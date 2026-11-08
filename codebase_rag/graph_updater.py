@@ -3101,6 +3101,7 @@ class GraphUpdater:
             py_engine._method_return_type_cache.clear()
             py_engine._self_assignment_cache.clear()
             py_engine._class_member_type_cache.clear()
+            py_engine._definition_indexes.clear()
         clear_scope_facts()
 
     def _finish_in_sync_run(self) -> None:

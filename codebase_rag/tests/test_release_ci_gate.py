@@ -108,6 +108,9 @@ def _steps() -> list[Step]:
 MARKER = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["env"][
     "DEFERRED_RELEASE_MARKER"
 ]
+COUNT_MARKER = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["env"][
+    "MERGE_COUNT_MARKER"
+]
 
 
 def _execute(
@@ -185,6 +188,9 @@ def _execute(
             "RELEASE": str(release).lower(),
             "CI_GATE": "skipped",
             "DEFERRED_RELEASE_MARKER": MARKER,
+            "MERGE_COUNT_MARKER": COUNT_MARKER,
+            "MERGE_COUNT": "",
+            "MERGE_COUNT_FROM": "",
             "GITHUB_OUTPUT": os.devnull,
             "GITHUB_STEP_SUMMARY": os.devnull,
             **(env or {}),
@@ -593,3 +599,88 @@ def test_a_new_release_deletes_the_drafts_it_supersedes(tmp_path: Path) -> None:
     # Only the bump job's own older draft: a person's draft, a published
     # release and this version's own draft stay.
     assert deleted == [f"gh api -X DELETE repos/{REPO}/releases/5"]
+
+
+# A bump that carries a version set by hand records how many merges its tag
+# stands for, so the cadence counts those instead of the numbers the version
+# skipped (issue #3573).
+
+
+def test_an_interim_tag_set_by_hand_records_its_merges() -> None:
+    result = _execute(
+        _pages([]),
+        release=False,
+        env={"MERGE_COUNT": "3", "MERGE_COUNT_FROM": "v0.0.900"},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        f"git: tag -a v0.0.951 -m {COUNT_MARKER}: 3 since v0.0.900\n" in result.stdout
+    )
+    assert "git: push https://x-access-token:" in result.stdout
+    assert "git: push origin v" not in result.stdout
+
+
+def test_a_release_tag_set_by_hand_stays_plain() -> None:
+    # The next count starts after a release, and the publish workflows start
+    # from its plain tag as from any other.
+    result = _execute(
+        _pages([_make_ci_run()]),
+        env={"MERGE_COUNT": "3", "MERGE_COUNT_FROM": "v0.0.900"},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "git: tag v0.0.951\n" in result.stdout
+    assert "git: push origin v0.0.951" in result.stdout
+
+
+def test_a_deferred_tag_set_by_hand_carries_only_the_deferral() -> None:
+    # A deferred release stays due whatever the count reads.
+    result = _execute(
+        _pages([]), env={"MERGE_COUNT": "3", "MERGE_COUNT_FROM": "v0.0.900"}
+    )
+
+    _assert_deferred(result)
+    assert COUNT_MARKER not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("count", "since"),
+    [
+        ("0", "v0.0.900"),
+        ("x", "v0.0.900"),
+        ("3; touch pwned", "v0.0.900"),
+        ("3\n4", "v0.0.900"),
+        ("-1", "v0.0.900"),
+        ("3", ""),
+        ("3", "main"),
+        ("3", "v0.0.900; touch pwned"),
+        ("3", "v0.0.900\nv0.0.901"),
+    ],
+)
+def test_a_malformed_merge_count_tags_without_it(
+    tmp_path: Path, count: str, since: str
+) -> None:
+    pwned = str(tmp_path / "pwned")
+    result = _execute(
+        _pages([]),
+        release=False,
+        env={
+            "MERGE_COUNT": count.replace("pwned", pwned),
+            "MERGE_COUNT_FROM": since.replace("pwned", pwned),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "git: tag v0.0.951\n" in result.stdout
+    assert "refusing malformed merge count" in result.stdout
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_the_tag_step_reads_the_count_from_decide() -> None:
+    steps = _steps()
+    tag = next(step for step in steps if step["name"] == "Create git tag")
+    assert tag["env"]["MERGE_COUNT"] == "${{ steps.decide.outputs.merge_count }}"
+    assert (
+        tag["env"]["MERGE_COUNT_FROM"] == "${{ steps.decide.outputs.merge_count_from }}"
+    )

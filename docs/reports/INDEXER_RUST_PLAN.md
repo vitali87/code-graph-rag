@@ -315,20 +315,123 @@ Under the profiler `interface_fingerprint` fell from 12.9% of the run to
 1.9%, and the scope walks from 6.6% to 3.2%, since the fingerprint no
 longer calls them from Python.
 
+## Stage 4, landed: the called parameters and the local aliases
+
+Step 1's profile of the code-graph-rag run pointed at three more walks that
+read every function: the flow model (`flow_bindings`, 3.8%), the local
+aliases (`_collect_local_aliases`, 3.8%) and the scan for called parameters
+(`_scan_invoked_parameters`, 2.1%). This stage moves the last two.
+
+- **Which parameters a function calls.** The definitions pass records, for
+  every function, the parameters its body calls (`def apply(f, x): f(x)`),
+  so the calls pass can link `apply(double, 3)` to `double` at the place
+  `f` is called (issue #2459). Stage 3's Rust fingerprint already ran this
+  scan for Python and JS/TS, as one of its checks of what reads a body; the
+  bridge now answers `callable_parameter_indices` with it too, and
+  `python_callable_parameter_indices` is the twin. The other languages keep
+  the twin.
+- **What each Python local was assigned.** Type inference reads
+  `resolved = target or Path("x")` so that `resolved.resolve()` resolves
+  through `target` and `Path("x")` (issue #1868). The answer is a list of
+  nodes per local, which type inference evaluates next, so the Rust walk
+  (`aliases.rs`) returns each node as its position under the function, its
+  pre-order index, and Python turns the index back into that very node with
+  `TreeCursor.goto_descendant`. `python_local_aliases` is the twin.
+
+The node types, fields, operator table and depth cap the alias walk reads
+are handed to the bridge from `constants/`, as the other stages hand
+theirs, and the startup probe compares both walks on every node of its
+sample. A `cgr-graph-rs` with this stage still builds the whole bridge for
+a code-graph-rag from before it, which hands over no alias rules; only the
+alias walk then declines.
+
+The flow model stays Python for now. It is about 800 lines that track what
+each name holds through branches and loops, and moves as a stage of its
+own.
+
+**Parity.** `codebase_rag/tests/test_native_callable_parameters.py`
+compares the two parameter scans on every node of a sample in Python,
+JavaScript, TypeScript and TSX, of the JS/TS files the repository tracks,
+and on every def and lambda of the package (33,295); outside the suite,
+every node of the 282 JS/TS files the evaluation oracles install with npm
+(629,133 nodes) gave no difference. `test_native_aliases.py` compares the
+alias walks on every node of a sample written to reach each form an alias
+reads through, and on every module, def, class and lambda of the package
+(37,861 scopes). The tests of higher-order calls, of #2459 and of #1868 run
+on both paths (the `both_callable_scans` and `both_alias_walks` fixtures).
+Indexing rich and code-graph-rag three times each on `main` and
+on this stage, alternating, wrote the same nodes. The edges that differ
+between runs differ between runs of `main` too: in rich the `resolution`
+label of four `Tree.add` calls in `rich/tree.py`, and in code-graph-rag one
+`CALLS` edge, from `test_opening_a_session_does_not_touch_the_network` to
+`Neo4jCursor.execute`, which step 1 found to come and go with the process's
+memory layout (it was in one of `main`'s three runs and all three of this
+stage's). Indexing rich in memory under seven memory layouts (0 to 256 MB
+allocated at startup), `main` wrote each of those labels both ways, and so
+did this stage.
+
+**Speed.** Profiling `main` and this stage back to back on code-graph-rag,
+the two walks went from 10.5 s of the run to 1.5 s: the alias walk from
+7.4 s to 0.95 s (7.8x) and the parameter scan from 3.0 s to 0.6 s (5x). The
+whole run gained less, 6.8 s in that pair of runs and 2.9 s on the mean of
+six below, because the Python walks of one function share a cost. Most of
+what a Python walk costs is building a Python object for each node it
+reads, and py-tree-sitter keeps a node's children once built, so the walks
+after it in the same function find them ready. With the alias walk in
+Rust, the walks after it build them instead: the flow model and four more
+walks of the calls pass (step 4 below) went from 15.0 s to 22.2 s. Measured
+alone, from fresh trees of the package, the alias walk takes 6.1 s to 7.3 s
+in Python and 0.8 s in Rust, and the walk of `_collect_returned_callables`
+that follows it 1.0 s after the Python alias walk and 6.5 s to 7.4 s after
+the Rust one.
+
+End to end, without embeddings, sync time:
+
+| Repository | `main` | Stage 4 | Gain |
+|---|---|---|---|
+| rich, median of 5 alternating runs | 9.2 s | 8.6 s | 1.07x |
+| code-graph-rag, mean of 6 alternating runs | 137.6 s | 134.7 s | 1.02x, 1.01x to 1.03x pair by pair |
+
+This sets how the calls pass's other walks move: together (step 4 below).
+
 ## The plan
 
 Every step is its own PR, re-measured with `benchmarks/index_profile.py`
 before the next starts. The Python fixes come first where they are larger:
 they are cheaper, and they change the shares the Rust steps are sized by.
 
-### 1. Python: index definitions once per tree (about 15%)
+### 1. Python: index definitions once per tree
 
-`_find_python_method_in_ast`, `_find_function_ast_node` and
-`_find_class_node` rerun the class or function query over a whole file every
-time a call's return type needs a definition node. Build one map per tree on
-first use (class name to its methods by name, top-level function name to
-node), kept beside the cached AST and dropped with it. This is the largest
-single item in the profile and needs no Rust.
+Landed. `_find_python_method_in_ast`, `_find_function_ast_node` and
+`_find_class_node` reran the class or function query over a whole file every
+time a call's return type needed a definition node: 13,709 lookups, 36.7 s of
+a 184.5 s run on code-graph-rag's own tree. Nothing in their
+history chose that: no cache was ever tried or reverted, and #3364, which
+indexed the other languages' per-lookup scans, did not touch them.
+
+`parsers/py/definition_index.py` now runs each query once per tree, with the
+same query, source order and name and nesting rules, and keeps what it found
+by name. The indexes are keyed by the tree's root node, so a file the AST
+cache evicted and parsed again gets a new one; they are bounded by trees (8,
+`PY_DEFINITION_INDEX_TREES`), as the scope walks are, since an index keeps
+its tree alive outside the AST cache's cap, and cleared with the engine's
+other caches at the start of every run and reingest. Lookups cluster by file:
+8 trees answer 83% of them from an index, every tree kept would answer 89%.
+
+**Parity.** `test_python_definition_index.py` compares the index with the
+old scans, kept there verbatim, on a sample written for the scans' quirks and
+on every file of `parsers/py`: every class and function name, every class and
+method name pair, and names that match nothing. Indexing code-graph-rag with
+the old and the new code gave the same graph, nodes, edges and properties
+(42,482 and 183,640); the few call edges that differ between runs differ
+between runs of the old code too.
+
+**Speed**, without embeddings, wall time of `cgr start --update-graph`:
+
+| Repository | `main` | Step 1 | Gain |
+|---|---|---|---|
+| rich, median of 5 alternating runs | 12.3 s | 10.3 s | 1.20x |
+| code-graph-rag, mean of 3 alternating runs | 183 s | 151 s | 1.22x |
 
 ### 2. Python: lazy agent imports (up to 9% of a small repository's run)
 
@@ -341,14 +444,24 @@ installed.
 
 Landed: the scope walks as stage 2, `interface_fingerprint` as stage 3.
 
-### 4. Rust: call-site extraction (2% to 5%)
+### 4. Rust: the calls pass's walks of a function, together
 
-`_scan_invoked_parameters` and the call collection in `call_processor.py`.
-`_scan_invoked_parameters` alone fell from 3.7% to 1.9% with stage 3, which
-stopped calling it from the fingerprint.
-Rust returns the call sites as nodes the caller already holds or as spans;
-resolution (`call_resolver.py`, the function registry) stays in Python,
-because it reads and writes registry state every language shares.
+The parameter scan landed as stage 4, with the local aliases. What stage 4
+measured changes how the rest is sized: most of what a Python walk costs is
+building the nodes it reads as Python objects, and the walks after it in
+the same function reuse them, so moving one walk hands that cost to the
+next. The calls pass reads every Python function with several such walks:
+the flow model (`FlowBindings`), `_collect_returned_callables`,
+`_python_with_statements`, `_ingest_property_accesses` and
+`_ingest_assignment_function_references`, 16% of stage 4's profile
+together (10% on its `main`, before they took over the alias walk's share
+of building nodes). They gain once no Python walk reads a function's whole
+body: each moves to Rust, or one Rust walk per function hands each of them
+only the nodes it acts on (its returns, its `with` statements, its
+attribute reads), as the alias walk hands back its leaves. Size this step
+on what is left of their cost after the move, not on their shares one by
+one. Resolution (`call_resolver.py`, the function registry) stays in
+Python, because it reads and writes registry state every language shares.
 
 ### 5. Parallel walks
 
@@ -369,6 +482,9 @@ callers follow it, before porting any of it.
 
 ### 7. Python: the Java registry scan (9.5% after stage 3)
 
+Landed in #3524, which answers from the trie alone; stage 4's profile no
+longer shows the scan.
+
 `_find_registry_entries_under` in `java/type_resolver.py` asks the function
 registry's trie for the names under a prefix, and when it finds none, as
 for a type declared outside the repository, it scans every registered name
@@ -382,9 +498,9 @@ not is the thing to check first.
 
 The code-graph-rag run without embeddings, timed without the profiler. The
 tree grew between stages 1 and 2, and the container slowed between stages 2
-and 3, so each stage is measured against the `main` of its day. The steps
-not taken yet are projected from stage 3's profile, from its measured mean,
-at 6x per ported walk:
+and 3, so each stage is measured against the `main` of its day. The step
+not taken yet is projected from stage 4's profile and measured mean, at 6x
+per ported walk:
 
 | After | Time |
 |---|---|
@@ -394,14 +510,18 @@ at 6x per ported walk:
 | Stage 2 (landed) | 214 s to 224 s, measured |
 | Stage 3's `main`, in a container about 1.6x slower | 335 s to 358 s, measured |
 | Stage 3 (landed) | 300 s to 312 s, measured |
-| Step 1 (Python lookups, 22.6% of stage 3's run) | about 235 s |
-| Step 7 (Java registry scan, 9.5%) | about 210 s |
-| Step 4 (call sites, 2% to 5%) | about 200 s |
+| Step 1's `main`, a later tree in another container | 179 s to 190 s, measured |
+| Step 1 (landed) | 150 s to 152 s, measured |
+| Stage 4's `main`, with step 7 landed | 134 s to 144 s, measured |
+| Stage 4 (landed) | 133 s to 139 s, measured |
+| Step 4 (the calls pass's walks of a function, 16%, together) | about 117 s |
 
-That is about 1.7x end to end on one core against stage 3's `main`, before
-step 5. Most of what remains is call resolution and the passes' own control
-flow in Python, which share registries across files and languages; they are
-the part that stays Python.
+Against the `main` of its day, stages 1 to 4 and step 1 gained 1.08x,
+1.23x, 1.13x, 1.02x and 1.22x: about 1.9x compounded, on one core, before
+step 7's own gain and before step 5. Most of what remains is call
+resolution and the passes' own control flow in Python, which share
+registries across files and languages; they are the part that stays
+Python.
 
 ## Beyond the indexer
 

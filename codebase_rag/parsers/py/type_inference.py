@@ -15,6 +15,7 @@ from ...types_defs import (
 )
 from ..import_processor import ImportProcessor
 from .ast_analyzer import PythonAstAnalyzerMixin
+from .definition_index import PythonDefinitionIndexes
 from .expression_analyzer import PythonExpressionAnalyzerMixin
 from .variable_analyzer import PythonVariableAnalyzerMixin
 from .with_analyzer import PythonWithBindingMixin
@@ -76,6 +77,7 @@ class PythonTypeInferenceEngine(
         "_return_stmt_cache",
         "_self_assignment_cache",
         "_class_member_type_cache",
+        "_definition_indexes",
     )
 
     def __init__(
@@ -112,6 +114,7 @@ class PythonTypeInferenceEngine(
         self._return_stmt_cache: dict[Node, list] = {}
         self._self_assignment_cache: dict[tuple[Node, str], dict[str, str] | None] = {}
         self._class_member_type_cache: dict[str, dict[str, str]] = {}
+        self._definition_indexes = PythonDefinitionIndexes()
 
     @staticmethod
     def _first_parameter_name(def_node: Node) -> str | None:

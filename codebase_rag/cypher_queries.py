@@ -286,6 +286,16 @@ CYPHER_STRANDED_RUN_IDS = (
 # that supersedes it has committed and cleared its own marker, and only while
 # the marker still names the exited process: the CLI sync's run id is shared,
 # so a CLI writer that started since has marked it under its own.
+# Every run of the project that may be writing, with the process it names,
+# whichever run it is, a marker from before run ids included: a deleted or
+# pruned project has no rebuild of its own to exclude (#2479).
+# `sync_guard` keeps as stopped only those whose process provably exited.
+CYPHER_WRITING_RUNS = (
+    "MATCH (m:IncompleteRun {project: $project_name}) "
+    "WHERE coalesce(m.writing, true) "
+    "RETURN m.run_id AS run_id, m.owner_host AS owner_host, "
+    "m.owner_pid AS owner_pid"
+)
 CYPHER_RETIRE_STRANDED_RUN = (
     "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
     "WHERE m.owner_host = $owner_host AND m.owner_pid = $owner_pid DELETE m"
@@ -378,10 +388,12 @@ WITH p, nested, collect(DISTINCT container) + collect(DISTINCT defined) AS owned
 CYPHER_RECORD_PROJECT_SYNC = (
     "MATCH (p:Project {name: $project_name}) SET p.last_synced_at = $last_synced_at"
 )
-# A project synced before the time was recorded reads back null.
+# A project synced before the time was recorded reads back null. The root
+# rides along so `cgr status` can mark one that is gone (#2479).
 CYPHER_PROJECT_SYNC_TIMES = (
     "MATCH (p:Project) "
-    "RETURN p.name AS name, p.last_synced_at AS last_synced_at ORDER BY p.name"
+    "RETURN p.name AS name, p.last_synced_at AS last_synced_at, "
+    "p.root_path AS root_path ORDER BY p.name"
 )
 
 # Retires a project whose checkout was just re-indexed under another name
@@ -403,6 +415,7 @@ OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_
 DETACH DELETE p, container, defined
 """
 
+
 # Deletes what `p` claims, except a Folder or File another project claims
 # too: that one only loses `p`'s edges. The named nodes go first, so the
 # check that follows walks up from each Folder/File over what is left; no
@@ -410,8 +423,9 @@ DETACH DELETE p, container, defined
 # Another project `q` claims a Folder/File it reaches through Folders and
 # Files from itself or from one of its own Packages, the same two walks as
 # _CYPHER_PROJECT_CLAIMS taken upward.
-CYPHER_DELETE_PROJECT = f"""
-MATCH (p:Project {{name: $project_name}})
+def _delete_project(match_filter: str = "") -> str:
+    return f"""
+MATCH (p:Project {{name: $project_name}}){match_filter}
 {_CYPHER_PROJECT_CLAIMS}
 WITH [c IN owned WHERE c:Folder OR c:File] AS shareable,
 [c IN owned WHERE NOT (c:Folder OR c:File)] AS named
@@ -429,17 +443,99 @@ WHERE other_claims = 0
 DETACH DELETE c
 """
 
+
+CYPHER_DELETE_PROJECT = _delete_project()
+
+# A run of the project that may be writing the graph: one whose marker is
+# up and reached its first write, or one from before the phase existed
+# (#1705). Every writer marks before its first graph write, whichever
+# checkout or CGR_HOME it runs from, so the marker is the one signal a
+# same-name sync elsewhere gives `cgr prune` (#2479). A run still in its
+# read-only prologue (`writing=false`) has written nothing to lose, and
+# prune's own marker, `$run_id`, is not another writer.
+_WRITING_RUN = (
+    "OPTIONAL MATCH (writer:IncompleteRun {project: $project_name})\n"
+    "WHERE coalesce(writer.writing, true) "
+    "AND (writer.run_id IS NULL OR writer.run_id <> $run_id)\n"
+)
+
+# The same delete, made conditional on the project still naming the root the
+# run checked, and on no run of it writing (#2479): the WHERE and the DELETE
+# are one statement, so a concurrent sync repointing `root_path`, or one
+# starting to write, between `cgr prune`'s checks and its purge leaves the
+# project alone. It returns nothing either way; the caller reads whether the
+# project is gone afterwards.
+CYPHER_DELETE_PROJECT_IF_ROOT = _delete_project(
+    "\nWHERE p.root_path = $expected_root\n"
+    + _WRITING_RUN
+    + "WITH p, count(writer) AS writers\nWHERE writers = 0"
+)
+
+
+# The labels a project owns by name alone: each one's qualified name carries
+# its project's name, as a Module's does (the fact CYPHER_DELETE_MODULE
+# relies on). An ALLOWLIST, because a delete that fails open takes another
+# project's nodes: an ExternalModule or a Resource is keyed by a name no
+# project owns, a Gloss outlives the rebuild it is meant to survive (issue
+# #1828), and Package and Module are the units the sweep walks from.
+_DETACHABLE_LABELS: tuple[NodeLabel, ...] = (
+    NodeLabel.CLASS,
+    NodeLabel.CODE_SMELL,
+    NodeLabel.CONSTANT,
+    NodeLabel.ENUM,
+    NodeLabel.ENUM_VARIANT,
+    NodeLabel.FIELD,
+    NodeLabel.FUNCTION,
+    NodeLabel.INTERFACE,
+    NodeLabel.METHOD,
+    NodeLabel.MODULE_IMPLEMENTATION,
+    NodeLabel.MODULE_INTERFACE,
+    NodeLabel.PARAMETER,
+    NodeLabel.PATTERN,
+    NodeLabel.SECTION,
+    NodeLabel.SECURITY_ISSUE,
+    NodeLabel.TYPE,
+    NodeLabel.UNION,
+)
+# The qualified-name-keyed labels a project delete never takes by name.
+_NEVER_SWEPT_LABELS: frozenset[NodeLabel] = frozenset(
+    {
+        NodeLabel.EXTERNAL_MODULE,
+        NodeLabel.GLOSS,
+        NodeLabel.MODULE,
+        NodeLabel.PACKAGE,
+        NodeLabel.RESOURCE,
+    }
+)
+
+
+def _sweep_detached() -> str:
+    # One label at a time, deleting as it goes and carrying only the short
+    # `nested` list: grouping on a large list cost seconds per thousand
+    # nodes (see CYPHER_DELETE_PROJECT).
+    return "".join(
+        f"OPTIONAL MATCH (d:{label.value}) WHERE {_belongs_to_named('d')}\n"
+        "WITH nested, collect(d) AS detached\n"
+        "FOREACH (n IN detached | DETACH DELETE n)\n"
+        "WITH nested\n"
+        for label in _DETACHABLE_LABELS
+    )
+
+
 # Run after CYPHER_DELETE_PROJECT: the project's Packages and Modules that no
 # containment path from it reached, such as a tree the #897 repair cut off
 # from its Project, go too rather than outliving it as orphans (issue
 # #2665). Modules always carry the project prefix, the fact
-# CYPHER_DELETE_MODULE relies on. Glosses are keyed by qualified name as
-# well, but are neither label and hang off nothing this walks, so they
-# survive the rebuild they are meant to survive (issue #1828).
-CYPHER_DELETE_PROJECT_CUT_OFF_UNITS = f"""
+# CYPHER_DELETE_MODULE relies on. So do the definitions an interrupted sync
+# left with no edge to their module, which no walk reaches (#2479): they go
+# by name too. Glosses are keyed by qualified name as well, but are none of
+# these labels and hang off nothing this walks, so they survive the rebuild
+# they are meant to survive (issue #1828).
+def _delete_cut_off_units(guard: str = "", carried: str = "") -> str:
+    return f"""{guard}
 OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH $project_prefix
-WITH collect(longer.name) AS nested
-OPTIONAL MATCH (pkg:Package) WHERE {_belongs_to_named("pkg")}
+WITH {carried}collect(longer.name) AS nested
+{_sweep_detached()}OPTIONAL MATCH (pkg:Package) WHERE {_belongs_to_named("pkg")}
 WITH nested, collect(pkg) AS packages
 OPTIONAL MATCH (mod:Module) WHERE {_belongs_to_named("mod")}
 WITH packages, collect(mod) AS modules
@@ -449,6 +545,51 @@ OPTIONAL MATCH (u)-[:{_DEFINITION_RELS}|CONTAINS_SECTION*]->(defined)
 WITH collect(DISTINCT u) + collect(DISTINCT defined) AS gone
 FOREACH (n IN gone | DETACH DELETE n)
 """
+
+
+CYPHER_DELETE_PROJECT_CUT_OFF_UNITS = _delete_cut_off_units()
+
+# The same sweep for `cgr prune` (#2479), run only while no project of the
+# name exists and no run of it is writing, checked in the same statement:
+# the sweep matches by name, so a sync that recreated the project, or began
+# writing it, after the conditional delete would otherwise lose its nodes to
+# it. Both counts are carried as grouping keys into the first aggregation,
+# so a failed check leaves no row to sweep with rather than one with an
+# empty `nested`.
+CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE = _delete_cut_off_units(
+    "\nOPTIONAL MATCH (other:Project {name: $project_name})\n"
+    "WITH count(other) AS recreated\n"
+    + _WRITING_RUN
+    + "WITH recreated, count(writer) AS writers\n"
+    "WHERE recreated = 0 AND writers = 0",
+    "recreated, writers, ",
+)
+
+
+def _count_named(label: NodeLabel) -> str:
+    return f"""OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH $project_prefix
+WITH collect(longer.name) AS nested
+OPTIONAL MATCH (n:{label.value}) WHERE {_belongs_to_named("n")}
+RETURN count(n) AS residual"""
+
+
+# What of a project is left once the delete and the cut-off sweep above ran
+# (#2479): its Project node, and every node the sweep takes by name -- each
+# Package, Module and definition under its name but not under a longer
+# registered name. One aggregated row per label, so a gone project still
+# answers every row, and the caller sums them: chained in one part, the
+# label scans outgrew what the embedded engine compiles into one statement.
+# `cgr prune` reports a purge done only when the rows sum to 0, so a delete
+# that stopped halfway is an error rather than a success.
+CYPHER_COUNT_PROJECT_NODES = "\nUNION ALL\n".join(
+    [
+        "MATCH (p:Project {name: $project_name}) RETURN count(p) AS residual",
+        *(
+            _count_named(label)
+            for label in (NodeLabel.PACKAGE, NodeLabel.MODULE, *_DETACHABLE_LABELS)
+        ),
+    ]
+)
 
 
 # Damage detectors for the issue #897 migration. The superseded key merged
@@ -1630,7 +1771,8 @@ _DELTA_DEFINITION_FIELDS = """RETURN labels(n)[0] AS label, n.qualified_name AS 
        n.positional_params AS positional_params,
        n.ast_fingerprint AS ast_fingerprint,
        n.ast_fingerprint_nodes AS ast_fingerprint_nodes,
-       n.ast_branch_fingerprints AS ast_branch_fingerprints"""
+       n.ast_branch_fingerprints AS ast_branch_fingerprints,
+       n.decorators AS decorators, n.modifiers AS modifiers"""
 CYPHER_DELTA_DEFINITIONS = f"""MATCH (n)
 WHERE {_any_label("n", _DELTA_DEFINITION_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes

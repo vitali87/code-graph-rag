@@ -69,6 +69,13 @@ TS_PY_LIST_SPLAT = "list_splat"
 TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
 TS_PY_DEFAULT_PARAMETER = "default_parameter"
 TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
+# `from __future__ import annotations` (PEP 563) keeps every annotation in
+# its module as a string that never runs.
+TS_PY_FUTURE_IMPORT_STATEMENT = "future_import_statement"
+PY_FUTURE_ANNOTATIONS = "annotations"
+# The literal sequence values an unpacking assignment pairs its targets with
+# by position (`a, b = x, y`, `(a, b) = (x, y)`, `[a, b] = [x, y]`).
+PY_UNPACKING_VALUE_TYPES = frozenset({"expression_list", "tuple", "list"})
 TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
 TS_PY_POSITIONAL_SEPARATOR = "positional_separator"
 TS_PY_KEYWORD_SEPARATOR = "keyword_separator"
@@ -556,6 +563,11 @@ PY_COMPREHENSION_TYPES = frozenset(
 # tree stays alive outside the AST cache's memory cap, so the cache holds a
 # few trees, all of whose scopes it keeps, rather than a number of scopes.
 PY_SCOPE_CACHE_TREES = 8
+# Trees whose definition indexes stay cached (`PythonDefinitionIndexes`), for
+# the same reason. Lookups cluster by file: indexing code-graph-rag's own tree
+# made 12,944 lookups into 1,375 files, and keeping 8 trees answered 83% of
+# them from an index (keeping every tree, 89%).
+PY_DEFINITION_INDEX_TREES = 8
 # The callable-parameter scan (`parsers/utils.py`, and the tree bridge's port
 # of it for the interface fingerprint): the scopes that capture an enclosing
 # def's parameters, and the ones it never enters.

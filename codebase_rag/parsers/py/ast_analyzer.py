@@ -20,7 +20,8 @@ from ...types_defs import (
 )
 from .. import native_trees
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
-from ..utils import get_cached_query, safe_decode_text, sorted_captures
+from ..utils import get_cached_query, safe_decode_text
+from .definition_index import PythonDefinitionIndexes
 from .utils import split_top_level as _split_top_level
 from .with_analyzer import WithTarget
 
@@ -751,6 +752,53 @@ def _call_bound_by(binder: Node) -> Node | None:
     return value if value is not None and value.type == cs.TS_PY_CALL else None
 
 
+def sole_bound_call(name: Node) -> Node | None:
+    """The call the name read at `name` holds, if it holds anything: the def
+    the read sits in binds it once, by a plain `name = call()`, annotated or
+    not. A read before that binding raises rather than reading another
+    value, so where the one binding sits does not matter.
+
+    None for a parameter, a name a `global` or `nonlocal` declares (in a
+    nested def too, which rebinds it from there), one a lambda or
+    comprehension around the read binds for itself, a second binding of any
+    kind, or a name the def does not bind.
+    """
+    text = safe_decode_text(name)
+    scope = _own_scope(name)
+    if not text or scope is None or scope.type != cs.TS_PY_FUNCTION_DEFINITION:
+        return None
+    current = name.parent
+    while current is not None and current.id != scope.id:
+        if (
+            current.type == cs.TS_PY_LAMBDA or current.type in cs.PY_COMPREHENSION_TYPES
+        ) and text in _inner_scope_bindings(current):
+            return None
+        current = current.parent
+    if text in _parameter_names(scope) or text in _declared_anywhere_in(scope):
+        return None
+    binders = [
+        binder
+        for binder, identifier in _bindings_in(scope)
+        if safe_decode_text(identifier) == text
+    ]
+    return _call_bound_by(binders[0]) if len(binders) == 1 else None
+
+
+def _declared_anywhere_in(scope: Node) -> set[str]:
+    """Every name a `global` or `nonlocal` under `scope` declares, its nested
+    defs' included: unlike `_declared_non_local`, which keeps to the scope's
+    own body."""
+    declared: set[str] = set()
+    stack = [scope]
+    while stack:
+        node = stack.pop()
+        if node.type in cs.PY_DECLARATION_TYPES:
+            declared.update(_declared_names(node))
+        else:
+            stack.extend(node.named_children)
+    return declared
+
+
 def _binding_events(
     name: str, before: int, caller: Node
 ) -> list[tuple[int, Node | None]]:
@@ -1100,14 +1148,6 @@ else:
     _AstBase = object
 
 
-def _node_name(node: Node) -> str | None:
-    # The decoded `name` field of a definition, or None when it has no text.
-    name_node = node.child_by_field_name(cs.TS_FIELD_NAME)
-    if not name_node or name_node.text is None:
-        return None
-    return safe_decode_text(name_node)
-
-
 class PythonAstAnalyzerMixin(_AstBase):
     __slots__ = ()
 
@@ -1206,6 +1246,7 @@ class PythonAstAnalyzerMixin(_AstBase):
     def _resolved_type(self, type_name: str, module_qn: str) -> str | None: ...
 
     _return_stmt_cache: dict[Node, list[Node]]
+    _definition_indexes: PythonDefinitionIndexes
 
     def _traverse_single_pass(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
@@ -2093,19 +2134,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         root_node, language = entry
         if language != cs.SupportedLanguage.PYTHON:
             return None
-        lang_queries = self.queries[cs.SupportedLanguage.PYTHON]
-        class_query = lang_queries[cs.QUERY_KEY_CLASSES]
+        class_query = self.queries[cs.SupportedLanguage.PYTHON][cs.QUERY_KEY_CLASSES]
         if not class_query:
             return None
-        cursor = QueryCursor(class_query)
-        captures = sorted_captures(cursor, root_node)
-        for class_node in captures.get(cs.QUERY_CAPTURE_CLASS, []):
-            if not isinstance(class_node, Node):
-                continue
-            name_node = class_node.child_by_field_name(cs.TS_FIELD_NAME)
-            if name_node and safe_decode_text(name_node) == class_name:
-                return class_node
-        return None
+        return self._definition_indexes(root_node).class_node(class_name, class_query)
 
     def _find_callable_ast_node(self, qn: str) -> Node | None:
         # Dispatch on the registry label: a FUNCTION qn is module.func (module is
@@ -2116,9 +2148,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         return self._find_method_ast_node(qn)
 
     def _find_function_ast_node(self, fn_qn: str) -> Node | None:
-        # Top-level function definition for `mod.func`. Nested and method defs
-        # carry longer qns, so anything under a class or function ancestor is
-        # skipped.
+        # Top-level function definition for `mod.func`.
         module_qn, _, fn_name = fn_qn.rpartition(cs.SEPARATOR_DOT)
         file_path = self.module_qn_to_file_path.get(module_qn)
         if not file_path or not (entry := self.ast_cache.load(file_path)):
@@ -2129,60 +2159,19 @@ class PythonAstAnalyzerMixin(_AstBase):
         fn_query = self.queries[cs.SupportedLanguage.PYTHON][cs.QUERY_KEY_FUNCTIONS]
         if not fn_query:
             return None
-        cursor = QueryCursor(fn_query)
-        captures = sorted_captures(cursor, root_node)
-        for fn_node in captures.get(cs.QUERY_CAPTURE_FUNCTION, []):
-            if not isinstance(fn_node, Node):
-                continue
-            name_node = fn_node.child_by_field_name(cs.TS_FIELD_NAME)
-            if (
-                name_node is not None
-                and safe_decode_text(name_node) == fn_name
-                and self._is_top_level_definition(fn_node)
-            ):
-                return fn_node
-        return None
-
-    def _is_top_level_definition(self, node: Node) -> bool:
-        parent = node.parent
-        while parent is not None:
-            if parent.type in (
-                cs.TS_PY_CLASS_DEFINITION,
-                cs.TS_PY_FUNCTION_DEFINITION,
-            ):
-                return False
-            parent = parent.parent
-        return True
+        return self._definition_indexes(root_node).top_level_function(fn_name, fn_query)
 
     def _find_python_method_in_ast(
         self, root_node: Node, class_name: str, method_name: str
     ) -> Node | None:
         lang_queries = self.queries[cs.SupportedLanguage.PYTHON]
         class_query = lang_queries[cs.QUERY_KEY_CLASSES]
-        if not class_query:
-            return None
-        cursor = QueryCursor(class_query)
-        captures = sorted_captures(cursor, root_node)
-
         method_query = lang_queries[cs.QUERY_KEY_FUNCTIONS]
-        if not method_query:
+        if not class_query or not method_query:
             return None
-
-        for class_node in captures.get(cs.QUERY_CAPTURE_CLASS, []):
-            if not isinstance(class_node, Node) or _node_name(class_node) != class_name:
-                continue
-            body_node = class_node.child_by_field_name(cs.TS_FIELD_BODY)
-            if not body_node:
-                continue
-            method_captures = sorted_captures(QueryCursor(method_query), body_node)
-            for method_node in method_captures.get(cs.QUERY_CAPTURE_FUNCTION, []):
-                if (
-                    isinstance(method_node, Node)
-                    and _node_name(method_node) == method_name
-                ):
-                    return method_node
-
-        return None
+        return self._definition_indexes(root_node).method(
+            class_name, method_name, class_query, method_query
+        )
 
     def _analyze_method_return_statements(
         self, method_node: Node, method_qn: str, module_qn: str | None = None

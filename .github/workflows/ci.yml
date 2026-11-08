@@ -39,7 +39,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -115,7 +115,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -184,7 +184,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -288,7 +288,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -340,7 +340,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -398,7 +398,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -439,7 +439,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -549,7 +549,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -603,7 +603,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -632,6 +632,37 @@ jobs:
       - name: Run the engine's tests on the Rust parser
         run: |
           uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_engine.py codebase_rag/tests/test_embedded_graph_memgraph_parity.py codebase_rag/tests/test_embedded_graph_default.py --tb=short
+
+  greptile-gate:
+    name: Greptile 5/5 Gate
+    runs-on: ubuntu-latest
+    # Every pull request: Greptile reviews forks, Dependabot and every base,
+    # and greptile.json has it review each push and draft. The gate fails
+    # only on a score below 5/5; with Greptile absent (out of credits,
+    # paused) it passes with a warning, so billing never blocks a merge.
+    if: github.event_name == 'pull_request'
+    # The script waits up to 10 min for Greptile to start and up to 45 min
+    # for a review in progress to post its score; this cap only bounds a hang.
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      # Greptile's score is in its summary comment on the pull request, and
+      # its "Greptile Review" check run shows whether a review is in flight.
+      pull-requests: read
+      checks: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fail if Greptile scores the head commit below 5/5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/greptile_gate.py "$PR" "$HEAD_SHA"
 
   sonar-gate:
     name: Sonar Zero Issues Gate
@@ -760,6 +791,7 @@ jobs:
         go-frontend,
         rust-graph-core,
         sonar-gate,
+        greptile-gate,
       ]
     timeout-minutes: 5
 
@@ -817,6 +849,13 @@ jobs:
           if [[ "${{ needs.sonar-gate.result }}" != "success" \
              && "${{ needs.sonar-gate.result }}" != "skipped" ]]; then
             echo "❌ Sonar gate failed: zero open SonarCloud issues on the head commit are required"
+            exit 1
+          fi
+          # Skipped only outside a pull request (a push to main, a dispatch);
+          # on every pull request anything but success blocks the merge.
+          if [[ "${{ needs.greptile-gate.result }}" != "success" \
+             && "${{ needs.greptile-gate.result }}" != "skipped" ]]; then
+            echo "❌ Greptile gate failed: Greptile scored the head commit below 5/5"
             exit 1
           fi
           echo "✅ All checks passed!"

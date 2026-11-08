@@ -368,7 +368,8 @@ MCP_PARAM_ALLOW_HEURISTIC = (
 )
 MCP_PARAM_RENAME_DRY_RUN = "Plan only: report the sites and diff, write nothing."
 MCP_CHANGE_SIGNATURE = (
-    "Change a Python function's or method's parameter list and rewrite every "
+    "Change a Python or JavaScript function's or method's parameter list and "
+    "rewrite every "
     "call site the graph knows, on the definition and on every override in "
     "both directions. `new_params` lists the new parameters in order (`n: int`, "
     "`limit: int = 10`, or a bare old name to carry it over unchanged). "

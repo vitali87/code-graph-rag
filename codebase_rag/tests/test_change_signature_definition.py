@@ -106,6 +106,40 @@ def test_a_kept_parameter_spelled_anew_takes_the_new_spelling(
         )
 
 
+def test_a_non_ascii_parameter_listed_by_name_keeps_its_default(
+    temp_repo: Path,
+) -> None:
+    # Read without its default, `élan` left `helper()` unmapped and refused
+    # moving after `b` as a required parameter following a default.
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": (
+                "def helper(élan: int = 1, b: str = 'x') -> str:\n    return b * élan\n"
+            ),
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper()\n",
+        },
+    )
+    store, _updater = _index(root)
+
+    kept = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        HELPER,
+        ["élan", "b", "n: int = 0"],
+        dry_run=True,
+    )
+    moved = change_signature(
+        root, store.fetch_all, PROJECT, HELPER, ["b", "élan"], dry_run=True
+    )
+
+    assert kept.unmapped == ()
+    assert moved.unmapped == ()
+    assert "+def helper(b: str = 'x', élan: int = 1) -> str:" in moved.diff
+
+
 def test_a_required_parameter_after_a_default_is_refused(
     repo: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
@@ -150,16 +184,15 @@ def test_a_definition_with_special_parameters_is_refused(
         )
 
 
-def test_a_non_python_definition_is_refused(temp_repo: Path) -> None:
+def test_a_definition_in_an_unsupported_language_is_refused(temp_repo: Path) -> None:
+    # JavaScript is supported now (issue #1908, test_signature_javascript.py);
+    # Go is not yet.
     root = _project(
         temp_repo,
-        {
-            "lib/tool.js": "export function helper(a) { return a; }\n",
-            "lib/app.js": "import { helper } from './tool.js';\nexport const run = () => helper(1);\n",
-        },
+        {"lib/tool.go": "package lib\n\nfunc helper(a int) int {\n\treturn a\n}\n"},
     )
     store, _updater = _index(root)
-    with pytest.raises(SignatureRefused, match=r"Python"):
+    with pytest.raises(SignatureRefused, match=r"does not support yet"):
         change_signature(
             root, store.fetch_all, PROJECT, f"{PROJECT}.lib.tool.helper", ["a", "n"]
         )
