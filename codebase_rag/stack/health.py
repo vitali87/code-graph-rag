@@ -9,7 +9,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from http.client import HTTPMessage
 from typing import IO, NamedTuple, Protocol
@@ -199,7 +199,7 @@ def _login_refused(report: MgclientProbeReport) -> bool:
 
 
 @contextmanager
-def _stderr_into(runtime: _CRuntime, capture: IO[bytes]) -> Iterator[None]:
+def _stderr_into(runtime: _CRuntime, capture: IO[bytes]) -> Generator[None]:
     try:
         saved: int | None = runtime.dup(cs.NATIVE_STDERR_FD)
     except OSError:
@@ -232,7 +232,7 @@ def _stderr_into(runtime: _CRuntime, capture: IO[bytes]) -> Iterator[None]:
 
 
 @contextmanager
-def _mgclient_stderr_to_debug_log() -> Iterator[None]:
+def _mgclient_stderr_to_debug_log() -> Generator[None]:
     with _NATIVE_STDERR_LOCK, tempfile.TemporaryFile() as capture:
         # Text Python still buffers for the terminal belongs there, not in
         # the capture.
