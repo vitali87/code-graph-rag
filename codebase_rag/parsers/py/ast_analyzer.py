@@ -1616,6 +1616,15 @@ class PythonAstAnalyzerMixin(_AstBase):
                 last[name] = max(last.get(name, -1), identifier.start_byte)
         for name, position in _alias_positions(case_clauses).items():
             last[name] = max(last.get(name, -1), position)
+        # A class name the function binds itself (`Thing = Other`, a
+        # parameter) is not the module's class: `case Thing()` matches
+        # whatever the local holds, so such a pattern types nothing
+        # (Greptile P1 on #3585).
+        shadowed = (
+            self.locally_bound_names(scope, module_qn)
+            if scope.type == cs.TS_PY_FUNCTION_DEFINITION
+            else frozenset()
+        )
         for clause in case_clauses:
             pattern = next(
                 (
@@ -1637,6 +1646,7 @@ class PythonAstAnalyzerMixin(_AstBase):
                             (name := safe_decode_text(children[-1]))
                             and (last.get(name, -1) <= children[-1].start_byte)
                             and (class_name := _match_pattern_class(children[0]))
+                            and class_name.split(cs.SEPARATOR_DOT, 1)[0] not in shadowed
                         ):
                             if typed := self._resolved_type(class_name, module_qn):
                                 local_var_types[name] = typed

@@ -527,6 +527,94 @@ SOURCE = (
     "def aliased_abc_iterator_with():\n"
     "    with aliased_abc_iterator(Thing()) as t:\n"
     "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def branch_rebound_factory(flag):\n"
+    "    t = Thing()\n"
+    "    if flag:\n"
+    "        t = Other()\n"
+    "    yield t\n"
+    "\n"
+    "\n"
+    "def branch_rebound_factory_with(flag):\n"
+    "    with branch_rebound_factory(flag) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def branch_local_factory(flag):\n"
+    "    t = Other()\n"
+    "    if flag:\n"
+    "        t = Thing()\n"
+    "        yield t\n"
+    "    else:\n"
+    "        yield Thing()\n"
+    "\n"
+    "\n"
+    "def branch_local_factory_with(flag):\n"
+    "    with branch_local_factory(flag) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def short_circuit_walrus_factory(flag):\n"
+    "    t = Thing()\n"
+    "    if flag and (t := Other()):\n"
+    "        pass\n"
+    "    yield t\n"
+    "\n"
+    "\n"
+    "def short_circuit_walrus_factory_with(flag):\n"
+    "    with short_circuit_walrus_factory(flag) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def shadowed_factory():\n"
+    "    yield Thing()\n"
+    "\n"
+    "\n"
+    "def shadowed_factory_with():\n"
+    "    with shadowed_factory() as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "def module_factory_with():\n"
+    "    with helpers.h_opened() as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "def locally_defined_factory_with():\n"
+    "    @contextmanager\n"
+    "    def shadowed_factory():\n"
+    "        yield Other()\n"
+    "\n"
+    "    with shadowed_factory() as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "def parameter_factory_with(shadowed_factory):\n"
+    "    with shadowed_factory() as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "def shadowed_module_factory_with(helpers):\n"
+    "    with helpers.h_opened() as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "def matched_rebound_class(shape):\n"
+    "    Thing = Other\n"
+    "    match shape:\n"
+    "        case Thing() as t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
+    "def matched_parameter_class(shape, Thing):\n"
+    "    match shape:\n"
+    "        case Thing() as t:\n"
+    "            return t.go()\n"
 )
 
 CHILD = (
@@ -561,6 +649,11 @@ HELPERS = (
     "    @cm\n"
     "    def release(self) -> Iterator[HThing]:\n"
     "        yield HThing()\n"
+    "\n"
+    "\n"
+    "@cm\n"
+    "def h_opened():\n"
+    "    yield HThing()\n"
 )
 
 
@@ -971,3 +1064,87 @@ def test_aliased_collections_abc_iterator_annotation(tmp_path: Path) -> None:
     calls = _calls(tmp_path)["aliased_abc_iterator_with"]
     assert calls.get(THING_GO) == EXACT
     assert OTHER_GO not in calls
+
+
+# --- reviews on #3585 --------------------------------------------------------
+
+
+def test_factory_branch_rebinding_leaves_the_target_untyped(
+    tmp_path: Path,
+) -> None:
+    """Greptile P1 on #3585: `t = Thing(); if flag: t = Other(); yield t`
+    yields `Thing` or `Other` depending on `flag`. A binding inside a
+    branch that does not hold the yield may not run before it, so it
+    adds a possible type instead of replacing the earlier one, and two
+    possible types name no single class."""
+    calls = _calls(tmp_path).get("branch_rebound_factory_with", {})
+    assert calls.get(THING_GO) != EXACT
+    assert calls.get(OTHER_GO) != EXACT
+
+
+def test_factory_binding_in_the_yields_own_branch_still_types(
+    tmp_path: Path,
+) -> None:
+    """A binding in the same block as the yield always runs before it,
+    so it still replaces the earlier `t = Other()`: both yields give
+    `Thing`."""
+    calls = _calls(tmp_path).get("branch_local_factory_with", {})
+    assert calls.get(THING_GO) == EXACT
+    assert calls.get(OTHER_GO) != EXACT
+
+
+def test_factory_short_circuit_walrus_leaves_the_target_untyped(
+    tmp_path: Path,
+) -> None:
+    """A walrus behind `and` runs only when the left operand is true, so
+    it may not rebind `t` before the yield either."""
+    calls = _calls(tmp_path).get("short_circuit_walrus_factory_with", {})
+    assert calls.get(THING_GO) != EXACT
+    assert calls.get(OTHER_GO) != EXACT
+
+
+def test_module_level_factory_is_the_control(tmp_path: Path) -> None:
+    calls = _calls(tmp_path)
+    assert calls["shadowed_factory_with"].get(THING_GO) == EXACT
+    assert calls["module_factory_with"].get(HTHING_GO) == EXACT
+
+
+def test_local_factory_does_not_resolve_to_the_module_one(tmp_path: Path) -> None:
+    """Greptile P1 on #3585: a factory the caller defines itself shadows
+    the module's same-named one. Local factories are not followed, so
+    the target stays untyped rather than taking the module factory's
+    yield type."""
+    calls = _calls(tmp_path).get("locally_defined_factory_with", {})
+    assert calls.get(THING_GO) != EXACT
+    assert calls.get(OTHER_GO) != EXACT
+
+
+def test_parameter_named_like_a_module_factory_stays_untyped(
+    tmp_path: Path,
+) -> None:
+    calls = _calls(tmp_path).get("parameter_factory_with", {})
+    assert calls.get(THING_GO) != EXACT
+
+
+def test_parameter_named_like_an_imported_module_stays_untyped(
+    tmp_path: Path,
+) -> None:
+    calls = _calls(tmp_path).get("shadowed_module_factory_with", {})
+    assert calls.get(HTHING_GO) != EXACT
+
+
+def test_match_class_rebound_in_the_function_stays_untyped(
+    tmp_path: Path,
+) -> None:
+    """Greptile P1 on #3585: `Thing = Other` in the function makes
+    `case Thing()` match `Other`, so the alias must not take the
+    module's `Thing`."""
+    calls = _calls(tmp_path).get("matched_rebound_class", {})
+    assert calls.get(THING_GO) != EXACT
+    assert _local_types(tmp_path, "matched_rebound_class").get("t") != THING
+
+
+def test_match_class_parameter_stays_untyped(tmp_path: Path) -> None:
+    calls = _calls(tmp_path).get("matched_parameter_class", {})
+    assert calls.get(THING_GO) != EXACT
+    assert _local_types(tmp_path, "matched_parameter_class").get("t") != THING

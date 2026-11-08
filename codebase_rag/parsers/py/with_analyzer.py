@@ -57,6 +57,10 @@ if TYPE_CHECKING:
             self, module_qn: str, name: str, scope: Node | None = None
         ) -> bool: ...
 
+        def locally_bound_names(
+            self, caller: Node, module_qn: str
+        ) -> frozenset[str]: ...
+
     _WithBase: type = _WithBindingDeps
 else:
     _WithBase = object
@@ -85,6 +89,23 @@ def _own_yield_values(definition: Node) -> Iterator[Node | None]:
         ):
             continue
         stack.extend(node.children)
+
+
+def _always_runs_before(binding: Node, position: int) -> bool:
+    """Whether `binding` runs on every path to `position`, read from the
+    structure alone: the block holding it also holds `position`, so no
+    branch, loop or handler between them can skip it. A binding behind a
+    short-circuit, inside a conditional expression or in a comprehension
+    may not run at all, so it never counts. Early exits (`return`,
+    `break`) are not read: they only make the answer more cautious."""
+    current = binding.parent
+    while current is not None:
+        if current.type in cs.PY_MAYBE_SKIPPED_EXPRESSION_TYPES:
+            return False
+        if current.type == cs.TS_PY_BLOCK:
+            return current.start_byte <= position < current.end_byte
+        current = current.parent
+    return False
 
 
 def _enclosing_class_qn(node: Node, module_qn: str) -> str | None:
@@ -286,6 +307,8 @@ class PythonWithBindingMixin(_WithBase):
         callee = manager.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if callee is None:
             return None
+        if self._callee_bound_locally(callee, manager, module_qn):
+            return None
         if callee.type == cs.TS_PY_IDENTIFIER:
             name = safe_decode_text(callee)
             if not name:
@@ -334,6 +357,33 @@ class PythonWithBindingMixin(_WithBase):
             ):
                 return definition, qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
         return None
+
+    def _callee_bound_locally(
+        self, callee: Node, manager: Node, module_qn: str
+    ) -> bool:
+        """Whether the function around the `with` binds the callee's first
+        name itself (a local def, a parameter, an assignment), so the call
+        never reaches the module's function or import of that name. Such a
+        factory is not followed: the target stays untyped rather than
+        taking the yield type of a module-level namesake (Greptile P1 on
+        #3585). `self` and `cls` are parameters too, but their methods are
+        found through the class, not the module, so they are not counted."""
+        first = callee
+        while first.type == cs.TS_PY_ATTRIBUTE:
+            if (receiver := first.child_by_field_name(cs.TS_FIELD_OBJECT)) is None:
+                return False
+            first = receiver
+        if first.type != cs.TS_PY_IDENTIFIER:
+            return False
+        name = safe_decode_text(first)
+        if not name or name in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS):
+            return False
+        caller = manager.parent
+        while caller is not None and caller.type != cs.TS_PY_FUNCTION_DEFINITION:
+            caller = caller.parent
+        return caller is not None and name in self.locally_bound_names(
+            caller, module_qn
+        )
 
     def _is_contextmanager_factory(
         self, definition: Node, factory_module_qn: str
@@ -445,8 +495,14 @@ class PythonWithBindingMixin(_WithBase):
         document order, so a later binding overwrites the earlier one,
         and `before` limits the map to the bindings reaching a given
         yield: one after it has not happened yet when the value is
-        yielded."""
+        yielded. A binding that may not run before that yield (in a
+        branch, loop or handler that does not hold it, or behind a
+        short-circuit) adds a possible type instead of replacing the
+        earlier one, and a name left with more than one possible type
+        is unknown: `t = Thing(); if flag: t = Other(); yield t` yields
+        either (Greptile P1 on #3585)."""
         local_types: dict[str, str] = {}
+        possible: dict[str, set[str | None]] = {}
         body = definition.child_by_field_name(cs.FIELD_BODY)
         if body is None:
             return local_types
@@ -484,8 +540,13 @@ class PythonWithBindingMixin(_WithBase):
                     ) or self._infer_type_from_expression_complex(
                         value_node, factory_module_qn, local_types
                     )
-                    if inferred:
-                        local_types[name] = inferred
+                    if before is None or _always_runs_before(node, before):
+                        possible[name] = {inferred}
+                    else:
+                        possible.setdefault(name, set()).add(inferred)
+                    types = possible[name]
+                    if len(types) == 1 and (only := next(iter(types))):
+                        local_types[name] = only
                     else:
                         local_types.pop(name, None)
                 continue
