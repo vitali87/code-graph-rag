@@ -1087,12 +1087,18 @@ def _python_string_literal(node: Node) -> str | None:
     return match.group(cs.KEY_NAME) if match else None
 
 
+def _python_entries(node: Node) -> list[Node]:
+    # A comment between a literal's entries or a call's arguments is a named
+    # child too, and spells no entry (Greptile, PR #2989).
+    return [c for c in node.named_children if c.type != cs.TS_COMMENT]
+
+
 def _python_literal_names(node: Node | None) -> list[str] | None:
     # The names a `__all__` list or tuple literal spells, None for anything
     # computed (`base.__all__ + [...]`), whose entries cannot be read here.
     if node is None or node.type not in (cs.TS_PY_LIST, cs.TS_PY_TUPLE):
         return None
-    names = [_python_string_literal(c) for c in node.named_children]
+    names = [_python_string_literal(c) for c in _python_entries(node)]
     return None if None in names else [n for n in names if n is not None]
 
 
@@ -1128,7 +1134,7 @@ def _python_dunder_all_call_part(call: Node) -> list[str] | None:
     if owner is None or owner.text != cs.PY_DUNDER_ALL.encode() or method is None:
         return None
     args = call.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-    arg = next(iter(args.named_children), None) if args is not None else None
+    arg = next(iter(_python_entries(args)), None) if args is not None else None
     if method.text == cs.PY_LIST_APPEND.encode() and arg is not None:
         name = _python_string_literal(arg)
         return _readable(None if name is None else [name])
