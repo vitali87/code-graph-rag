@@ -61,9 +61,10 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Rust Upgrade**: Updated Rust to version 1.99.1-slim-trixie.
-- **Signature Functionality**: Added support for reading and writing JavaScript headers for change signatures, including the ability to change the signature of JavaScript functions or methods.
-- **macOS Compatibility**: The build now leaves macOS-14 support.
+- **Continuous Integration Improvements**: Enhanced release cadence tracking and ensured accurate green status for deferred releases.
+- **Code Quality & Clarity**: Resolved several code style and correctness issues including foreach loop variable typing and Python method receiver handling.
+- **Build Process Refinement**: Reduced the default install package count and improved makefile functionality for host/port watching.
+- **Feature Control**: Prevented the use of `--no-endpoint-roots` when endpoint data is absent.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
