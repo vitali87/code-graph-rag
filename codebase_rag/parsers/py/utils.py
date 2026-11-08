@@ -3,12 +3,34 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
-from ...constants import CHAR_COMMA, SEPARATOR_DOT
+from ...constants import (
+    CHAR_COMMA,
+    SEPARATOR_DOT,
+    TS_FIELD_FUNCTION,
+    TS_FIELD_OBJECT,
+    TS_PY_ATTRIBUTE,
+    TS_PY_CALL,
+    TS_PY_IDENTIFIER,
+)
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..utils import follow_reexports
 
 if TYPE_CHECKING:
+    from tree_sitter import Node
+
     from ..import_processor import ImportProcessor
+
+
+def call_head(node: Node) -> Node | None:
+    """The identifier a call's callee starts with: `Thing` for `Thing()`,
+    `pkg` for `pkg.make()`, None for anything else. A scope that binds
+    that name itself calls its own binding, not the module's."""
+    if node.type != TS_PY_CALL:
+        return None
+    head = node.child_by_field_name(TS_FIELD_FUNCTION)
+    while head is not None and head.type == TS_PY_ATTRIBUTE:
+        head = head.child_by_field_name(TS_FIELD_OBJECT)
+    return head if head is not None and head.type == TS_PY_IDENTIFIER else None
 
 
 def split_top_level(inner: str, separator: str = CHAR_COMMA) -> list[str]:

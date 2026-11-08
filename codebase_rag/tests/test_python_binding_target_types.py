@@ -831,6 +831,65 @@ SOURCE = (
     "            return a.go()\n"
     "\n"
     "\n"
+    "def nonlocal_walrus_shadowed_constructor():\n"
+    "    t = Other()\n"
+    "\n"
+    "    def inner(Thing):\n"
+    "        nonlocal t\n"
+    "        if (t := Thing()):\n"
+    "            pass\n"
+    "\n"
+    "    inner(Other)\n"
+    "    return t.go()\n"
+    "\n"
+    "\n"
+    "def capture_arm_then_alias(shape, flag):\n"
+    "    match shape:\n"
+    "        case t if flag:\n"
+    "            return t.go()\n"
+    "        case Thing() as t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
+    "def mixed_factory_after_binding(flag):\n"
+    "    t = Thing()\n"
+    "    with mixed_yields(flag) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def parameter_constructor_factory(Thing):\n"
+    "    t = Thing()\n"
+    "    yield t\n"
+    "\n"
+    "\n"
+    "def parameter_constructor_factory_with():\n"
+    "    with parameter_constructor_factory(Other) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def parameter_constructor_yield_factory(Thing):\n"
+    "    yield Thing()\n"
+    "\n"
+    "\n"
+    "def parameter_constructor_yield_factory_with():\n"
+    "    with parameter_constructor_yield_factory(Other) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def walrus_in_value_factory(consume):\n"
+    "    t = Thing()\n"
+    "    result = consume(t := Other())\n"
+    "    yield t\n"
+    "\n"
+    "\n"
+    "def walrus_in_value_factory_with(consume):\n"
+    "    with walrus_in_value_factory(consume) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
     "def matched_same_alias_twice(shape):\n"
     "    match shape:\n"
     "        case Thing(x=1) as t:\n"
@@ -1584,3 +1643,47 @@ def test_unpacking_from_a_capture_of_an_unpacked_subject(tmp_path: Path) -> None
     calls = _calls_at(tmp_path, "unpacked_subject_capture_then_unpack", "return a.go()")
     assert calls.get(THING_GO) == EXACT
     assert OTHER_GO not in calls
+
+
+def test_nonlocal_walrus_with_a_shadowed_constructor(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: `Thing` is the nested def's own
+    parameter, so `(t := Thing())` there does not construct the module's
+    `Thing`."""
+    calls = _calls(tmp_path).get("nonlocal_walrus_shadowed_constructor", {})
+    assert calls.get(THING_GO) != EXACT
+
+
+def test_capture_arm_breaks_alias_agreement(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: `case t if flag:` binds `t` to whatever
+    `shape` is, so a later `case Thing() as t` must not type the first
+    arm's `t` as `Thing`."""
+    calls = _calls_at(tmp_path, "capture_arm_then_alias", "return t.go()")
+    assert calls.get(THING_GO) != EXACT
+
+
+def test_unknown_yield_drops_the_earlier_target_type(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: a factory yielding different classes
+    types its target as nothing, so `t = Thing()` before the `with` must
+    not keep describing it in the type map. The call edge is not checked:
+    after any untyped rebinding (`with cm() as t` included) call-site
+    resolution falls back to the earlier binding on `main` too."""
+    assert "t" not in _local_types(tmp_path, "mixed_factory_after_binding")
+
+
+def test_factory_parameter_shadowing_a_class(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: a factory's `Thing` parameter is not the
+    module's class, whether the factory binds `Thing()` first or yields
+    it directly."""
+    calls = _calls(tmp_path)
+    assert calls.get("parameter_constructor_factory_with", {}).get(THING_GO) != EXACT
+    assert (
+        calls.get("parameter_constructor_yield_factory_with", {}).get(THING_GO) != EXACT
+    )
+
+
+def test_factory_walrus_inside_an_assignment_value(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: `result = consume(t := Other())` rebinds
+    `t` before the yield, so the target is an `Other`."""
+    calls = _calls(tmp_path)["walrus_in_value_factory_with"]
+    assert calls.get(OTHER_GO) == EXACT
+    assert THING_GO not in calls

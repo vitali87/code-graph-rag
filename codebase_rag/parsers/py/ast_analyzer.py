@@ -22,6 +22,7 @@ from .. import native_trees
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import get_cached_query, safe_decode_text
 from .definition_index import PythonDefinitionIndexes
+from .utils import call_head
 from .utils import split_top_level as _split_top_level
 from .with_analyzer import WithTarget
 
@@ -1199,6 +1200,7 @@ if TYPE_CHECKING:
             targets: list[WithTarget],
             local_var_types: dict[str, str],
             module_qn: str,
+            dropped: set[str] | None = None,
         ) -> list[WithTarget]: ...
 
     _AstBase: type = _AstAnalyzerDeps
@@ -1395,7 +1397,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         # types `r = conn.send()` from the target. A manager only the complex
         # pass types is retried after it.
         with_targets = _with_targets(node, with_statements, case_clauses)
-        pending = self._type_with_targets(with_targets, local_var_types, module_qn)
+        dropped_targets: set[str] = set()
+        pending = self._type_with_targets(
+            with_targets, local_var_types, module_qn, dropped_targets
+        )
 
         for binder in sorted(
             (*assignments, *named_expressions), key=lambda n: n.start_byte
@@ -1409,7 +1414,9 @@ class PythonAstAnalyzerMixin(_AstBase):
         # a retry types a manager; it types only names still untyped. Each
         # round types at least one more manager, so the loop ends.
         while pending:
-            retried = self._type_with_targets(pending, local_var_types, module_qn)
+            retried = self._type_with_targets(
+                pending, local_var_types, module_qn, dropped_targets
+            )
             if len(retried) == len(pending):
                 break
             typed_now = [target for target in pending if target not in retried]
@@ -1432,7 +1439,13 @@ class PythonAstAnalyzerMixin(_AstBase):
         # without the last-binding rule, so what the alias pass decided
         # is applied again after them: an annotation must not restore a
         # type an alias dropped (CodeRabbit review on #3585).
-        decided = self._type_match_aliases(
+        # A with target a `@contextmanager` factory left untyped is its
+        # name's last binding: the complex pass, which types names still
+        # untyped, must not give it an earlier binding's type, and the
+        # later passes are held to that the way match bindings are.
+        decided: dict[str, str | None] = dict.fromkeys(dropped_targets)
+        _apply_decided(decided, local_var_types)
+        decided |= self._type_match_aliases(
             node, case_clauses, local_var_types, module_qn
         )
         self._process_assignment_annotation(
@@ -1706,7 +1719,19 @@ class PythonAstAnalyzerMixin(_AstBase):
         name, value_node = _walrus_parts(walrus_node)
         if not name or value_node is None:
             return
-        if inferred := self._infer_type_from_expression_simple(value_node, module_qn):
+        # The nested def may bind the constructor's name itself (a
+        # parameter `Thing`), and then calls its own binding (CodeRabbit
+        # review on #3585).
+        own = _own_scope(walrus_node)
+        head = call_head(value_node)
+        shadowed = (
+            own is not None
+            and head is not None
+            and safe_decode_text(head) in self.locally_bound_names(own, module_qn)
+        )
+        if not shadowed and (
+            inferred := self._infer_type_from_expression_simple(value_node, module_qn)
+        ):
             local_var_types[name] = inferred
             logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=inferred)
         else:
@@ -1762,10 +1787,17 @@ class PythonAstAnalyzerMixin(_AstBase):
         )
         alias_types: dict[str, set[str | None]] = {}
         alias_last: dict[str, int] = {}
+        captured: set[str] = set()
         for _clause, pattern in _case_patterns(case_clauses):
             stack = [pattern]
             while stack:
                 node = stack.pop()
+                if node.type == cs.TS_PY_CASE_PATTERN:
+                    captured.update(
+                        name
+                        for identifier in _capture_targets(node)
+                        if (name := safe_decode_text(identifier))
+                    )
                 if node.type == cs.TS_PY_AS_PATTERN:
                     children = node.named_children
                     if (
@@ -1780,6 +1812,11 @@ class PythonAstAnalyzerMixin(_AstBase):
                             alias_last.get(name, -1), children[-1].start_byte
                         )
                 stack.extend(node.named_children)
+        # A capture of the name in another arm (`case t if flag:` before
+        # `case Thing() as t`) binds whatever was matched there, so the
+        # arms agree on no single class (CodeRabbit review on #3585).
+        for name in captured & alias_types.keys():
+            alias_types[name].add(None)
         decided: dict[str, str | None] = {}
         for name, types in alias_types.items():
             if last.get(name, -1) > alias_last[name]:

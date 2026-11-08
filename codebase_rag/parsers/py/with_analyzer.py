@@ -12,6 +12,7 @@ from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..import_processor import ImportProcessor
 from ..utils import follow_reexports, safe_decode_text
 from .utils import (
+    call_head,
     dotted_head_bases,
     resolve_class_name,
     resolve_dotted_class,
@@ -215,12 +216,17 @@ class PythonWithBindingMixin(_WithBase):
         targets: list[WithTarget],
         local_var_types: dict[str, str],
         module_qn: str,
+        dropped: set[str] | None = None,
     ) -> list[WithTarget]:
         """Type each target; return the ones whose manager has no type yet.
 
         Those are retried once the complex assignment pass has run, for a
         manager that is a local typed only by that pass
-        (`client = make_client(); with client as c`).
+        (`client = make_client(); with client as c`). A target entered
+        from a `@contextmanager` factory whose yields name no single type
+        is left untyped and added to `dropped`, for the caller to keep
+        untyped over later passes that would type it again from an
+        earlier binding.
         """
         pending: list[WithTarget] = []
         for target in targets:
@@ -236,6 +242,13 @@ class PythonWithBindingMixin(_WithBase):
                 if entered := self._contextmanager_yield_type(*factory):
                     local_var_types[target.name] = entered
                     logger.debug(lg.PY_TYPE_WITH, var=target.name, type=entered)
+                else:
+                    # The target is its name's last binding (`_with_targets`),
+                    # so an earlier type describes a value it replaced
+                    # (CodeRabbit review on #3585).
+                    local_var_types.pop(target.name, None)
+                    if dropped is not None:
+                        dropped.add(target.name)
                 continue
             manager_type = self._manager_type(
                 target.manager, local_var_types, module_qn
@@ -515,6 +528,7 @@ class PythonWithBindingMixin(_WithBase):
         either (Greptile P1 on #3585)."""
         local_types: dict[str, str] = {}
         possible: dict[str, set[str | None]] = {}
+        shadowed = self.locally_bound_names(definition, factory_module_qn)
         body = definition.child_by_field_name(cs.FIELD_BODY)
         if body is None:
             return local_types
@@ -546,22 +560,16 @@ class PythonWithBindingMixin(_WithBase):
                 # rebinding to something unknown, and it clears the
                 # stale type instead of keeping it.
                 if value_node is not None:
-                    inferred = (
-                        self._infer_type_from_expression_simple(
-                            value_node, factory_module_qn
-                        )
-                        or self._infer_type_from_expression_complex(
-                            value_node, factory_module_qn, local_types
-                        )
-                        or (
-                            local_types.get(safe_decode_text(value_node) or "")
-                            if value_node.type == cs.TS_PY_IDENTIFIER
-                            else None
-                        )
+                    inferred = self._factory_value_type(
+                        value_node, factory_module_qn, local_types, shadowed
                     )
                     self._bind_factory_local(
                         name, inferred, node, before, possible, local_types
                     )
+                    # A walrus inside the value binds too:
+                    # `result = consume(t := Other())` (CodeRabbit review
+                    # on #3585).
+                    stack.append(value_node)
                 continue
             # Every other binding form (`for t in xs`, `with ... as t`,
             # `t, u = pair`, `t += 1`, `except E as t`, a nested `def t`)
@@ -583,6 +591,8 @@ class PythonWithBindingMixin(_WithBase):
                         name, None, node, before, possible, local_types
                     )
             if pair is not None:
+                if value_node is not None:
+                    stack.append(value_node)
                 continue
             if node.type in (
                 cs.TS_PY_FUNCTION_DEFINITION,
@@ -592,6 +602,39 @@ class PythonWithBindingMixin(_WithBase):
                 continue
             stack.extend(reversed(node.children))
         return local_types
+
+    def _factory_value_type(
+        self,
+        value: Node,
+        factory_module_qn: str,
+        local_types: dict[str, str],
+        shadowed: frozenset[str],
+    ) -> str | None:
+        """The type a factory-local value has. A call through a name the
+        factory binds itself and has not typed (a parameter `Thing`, a
+        local class) calls that binding, not the module's namesake, so it
+        types nothing (CodeRabbit review on #3585). `self` and `cls` are
+        read through the class as everywhere else."""
+        head = call_head(value)
+        head_name = safe_decode_text(head) if head is not None else None
+        if (
+            head_name
+            and head_name in shadowed
+            and head_name not in local_types
+            and head_name not in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
+        ):
+            return None
+        return (
+            self._infer_type_from_expression_simple(value, factory_module_qn)
+            or self._infer_type_from_expression_complex(
+                value, factory_module_qn, local_types
+            )
+            or (
+                local_types.get(safe_decode_text(value) or "")
+                if value.type == cs.TS_PY_IDENTIFIER
+                else None
+            )
+        )
 
     @staticmethod
     def _bind_factory_local(
@@ -630,6 +673,7 @@ class PythonWithBindingMixin(_WithBase):
         yield, so the try/finally shape (`t = Thing(); yield t`) types
         too, and a rebinding after the yield does not reach it."""
         found: set[str | None] = set()
+        shadowed = self.locally_bound_names(definition, factory_module_qn)
         for value in _own_yield_values(definition):
             if value is None:
                 found.add(None)
@@ -640,10 +684,8 @@ class PythonWithBindingMixin(_WithBase):
             if value.type == cs.TS_PY_IDENTIFIER:
                 inferred = factory_types.get(safe_decode_text(value) or "")
             else:
-                inferred = self._infer_type_from_expression_simple(
-                    value, factory_module_qn
-                ) or self._infer_type_from_expression_complex(
-                    value, factory_module_qn, factory_types
+                inferred = self._factory_value_type(
+                    value, factory_module_qn, factory_types, shadowed
                 )
             found.add(
                 self._resolved_type(inferred, factory_module_qn) if inferred else None
