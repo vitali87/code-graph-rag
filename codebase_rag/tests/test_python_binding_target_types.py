@@ -653,6 +653,67 @@ SOURCE = (
     "            return t.go()\n"
     "\n"
     "\n"
+    "@contextmanager\n"
+    "def loop_rebound_factory(xs):\n"
+    "    t = Thing()\n"
+    "    for t in xs:\n"
+    "        pass\n"
+    "    yield t\n"
+    "\n"
+    "\n"
+    "def loop_rebound_factory_with(xs):\n"
+    "    with loop_rebound_factory(xs) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def unpacked_factory(pair):\n"
+    "    t = Thing()\n"
+    "    t, u = pair\n"
+    "    yield t\n"
+    "\n"
+    "\n"
+    "def unpacked_factory_with(pair):\n"
+    "    with unpacked_factory(pair) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def loop_then_bound_factory(xs):\n"
+    "    for t in xs:\n"
+    "        pass\n"
+    "    t = Thing()\n"
+    "    yield t\n"
+    "\n"
+    "\n"
+    "def loop_then_bound_factory_with(xs):\n"
+    "    with loop_then_bound_factory(xs) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def yields_then_returns():\n"
+    "    yield Thing()\n"
+    "    return Other()\n"
+    "\n"
+    "\n"
+    "def yields_then_returns_with():\n"
+    "    with yields_then_returns() as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def copied_local_factory():\n"
+    "    original = Thing()\n"
+    "    resource = original\n"
+    "    yield resource\n"
+    "\n"
+    "\n"
+    "def copied_local_factory_with():\n"
+    "    with copied_local_factory() as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
     "def matched_same_alias_twice(shape):\n"
     "    match shape:\n"
     "        case Thing(x=1) as t:\n"
@@ -1253,3 +1314,34 @@ def test_aliases_of_the_same_class_still_type(tmp_path: Path) -> None:
     calls = _calls(tmp_path)["matched_same_alias_twice"]
     assert calls.get(THING_GO) == EXACT
     assert OTHER_GO not in calls
+
+
+def test_factory_loop_rebinding_leaves_the_target_untyped(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: `for t in xs` rebinds the factory's
+    `t` after `t = Thing()`, so the yield is not known to be a Thing."""
+    calls = _calls(tmp_path).get("loop_rebound_factory_with", {})
+    assert calls.get(THING_GO) != EXACT
+
+
+def test_factory_unpacking_leaves_the_target_untyped(tmp_path: Path) -> None:
+    calls = _calls(tmp_path).get("unpacked_factory_with", {})
+    assert calls.get(THING_GO) != EXACT
+
+
+def test_factory_binding_after_a_loop_still_types(tmp_path: Path) -> None:
+    calls = _calls(tmp_path)["loop_then_bound_factory_with"]
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+
+
+def test_decorated_factory_types_by_yield_not_return(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: a value a `@contextmanager` generator
+    returns after its yield is not what `with` hands the target."""
+    calls = _calls(tmp_path)["yields_then_returns_with"]
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+
+
+def test_factory_yielding_a_copied_local(tmp_path: Path) -> None:
+    calls = _calls(tmp_path)["copied_local_factory_with"]
+    assert calls.get(THING_GO) == EXACT

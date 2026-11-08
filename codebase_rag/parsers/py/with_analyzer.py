@@ -66,6 +66,8 @@ if TYPE_CHECKING:
             self, caller: Node, module_qn: str
         ) -> frozenset[str]: ...
 
+        def binder_names(self, node: Node) -> list[str]: ...
+
     _WithBase: type = _WithBindingDeps
 else:
     _WithBase = object
@@ -221,18 +223,23 @@ class PythonWithBindingMixin(_WithBase):
         """
         pending: list[WithTarget] = []
         for target in targets:
+            if (
+                factory := self._decorated_contextmanager(target.manager, module_qn)
+            ) is not None:
+                # A `@contextmanager` / `@asynccontextmanager` factory hands
+                # its target the yielded value whatever the generator
+                # returns, so the factory is read before any manager type:
+                # a `return Other()` after the yield must not type it
+                # (#3340; CodeRabbit review on #3585). Yields that cannot
+                # be read leave the target untyped.
+                if entered := self._contextmanager_yield_type(*factory):
+                    local_var_types[target.name] = entered
+                    logger.debug(lg.PY_TYPE_WITH, var=target.name, type=entered)
+                continue
             manager_type = self._manager_type(
                 target.manager, local_var_types, module_qn
             )
             if not manager_type:
-                # A `@contextmanager` factory with no readable return type
-                # still hands its target the yielded value: resolve the
-                # factory itself rather than wait on a manager type that
-                # will never arrive (#3340).
-                if entered := self._contextmanager_entered_type(target, module_qn):
-                    local_var_types[target.name] = entered
-                    logger.debug(lg.PY_TYPE_WITH, var=target.name, type=entered)
-                    continue
                 pending.append(target)
                 continue
             if entered := self._entered_type(target, manager_type, module_qn):
@@ -258,12 +265,6 @@ class PythonWithBindingMixin(_WithBase):
     ) -> str | None:
         class_qn = self._indexed_class_qn(manager_type, module_qn, target.manager)
         if class_qn is None:
-            # A `@contextmanager` / `@asynccontextmanager` factory: the
-            # entered value is the generator's yield type, read from the
-            # factory itself. Any other factory keeps the refusal below:
-            # its return type is the manager's, not the entered value's.
-            if entered := self._contextmanager_entered_type(target, module_qn):
-                return entered
             # An external class's `__enter__` cannot be read, so the
             # convention applies -- but only to a constructor call: a
             # factory's return type (`-> Generator`, `-> Iterator[W]`) is not
@@ -281,19 +282,16 @@ class PythonWithBindingMixin(_WithBase):
                 return manager_type if returned == class_qn else returned
         return manager_type
 
-    def _contextmanager_entered_type(
-        self, target: WithTarget, module_qn: str
-    ) -> str | None:
-        """The yield type of the `@contextmanager` / `@asynccontextmanager`
-        factory `target` calls, or None when the manager is not such a
-        factory (issue #3340)."""
-        factory = self._contextmanager_factory(target.manager, module_qn)
-        if factory is None:
+    def _decorated_contextmanager(
+        self, manager: Node, module_qn: str
+    ) -> tuple[Node, str] | None:
+        """The definition and defining module of the `@contextmanager` /
+        `@asynccontextmanager` factory a `with` manager calls, or None when
+        the manager is not a call to such a factory (issue #3340)."""
+        factory = self._contextmanager_factory(manager, module_qn)
+        if factory is None or not self._is_contextmanager_factory(*factory):
             return None
-        definition, factory_module_qn = factory
-        if not self._is_contextmanager_factory(definition, factory_module_qn):
-            return None
-        return self._contextmanager_yield_type(definition, factory_module_qn)
+        return factory
 
     def _contextmanager_factory(
         self, manager: Node, module_qn: str
@@ -535,33 +533,55 @@ class PythonWithBindingMixin(_WithBase):
                     node.child_by_field_name(cs.FIELD_NAME),
                     node.child_by_field_name(cs.FIELD_VALUE),
                 )
-            if pair is not None:
-                name_node, value_node = pair
-                if (
-                    name_node is not None
-                    and name_node.type == cs.TS_PY_IDENTIFIER
-                    and value_node is not None
-                    and (name := safe_decode_text(name_node))
-                ):
-                    # A bare annotation (`t: Thing`) has no value: it
-                    # declares a type without rebinding, so it leaves
-                    # the map alone. A value that cannot be inferred is
-                    # a real rebinding to something unknown, and it
-                    # clears the stale type instead of keeping it.
-                    inferred = self._infer_type_from_expression_simple(
-                        value_node, factory_module_qn
-                    ) or self._infer_type_from_expression_complex(
-                        value_node, factory_module_qn, local_types
+            name_node, value_node = pair if pair is not None else (None, None)
+            if (
+                name_node is not None
+                and name_node.type == cs.TS_PY_IDENTIFIER
+                and (name := safe_decode_text(name_node))
+            ):
+                # A bare annotation (`t: Thing`) has no value: it
+                # declares a type without rebinding, so it leaves the
+                # map alone. A value that cannot be inferred is a real
+                # rebinding to something unknown, and it clears the
+                # stale type instead of keeping it.
+                if value_node is not None:
+                    inferred = (
+                        self._infer_type_from_expression_simple(
+                            value_node, factory_module_qn
+                        )
+                        or self._infer_type_from_expression_complex(
+                            value_node, factory_module_qn, local_types
+                        )
+                        or (
+                            local_types.get(safe_decode_text(value_node) or "")
+                            if value_node.type == cs.TS_PY_IDENTIFIER
+                            else None
+                        )
                     )
-                    if before is None or _always_runs_before(node, before):
-                        possible[name] = {inferred}
-                    else:
-                        possible.setdefault(name, set()).add(inferred)
-                    types = possible[name]
-                    if len(types) == 1 and (only := next(iter(types))):
-                        local_types[name] = only
-                    else:
-                        local_types.pop(name, None)
+                    self._bind_factory_local(
+                        name, inferred, node, before, possible, local_types
+                    )
+                continue
+            # Every other binding form (`for t in xs`, `with ... as t`,
+            # `t, u = pair`, `t += 1`, `except E as t`, a nested `def t`)
+            # rebinds to a value this census does not read, so it makes
+            # the name unknown rather than leaving the earlier type in
+            # place (CodeRabbit review on #3585).
+            for name in self.binder_names(node):
+                self._bind_factory_local(
+                    name, None, node, before, possible, local_types
+                )
+            # A `case ... as t` alias is kept out of `_binding_targets`,
+            # so it is read here.
+            if node.type == cs.TS_PY_AS_PATTERN and node.named_children:
+                alias = node.named_children[-1]
+                if alias.type == cs.TS_PY_IDENTIFIER and (
+                    name := safe_decode_text(alias)
+                ):
+                    self._bind_factory_local(
+                        name, None, node, before, possible, local_types
+                    )
+            if pair is not None:
                 continue
             if node.type in (
                 cs.TS_PY_FUNCTION_DEFINITION,
@@ -571,6 +591,29 @@ class PythonWithBindingMixin(_WithBase):
                 continue
             stack.extend(reversed(node.children))
         return local_types
+
+    @staticmethod
+    def _bind_factory_local(
+        name: str,
+        inferred: str | None,
+        binding: Node,
+        before: int | None,
+        possible: dict[str, set[str | None]],
+        local_types: dict[str, str],
+    ) -> None:
+        """Record one binding of `name` in a factory's local census: it
+        replaces the earlier possible types when it always runs before
+        the yield, else adds to them, and the name keeps a type only
+        while exactly one known type remains possible."""
+        if before is None or _always_runs_before(binding, before):
+            possible[name] = {inferred}
+        else:
+            possible.setdefault(name, set()).add(inferred)
+        types = possible[name]
+        if len(types) == 1 and (only := next(iter(types))):
+            local_types[name] = only
+        else:
+            local_types.pop(name, None)
 
     def _yield_expression_type(
         self, definition: Node, factory_module_qn: str

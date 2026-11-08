@@ -1156,6 +1156,18 @@ class PythonAstAnalyzerMixin(_AstBase):
         import_map = self.import_processor.import_mapping.get(module_qn) or {}
         return local_names(caller, import_map)
 
+    def binder_names(self, node: Node) -> list[str]:
+        """The names ONE statement or expression binds itself, by every
+        binding form `_binding_targets` knows (`for`, `with ... as`,
+        unpacking, `except ... as`, `import`, a nested def or class, a
+        `case` capture), for a census that must not miss a rebinding."""
+        return [
+            name
+            for target in _binding_targets(node)
+            for identifier in _identifiers_in(target)
+            if (name := safe_decode_text(identifier))
+        ]
+
     def own_class_rebinds_import(
         self, module_qn: str, name: str, scope: Node | None = None
     ) -> bool:
