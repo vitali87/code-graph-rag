@@ -14,7 +14,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.dart import DartBareImport
+from codebase_rag.parsers.dart import DartDirective
 
 REFERENCES = cs.RelationshipType.REFERENCES.value
 
@@ -816,7 +816,8 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     processor.import_mapping = {"m": {"p": "m.lib"}}
     processor.dart_prefix_shadows = {"m": {"p": [(0, 1)]}}
     processor.dart_import_aliases = {"m": {"p": ["m.lib"]}}
-    processor.dart_bare_imports = {"m": [DartBareImport("m.lib", ())]}
+    processor.dart_bare_imports = {"m": [DartDirective("m.lib", ())]}
+    processor.dart_exports = {"m": [DartDirective("m.lib", ())]}
     # `m`'s `part` directives wrote the first link; another library's part
     # keeps its own.
     processor.dart_part_of = {"m.model": "m", "m": "other"}
@@ -841,6 +842,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     assert processor.dart_prefix_shadows.get("m") is None
     assert processor.dart_import_aliases.get("m") is None
     assert processor.dart_bare_imports.get("m") is None
+    assert processor.dart_exports.get("m") is None
     assert processor.dart_part_of == {"m": "other"}
     assert processor.dart_exposed_libraries.get("m") is None
     assert processor._julia_scope_map_keys.get("m") is None

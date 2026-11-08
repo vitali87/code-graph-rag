@@ -312,6 +312,48 @@ def test_a_dart_library_kept_out_of_scope_does_not_contest_the_bare_type(
 
 
 @pytest.mark.parametrize(
+    "barrels",
+    [
+        {"lib/barrel.dart": "export 'a_toy/cart.dart' hide Cart;\n"},
+        {"lib/barrel.dart": "export 'a_toy/cart.dart' show Other;\n"},
+        {
+            "lib/barrel.dart": "export 'inner.dart' hide Cart;\n",
+            "lib/inner.dart": "export 'a_toy/cart.dart';\n",
+        },
+    ],
+    ids=["export-hide", "export-show-other", "hidden-one-export-up"],
+)
+def test_a_dart_export_s_clauses_keep_a_class_out_of_scope(
+    temp_repo: Path, mock_ingestor: MagicMock, barrels: dict[str, str]
+) -> None:
+    # `barrel.dart` hands on `a_toy/cart.dart` without its `Cart`, so the
+    # library importing both sees `cart.dart`'s alone; counting the hidden
+    # one left the hop untyped (Greptile, PR #3292).
+    for rel, text in barrels.items():
+        (temp_repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (temp_repo / rel).write_text(text, encoding="utf-8")
+    shop = "import 'cart.dart';\nimport 'barrel.dart';\n"
+    assert _index_dart(temp_repo, mock_ingestor, shop) == {
+        ("lib.cart.Cart.total", cs.EdgeResolution.EXACT)
+    }
+
+
+def test_a_dart_export_showing_the_class_still_contests_the_bare_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `show Cart` hands the second `Cart` on, so two visible
+    # libraries declare it and neither is picked.
+    (temp_repo / "lib").mkdir(parents=True, exist_ok=True)
+    (temp_repo / "lib/barrel.dart").write_text(
+        "export 'a_toy/cart.dart' show Cart;\n", encoding="utf-8"
+    )
+    shop = "import 'cart.dart';\nimport 'barrel.dart';\n"
+    assert ("lib.cart.Cart.total", cs.EdgeResolution.EXACT) not in _index_dart(
+        temp_repo, mock_ingestor, shop
+    )
+
+
+@pytest.mark.parametrize(
     "directive",
     [
         "import 'cart.dart' hide Cart;",

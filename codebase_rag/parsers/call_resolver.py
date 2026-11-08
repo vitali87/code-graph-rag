@@ -6691,18 +6691,36 @@ class CallResolver:
             for directive in self.import_processor.dart_bare_imports.get(module_qn, ())
             if directive.admits(name)
         ]
-        return self._dart_with_exposed(set(roots), roots)
+        return self._dart_with_exposed(set(roots), roots, name)
 
-    def _dart_with_exposed(self, visible: set[str], frontier: list[str]) -> set[str]:
+    def _dart_with_exposed(
+        self, visible: set[str], frontier: list[str], name: str | None = None
+    ) -> set[str]:
         """`visible` plus whatever the `frontier` libraries hand on through
-        `export` / `part`, transitively."""
+        `export` / `part`, transitively; for a `name`, only through exports
+        whose `show` / `hide` clauses hand that name on."""
         exposed_by = self.import_processor.dart_exposed_libraries
         while frontier:
-            for exposed in exposed_by.get(frontier.pop(), ()):
-                if exposed not in visible:
-                    visible.add(exposed)
-                    frontier.append(exposed)
+            library = frontier.pop()
+            for exposed in exposed_by.get(library, ()):
+                if exposed in visible or (
+                    name is not None and not self._dart_hands_on(library, exposed, name)
+                ):
+                    continue
+                visible.add(exposed)
+                frontier.append(exposed)
         return visible
+
+    def _dart_hands_on(self, library: str, exposed: str, name: str) -> bool:
+        # `export 'b.dart' hide Cart;` hands on b's names but `Cart` (Greptile,
+        # PR #3292). A part has no clauses, and one export admitting the name
+        # is enough when the library exports the same file twice.
+        exports = [
+            export
+            for export in self.import_processor.dart_exports.get(library, ())
+            if export.library == exposed
+        ]
+        return not exports or any(export.admits(name) for export in exports)
 
     def _drop_named_constructor(self, name: str, target: str) -> str:
         """`Box.named` -> `Box` when the dotted name is not a definition but

@@ -26,9 +26,10 @@ class DartCombinator(NamedTuple):
     names: frozenset[str]
 
 
-class DartBareImport(NamedTuple):
-    """A directive that brings a library's names in unprefixed: a plain
-    `import`, with its `show` / `hide` clauses, or a `part`."""
+class DartDirective(NamedTuple):
+    """A directive naming a library with the `show` / `hide` clauses it
+    applies: an unprefixed `import` or a `part`, which bring the library's
+    names in, or an `export`, which hands them on to importers."""
 
     library: str
     combinators: tuple[DartCombinator, ...]

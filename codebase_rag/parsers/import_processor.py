@@ -50,7 +50,7 @@ from ..utils.path_utils import (
 from ..utils.source_encoding import grammar_bytes
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
-    DartBareImport,
+    DartDirective,
     dart_binding_spans,
     dart_combinators,
     dart_exposes_library,
@@ -1147,6 +1147,7 @@ class ImportProcessor:
         "dart_prefix_shadows",
         "dart_import_aliases",
         "dart_bare_imports",
+        "dart_exports",
         "dart_part_of",
         "dart_exposed_libraries",
         "rust_block_scope_imports",
@@ -1415,7 +1416,12 @@ class ImportProcessor:
         # import 'a.dart' as p;` (bare `A` visible) from the prefixed import
         # alone, and either from `export 'a.dart';`, which brings in nothing
         # (#3286).
-        self.dart_bare_imports: dict[str, list[DartBareImport]] = {}
+        self.dart_bare_imports: dict[str, list[DartDirective]] = {}
+        # {library module qn: its `export` directives}. dart_exposed_libraries
+        # holds their targets beside its parts'; this keeps the `show` /
+        # `hide` clauses deciding which names each one hands on (Greptile,
+        # PR #3292).
+        self.dart_exports: dict[str, list[DartDirective]] = {}
         # {part file module qn: the library whose `part '...'` directive
         # names it}. A part brings in nothing: it is a piece of that library
         # and writes names through the library's imports (#3286). The
@@ -1718,6 +1724,7 @@ class ImportProcessor:
         self.dart_prefix_shadows.pop(module_qn, None)
         self.dart_import_aliases.pop(module_qn, None)
         self.dart_bare_imports.pop(module_qn, None)
+        self.dart_exports.pop(module_qn, None)
         # Keyed by the part but written by its LIBRARY's parse: the library's
         # re-parse drops the links it wrote, and the part's keeps them, as
         # the library still names it.
@@ -6775,10 +6782,11 @@ class ImportProcessor:
             return
         if directive.type == cs.TS_DART_PART_DIRECTIVE:
             self.dart_part_of[full_name] = module_qn
-        if not dart_is_export(directive):
-            self.dart_bare_imports.setdefault(module_qn, []).append(
-                DartBareImport(full_name, dart_combinators(directive))
-            )
+        recorded = DartDirective(full_name, dart_combinators(directive))
+        if dart_is_export(directive):
+            self.dart_exports.setdefault(module_qn, []).append(recorded)
+        else:
+            self.dart_bare_imports.setdefault(module_qn, []).append(recorded)
 
     def dart_import_target(self, uri: str, module_qn: str) -> str:
         # What `uri` resolves to under the package map as it is on disk now;

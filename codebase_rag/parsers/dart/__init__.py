@@ -1,7 +1,7 @@
 from .package_paths import discover_dart_packages
 from .utils import (
-    DartBareImport,
     DartCombinator,
+    DartDirective,
     dart_binding_spans,
     dart_body_node,
     dart_call_name,
@@ -20,8 +20,8 @@ from .utils import (
 )
 
 __all__ = [
-    "DartBareImport",
     "DartCombinator",
+    "DartDirective",
     "dart_binding_spans",
     "dart_body_node",
     "dart_call_name",
