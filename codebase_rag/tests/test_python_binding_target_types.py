@@ -741,6 +741,40 @@ SOURCE = (
     "    return t.go()\n"
     "\n"
     "\n"
+    "@contextmanager\n"
+    "def parameter_branch_factory(t, flag):\n"
+    "    if flag:\n"
+    "        t = Thing()\n"
+    "    yield t\n"
+    "\n"
+    "\n"
+    "def parameter_branch_factory_with(x, flag):\n"
+    "    with parameter_branch_factory(x, flag) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def elif_walrus_factory(a):\n"
+    "    t = Thing()\n"
+    "    if a:\n"
+    "        pass\n"
+    "    elif (t := Other()):\n"
+    "        pass\n"
+    "    yield t\n"
+    "\n"
+    "\n"
+    "def elif_walrus_factory_with(a):\n"
+    "    with elif_walrus_factory(a) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "def annotated_then_union_alias(shape):\n"
+    "    t: Thing = Thing()\n"
+    "    match shape:\n"
+    "        case Thing() | Other() as t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
     "def matched_same_alias_twice(shape):\n"
     "    match shape:\n"
     "        case Thing(x=1) as t:\n"
@@ -1425,3 +1459,28 @@ def test_nonlocal_walrus_rebinds_the_enclosing_name(tmp_path: Path) -> None:
     calls = _calls(tmp_path)["nonlocal_walrus_rebinding"]
     assert calls.get(OTHER_GO) == EXACT
     assert THING_GO not in calls
+
+
+def test_factory_parameter_bound_in_a_branch_stays_untyped(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: `if flag: t = Thing()` may be skipped,
+    and then the factory yields its parameter `t`, whose type is unknown,
+    so the target must not be typed as `Thing`."""
+    calls = _calls(tmp_path).get("parameter_branch_factory_with", {})
+    assert calls.get(THING_GO) != EXACT
+
+
+def test_factory_elif_walrus_may_not_run(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: an `elif` condition runs only when
+    the `if` before it fails, so its walrus may not rebind `t`."""
+    calls = _calls(tmp_path).get("elif_walrus_factory_with", {})
+    assert calls.get(THING_GO) != EXACT
+    assert calls.get(OTHER_GO) != EXACT
+
+
+def test_annotation_does_not_restore_a_dropped_alias_type(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: `t: Thing = ...` then a union alias
+    `case Thing() | Other() as t` leaves `t` untyped; the annotation pass
+    must not type it back as `Thing`."""
+    calls = _calls(tmp_path).get("annotated_then_union_alias", {})
+    assert calls.get(THING_GO) != EXACT
+    assert "t" not in _local_types(tmp_path, "annotated_then_union_alias")

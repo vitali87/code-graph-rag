@@ -1373,16 +1373,18 @@ class PythonAstAnalyzerMixin(_AstBase):
                 self._retype_walrus_after_with_targets(
                     walrus, typed_now, local_var_types, module_qn
                 )
-        # `case C(...) as t` types `t` as C (#3340). It runs after the
-        # assignment passes: the alias is a binding like a with target,
-        # and the map holds one type per name.
-        self._type_match_aliases(node, case_clauses, local_var_types, module_qn)
         self._process_assignment_annotation(
             node, assignments, local_var_types, module_qn
         )
         self._process_assignment_unpacking(
             node, assignments, local_var_types, module_qn
         )
+        # `case C(...) as t` types `t` as C (#3340). It runs after the
+        # assignment, annotation and unpacking passes: the alias is a
+        # binding like a with target, the map holds one type per name,
+        # and an alias that types nothing must not have an annotation
+        # restore the type it dropped (CodeRabbit review on #3585).
+        self._type_match_aliases(node, case_clauses, local_var_types, module_qn)
 
         self.analyze_scoped_comprehensions(
             node, comprehensions, local_var_types, module_qn

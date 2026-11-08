@@ -559,11 +559,19 @@ PY_COMPREHENSION_TYPES = frozenset(
         TS_PY_GENERATOR_EXPRESSION,
     }
 )
-# Expressions whose parts may not be evaluated at all: the right operand of
-# `and` / `or`, either arm of `a if c else b`, and a comprehension's body and
-# filters. A walrus inside one may never bind (#3340).
-PY_MAYBE_SKIPPED_EXPRESSION_TYPES = (
-    frozenset({TS_PY_BOOLEAN_OPERATOR, TS_PY_CONDITIONAL_EXPRESSION})
+# Nodes whose parts may not be evaluated at all: the right operand of
+# `and` / `or`, either arm of `a if c else b`, a comprehension's body and
+# filters, an `elif` condition and a `case` pattern or guard. A binding
+# inside one may never run (#3340).
+PY_MAYBE_SKIPPED_TYPES = (
+    frozenset(
+        {
+            TS_PY_BOOLEAN_OPERATOR,
+            TS_PY_CONDITIONAL_EXPRESSION,
+            TS_PY_ELIF_CLAUSE,
+            TS_PY_CASE_CLAUSE,
+        }
+    )
     | PY_COMPREHENSION_TYPES
 )
 # Trees whose scope walks stay cached (`ast_analyzer.scope_facts`). A cached

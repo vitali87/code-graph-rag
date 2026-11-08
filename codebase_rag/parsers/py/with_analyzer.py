@@ -102,12 +102,13 @@ def _always_runs_before(binding: Node, position: int) -> bool:
     """Whether `binding` runs on every path to `position`, read from the
     structure alone: the block holding it also holds `position`, so no
     branch, loop or handler between them can skip it. A binding behind a
-    short-circuit, inside a conditional expression or in a comprehension
-    may not run at all, so it never counts. Early exits (`return`,
+    short-circuit, inside a conditional expression or a comprehension, in
+    an `elif` condition or in a `case` pattern or guard may not run at
+    all, so it never counts. Early exits (`return`,
     `break`) are not read: they only make the answer more cautious."""
     current = binding.parent
     while current is not None:
-        if current.type in cs.PY_MAYBE_SKIPPED_EXPRESSION_TYPES:
+        if current.type in cs.PY_MAYBE_SKIPPED_TYPES:
             return False
         if current.type == cs.TS_PY_BLOCK:
             return current.start_byte <= position < current.end_byte
@@ -603,12 +604,16 @@ class PythonWithBindingMixin(_WithBase):
     ) -> None:
         """Record one binding of `name` in a factory's local census: it
         replaces the earlier possible types when it always runs before
-        the yield, else adds to them, and the name keeps a type only
-        while exactly one known type remains possible."""
+        the yield, else adds to them (to an unknown when the census has
+        read no earlier binding), and the name keeps a type only while
+        exactly one known type remains possible."""
         if before is None or _always_runs_before(binding, before):
             possible[name] = {inferred}
         else:
-            possible.setdefault(name, set()).add(inferred)
+            # Skipped, the binding leaves the value the name held before
+            # it: a parameter's, or one this census never read, so an
+            # unknown stays possible (CodeRabbit review on #3585).
+            possible.setdefault(name, {None}).add(inferred)
         types = possible[name]
         if len(types) == 1 and (only := next(iter(types))):
             local_types[name] = only
