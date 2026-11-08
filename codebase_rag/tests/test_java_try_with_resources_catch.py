@@ -348,6 +348,54 @@ def test_multi_catch_unrelated_types_stay_untyped(
     assert targets == set(), sorted(targets)
 
 
+def test_multi_catch_qualified_nested_types_resolve(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Greptile P1 on #3525: nested exceptions are stored under the doubled
+    # file-module form (<module>.com.example.Outer.Outer.A), so the written
+    # qualified name com.example.Outer.A matches neither suffix check and
+    # e stays untyped, losing the CALLS edge to BaseError.detail().
+    root = temp_repo / "jmulticatchnested"
+    _write_pkg(
+        root,
+        {
+            "BaseError.java": (
+                "package com.example;\n"
+                "public class BaseError extends RuntimeException {\n"
+                '  public String detail() { return "base"; }\n'
+                "}\n"
+            ),
+            "Outer.java": (
+                "package com.example;\n"
+                "public class Outer {\n"
+                "  public static class A extends BaseError {}\n"
+                "  public static class B extends BaseError {}\n"
+                "}\n"
+            ),
+            "ErrorDecoy.java": _ERROR_DECOY,
+            "Main.java": (
+                "package com.example;\n"
+                "public class Main {\n"
+                "  String multi() {\n"
+                "    try {\n"
+                "      throw new Outer.A();\n"
+                "    } catch (com.example.Outer.A | com.example.Outer.B e) {\n"
+                "      return e.detail();\n"
+                "    }\n"
+                "  }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    _assert_calls(
+        _calls(mock_ingestor),
+        ".Main.multi()",
+        ".BaseError.detail()",
+        ".ErrorDecoy.detail()",
+    )
+
+
 def test_java9_bare_resource_keeps_outer_type(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

@@ -1435,6 +1435,39 @@ class TestInheritanceKeyFor:
             self._key_for(engine, "Outer.Inner") == "jX.com.example.Outer.Inner.Inner"
         )
 
+    def test_qualified_nested_name_resolves_doubled_outer(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Greptile P1 on #3525: the stored key doubles the outermost class
+        # (`<module>.com.example.Outer.Outer.A`), so the written qualified
+        # name `com.example.Outer.A` matches neither the plain nor the
+        # simple-doubled suffix.
+        engine.class_inheritance = {
+            "jX.com.example.Outer.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.com.example.Outer.Outer.B": ["jX.com.example.Base.Base"],
+            "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+
+        assert (
+            self._key_for(engine, "com.example.Outer.A")
+            == "jX.com.example.Outer.Outer.A"
+        )
+        assert (
+            self._key_for(engine, "com.example.Outer.B")
+            == "jX.com.example.Outer.Outer.B"
+        )
+
+    def test_qualified_nested_name_with_two_suffix_matches_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # The same nested path in two packages stays ambiguous.
+        engine.class_inheritance = {
+            "jX.com.example.Outer.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.org.example.Outer.Outer.A": ["jX.org.example.Base.Base"],
+        }
+
+        assert self._key_for(engine, "example.Outer.A") is None
+
     def test_qualified_name_with_two_suffix_matches_returns_none(
         self, engine: JavaTypeInferenceEngine
     ) -> None:

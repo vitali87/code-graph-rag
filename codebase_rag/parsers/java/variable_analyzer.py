@@ -532,7 +532,15 @@ class JavaVariableAnalyzerMixin:
         # that ends at the written path, in plain or doubled form. A
         # same-named class in another package never stands in for a
         # qualified name — in particular, `java.io.IOException` never
-        # resolves to a first-party `IOException`.
+        # resolves to a first-party `IOException`. A NESTED class is stored
+        # the same doubled way, but the extra segment sits in the middle:
+        # the module qn already ends in the file stem (the outermost class),
+        # and the class path repeats it, so `com.example.Outer.A` is keyed
+        # `<module>.com.example.Outer.Outer.A`. The plain and simple-doubled
+        # suffixes both miss that form, so a third candidate duplicates the
+        # first class segment (the first segment starting with an uppercase
+        # letter; package segments are lowercase by convention). As before,
+        # an ambiguous match resolves to nothing.
         if resolved_type in self.class_inheritance:
             return resolved_type
         if cs.SEPARATOR_DOT not in resolved_type:
@@ -543,12 +551,24 @@ class JavaVariableAnalyzerMixin:
             ]
             return matches[0] if len(matches) == 1 else None
         simple_name = resolved_type.rpartition(cs.SEPARATOR_DOT)[2]
+        parts = resolved_type.split(cs.SEPARATOR_DOT)
+        doubled_nested: str | None = None
+        for index, part in enumerate(parts):
+            if part[:1].isupper():
+                doubled_nested = cs.SEPARATOR_DOT.join(
+                    [*parts[: index + 1], part, *parts[index + 1 :]]
+                )
+                break
         matches = [
             qn
             for qn in self.class_inheritance
             if qn.endswith(f"{cs.SEPARATOR_DOT}{resolved_type}")
             or qn.endswith(
                 f"{cs.SEPARATOR_DOT}{resolved_type}{cs.SEPARATOR_DOT}{simple_name}"
+            )
+            or (
+                doubled_nested is not None
+                and qn.endswith(f"{cs.SEPARATOR_DOT}{doubled_nested}")
             )
         ]
         return matches[0] if len(matches) == 1 else None
