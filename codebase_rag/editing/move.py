@@ -2330,11 +2330,16 @@ class Mover:
         refused rather than shadowed. A binding of the old module whose
         every use was rewritten is dropped: left in place it is an import of
         a module the move may have vacated, which the contract counts as
-        stale and rolls back.
+        stale and rolls back. One the file exports is kept (Greptile):
+        dropping it broke `from caller import util` and the star imports
+        that carried it, and the contract does not see either.
         """
         names = [n.id for n in ast.walk(tree) if isinstance(n, ast.Name)]
+        exported = self._exported(path, source)
         dropped = [
-            local for local, ats in local_uses.items() if names.count(local) == len(ats)
+            local
+            for local, ats in local_uses.items()
+            if names.count(local) == len(ats) and not exported(local)
         ]
         bound = _module_locals(tree, path, new_spelled)
         parent, _dot, leaf = new_spelled.rpartition(cs.SEPARATOR_DOT)
@@ -2370,6 +2375,26 @@ class Mover:
             _language, root = self._parse(path, source)
             at = _import_block_end(source, root)
             patcher.replace_span(path, (at, at), f"{statement}\n")
+
+    def _exported(self, path: str, source: bytes) -> Callable[[str], bool]:
+        """Whether a module-level name of `path` is one other modules take:
+        imported from it by name, listed in its `__all__`, or carried by a
+        star import of it."""
+        module = base_module_qn(Path(path), self.project)
+        taken = {
+            row["imported_name"]
+            for row in graph_query.importers(self.fetch_all, self.project, module)
+        }
+        text = source.decode(cs.ENCODING_UTF8, errors="replace")
+        # Without a star importer, only an `__all__` makes a name public.
+        listed = cs.IMPORTED_NAME_WILDCARD in taken or _PY_ALL in _module_scope_names(
+            text
+        )
+
+        def exported(local: str) -> bool:
+            return local in taken or (listed and _star_exports(source, local))
+
+        return exported
 
     @staticmethod
     def _qualified_use_at(

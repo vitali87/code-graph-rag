@@ -43,7 +43,9 @@ optional `keep_alias`, `dry_run` and `project`.
    `import pkg.core`, and `util.helper(...)` (after `from pkg import util`
    or `import pkg.util as util`) becomes `core.helper(...)` with
    `from pkg import core`. An import of the old module left with no use is
-   dropped; a caller that already uses the name `core` for something else
+   dropped, unless the file exports that name (its `__all__`, another
+   module importing it by name or with `*`); a caller that already uses
+   the name `core` for something else
    is refused rather than shadowed. These files count as importers in the
    report. Importer statements the rewriter cannot retarget are listed as
    `unchanged_importers`.

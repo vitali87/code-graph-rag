@@ -115,6 +115,35 @@ def test_a_module_name_still_used_keeps_its_import(temp_repo: Path) -> None:
     assert "-from shop import util\n" not in report.diff
 
 
+@pytest.mark.parametrize(
+    ("head", "extra", "kept"),
+    [
+        pytest.param("__all__ = ['util', 'total']\n", {}, True, id="listed"),
+        pytest.param(
+            "",
+            {"shop/c.py": "from shop.b import util  # noqa: F401\n"},
+            True,
+            id="taken",
+        ),
+        pytest.param(
+            "", {"shop/c.py": "from shop.b import *  # noqa: F403\n"}, True, id="star"
+        ),
+        pytest.param("__all__ = ['total']\n", {}, False, id="not-listed"),
+    ],
+)
+def test_a_module_name_the_caller_exports_keeps_its_import(
+    temp_repo: Path, head: str, extra: dict[str, str], kept: bool
+) -> None:
+    """Counting only the file's own uses dropped `util` while `__all__`
+    listed it, and `from shop.b import util` elsewhere then failed; the
+    contract sees neither (Greptile)."""
+    b = "from shop import util\n" + head + CALL.format(receiver="util")
+    root, store, updater = _shop(temp_repo, b, **extra)
+    report = _move(root, store, updater, dry_run=True)
+    assert "+    return pricing.discounted(10.0)\n" in report.diff
+    assert ("-from shop import util\n" not in report.diff) == kept
+
+
 def test_a_name_the_caller_already_uses_is_refused(temp_repo: Path) -> None:
     """Importing the destination as `pricing` would rebind the caller's own
     `pricing`; refusing beats a move that silently changes what it means."""
