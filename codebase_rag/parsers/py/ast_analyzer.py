@@ -1383,18 +1383,28 @@ class PythonAstAnalyzerMixin(_AstBase):
                 self._retype_walrus_after_with_targets(
                     walrus, typed_now, local_var_types, module_qn
                 )
+        # `case C(...) as t` types `t` as C (#3340). It runs after the
+        # assignment passes, the alias being a binding like a with
+        # target, and before the annotation and unpacking passes, so an
+        # unpacking in a case body (`a, b = t.pair()`) reads the alias's
+        # type (Greptile P1 on #3585). Those two passes write the map
+        # without the last-binding rule, so what the alias pass decided
+        # is applied again after them: an annotation must not restore a
+        # type an alias dropped (CodeRabbit review on #3585).
+        decided = self._type_match_aliases(
+            node, case_clauses, local_var_types, module_qn
+        )
         self._process_assignment_annotation(
             node, assignments, local_var_types, module_qn
         )
         self._process_assignment_unpacking(
             node, assignments, local_var_types, module_qn
         )
-        # `case C(...) as t` types `t` as C (#3340). It runs after the
-        # assignment, annotation and unpacking passes: the alias is a
-        # binding like a with target, the map holds one type per name,
-        # and an alias that types nothing must not have an annotation
-        # restore the type it dropped (CodeRabbit review on #3585).
-        self._type_match_aliases(node, case_clauses, local_var_types, module_qn)
+        for name, decided_type in decided.items():
+            if decided_type:
+                local_var_types[name] = decided_type
+            else:
+                local_var_types.pop(name, None)
 
         self.analyze_scoped_comprehensions(
             node, comprehensions, local_var_types, module_qn
@@ -1659,10 +1669,13 @@ class PythonAstAnalyzerMixin(_AstBase):
         case_clauses: list[Node],
         local_var_types: dict[str, str],
         module_qn: str,
-    ) -> None:
+    ) -> dict[str, str | None]:
         """Type `case C(...) as t` aliases as `C`, resolved the way a
         constructor name is, and a bare capture `case t:` as the matched
-        subject's type (#3340). Only the alias or capture is typed:
+        subject's type (#3340). Returns each name whose last binding an
+        alias or capture is, with the type it decided (None for none),
+        for the caller to re-apply over passes that write the map
+        without the last-binding rule. Only the alias or capture is typed:
         narrowing the matched subject, or a capture inside the pattern,
         is a flow-sensitive question this flat map cannot answer, and a
         union of different classes names no single class. A binding a
@@ -1722,10 +1735,13 @@ class PythonAstAnalyzerMixin(_AstBase):
                             alias_last.get(name, -1), children[-1].start_byte
                         )
                 stack.extend(node.named_children)
+        decided: dict[str, str | None] = {}
         for name, types in alias_types.items():
             if last.get(name, -1) > alias_last[name]:
                 continue
-            if len(types) == 1 and (typed := next(iter(types))):
+            typed = next(iter(types)) if len(types) == 1 else None
+            decided[name] = typed
+            if typed:
                 local_var_types[name] = typed
                 logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=typed)
             else:
@@ -1734,7 +1750,11 @@ class PythonAstAnalyzerMixin(_AstBase):
         # a `case Thing() as t` body reads `t`'s alias type, not the one
         # an earlier binding left in the map (Greptile P1 on #3585).
         for clause, pattern in patterns:
-            self._type_bare_capture(clause, pattern, last, local_var_types, module_qn)
+            if captured := self._type_bare_capture(
+                clause, pattern, last, local_var_types, module_qn
+            ):
+                decided[captured[0]] = captured[1]
+        return decided
 
     def _alias_class_type(
         self, pattern: Node, shadowed: frozenset[str], module_qn: str
@@ -1753,7 +1773,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         last: dict[str, int],
         local_var_types: dict[str, str],
         module_qn: str,
-    ) -> None:
+    ) -> tuple[str, str | None] | None:
         """Type a bare capture `case t:` as the `match` subject's type:
         the capture binds the subject itself, so it takes whatever type
         the subject already has in the map. Only a whole-pattern single
@@ -1764,16 +1784,18 @@ class PythonAstAnalyzerMixin(_AstBase):
         later type, and this pass runs after the assignment passes, so
         the type at the `match` is not recoverable from it. Left
         untyped as the name's last binding, the capture drops any
-        earlier type of the name, which describes a value it replaced."""
+        earlier type of the name, which describes a value it replaced.
+        Returns the capture's name and the type it decided when it is
+        the name's last binding, else None."""
         children = pattern.named_children
         if len(children) != 1 or children[0].type != cs.TS_PY_DOTTED_NAME:
-            return
+            return None
         parts = children[0].named_children
         if len(parts) != 1 or parts[0].type != cs.TS_PY_IDENTIFIER:
-            return
+            return None
         name = safe_decode_text(parts[0])
         if not name or last.get(name, -1) > parts[0].start_byte:
-            return
+            return None
         statement = clause.parent
         while statement is not None and statement.type != cs.TS_PY_MATCH_STATEMENT:
             statement = statement.parent
@@ -1784,7 +1806,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         )
         if subject is None or statement is None:
             local_var_types.pop(name, None)
-            return
+            return name, None
         if (
             subject.type == cs.TS_PY_IDENTIFIER
             and (subject_name := safe_decode_text(subject))
@@ -1796,7 +1818,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             # walrus inside the subject itself binds before its end, so
             # it does not trigger the skip.
             local_var_types.pop(name, None)
-            return
+            return name, None
         inferred = (
             self._infer_type_from_expression_simple(subject, module_qn)
             or self._infer_type_from_expression_complex(
@@ -1809,6 +1831,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=inferred)
         else:
             local_var_types.pop(name, None)
+        return name, inferred
 
     def _type_comprehension_walrus(
         self,

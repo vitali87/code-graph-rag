@@ -62,6 +62,9 @@ SOURCE = (
     "    def go(self):\n"
     "        return 2\n"
     "\n"
+    "    def pair(self) -> tuple['Thing', 'Thing']:\n"
+    "        return Thing(), Thing()\n"
+    "\n"
     "    def __enter__(self):\n"
     "        return self\n"
     "\n"
@@ -72,6 +75,9 @@ SOURCE = (
     "class Other:\n"
     "    def go(self):\n"
     "        return 1\n"
+    "\n"
+    "    def pair(self) -> tuple['Other', 'Other']:\n"
+    "        return Other(), Other()\n"
     "\n"
     "\n"
     "class Inner:\n"
@@ -787,6 +793,14 @@ SOURCE = (
     "\n"
     "    inner()\n"
     "    return t.go()\n"
+    "\n"
+    "\n"
+    "def matched_alias_then_unpack(shape):\n"
+    "    t = Other()\n"
+    "    match shape:\n"
+    "        case Thing() as t:\n"
+    "            a, b = t.pair()\n"
+    "            return a.go()\n"
     "\n"
     "\n"
     "def matched_same_alias_twice(shape):\n"
@@ -1506,3 +1520,12 @@ def test_nonlocal_walrus_does_not_read_the_outer_scope(tmp_path: Path) -> None:
     enclosing `x`'s `Thing` into `t`."""
     calls = _calls(tmp_path).get("nonlocal_walrus_copying_an_inner_local", {})
     assert calls.get(THING_GO) != EXACT
+
+
+def test_unpacking_in_a_case_body_reads_the_alias_type(tmp_path: Path) -> None:
+    """Greptile P1 on #3585: `a, b = t.pair()` in a `case Thing() as t`
+    body unpacks `Thing.pair`'s tuple, so the alias must be typed before
+    the unpacking pass reads `t`, not the earlier `t = Other()`."""
+    calls = _calls_at(tmp_path, "matched_alias_then_unpack", "return a.go()")
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
