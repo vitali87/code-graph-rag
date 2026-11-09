@@ -11,11 +11,18 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **Type Handling**: Improved handling of type context managers, walrus operators, and match binding targets in both Python and TypeScript.
+- **Rename Refinement**: Prevented Go renames from unexporting names used by other packages.
+- **Profile Naming**: Corrected the naming of pprof profiles to avoid "malformed" errors when no samples are present.
+- **Output Budget**: Increased the Anthropic output budget to improve the default thinking experience.
+- **Module Resolution**: Resolved issues with module resolution in various scenarios, including ES module default imports and bare name bindings.
+- **Dead Code Elimination**: Removed dead code roots associated with IPython rich-display methods.
+- **Incremental Refresh**: Improved incremental refresh to ensure callers are updated when dispatch targets change.
+<!-- latest-release-end -->
 - **Continuous Integration Improvements**: Enhanced release cadence tracking and ensured accurate green status for deferred releases.
 - **Code Quality & Clarity**: Resolved several code style and correctness issues including foreach loop variable typing and Python method receiver handling.
 - **Build Process Refinement**: Reduced the default install package count and improved makefile functionality for host/port watching.
 - **Feature Control**: Prevented the use of `--no-endpoint-roots` when endpoint data is absent.
-<!-- latest-release-end -->
 - **Rust Upgrade**: Updated Rust to version 1.99.1-slim-trixie.
 - **Signature Functionality**: Added support for reading and writing JavaScript headers for change signatures, including the ability to change the signature of JavaScript functions or methods.
 - **macOS Compatibility**: The build now leaves macOS-14 support.
