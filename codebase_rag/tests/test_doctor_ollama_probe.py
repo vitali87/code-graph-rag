@@ -23,6 +23,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.config import settings
 from codebase_rag.schemas import HealthCheckResult
+from codebase_rag.tests.conftest import patch_active_model
 from codebase_rag.tools.health_checker import HealthChecker
 
 
@@ -34,8 +35,8 @@ def default_roles(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, f"{role}_API_KEY", None)
         monkeypatch.setattr(settings, f"{role}_ENDPOINT", None)
         monkeypatch.setattr(settings, f"{role}_PROVIDER_TYPE", None)
-    monkeypatch.setattr(settings, "_active_orchestrator", None)
-    monkeypatch.setattr(settings, "_active_cypher", None)
+    patch_active_model(monkeypatch, "_active_orchestrator", None)
+    patch_active_model(monkeypatch, "_active_cypher", None)
 
 
 def _serving(body: bytes, requests: list[str]) -> type[BaseHTTPRequestHandler]:

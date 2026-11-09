@@ -697,7 +697,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## pyo3 0.29.3
+## pyo3 0.30.1
 
 Licence: MIT OR Apache-2.0 (used under MIT)
 
@@ -729,7 +729,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## pyo3-ffi 0.29.3
+## pyo3-ffi 0.30.1
 
 Licence: MIT OR Apache-2.0 (used under MIT)
 
