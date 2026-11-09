@@ -368,6 +368,13 @@ def test_strict_code_keeps_a_block_s_function_to_the_block(
         "const require = createRequire(import.meta.url);\n",
         'import nodeModule from "node:module";\n'
         "const require = nodeModule.createRequire(import.meta.url);\n",
+        'import { createRequire } from "node:module";\n'
+        "const require = createRequire(import.meta.url);\n"
+        "function configure(require) {\n  require = null;\n}\n",
+        'const { "createRequire": make } = await import("node:module");\n'
+        "const require = make(import.meta.url);\n",
+        'import { "createRequire" as make } from "node:module";\n'
+        "const require = make(import.meta.url);\n",
     ],
     ids=[
         "create-require",
@@ -378,6 +385,9 @@ def test_strict_code_keeps_a_block_s_function_to_the_block(
         "alias-chain",
         "dynamic-import",
         "default-import",
+        "a-parameter-reassigned-elsewhere",
+        "quoted-destructure",
+        "quoted-import",
     ],
 )
 def test_a_module_level_require_made_by_create_require_still_imports(

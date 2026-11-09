@@ -46,7 +46,6 @@ from ..utils import safe_decode_text
 _EXPORTS = cs.JS_EXPORTS_KEYWORD.encode()
 _MODULE = cs.JS_MODULE_KEYWORD.encode()
 _REQUIRE = cs.JS_REQUIRE_KEYWORD.encode()
-_CREATE_REQUIRE = cs.JS_CREATE_REQUIRE.encode()
 _ARGUMENTS = cs.JS_ARGUMENTS_NAME.encode()
 _EVAL = cs.JS_EVAL_NAME.encode()
 
@@ -201,13 +200,13 @@ class LocalBindings:
     """Whether a `require` call's callee is Node's loader, decided from the
     scopes of one module, read once."""
 
-    __slots__ = ("_module", "_root", "_node_module", "_reassigned")
+    __slots__ = ("_module", "_root", "_node_module", "_rewritten")
 
     def __init__(self, root: Node) -> None:
         self._module = _Module(root, strict_blocks=True)
         self._root = root
         self._node_module: _NodeModuleBindings | None = None
-        self._reassigned: frozenset[str] | None = None
+        self._rewritten: frozenset[_Binding] | None = None
 
     def is_loader(self, identifier: Node) -> bool:
         """The global `require`, which nothing in the module binds, or a
@@ -267,7 +266,7 @@ class LocalBindings:
             return False
         scope = self._module.binding_scope(node)
         name = safe_decode_text(node)
-        if scope is None or not name or name in self._reassigned_names():
+        if scope is None or not name or (name, _key(scope)) in self._reassigned():
             return False
         if (name, _key(scope)) in imported:
             return True
@@ -276,18 +275,25 @@ class LocalBindings:
     def _settled_value(self, identifier: Node, scope: Node) -> Node | None:
         # The initializer of a binding nothing reassigns; None otherwise.
         name = safe_decode_text(identifier)
-        if not name or name in self._reassigned_names():
+        if not name or (name, _key(scope)) in self._reassigned():
             return None
         return _unwrapped(_declared_value(scope, name))
 
-    def _reassigned_names(self) -> frozenset[str]:
-        if self._reassigned is None:
-            self._reassigned = frozenset(
-                name
-                for node in _subtree(self._root)
-                for name in _reassigned_names(node, self._root)
-            )
-        return self._reassigned
+    def _reassigned(self) -> frozenset[_Binding]:
+        # Each binding something writes after its declaration, keyed by the
+        # scope that binds it: a parameter's `require = null` leaves the
+        # module's own `require` settled (Greptile, PR #3284).
+        if self._rewritten is None:
+            root_key = _key(self._root)
+            found: set[_Binding] = set()
+            for node in _subtree(self._root):
+                for target, module_level in _reassignment_targets(node, self._root):
+                    if not (name := safe_decode_text(target)):
+                        continue
+                    scope = None if module_level else self._module.binding_scope(target)
+                    found.add((name, _key(scope) if scope is not None else root_key))
+            self._rewritten = frozenset(found)
+        return self._rewritten
 
     def _bindings(self) -> _NodeModuleBindings:
         if self._node_module is None:
@@ -1041,10 +1047,13 @@ def _node_module_locals(root: Node) -> tuple[list[Node], list[Node]]:
             for part in _subtree(node):
                 if part.type == cs.TS_IMPORT_SPECIFIER:
                     name = part.child_by_field_name(cs.FIELD_NAME)
-                    if name is not None and name.text == _CREATE_REQUIRE:
-                        factories.append(
-                            part.child_by_field_name(cs.FIELD_ALIAS) or name
-                        )
+                    local = part.child_by_field_name(cs.FIELD_ALIAS) or name
+                    if (
+                        _specifier_name(name) == cs.JS_CREATE_REQUIRE
+                        and local is not None
+                        and local.type == cs.TS_IDENTIFIER
+                    ):
+                        factories.append(local)
                 elif (local := _import_local(part)) is not None:
                     modules.append(local)
         elif node.type == cs.TS_VARIABLE_DECLARATOR and _loads_node_module(
@@ -1052,22 +1061,21 @@ def _node_module_locals(root: Node) -> tuple[list[Node], list[Node]]:
         ):
             target = node.child_by_field_name(cs.FIELD_NAME)
             if target is not None and target.type == cs.TS_OBJECT_PATTERN:
-                factories.extend(_destructured(target, _CREATE_REQUIRE))
+                factories.extend(_destructured(target, cs.JS_CREATE_REQUIRE))
     return factories, modules
 
 
-def _destructured(pattern: Node, key: bytes) -> Iterator[Node]:
-    # The identifiers an object pattern binds the property `key` to.
+def _destructured(pattern: Node, key: str) -> Iterator[Node]:
+    # The identifiers an object pattern binds the property `key` to, its
+    # name written bare or quoted (Greptile, PR #3284).
     for part in pattern.named_children:
         if part.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
-            if part.text == key:
+            if safe_decode_text(part) == key:
                 yield part
         elif part.type == cs.TS_PAIR_PATTERN:
-            prop = part.child_by_field_name(cs.FIELD_KEY)
             value = part.child_by_field_name(cs.FIELD_VALUE)
             if (
-                prop is not None
-                and prop.text == key
+                _property_key(part.child_by_field_name(cs.FIELD_KEY)) == key
                 and value is not None
                 and value.type == cs.TS_IDENTIFIER
             ):
@@ -1151,6 +1159,12 @@ def _declarator_names(declaration: Node) -> Iterator[str]:
 def _pattern_names(pattern: Node | None) -> Iterator[str]:
     # The names a binding pattern binds, exactly: a default value's names
     # and a parameter's type are not bound.
+    for node in _pattern_identifiers(pattern):
+        if text := safe_decode_text(node):
+            yield text
+
+
+def _pattern_identifiers(pattern: Node | None) -> Iterator[Node]:
     pending = [pattern] if pattern is not None else []
     while pending:
         node = pending.pop()
@@ -1159,8 +1173,7 @@ def _pattern_names(pattern: Node | None) -> Iterator[str]:
             cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
             cs.TS_TYPE_IDENTIFIER,
         ):
-            if text := safe_decode_text(node):
-                yield text
+            yield node
         elif node.type in (cs.TS_ASSIGNMENT_PATTERN, cs.TS_OBJECT_ASSIGNMENT_PATTERN):
             pending.extend(_present(node.child_by_field_name(cs.FIELD_LEFT)))
         elif node.type == cs.TS_PAIR_PATTERN:
@@ -1295,6 +1308,47 @@ def _reassigned_names(node: Node, root: Node) -> Iterator[str]:
             yield from _pattern_names(node.child_by_field_name(cs.FIELD_NAME))
 
 
+def _reassignment_targets(node: Node, root: Node) -> Iterator[tuple[Node, bool]]:
+    # The identifiers `node` writes after their declaration, as
+    # _reassigned_names reads them, each with whether it rebinds the
+    # module's own name (a `var` or function in a module-level block).
+    if node.type in _ASSIGNMENTS:
+        targets = _written_targets(node.child_by_field_name(cs.FIELD_LEFT))
+    elif node.type == cs.TS_JS_UPDATE_EXPRESSION:
+        targets = _written_targets(node.child_by_field_name(cs.TS_FIELD_ARGUMENT))
+    elif (
+        node.type == cs.TS_JS_FOR_IN_STATEMENT
+        and node.child_by_field_name(cs.FIELD_KIND) is None
+    ):
+        targets = _written_targets(node.child_by_field_name(cs.FIELD_LEFT))
+    elif _rebinds_module_name(node, root):
+        rebound = (
+            [
+                d.child_by_field_name(cs.FIELD_NAME)
+                for d in node.named_children
+                if d.type == cs.TS_VARIABLE_DECLARATOR
+            ]
+            if node.type == cs.TS_VARIABLE_DECLARATION
+            else [node.child_by_field_name(cs.FIELD_NAME)]
+        )
+        for target in rebound:
+            yield from ((t, True) for t in _pattern_identifiers(target))
+        return
+    else:
+        return
+    yield from ((t, False) for t in targets)
+
+
+def _written_targets(target: Node | None) -> Iterator[Node]:
+    target = _unwrapped(target)
+    if target is None:
+        return
+    if target.type == cs.TS_IDENTIFIER:
+        yield target
+    elif target.type in _PATTERNS:
+        yield from _pattern_identifiers(target)
+
+
 def _rebinds_module_name(node: Node, root: Node) -> bool:
     if node.parent == root or node.type not in (
         cs.TS_VARIABLE_DECLARATION,
@@ -1372,6 +1426,14 @@ def _object_names(value: Node | None) -> dict[str, Node | None] | None:
             return None
         names[key] = held
     return names
+
+
+def _specifier_name(name: Node | None) -> str | None:
+    # An import specifier's exported name: `{ createRequire }`, or quoted as
+    # ES2022 allows (`{ "createRequire" as make }`).
+    if name is not None and name.type == cs.TS_STRING:
+        return _string_content(name)
+    return safe_decode_text(name) if name is not None else None
 
 
 def _property_key(key: Node | None) -> str | None:
