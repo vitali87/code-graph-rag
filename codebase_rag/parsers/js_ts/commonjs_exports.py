@@ -934,11 +934,15 @@ def _declared_names(scope: Node, strict: bool = False) -> Iterator[str]:
     if scope.type in (cs.TS_STATEMENT_BLOCK, cs.TS_JS_SWITCH_BODY):
         yield from _block_names(scope)
         return
-    if scope.type in (cs.TS_JS_CATCH_CLAUSE, cs.TS_JS_FOR_IN_STATEMENT):
-        field = (
-            cs.FIELD_PARAMETER if scope.type == cs.TS_JS_CATCH_CLAUSE else cs.FIELD_LEFT
-        )
-        yield from _pattern_names(scope.child_by_field_name(field))
+    if scope.type == cs.TS_JS_CATCH_CLAUSE:
+        yield from _pattern_names(scope.child_by_field_name(cs.FIELD_PARAMETER))
+        return
+    if scope.type == cs.TS_JS_FOR_IN_STATEMENT:
+        # Only a head that declares (`for (const x of ...)`) binds; a bare
+        # `for (x of ...)` writes the binding around the loop (Greptile,
+        # PR #3284).
+        if scope.child_by_field_name(cs.FIELD_KIND) is not None:
+            yield from _pattern_names(scope.child_by_field_name(cs.FIELD_LEFT))
         return
     if scope.type == cs.TS_JS_FOR_STATEMENT:
         initializer = scope.child_by_field_name(cs.TS_FIELD_INITIALIZER)
@@ -991,31 +995,40 @@ def _declared_value(scope: Node, name: str) -> Node | None:
     return None
 
 
+_DECLARATIONS = frozenset({cs.TS_LEXICAL_DECLARATION, cs.TS_VARIABLE_DECLARATION})
+
+
 def _scope_declarations(scope: Node) -> Iterator[Node]:
     # The declarations whose names `scope` binds: a function's `var`s outside
     # nested functions and the `let` / `const` directly in its body; a `for`
     # head's; and those directly in a block, a `switch` body or the module.
-    lexical = (cs.TS_LEXICAL_DECLARATION, cs.TS_VARIABLE_DECLARATION)
     if scope.type in _FUNCTIONS:
-        body = scope.child_by_field_name(cs.FIELD_BODY)
-        if body is None or body.type != cs.TS_STATEMENT_BLOCK:
-            return
-        yield from (s for s in body.named_children if s.type in lexical)
-        pending = deque(
-            s for s in body.named_children if s.type != cs.TS_VARIABLE_DECLARATION
-        )
-        while pending:
-            node = pending.popleft()
-            if node.type == cs.TS_VARIABLE_DECLARATION:
-                yield node
-            elif node.type not in _FUNCTIONS:
-                pending.extend(node.named_children)
-        return
-    if scope.type == cs.TS_JS_FOR_STATEMENT:
+        yield from _function_declarations(scope)
+    elif scope.type == cs.TS_JS_FOR_STATEMENT:
         initializer = scope.child_by_field_name(cs.TS_FIELD_INITIALIZER)
-        if initializer is not None and initializer.type in lexical:
+        if initializer is not None and initializer.type in _DECLARATIONS:
             yield initializer
+    else:
+        yield from _block_declarations(scope)
+
+
+def _function_declarations(function: Node) -> Iterator[Node]:
+    body = function.child_by_field_name(cs.FIELD_BODY)
+    if body is None or body.type != cs.TS_STATEMENT_BLOCK:
         return
+    yield from (s for s in body.named_children if s.type in _DECLARATIONS)
+    pending = deque(
+        s for s in body.named_children if s.type != cs.TS_VARIABLE_DECLARATION
+    )
+    while pending:
+        node = pending.popleft()
+        if node.type == cs.TS_VARIABLE_DECLARATION:
+            yield node
+        elif node.type not in _FUNCTIONS:
+            pending.extend(node.named_children)
+
+
+def _block_declarations(scope: Node) -> Iterator[Node]:
     statements = (
         [
             statement
@@ -1028,7 +1041,7 @@ def _scope_declarations(scope: Node) -> Iterator[Node]:
     for statement in statements:
         if statement.type == cs.TS_EXPORT_STATEMENT:
             statement = statement.child_by_field_name(cs.FIELD_DECLARATION) or statement
-        if statement.type in lexical:
+        if statement.type in _DECLARATIONS:
             yield statement
 
 
@@ -1040,22 +1053,12 @@ def _node_module_locals(root: Node) -> tuple[list[Node], list[Node]]:
     factories: list[Node] = []
     modules: list[Node] = []
     for node in _subtree(root):
-        if node.type == cs.TS_IMPORT_STATEMENT:
-            source = _string_content(node.child_by_field_name(cs.FIELD_SOURCE))
-            if source not in cs.JS_NODE_MODULE_SPECIFIERS:
-                continue
-            for part in _subtree(node):
-                if part.type == cs.TS_IMPORT_SPECIFIER:
-                    name = part.child_by_field_name(cs.FIELD_NAME)
-                    local = part.child_by_field_name(cs.FIELD_ALIAS) or name
-                    if (
-                        _specifier_name(name) == cs.JS_CREATE_REQUIRE
-                        and local is not None
-                        and local.type == cs.TS_IDENTIFIER
-                    ):
-                        factories.append(local)
-                elif (local := _import_local(part)) is not None:
-                    modules.append(local)
+        if (
+            node.type == cs.TS_IMPORT_STATEMENT
+            and _string_content(node.child_by_field_name(cs.FIELD_SOURCE))
+            in cs.JS_NODE_MODULE_SPECIFIERS
+        ):
+            _read_node_module_import(node, factories, modules)
         elif node.type == cs.TS_VARIABLE_DECLARATOR and _loads_node_module(
             node.child_by_field_name(cs.FIELD_VALUE)
         ):
@@ -1063,6 +1066,30 @@ def _node_module_locals(root: Node) -> tuple[list[Node], list[Node]]:
             if target is not None and target.type == cs.TS_OBJECT_PATTERN:
                 factories.extend(_destructured(target, cs.JS_CREATE_REQUIRE))
     return factories, modules
+
+
+def _read_node_module_import(
+    statement: Node, factories: list[Node], modules: list[Node]
+) -> None:
+    for part in _subtree(statement):
+        if part.type == cs.TS_IMPORT_SPECIFIER:
+            if (local := _create_require_specifier(part)) is not None:
+                factories.append(local)
+        elif (local := _import_local(part)) is not None:
+            modules.append(local)
+
+
+def _create_require_specifier(specifier: Node) -> Node | None:
+    # The local `{ createRequire [as X] }` binds, as an identifier.
+    name = specifier.child_by_field_name(cs.FIELD_NAME)
+    local = specifier.child_by_field_name(cs.FIELD_ALIAS) or name
+    if (
+        _specifier_name(name) == cs.JS_CREATE_REQUIRE
+        and local is not None
+        and local.type == cs.TS_IDENTIFIER
+    ):
+        return local
+    return None
 
 
 def _destructured(pattern: Node, key: str) -> Iterator[Node]:

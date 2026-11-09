@@ -283,6 +283,9 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
         'import { createRequire } from "node:module";\n'
         "let require = createRequire(import.meta.url);\n"
         'require = () => {};\nrequire("./db");\n',
+        'import { createRequire } from "node:module";\n'
+        "let make = createRequire;\nfor (make of [() => () => {}]) {}\n"
+        'const require = make();\nrequire("./db");\n',
     ],
     ids=[
         "parameter",
@@ -299,6 +302,7 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
         "another-object-s-factory",
         "reassigned-factory-alias",
         "reassigned-loader",
+        "alias-rewritten-by-a-loop",
     ],
 )
 def test_a_call_to_a_local_named_require_is_no_import(
