@@ -623,3 +623,34 @@ pub const IN_CONST: fn() -> u8 = {
     )
     targets = _path_targets(mock_ingestor, f"{base}.walk.in_const")
     assert targets == {f"{base}.util.TempDir.path": cs.EdgeResolution.EXACT}, targets
+
+
+def test_a_helper_s_outside_crate_return_type_is_not_the_caller_s(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `helpers::open()` returns the `File` its module imports from std; the
+    # caller's own `File` shares the name only, so `f` is untyped and
+    # `f.path()` is no exact call to it (CodeRabbit, PR #3010).
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_modfn_extret",
+        """\
+mod helpers {
+    use std::fs::File;
+    pub fn open() -> File { unimplemented!() }
+}
+
+pub struct File;
+impl File {
+    pub fn path(&self) -> u8 { 2 }
+}
+
+pub fn external() -> u8 {
+    let f = helpers::open();
+    f.path()
+}
+""",
+    )
+    targets = _path_targets(mock_ingestor, f"{base}.walk.external")
+    assert targets.get(f"{base}.walk.File.path") != cs.EdgeResolution.EXACT, targets

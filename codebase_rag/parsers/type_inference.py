@@ -1346,6 +1346,15 @@ class TypeInferenceEngine:
         if return_type is None:
             return None
         owner = fn_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        # A type the helper's module imports from an outside crate (`use
+        # tempfile::TempDir;`) is no project type: left bare, the caller would
+        # read it in its own module and could take a same-named one there
+        # (CodeRabbit, PR #3010).
+        imported = self.import_processor.import_mapping.get(owner, {}).get(return_type)
+        if imported is not None and cs.SEPARATOR_DOUBLE_COLON in imported:
+            head = imported.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+            if self.import_processor.rust_crate_is_external(head, owner):
+                return None
         return self._rust_owner_type_qn(return_type, owner) or return_type
 
     def _rust_owner_type_qn(self, type_name: str, owner: str) -> str | None:
