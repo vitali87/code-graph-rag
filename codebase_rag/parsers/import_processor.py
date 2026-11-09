@@ -50,10 +50,13 @@ from ..utils.path_utils import (
 from ..utils.source_encoding import grammar_bytes
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
+    DartDirective,
     dart_binding_spans,
+    dart_combinators,
     dart_exposes_library,
     dart_extract_uri,
     dart_import_prefix,
+    dart_is_export,
     dart_local_name,
     dart_resolve_import,
     discover_dart_packages,
@@ -1143,6 +1146,9 @@ class ImportProcessor:
         "rust_block_item_qns",
         "dart_prefix_shadows",
         "dart_import_aliases",
+        "dart_bare_imports",
+        "dart_exports",
+        "dart_part_of",
         "dart_exposed_libraries",
         "rust_block_scope_imports",
         "rust_self_module_imports",
@@ -1403,6 +1409,25 @@ class ImportProcessor:
         # edge (those come from import_mapping's values) while the name the
         # source writes resolves to the aliased library (Greptile, #2033).
         self.dart_import_aliases: dict[str, dict[str, list[str]]] = {}
+        # {module qn: [the `import` / `part` directives that bring a library's
+        # names in WITHOUT a prefix, with their `show` / `hide` clauses]}.
+        # The file-derived import_mapping key is written for a prefixed
+        # import and an `export` too, so only this tells `import 'a.dart';
+        # import 'a.dart' as p;` (bare `A` visible) from the prefixed import
+        # alone, and either from `export 'a.dart';`, which brings in nothing
+        # (#3286).
+        self.dart_bare_imports: dict[str, list[DartDirective]] = {}
+        # {library module qn: its `export` directives}. dart_exposed_libraries
+        # holds their targets beside its parts'; this keeps the `show` /
+        # `hide` clauses deciding which names each one hands on (Greptile,
+        # PR #3292).
+        self.dart_exports: dict[str, list[DartDirective]] = {}
+        # {part file module qn: the library whose `part '...'` directive
+        # names it}. A part brings in nothing: it is a piece of that library
+        # and writes names through the library's imports (#3286). The
+        # library's directive is read, not the part's `part of`, which may
+        # name the library by its `library shop;` name rather than a file.
+        self.dart_part_of: dict[str, str] = {}
         # {library module qn: [module qns it hands to ITS importers]}: the
         # targets of its `export` and `part` directives. import_mapping holds
         # those beside plain imports, which expose nothing, so an extension
@@ -1698,6 +1723,16 @@ class ImportProcessor:
         # PR #2040).
         self.dart_prefix_shadows.pop(module_qn, None)
         self.dart_import_aliases.pop(module_qn, None)
+        self.dart_bare_imports.pop(module_qn, None)
+        self.dart_exports.pop(module_qn, None)
+        # Keyed by the part but written by its LIBRARY's parse: the library's
+        # re-parse drops the links it wrote, and the part's keeps them, as
+        # the library still names it.
+        self.dart_part_of = {
+            part: library
+            for part, library in self.dart_part_of.items()
+            if library != module_qn
+        }
         self.dart_exposed_libraries.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
@@ -6722,6 +6757,8 @@ class ImportProcessor:
                         module_qn, prefix, full_name, import_node, uri
                     )
                     prefixes.add(prefix)
+                else:
+                    self._record_dart_unprefixed(module_qn, import_node, full_name)
         # A local or parameter of the same name SHADOWS the prefix inside its
         # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
         # local_var_types, so the type map cannot answer this. The binding is
@@ -6731,6 +6768,25 @@ class ImportProcessor:
             self.dart_prefix_shadows[module_qn] = dart_binding_spans(
                 root_node, frozenset(prefixes)
             )
+
+    def _record_dart_unprefixed(
+        self, module_qn: str, directive: Node, full_name: str
+    ) -> None:
+        # `part of 'shop.dart';` brings nothing in: the file is a piece of
+        # that library and writes names in its scope (#3286). The link comes
+        # from the library's `part 'shop_model.dart';`, which a `part of
+        # shop;` naming no file has too. An `export` hands its target to
+        # importers only; a plain `import` or a `part` brings the target's
+        # names in bare.
+        if directive.type == cs.TS_DART_PART_OF_DIRECTIVE:
+            return
+        if directive.type == cs.TS_DART_PART_DIRECTIVE:
+            self.dart_part_of[full_name] = module_qn
+        recorded = DartDirective(full_name, dart_combinators(directive))
+        if dart_is_export(directive):
+            self.dart_exports.setdefault(module_qn, []).append(recorded)
+        else:
+            self.dart_bare_imports.setdefault(module_qn, []).append(recorded)
 
     def dart_import_target(self, uri: str, module_qn: str) -> str:
         # What `uri` resolves to under the package map as it is on disk now;
