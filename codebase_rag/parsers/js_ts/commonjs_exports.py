@@ -34,6 +34,7 @@ shadows in the registry or the import map; any other value drops its name.
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Iterator
 from typing import NamedTuple
 
@@ -180,16 +181,24 @@ def commonjs_export_bindings(root: Node) -> dict[str, CommonjsBinding]:
 
 
 class LocalBindings:
-    """Whether a function, block, `catch` or `for` scope between a name and
-    the module's top level binds it, one module's scopes read once."""
+    """What a name means where it is written: whether a scope of the module,
+    from the innermost out to its top level, binds it, and the value that
+    binding gives it. One module's scopes are read once."""
 
     __slots__ = ("_module",)
 
     def __init__(self, root: Node) -> None:
         self._module = _Module(root, strict_blocks=True)
 
-    def bind(self, identifier: Node) -> bool:
-        return self._module.is_shadowed(identifier)
+    def binding(self, identifier: Node) -> tuple[bool, Node | None]:
+        """(bound, value): whether a scope binds the name, and the value its
+        nearest `var` / `let` / `const` there gives it; None for a parameter,
+        a function, a class or an import."""
+        scope = self._module.binding_scope(identifier)
+        if scope is None:
+            return False, None
+        name = safe_decode_text(identifier)
+        return True, _declared_value(scope, name) if name else None
 
 
 def _is_export_assignment(statement: Node) -> bool:
@@ -232,6 +241,7 @@ class _Module:
         "_reassigned",
         "_strict_blocks",
         "_module_strict",
+        "_top_names",
     )
 
     def __init__(self, root: Node, strict_blocks: bool = False) -> None:
@@ -242,6 +252,7 @@ class _Module:
         # `require` the block does not reach (Greptile, PR #3284).
         self._strict_blocks = strict_blocks
         self._module_strict: bool | None = None
+        self._top_names: frozenset[str] | None = None
         self._bound: dict[tuple[int, int, str], frozenset[str]] = {}
         self._declarations: dict[str, list[_Declaration]] | None = None
         self._reassigned: set[str] = set()
@@ -300,6 +311,39 @@ class _Module:
                 return True
             scope = scope.parent
         return False
+
+    def binding_scope(self, identifier: Node) -> Node | None:
+        """The nearest scope binding the name, the module's top level
+        included; None when nothing in the module binds it."""
+        name = safe_decode_text(identifier)
+        scope = identifier.parent
+        while scope is not None and scope != self._root:
+            if scope.type in _SCOPES and name in self._names_bound_by(scope):
+                return scope
+            scope = scope.parent
+        return self._root if name in self._top_level_names() else None
+
+    def _top_level_names(self) -> frozenset[str]:
+        # The names the module's own statements declare or import.
+        if self._top_names is None:
+            names: set[str] = set()
+            for statement in self._root.named_children:
+                node = statement
+                if node.type == cs.TS_EXPORT_STATEMENT:
+                    node = node.child_by_field_name(cs.FIELD_DECLARATION) or node
+                if node.type == cs.TS_IMPORT_STATEMENT:
+                    names.update(_imported_names(node))
+                elif node.type in (
+                    cs.TS_LEXICAL_DECLARATION,
+                    cs.TS_VARIABLE_DECLARATION,
+                ):
+                    names.update(_declarator_names(node))
+                elif node.type in _NAMED_DECLARATIONS:
+                    names.update(
+                        _pattern_names(node.child_by_field_name(cs.FIELD_NAME))
+                    )
+            self._top_names = frozenset(names)
+        return self._top_names
 
     def resolve(self, value: Node) -> CommonjsBinding | None:
         """The top-level binding a published value certainly names, if any."""
@@ -817,6 +861,25 @@ def _function_names(function: Node, strict: bool = False) -> Iterator[str]:
             yield from _pattern_names(node.child_by_field_name(cs.FIELD_LEFT))
         if node.type not in _FUNCTIONS:
             pending.extend((child, False) for child in node.named_children)
+
+
+def _declared_value(scope: Node, name: str) -> Node | None:
+    # The value the shallowest `var` / `let` / `const` declarator of `scope`
+    # gives `name`, not looking inside nested functions.
+    pending = deque(scope.named_children)
+    while pending:
+        node = pending.popleft()
+        if node.type == cs.TS_VARIABLE_DECLARATOR:
+            target = node.child_by_field_name(cs.FIELD_NAME)
+            if (
+                target is not None
+                and target.type == cs.TS_IDENTIFIER
+                and safe_decode_text(target) == name
+            ):
+                return node.child_by_field_name(cs.FIELD_VALUE)
+        if node.type not in _FUNCTIONS:
+            pending.extend(node.named_children)
+    return None
 
 
 def _is_es_module(root: Node) -> bool:

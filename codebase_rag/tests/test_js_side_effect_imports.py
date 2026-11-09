@@ -205,8 +205,23 @@ def test_a_whole_module_import_of_a_package_names_the_package_a_named_one_does(
         ('function boot() {\n  require("./db");\n}\nboot();\n', 2),
         ('try {\n  require("./db");\n} catch (e) {}\n', 2),
         ('async function load() {\n  await import("./db");\n}\nload();\n', 2),
+        ('void import("./db");\n', 1),
+        (
+            'import { createRequire } from "node:module";\n'
+            "export function boot() {\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./db");\n}\n',
+            4,
+        ),
     ],
-    ids=["if-branch", "function-body", "try-block", "awaited-in-function"],
+    ids=[
+        "if-branch",
+        "function-body",
+        "try-block",
+        "awaited-in-function",
+        "void-dynamic-import",
+        "create-require-in-a-function",
+    ],
 )
 def test_a_nested_side_effect_call_is_an_imports_edge(
     temp_repo: Path, mock_ingestor: MagicMock, source: str, line: int
@@ -247,6 +262,8 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
         'function run() {\n  function require() {}\n  require("./db");\n}\nrun();\n',
         'try {\n  load();\n} catch (require) {\n  require("./db");\n}\n',
         'function boot() {\n  {\n    function require() {}\n  }\n  require("./db");\n}\n',
+        'export const ready = true;\nconst require = () => {};\nrequire("./db");\n',
+        'function require(name) {\n  return name;\n}\nrequire("./db");\n',
     ],
     ids=[
         "parameter",
@@ -255,6 +272,8 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
         "local-function",
         "catch",
         "sloppy-block-function",
+        "module-level-helper",
+        "module-level-function",
     ],
 )
 def test_a_call_to_a_local_named_require_is_no_import(
@@ -320,6 +339,20 @@ def test_a_module_level_require_made_by_create_require_still_imports(
     props = _imports(temp_repo, mock_ingestor).get(("main", "db"))
     assert props is not None, sorted(_imports(temp_repo, mock_ingestor))
     assert props.get(cs.KEY_LINE) == 3, props
+
+
+def test_only_the_first_argument_names_the_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `require(name, "./db")` loads `name`; a later string argument
+    # is no specifier (CodeRabbit, PR #3284).
+    (temp_repo / "db.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (temp_repo / "main.js").write_text(
+        'const name = "./other";\nrequire(name, "./db");\n', encoding="utf-8"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    assert ("main", "db") not in _imports(temp_repo, mock_ingestor)
 
 
 @pytest.mark.parametrize(

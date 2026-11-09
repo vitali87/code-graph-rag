@@ -513,6 +513,12 @@ def _js_side_effect_call(statement: Node) -> tuple[str, Node | None] | None:
     if statement.type != cs.TS_EXPRESSION_STATEMENT:
         return None
     call = statement.named_child(0)
+    if (
+        call is not None
+        and call.type == cs.TS_JS_UNARY_EXPRESSION
+        and _js_unary_operator(call) == cs.JS_VOID_OPERATOR
+    ):
+        call = call.child_by_field_name(cs.TS_FIELD_ARGUMENT)
     if call is not None and call.type == cs.TS_AWAIT_EXPRESSION:
         call = call.named_child(0)
     if call is None or call.type != cs.TS_CALL_EXPRESSION:
@@ -526,10 +532,27 @@ def _js_side_effect_call(statement: Node) -> tuple[str, Node | None] | None:
     )
     if not is_require and func.type != cs.TS_JS_DYNAMIC_IMPORT:
         return None
-    arg = next((a for a in args.named_children if a.type == cs.TS_STRING), None)
-    if arg is None:
+    # The loader reads its first argument; `require(name, "./db")` loads
+    # `name`, whatever string follows (CodeRabbit, PR #3284).
+    arg = next((a for a in args.named_children if a.type != cs.TS_COMMENT), None)
+    if arg is None or arg.type != cs.TS_STRING:
         return None
     return safe_decode_with_fallback(arg).strip("'\""), func if is_require else None
+
+
+def _js_unary_operator(expression: Node) -> str | None:
+    operator = expression.child_by_field_name(cs.FIELD_OPERATOR)
+    return safe_decode_text(operator) if operator is not None else None
+
+
+def _is_create_require(value: Node | None) -> bool:
+    # `createRequire(import.meta.url)` or `module.createRequire(...)`.
+    if value is None or value.type != cs.TS_CALL_EXPRESSION:
+        return False
+    func = value.child_by_field_name(cs.FIELD_FUNCTION)
+    if func is not None and func.type == cs.TS_MEMBER_EXPRESSION:
+        func = func.child_by_field_name(cs.FIELD_PROPERTY)
+    return func is not None and safe_decode_text(func) == cs.JS_CREATE_REQUIRE
 
 
 def _is_js_whole_module_import(entry: DeferredImportEdge) -> bool:
@@ -4993,10 +5016,13 @@ class ImportProcessor:
                 continue
             specifier, require = call
             if require is not None:
-                # `function run(require) { require("./db"); }` calls its
-                # parameter, which loads nothing (Greptile, PR #3284).
+                # The global loader, or one `createRequire(...)` makes,
+                # imports; any other binding of `require` (a parameter, a
+                # local helper) is whatever it holds and loads nothing
+                # (Greptile and CodeRabbit, PR #3284).
                 bindings = bindings or LocalBindings(root_node)
-                if bindings.bind(require):
+                bound, value = bindings.binding(require)
+                if bound and not _is_create_require(value):
                     continue
             target = self._resolve_js_import_target(
                 specifier, module_qn, require is not None

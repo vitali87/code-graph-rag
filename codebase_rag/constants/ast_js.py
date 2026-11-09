@@ -73,8 +73,13 @@ TS_JS_DYNAMIC_IMPORT = "import"
 # `require("./db");` or `import("./cache");` whose value is dropped sits
 # (issue #3267).
 JS_CALL_STATEMENT_QUERY = (
-    "(expression_statement [(call_expression) (await_expression)]) @statement"
+    "(expression_statement [(call_expression) (await_expression) "
+    "(unary_expression)]) @statement"
 )
+# `void import("./cache")` discards the promise as a bare call does.
+JS_VOID_OPERATOR = "void"
+# `createRequire(import.meta.url)` (node:module) makes a CommonJS loader.
+JS_CREATE_REQUIRE = "createRequire"
 CAPTURE_JS_CALL_STATEMENT = "statement"
 # JSX element nodes that carry a component name (javascript and tsx grammars
 # share these); the closing element repeats the name and must not double-emit.
