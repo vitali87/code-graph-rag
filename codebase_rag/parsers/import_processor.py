@@ -3943,6 +3943,16 @@ class ImportProcessor:
         )
         return deps.get(key) if isinstance(deps, dict) else None
 
+    def rust_crate_is_external(self, crate: str, module_qn: str) -> bool:
+        """Whether a use head provably names a crate outside the repo: a
+        toolchain crate, or a dependency the importer's manifest fetches from
+        outside the repo that no crate of the repo answers to."""
+        return crate in cs.RS_STDLIB_CRATES or (
+            not self.rust_head_is_repo_crate(crate)
+            and not self.rust_head_is_member_dep(crate, module_qn)
+            and self.rust_head_is_external_dep(crate, module_qn)
+        )
+
     def rust_head_is_repo_crate(self, head: str) -> bool:
         """Whether this use head names a lib crate the repo itself holds.
 
