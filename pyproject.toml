@@ -85,7 +85,7 @@ dependencies = [
     # Windows x64, and has no sdist, so other platforms cannot install cgr.
     # The floor is the crate version this code was written against, raised
     # with each crate release.
-    "cgr-graph-rs>=0.1.7,<0.2",
+    "cgr-graph-rs>=0.1.8,<0.2",
 ]
 
 [project.scripts]
