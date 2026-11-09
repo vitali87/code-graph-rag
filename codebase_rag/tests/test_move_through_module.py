@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.editing.move import Mover, MoveRefused, move
+from codebase_rag.editing.move import MoveRefused, move
 from codebase_rag.editing.transaction import load_history
 from codebase_rag.tests.test_move_op import PROJECT, _index, _materialise
 from codebase_rag.tests.test_move_safety import _python
@@ -233,20 +233,75 @@ def test_a_binding_the_caller_already_has_is_reused(temp_repo: Path) -> None:
     assert run.stdout.strip() == "12.0"
 
 
+PROXY = "\n\nclass Proxy:\n    discounted = staticmethod(lambda price: -price)\n"
+
+
 @pytest.mark.parametrize(
-    ("source", "found"),
+    ("use", "rewritten"),
     [
-        (b"x = util.discounted(1)", 4),
-        (b"x = myutil.discounted(1)", None),
-        (b"x = a.util.discounted(1)", None),
-        (b"x = _util.discounted(1)", None),
+        pytest.param("BASE = util.discounted(1.0)", True, id="module-scope"),
+        pytest.param(
+            "class Cart:\n    util = Proxy\n    RESULT = util.discounted(1.0)",
+            False,
+            id="class-body-binds-it",
+        ),
+        pytest.param(
+            "class Cart:\n    util = Proxy\n\n"
+            "    def total(self):\n        return util.discounted(1.0)",
+            True,
+            id="method-skips-class-scope",
+        ),
+        pytest.param(
+            "DOUBLE = [util.discounted(1.0) for util in [Proxy]]",
+            False,
+            id="comprehension-binds-it",
+        ),
+        pytest.param(
+            "DOUBLE = [p for p in util.discounted(1.0) or [1]]",
+            True,
+            id="first-iterable-is-outside",
+        ),
+        pytest.param(
+            "def total(util=Proxy):\n    return util.discounted(1.0)",
+            False,
+            id="parameter-binds-it",
+        ),
+        pytest.param(
+            "def total():\n    f = util.discounted\n    return f(1.0)",
+            True,
+            id="reference-not-call",
+        ),
+        pytest.param(
+            "BASE = util.discounted(1.0)\nutil = Proxy", False, id="rebound-later"
+        ),
     ],
 )
-def test_only_the_whole_receiver_is_matched(source: bytes, found: int | None) -> None:
-    """`find` alone matched `util.discounted` inside `myutil.discounted`."""
-    start = source.index(b"discounted")
-    end = source.index(b"(")
-    assert (
-        Mover._qualified_use_at(source, start, end, b"util.discounted", "discounted")
-        == found
+def test_only_uses_that_reach_the_module_are_rewritten(
+    temp_repo: Path, use: str, rewritten: bool
+) -> None:
+    """The graph's call rows named `util.discounted()` in a class body or a
+    comprehension with its own `util`, and the move rewrote calls on
+    another object (Greptile). Sites are now found by Python's scoping."""
+    b = "from shop import util" + PROXY + "\n\n" + use + "\n"
+    root, store, updater = _shop(temp_repo, b)
+    report = _move(root, store, updater, dry_run=True)
+    assert ("+from shop import pricing\n" in report.diff) == rewritten
+    assert ("shop/b.py" in report.importers) == rewritten
+    # Left alone, the file is not touched at all.
+    assert ("shop/b.py" in report.diff) == rewritten
+
+
+def test_a_spaced_receiver_is_replaced_whole(temp_repo: Path) -> None:
+    """Assuming the receiver's length from its spelling left a stray `d`:
+    `shop.util .discounted` became `shop.pricing.discountedd` (Greptile)."""
+    b = "import shop.util\n\nTOTAL = shop.util .discounted(10.0)\n"
+    root, store, updater = _shop(temp_repo, b)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    assert (root / "shop/b.py").read_text() == (
+        "import shop.util\nimport shop.pricing\n\n"
+        "TOTAL = shop.pricing .discounted(10.0)\n"
     )
+    run = _python(root, "import shop.b; print(shop.b.TOTAL)")
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.strip() == "8.0"

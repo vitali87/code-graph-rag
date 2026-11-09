@@ -120,6 +120,8 @@ _PY_SCOPES = (
     ast.DictComp,
     ast.GeneratorExp,
 )
+_PY_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+_PY_NESTED_SCOPES = (*_PY_SCOPES, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 _PY_STAR = "*"
 _PY_ALL = "__all__"
 _PY_PRIVATE = "_"
@@ -353,42 +355,149 @@ def _dotted_name(node: ast.expr) -> str | None:
     return None
 
 
-def _module_scope_uses(
-    tree: ast.Module, source: bytes, name: str, receivers: set[str]
-) -> dict[str, set[int]]:
-    """Where code at module scope spells `<receiver>.<name>`, by receiver,
-    as the offset the receiver starts at.
+def _parameters(arguments: ast.arguments) -> set[str]:
+    every = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+    every += [a for a in (arguments.vararg, arguments.kwarg) if a is not None]
+    return {a.arg for a in every}
 
-    The graph has no call row for `TOTAL = pkg.util.helper()` or a call
-    in an `if __name__ == "__main__":` block, so those stayed on the old
-    module and the contract rolled the move back on the import they kept
-    (Greptile TREX). Function and lambda bodies are not walked: a local
-    there may shadow the receiver, and the graph's call rows cover them.
-    Decorators and defaults are, since they run at module scope.
+
+def _scope_locals(body: list[ast.stmt]) -> set[str]:
+    """What a function or class body binds in its own scope: everything it
+    assigns or imports, less what it declares `global`."""
+    bound: set[str] = set()
+    declared: set[str] = set()
+    for statement in body:
+        bound |= _py_bound(statement)
+        stack: list[ast.AST] = [statement]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, ast.Global):
+                declared.update(node.names)
+            elif not isinstance(node, _PY_NESTED_SCOPES):
+                stack.extend(ast.iter_child_nodes(node))
+    return bound - declared
+
+
+def _comprehension_targets(
+    node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
+) -> set[str]:
+    return {
+        n.id
+        for generator in node.generators
+        for n in ast.walk(generator.target)
+        if isinstance(n, ast.Name)
+    }
+
+
+def _module_attribute_uses(
+    tree: ast.Module, source: bytes, name: str, receivers: set[str]
+) -> dict[str, dict[int, int]]:
+    """Every `<receiver>.<name>` whose receiver resolves to the module's own
+    binding of it, by receiver, as the receiver's span: start to end.
+
+    The graph's call rows were the sites before, and they miss two ways:
+    no row at all for a call at module scope through a dotted path
+    (`TOTAL = pkg.util.helper()`, a `__main__` block; Greptile TREX), and
+    a row for `util.helper()` where a class body or a comprehension binds
+    its own `util` (Greptile). So the file is read with Python's scoping:
+    a function, lambda or comprehension that binds the receiver's first
+    name hides the module's for everything inside it, a class body only
+    for its own statements. A comprehension's first iterable and a
+    definition's decorators, defaults and bases run outside it. The span
+    is the receiver's, not a length taken from its spelling:
+    `pkg.util .helper` is valid Python.
     """
-    found: dict[str, set[int]] = {}
-    stack: list[ast.AST] = list(tree.body)
+    roots = {r.partition(cs.SEPARATOR_DOT)[0] for r in receivers}
+    found: dict[str, dict[int, int]] = {}
+    # (node, names hidden by enclosing functions, names hidden by the class
+    # body it sits directly in)
+    stack: list[tuple[ast.AST, frozenset[str], frozenset[str]]] = [
+        (n, frozenset(), frozenset()) for n in tree.body
+    ]
     while stack:
-        node = stack.pop()
-        if isinstance(node, ast.Lambda):
+        node, hidden, by_class = stack.pop()
+        outside = [(n, hidden, by_class) for n in _evaluated_outside(node)]
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+            inner = hidden | (
+                roots
+                & (
+                    _parameters(node.args)
+                    | (
+                        _scope_locals(node.body)
+                        if not isinstance(node, ast.Lambda)
+                        else set()
+                    )
+                )
+            )
+            body = [node.body] if isinstance(node, ast.Lambda) else node.body
+            stack += outside + [(n, inner, frozenset()) for n in body]
             continue
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            stack.extend(node.decorator_list)
-            stack.extend(node.args.defaults)
-            stack.extend(d for d in node.args.kw_defaults if d is not None)
+        if isinstance(node, ast.ClassDef):
+            own = frozenset(roots & _scope_locals(node.body))
+            stack += outside + [(n, hidden, own) for n in node.body]
+            continue
+        if isinstance(node, _PY_COMPREHENSIONS):
+            inner = hidden | (roots & _comprehension_targets(node))
+            first, *rest = node.generators
+            stack.append((first.iter, hidden, by_class))
+            inside: list[ast.AST] = [first.target, *first.ifs, *rest]
+            inside += [
+                n for n in ast.iter_child_nodes(node) if n not in node.generators
+            ]
+            stack += [(n, inner, frozenset()) for n in inside]
             continue
         if isinstance(node, ast.Attribute) and node.attr == name:
             spelled = _dotted_name(node.value)
-            if spelled in receivers:
-                found.setdefault(spelled, set()).add(
+            if (
+                spelled in receivers
+                and spelled.partition(cs.SEPARATOR_DOT)[0] not in hidden | by_class
+            ):
+                found.setdefault(spelled, {})[
                     line_col_to_byte(source, node.value.lineno, node.value.col_offset)
-                )
+                ] = _ast_span(source, node.value)[1]
                 continue
-        stack.extend(ast.iter_child_nodes(node))
+        stack += [(n, hidden, by_class) for n in ast.iter_child_nodes(node)]
     return found
 
 
-def _ast_span(source: bytes, node: ast.stmt) -> tuple[int, int]:
+def _evaluated_outside(node: ast.AST) -> list[ast.AST]:
+    """The parts of a definition that run in the scope around it."""
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+        arguments = node.args
+        parts: list[ast.AST] = [*arguments.defaults]
+        parts += [d for d in arguments.kw_defaults if d is not None]
+        if not isinstance(node, ast.Lambda):
+            parts += node.decorator_list
+        return parts
+    if isinstance(node, ast.ClassDef):
+        return [*node.decorator_list, *node.bases, *(k.value for k in node.keywords)]
+    return []
+
+
+def _rebound_elsewhere(
+    tree: ast.Module, text: str, root: str, own: ast.stmt | None
+) -> bool:
+    """Whether the module binds `root` other than by `own` (the import that
+    binds the old module to it) or a plain `import root.sub`, which binds
+    the same package: then a use of it at module scope may not reach the
+    old module, depending on which binding ran last."""
+    for statement in tree.body:
+        if statement is own:
+            continue
+        if isinstance(statement, ast.Import):
+            if any(
+                alias.asname == root
+                for alias in statement.names
+                if alias.asname is not None
+            ):
+                return True
+            continue
+        if root in _py_bound(statement):
+            return True
+    return root in _global_writes(text)
+
+
+def _ast_span(source: bytes, node: ast.stmt | ast.expr) -> tuple[int, int]:
     end_line = node.end_lineno or node.lineno
     end_col = node.end_col_offset if node.end_col_offset is not None else 0
     return (
@@ -421,15 +530,6 @@ def _drop_statement(
     if source[line_start:start].strip() or (rest and not rest.startswith(b"#")):
         return span, "pass"
     return (line_start, min(line_end + 1, len(source))), ""
-
-
-def _starts_name(source: bytes, at: int) -> bool:
-    """Whether a dotted name at `at` is not the tail of a longer one:
-    `myutil.f` and `x.util.f` do not spell `util.f`."""
-    if at == 0:
-        return True
-    before = source[at - 1 : at]
-    return not (before.isalnum() or before in (b"_", b".") or before[0] >= 0x80)
 
 
 def _py_bound(node: ast.AST) -> set[str]:
@@ -2299,61 +2399,50 @@ class Mover:
         longer had `helper`, so the contract rolled every such move back
         (Greptile TREX). It now goes through `_retarget_local_uses`.
 
-        The sites are the graph's call rows, plus what `_module_scope_uses`
-        finds in each importer of the old module: the graph records no call
-        made at module scope through a dotted path.
+        The graph names the files (callers and importers of the old
+        module); `_module_attribute_uses` finds the sites in each, by
+        Python's scoping rather than the graph's call rows.
         """
         if language != cs.SupportedLanguage.PYTHON:
             return set()
-        old_attr = f"{old_spelled}{cs.SEPARATOR_DOT}{name}".encode(cs.ENCODING_UTF8)
-        new_attr = f"{new_spelled}{cs.SEPARATOR_DOT}{name}"
-        sites: dict[str, set[tuple[int, int, int, int]]] = {}
-        for row in graph_query.callers(self.fetch_all, self.project, qn):
-            path, line, col = row["path"], row["line"], row["col"]
-            if not isinstance(path, str) or line is None or col is None:
-                continue
-            sites.setdefault(path, set()).add(
-                (line, col, row["end_line"] or line, row["end_col"] or col)
-            )
-        for row in graph_query.importers(self.fetch_all, self.project, old_module):
-            if isinstance(row["path"], str):
-                sites.setdefault(row["path"], set())
+        paths = {
+            row["path"]
+            for row in graph_query.callers(self.fetch_all, self.project, qn)
+            if isinstance(row["path"], str)
+        } | {
+            row["path"]
+            for row in graph_query.importers(self.fetch_all, self.project, old_module)
+            if isinstance(row["path"], str)
+        }
+        root = old_spelled.partition(cs.SEPARATOR_DOT)[0]
         touched: set[str] = set()
-        for path, spans in sorted(sites.items()):
+        for path in sorted(paths):
             try:
                 source = patcher.source(path)
             except PatcherError:
                 continue
             tree = _py_tree(source)
-            module_locals = (
-                _module_locals(tree, path, old_spelled) if tree is not None else {}
-            )
-            dotted: set[int] = set()
-            local_uses: dict[str, set[int]] = {}
-            if tree is not None:
-                receivers = set(module_locals)
-                text = source.decode(cs.ENCODING_UTF8, errors="replace")
-                if _module_bound(text, old_spelled):
-                    receivers.add(old_spelled)
-                found = _module_scope_uses(tree, source, name, receivers)
-                dotted |= found.pop(old_spelled, set())
-                for local, ats in found.items():
-                    local_uses.setdefault(local, set()).update(ats)
-            for line, col, end_line, end_col in sorted(spans):
-                start = line_col_to_byte(source, line, col)
-                end = line_col_to_byte(source, end_line, end_col)
-                at = self._qualified_use_at(source, start, end, old_attr, name)
-                if at is not None:
-                    dotted.add(at)
-                    continue
-                for local in module_locals:
-                    attr = f"{local}{cs.SEPARATOR_DOT}{name}".encode(cs.ENCODING_UTF8)
-                    at = self._qualified_use_at(source, start, end, attr, name)
-                    if at is not None:
-                        local_uses.setdefault(local, set()).add(at)
-                        break
-            for at in sorted(dotted):
-                patcher.replace_span(path, (at, at + len(old_attr)), new_attr)
+            if tree is None:
+                continue
+            text = source.decode(cs.ENCODING_UTF8, errors="replace")
+            module_locals = _module_locals(tree, path, old_spelled)
+            # A name the module also binds some other way may not hold the
+            # old module where it is used, so it is left alone.
+            receivers = {
+                local
+                for local, statement in module_locals.items()
+                if not _rebound_elsewhere(tree, text, local, statement)
+            }
+            if _module_bound(text, root) and not _rebound_elsewhere(
+                tree, text, root, None
+            ):
+                receivers.add(old_spelled)
+            found = _module_attribute_uses(tree, source, name, receivers)
+            # Receiver spans, start to end, of `pkg.util` in `pkg.util.helper`.
+            dotted = found.pop(old_spelled, {})
+            local_uses = {local: set(spans) for local, spans in found.items()}
+            for at, end in sorted(dotted.items()):
+                patcher.replace_span(path, (at, end), new_spelled)
             if dotted:
                 self._import_module(patcher, path, source, new_spelled)
             if local_uses:
@@ -2457,27 +2546,6 @@ class Mover:
             return local in taken or (listed and _star_exports(source, local))
 
         return exported
-
-    @staticmethod
-    def _qualified_use_at(
-        source: bytes, start: int, end: int, old_attr: bytes, name: str
-    ) -> int | None:
-        """Where the call site spanning `start`..`end` spells `old_attr`
-        (`pkg.util.helper`), or None when it does not."""
-        # A member call's site starts at its name (#3166), past the
-        # module path it is reached through. Checked first: a search of
-        # that span finds an inner call (`util.f(util.f(1))`) instead.
-        at = start + len(name.encode(cs.ENCODING_UTF8)) - len(old_attr)
-        if (
-            at >= 0
-            and source[at : at + len(old_attr)] == old_attr
-            and _starts_name(source, at)
-        ):
-            return at
-        at = source.find(old_attr, start, end)
-        while at >= 0 and not _starts_name(source, at):
-            at = source.find(old_attr, at + 1, end)
-        return at if at >= 0 else None
 
     def _import_module(
         self, patcher: Patcher, path: str, source: bytes, module: str

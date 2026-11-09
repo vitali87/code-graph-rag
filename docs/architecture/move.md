@@ -42,10 +42,13 @@ optional `keep_alias`, `dry_run` and `project`.
    `pkg.util.helper(...)` becomes `pkg.core.helper(...)` with
    `import pkg.core`, and `util.helper(...)` (after `from pkg import util`
    or `import pkg.util as util`) becomes `core.helper(...)` with
-   `from pkg import core`. Calls at module scope (an assignment, an
-   `if __name__ == "__main__":` block) are found by reading each importer
-   of the old module, since the graph records no call row for them. An
-   import of the old module left with no use is
+   `from pkg import core`. The graph names the files (callers and
+   importers of the old module); the uses in each are found by reading it
+   with Python's scoping, since the graph has no call row for a call at
+   module scope through a dotted path and does not see a class body or a
+   comprehension that binds its own `util`. Uses that are not calls
+   (`f = util.helper`) follow too, and a name the module also binds some
+   other way is left alone. An import of the old module left with no use is
    dropped, unless the file exports that name (its `__all__`, another
    module importing it by name or with `*`); a caller that already uses
    the name `core` for something else
