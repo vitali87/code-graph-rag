@@ -615,7 +615,8 @@ def test_a_class_whose_method_respells_a_relative_import_moves(
     store, updater = _index(root)
     report = _move(root, store, updater, qn=f"{PROJECT}.pkg.sub.util.Helper")
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok
+    assert report.verdict is not None
+    assert report.verdict.ok
     probe = _python(
         root,
         "from pkg.core import Helper; print(Helper().run(), Helper.Inner().go())",

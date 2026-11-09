@@ -38,6 +38,12 @@ def _shop(temp_repo: Path, b: str, **extra: str):
     return root, store, updater
 
 
+def _diff(report) -> str:
+    # Windows writes the fixtures with CRLF, and a diff line keeps its own
+    # ending; the assertions are about the text.
+    return report.diff.replace("\r\n", "\n")
+
+
 def _move(root: Path, store, updater, **kw):
     return move(
         root,
@@ -74,7 +80,8 @@ def test_a_call_through_the_module_follows_the_move(
     assert preview.message == cs.MOVE_PLANNED.format(importers=2, unchanged=0)
     report = _move(root, store, updater)
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok
+    assert report.verdict is not None
+    assert report.verdict.ok
     after = (root / "shop/b.py").read_text()
     new_receiver = "shop.pricing" if receiver == "shop.util" else "pricing"
     assert after == expected + CALL.format(receiver=new_receiver)
@@ -167,9 +174,9 @@ def test_a_module_name_still_used_keeps_its_import(temp_repo: Path) -> None:
     root, store, updater = _shop(temp_repo, b)
     report = _move(root, store, updater, dry_run=True)
     assert "shop/b.py" in report.importers
-    assert "+from shop import pricing\n" in report.diff
-    assert "+    return pricing.discounted(10.0) + util.TAX_RATE\n" in report.diff
-    assert "-from shop import util\n" not in report.diff
+    assert "+from shop import pricing\n" in _diff(report)
+    assert "+    return pricing.discounted(10.0) + util.TAX_RATE\n" in _diff(report)
+    assert "-from shop import util\n" not in _diff(report)
 
 
 @pytest.mark.parametrize(
@@ -197,8 +204,8 @@ def test_a_module_name_the_caller_exports_keeps_its_import(
     b = "from shop import util\n" + head + CALL.format(receiver="util")
     root, store, updater = _shop(temp_repo, b, **extra)
     report = _move(root, store, updater, dry_run=True)
-    assert "+    return pricing.discounted(10.0)\n" in report.diff
-    assert ("-from shop import util\n" not in report.diff) == kept
+    assert "+    return pricing.discounted(10.0)\n" in _diff(report)
+    assert ("-from shop import util\n" not in _diff(report)) == kept
 
 
 def test_a_name_the_caller_already_uses_is_refused(temp_repo: Path) -> None:
@@ -290,10 +297,10 @@ def test_only_uses_that_reach_the_module_are_rewritten(
     b = "from shop import util" + PROXY + "\n\n" + use + "\n"
     root, store, updater = _shop(temp_repo, b)
     report = _move(root, store, updater, dry_run=True)
-    assert ("+from shop import pricing\n" in report.diff) == rewritten
+    assert ("+from shop import pricing\n" in _diff(report)) == rewritten
     assert ("shop/b.py" in report.importers) == rewritten
     # Left alone, the file is not touched at all.
-    assert ("shop/b.py" in report.diff) == rewritten
+    assert ("shop/b.py" in _diff(report)) == rewritten
 
 
 def test_a_spaced_receiver_is_replaced_whole(temp_repo: Path) -> None:

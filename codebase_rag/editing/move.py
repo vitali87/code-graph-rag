@@ -122,6 +122,9 @@ _PY_SCOPES = (
 )
 _PY_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 _PY_NESTED_SCOPES = (*_PY_SCOPES, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+# A node to walk, the receiver names an enclosing function, lambda or
+# comprehension hides there, and those the class body it sits in hides.
+_Scoped = tuple[ast.AST, frozenset[str], frozenset[str]]
 _PY_STAR = "*"
 _PY_ALL = "__all__"
 _PY_PRIVATE = "_"
@@ -328,21 +331,23 @@ def _module_locals(
     """
     found: dict[str, ast.Import | ast.ImportFrom] = {}
     for node in tree.body:
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.asname and alias.name == module:
-                    found[alias.asname] = node
-        elif isinstance(node, ast.ImportFrom):
-            base = _absolute_from(node, path)
-            if base is None:
-                continue
-            for alias in node.names:
-                spelled = (
-                    f"{base}{cs.SEPARATOR_DOT}{alias.name}" if base else alias.name
-                )
-                if spelled == module:
-                    found[alias.asname or alias.name] = node
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            for local in _locals_bound_to(node, path, module):
+                found[local] = node
     return found
+
+
+def _locals_bound_to(
+    node: ast.Import | ast.ImportFrom, path: str, module: str
+) -> list[str]:
+    """The names one import statement binds to `module` itself."""
+    if isinstance(node, ast.Import):
+        return [a.asname for a in node.names if a.asname and a.name == module]
+    base = _absolute_from(node, path)
+    if base is None:
+        return []
+    prefix = f"{base}{cs.SEPARATOR_DOT}" if base else ""
+    return [a.asname or a.name for a in node.names if f"{prefix}{a.name}" == module]
 
 
 def _dotted_name(node: ast.expr) -> str | None:
@@ -399,65 +404,71 @@ def _module_attribute_uses(
     no row at all for a call at module scope through a dotted path
     (`TOTAL = pkg.util.helper()`, a `__main__` block; Greptile TREX), and
     a row for `util.helper()` where a class body or a comprehension binds
-    its own `util` (Greptile). So the file is read with Python's scoping:
-    a function, lambda or comprehension that binds the receiver's first
-    name hides the module's for everything inside it, a class body only
-    for its own statements. A comprehension's first iterable and a
-    definition's decorators, defaults and bases run outside it. The span
-    is the receiver's, not a length taken from its spelling:
-    `pkg.util .helper` is valid Python.
+    its own `util` (Greptile). So the file is read with Python's scoping
+    (`_scoped_children`). The span is the receiver's, not a length taken
+    from its spelling: `pkg.util .helper` is valid Python.
     """
     roots = {r.partition(cs.SEPARATOR_DOT)[0] for r in receivers}
     found: dict[str, dict[int, int]] = {}
-    # (node, names hidden by enclosing functions, names hidden by the class
-    # body it sits directly in)
-    stack: list[tuple[ast.AST, frozenset[str], frozenset[str]]] = [
-        (n, frozenset(), frozenset()) for n in tree.body
-    ]
+    stack: list[_Scoped] = [(n, frozenset(), frozenset()) for n in tree.body]
     while stack:
         node, hidden, by_class = stack.pop()
-        outside = [(n, hidden, by_class) for n in _evaluated_outside(node)]
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
-            inner = hidden | (
-                roots
-                & (
-                    _parameters(node.args)
-                    | (
-                        _scope_locals(node.body)
-                        if not isinstance(node, ast.Lambda)
-                        else set()
-                    )
-                )
-            )
-            body = [node.body] if isinstance(node, ast.Lambda) else node.body
-            stack += outside + [(n, inner, frozenset()) for n in body]
+        nested = _scoped_children(node, roots, hidden, by_class)
+        if nested is not None:
+            stack += nested
             continue
-        if isinstance(node, ast.ClassDef):
-            own = frozenset(roots & _scope_locals(node.body))
-            stack += outside + [(n, hidden, own) for n in node.body]
+        spelled = _receiver_of(node, name)
+        if (
+            isinstance(node, ast.Attribute)
+            and spelled in receivers
+            and spelled.partition(cs.SEPARATOR_DOT)[0] not in hidden | by_class
+        ):
+            start = line_col_to_byte(source, node.value.lineno, node.value.col_offset)
+            found.setdefault(spelled, {})[start] = _ast_span(source, node.value)[1]
             continue
-        if isinstance(node, _PY_COMPREHENSIONS):
-            inner = hidden | (roots & _comprehension_targets(node))
-            first, *rest = node.generators
-            stack.append((first.iter, hidden, by_class))
-            inside: list[ast.AST] = [first.target, *first.ifs, *rest]
-            inside += [
-                n for n in ast.iter_child_nodes(node) if n not in node.generators
-            ]
-            stack += [(n, inner, frozenset()) for n in inside]
-            continue
-        if isinstance(node, ast.Attribute) and node.attr == name:
-            spelled = _dotted_name(node.value)
-            if (
-                spelled in receivers
-                and spelled.partition(cs.SEPARATOR_DOT)[0] not in hidden | by_class
-            ):
-                found.setdefault(spelled, {})[
-                    line_col_to_byte(source, node.value.lineno, node.value.col_offset)
-                ] = _ast_span(source, node.value)[1]
-                continue
         stack += [(n, hidden, by_class) for n in ast.iter_child_nodes(node)]
     return found
+
+
+def _receiver_of(node: ast.AST, name: str) -> str | None:
+    """`pkg.util` for the expression `pkg.util.<name>`, None otherwise."""
+    if isinstance(node, ast.Attribute) and node.attr == name:
+        return _dotted_name(node.value)
+    return None
+
+
+def _scoped_children(
+    node: ast.AST, roots: set[str], hidden: frozenset[str], by_class: frozenset[str]
+) -> list[_Scoped] | None:
+    """What a node that opens a scope hands on, each part with the receiver
+    names hidden where it runs; None for a node that opens none.
+
+    A function, lambda or comprehension that binds a name hides the
+    module's for everything inside it; a class body only for its own
+    statements, since a method skips the class scope. A comprehension's
+    first iterable, and a definition's decorators, defaults, annotations
+    and bases, run in the scope around it.
+    """
+    outside: list[_Scoped] = [(n, hidden, by_class) for n in _evaluated_outside(node)]
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+        bound = _parameters(node.args) | _scope_locals(node.body)
+        inner = hidden | (roots & bound)
+        return outside + [(n, inner, frozenset()) for n in node.body]
+    if isinstance(node, ast.Lambda):
+        inner = hidden | (roots & _parameters(node.args))
+        return [*outside, (node.body, inner, frozenset())]
+    if isinstance(node, ast.ClassDef):
+        own = frozenset(roots & _scope_locals(node.body))
+        return outside + [(n, hidden, own) for n in node.body]
+    if isinstance(node, _PY_COMPREHENSIONS):
+        inner = hidden | (roots & _comprehension_targets(node))
+        first, *rest = node.generators
+        inside: list[ast.AST] = [first.target, *first.ifs, *rest]
+        inside += [n for n in ast.iter_child_nodes(node) if n not in node.generators]
+        return [(first.iter, hidden, by_class)] + [
+            (n, inner, frozenset()) for n in inside
+        ]
+    return None
 
 
 def _evaluated_outside(node: ast.AST) -> list[ast.AST]:
@@ -482,6 +493,82 @@ def _evaluated_outside(node: ast.AST) -> list[ast.AST]:
     if isinstance(node, ast.ClassDef):
         return [*node.decorator_list, *node.bases, *(k.value for k in node.keywords)]
     return []
+
+
+def _module_receivers(
+    tree: ast.Module, source: bytes, path: str, old_spelled: str
+) -> tuple[dict[str, ast.Import | ast.ImportFrom], set[str]]:
+    """The names the file binds to the old module, and those of them (plus
+    the dotted path through a plain `import`) that can be rewritten.
+
+    A name the module also binds some other way may not hold the old
+    module where it is used, so it is left alone.
+    """
+    text = source.decode(cs.ENCODING_UTF8, errors="replace")
+    module_locals = _module_locals(tree, path, old_spelled)
+    receivers = {
+        local
+        for local, statement in module_locals.items()
+        if not _rebound_elsewhere(tree, text, local, statement)
+    }
+    root = old_spelled.partition(cs.SEPARATOR_DOT)[0]
+    if _module_bound(text, root) and not _rebound_elsewhere(tree, text, root, None):
+        receivers.add(old_spelled)
+    return module_locals, receivers
+
+
+def _destination_binding(
+    tree: ast.Module,
+    source: bytes,
+    path: str,
+    new_spelled: str,
+    dropped: list[str],
+    name: str,
+) -> tuple[str, str | None]:
+    """The name a file reaches the destination by, and the import that
+    binds it when the file has none yet.
+
+    The file's own binding of the destination is reused; else its last
+    segment is imported by name. A name the file uses for anything else
+    is refused rather than shadowed, unless it is a binding of the old
+    module the move drops.
+    """
+    bound = _module_locals(tree, path, new_spelled)
+    if bound:
+        return next(iter(bound)), None
+    parent, _dot, leaf = new_spelled.rpartition(cs.SEPARATOR_DOT)
+    text = source.decode(cs.ENCODING_UTF8, errors="replace")
+    if leaf not in dropped and _uses(text, leaf):
+        raise MoveRefused(
+            cs.MOVE_MODULE_NAME_TAKEN.format(path=path, name=name, local=leaf)
+        )
+    return leaf, f"from {parent} import {leaf}" if parent else f"import {leaf}"
+
+
+def _drop_bindings(
+    patcher: Patcher,
+    path: str,
+    source: bytes,
+    module_locals: dict[str, ast.Import | ast.ImportFrom],
+    dropped: list[str],
+    statement: str | None,
+) -> str | None:
+    """Remove the `dropped` bindings of the old module, putting `statement`
+    in the place of the first import left empty; returns it when no such
+    place was found."""
+    # One edit per statement: `from pkg import util, util as u` binds two.
+    nodes = {id(module_locals[local]): module_locals[local] for local in dropped}
+    for node in nodes.values():
+        span = _ast_span(source, node)
+        kept = [a for a in node.names if (a.asname or a.name) not in dropped]
+        if kept:
+            patcher.replace_span(path, span, _py_import_text(node, kept))
+        elif statement is not None:
+            patcher.replace_span(path, span, statement)
+            statement = None
+        else:
+            patcher.replace_span(path, *_drop_statement(source, span))
+    return statement
 
 
 def _rebound_elsewhere(
@@ -1208,7 +1295,7 @@ class Mover:
         self._reshaped = False
         # What the moved definition holds, as suffixes of its name, when
         # `_reshaped`: those pairs are declared reshaped too.
-        self._nested: tuple[str, ...] = ()
+        self._inner_suffixes: tuple[str, ...] = ()
 
     def _parse(
         self, path: str, source: bytes
@@ -1260,7 +1347,9 @@ class Mover:
         # word: naming the class alone left the method unpaired, so the
         # contract read it as removed and added and undid a correct move
         # (Greptile).
-        self._nested = self._nested_suffixes(qn, old_path) if self._reshaped else ()
+        self._inner_suffixes = (
+            self._nested_suffixes(qn, old_path) if self._reshaped else ()
+        )
         # A JS definition exported by its own `export { helper }` lost the
         # export with the cut: the destination did not export it, and every
         # rewritten importer (and the old module's import of it back)
@@ -2415,61 +2504,57 @@ class Mover:
         """
         if language != cs.SupportedLanguage.PYTHON:
             return set()
-        paths = {
-            row["path"]
-            for row in graph_query.callers(self.fetch_all, self.project, qn)
-            if isinstance(row["path"], str)
-        } | {
-            row["path"]
-            for row in graph_query.importers(self.fetch_all, self.project, old_module)
-            if isinstance(row["path"], str)
+        return {
+            path
+            for path in self._module_users(qn, old_module)
+            if self._retarget_file(patcher, path, old_spelled, new_spelled, name)
         }
-        root = old_spelled.partition(cs.SEPARATOR_DOT)[0]
-        touched: set[str] = set()
-        for path in sorted(paths):
-            try:
-                source = patcher.source(path)
-            except PatcherError:
-                continue
-            tree = _py_tree(source)
-            if tree is None:
-                continue
-            text = source.decode(cs.ENCODING_UTF8, errors="replace")
-            module_locals = _module_locals(tree, path, old_spelled)
-            # A name the module also binds some other way may not hold the
-            # old module where it is used, so it is left alone.
-            receivers = {
-                local
-                for local, statement in module_locals.items()
-                if not _rebound_elsewhere(tree, text, local, statement)
-            }
-            if _module_bound(text, root) and not _rebound_elsewhere(
-                tree, text, root, None
-            ):
-                receivers.add(old_spelled)
-            found = _module_attribute_uses(tree, source, name, receivers)
-            # Receiver spans, start to end, of `pkg.util` in `pkg.util.helper`.
-            dotted = found.pop(old_spelled, {})
-            local_uses = {local: set(spans) for local, spans in found.items()}
-            for at, end in sorted(dotted.items()):
-                patcher.replace_span(path, (at, end), new_spelled)
-            if dotted:
-                self._import_module(patcher, path, source, new_spelled)
-            if local_uses:
-                assert tree is not None
-                self._retarget_local_uses(
-                    patcher,
-                    path,
-                    source,
-                    tree,
-                    local_uses,
-                    module_locals,
-                    new_spelled,
-                    name,
-                )
-            if dotted or local_uses:
-                touched.add(path)
-        return touched
+
+    def _module_users(self, qn: str, old_module: str) -> list[str]:
+        """The files that call `qn` or import the old module."""
+        rows = [
+            *graph_query.callers(self.fetch_all, self.project, qn),
+            *graph_query.importers(self.fetch_all, self.project, old_module),
+        ]
+        return sorted({r["path"] for r in rows if isinstance(r["path"], str)})
+
+    def _retarget_file(
+        self,
+        patcher: Patcher,
+        path: str,
+        old_spelled: str,
+        new_spelled: str,
+        name: str,
+    ) -> bool:
+        """Rewrite one file's uses of the moved name through the old module;
+        whether there were any."""
+        try:
+            source = patcher.source(path)
+        except PatcherError:
+            return False
+        tree = _py_tree(source)
+        if tree is None:
+            return False
+        module_locals, receivers = _module_receivers(tree, source, path, old_spelled)
+        found = _module_attribute_uses(tree, source, name, receivers)
+        # Receiver spans, start to end, of `pkg.util` in `pkg.util.helper`.
+        dotted = found.pop(old_spelled, {})
+        for at, end in sorted(dotted.items()):
+            patcher.replace_span(path, (at, end), new_spelled)
+        if dotted:
+            self._import_module(patcher, path, source, new_spelled)
+        if found:
+            self._retarget_local_uses(
+                patcher,
+                path,
+                source,
+                tree,
+                {local: set(spans) for local, spans in found.items()},
+                module_locals,
+                new_spelled,
+                name,
+            )
+        return bool(dotted or found)
 
     def _retarget_local_uses(
         self,
@@ -2502,36 +2587,15 @@ class Mover:
             for local, ats in local_uses.items()
             if names.count(local) == len(ats) and not exported(local)
         ]
-        bound = _module_locals(tree, path, new_spelled)
-        parent, _dot, leaf = new_spelled.rpartition(cs.SEPARATOR_DOT)
-        statement: str | None = None
-        receiver = next(iter(bound), leaf)
-        if not bound:
-            if leaf not in dropped and _uses(
-                source.decode(cs.ENCODING_UTF8, errors="replace"), leaf
-            ):
-                raise MoveRefused(
-                    cs.MOVE_MODULE_NAME_TAKEN.format(path=path, name=name, local=leaf)
-                )
-            statement = f"from {parent} import {leaf}" if parent else f"import {leaf}"
+        receiver, statement = _destination_binding(
+            tree, source, path, new_spelled, dropped, name
+        )
         for local, ats in local_uses.items():
             for at in sorted(ats):
                 patcher.replace_span(path, (at, at + len(local)), receiver)
-        # One edit per statement: `from pkg import util, util as u` binds two.
-        statements = {
-            id(module_locals[local]): module_locals[local] for local in dropped
-        }
-        for node in statements.values():
-            span = _ast_span(source, node)
-            kept = [a for a in node.names if (a.asname or a.name) not in dropped]
-            if kept:
-                patcher.replace_span(path, span, _py_import_text(node, kept))
-            elif statement is not None:
-                # The new import takes the old one's place.
-                patcher.replace_span(path, span, statement)
-                statement = None
-            else:
-                patcher.replace_span(path, *_drop_statement(source, span))
+        statement = _drop_bindings(
+            patcher, path, source, module_locals, dropped, statement
+        )
         if statement is not None:
             _language, root = self._parse(path, source)
             at = _import_block_end(source, root)
@@ -2638,7 +2702,7 @@ class Mover:
                         f"{renamed[0]}{cs.SEPARATOR_DOT}{suffix}",
                         f"{renamed[1]}{cs.SEPARATOR_DOT}{suffix}",
                     )
-                    for suffix in self._nested
+                    for suffix in self._inner_suffixes
                 ),
             )
             if self._reshaped
