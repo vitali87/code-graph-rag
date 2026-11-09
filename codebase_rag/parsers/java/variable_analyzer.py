@@ -111,6 +111,7 @@ class JavaVariableAnalyzerMixin:
     ast_cache: ASTCacheProtocol
     module_qn_to_file_path: dict[str, Path]
     class_inheritance: dict[str, list[str]]
+    class_owner_module: dict[str, str]
     _lookup_cache: dict[str, str | None]
     _lookup_in_progress: set[str]
     # Annotation only, never a def: this mixin precedes JavaMethodResolverMixin
@@ -639,10 +640,21 @@ class JavaVariableAnalyzerMixin:
 
     def _is_declaring_module(self, class_qn: str, module_qn: str) -> bool:
         # True when `module_qn` is the file that declares the top-level
-        # class of `class_qn`: the longest module qn prefixing the key.
-        # Walk the key's own prefixes from longest to shortest; the first
-        # module found is the declaring one, so a same-named file beside
-        # the real file's directory never stands in for it.
+        # class of `class_qn`. The owner record written at class ingest
+        # names that file (issue #1772): a class qn embeds its package
+        # path, so the longest module qn prefixing the key need not be
+        # the declaring file — `com/example/Helpers.java` declares
+        # `Outer.A` while `com/example/Helpers/Outer.java` is a separate
+        # package's file whose module qn is the longer prefix (Greptile
+        # P1 on #3525). Trust the record when it exists; a class carried
+        # over by a rehydrate has none, so fall back to the longest
+        # module prefix there, as the prune does (graph_updater
+        # `_prune_class_keyed_maps`). Without a record, the first module
+        # found walking the key's prefixes from longest to shortest is
+        # the declaring one, so a same-named file beside the real file's
+        # directory never stands in for it.
+        if (owner := self.class_owner_module.get(class_qn)) is not None:
+            return owner == module_qn
         segments = class_qn.split(cs.SEPARATOR_DOT)
         for end in range(len(segments) - 1, 0, -1):
             candidate = cs.SEPARATOR_DOT.join(segments[:end])

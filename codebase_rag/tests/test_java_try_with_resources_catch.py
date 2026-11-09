@@ -495,6 +495,63 @@ def test_multi_catch_qualified_nested_other_file_stem_resolves(
     )
 
 
+def test_multi_catch_qualified_nested_longer_module_is_other_package(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Greptile P1 on #3525: `com/example/Helpers.java` declares `Outer.A`
+    # and `Outer.B`, while `com/example/Helpers/Outer.java` belongs to the
+    # separate package `com.example.Helpers`. Both layouts are legal, and
+    # the longer module qn prefixing the stored class name is the
+    # unrelated file's, so the longest-prefix rule rejects the real
+    # declaring file and the qualified multi-catch loses its type and its
+    # CALLS edges.
+    root = temp_repo / "jmulticatchlongmod"
+    _write_pkg(
+        root,
+        {
+            "BaseError.java": (
+                "package com.example;\n"
+                "public class BaseError extends RuntimeException {\n"
+                '  public String detail() { return "base"; }\n'
+                "}\n"
+            ),
+            "Helpers.java": (
+                "package com.example;\n"
+                "class Outer {\n"
+                "  public static class A extends BaseError {}\n"
+                "  public static class B extends BaseError {}\n"
+                "}\n"
+            ),
+            "ErrorDecoy.java": _ERROR_DECOY,
+            "Main.java": (
+                "package com.example;\n"
+                "public class Main {\n"
+                "  String multi() {\n"
+                "    try {\n"
+                "      throw new Outer.A();\n"
+                "    } catch (com.example.Outer.A | com.example.Outer.B e) {\n"
+                "      return e.detail();\n"
+                "    }\n"
+                "  }\n"
+                "}\n"
+            ),
+        },
+    )
+    helpers_dir = root / "com" / "example" / "Helpers"
+    helpers_dir.mkdir()
+    (helpers_dir / "Outer.java").write_text(
+        "package com.example.Helpers;\npublic class Outer {}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    _assert_calls(
+        _calls(mock_ingestor),
+        ".Main.multi()",
+        ".BaseError.detail()",
+        ".ErrorDecoy.detail()",
+    )
+
+
 def test_multi_catch_qualified_nested_wrong_package_never_binds(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

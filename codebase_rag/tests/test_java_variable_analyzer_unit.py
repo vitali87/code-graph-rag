@@ -1552,6 +1552,67 @@ class TestInheritanceKeyFor:
             == "jX.com.example.Helpers.Outer.B"
         )
 
+    def test_qualified_nested_name_longer_module_is_other_package(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Greptile P1 on #3525: `com/example/Helpers.java` declares
+        # `Outer.A` while `com/example/Helpers/Outer.java` belongs to the
+        # separate package `com.example.Helpers`, so the longer module qn
+        # prefixing the key is the unrelated file's. The ingest owner
+        # record names the declaring file; the longest-prefix rule alone
+        # rejects it.
+        engine.class_inheritance = {
+            "jX.com.example.Helpers.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.com.example.Helpers.Outer.B": ["jX.com.example.Base.Base"],
+            "jX.com.example.Helpers.Outer.Outer": [],
+            "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+        engine.class_owner_module = {
+            "jX.com.example.Helpers.Outer.A": "jX.com.example.Helpers",
+            "jX.com.example.Helpers.Outer.B": "jX.com.example.Helpers",
+            "jX.com.example.Helpers.Outer.Outer": "jX.com.example.Helpers.Outer",
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.example.Helpers": Path("/test/repo/com/example/Helpers.java"),
+            "jX.com.example.Helpers.Outer": Path(
+                "/test/repo/com/example/Helpers/Outer.java"
+            ),
+            "jX.com.example.Base": Path("/test/repo/com/example/Base.java"),
+        }
+
+        assert (
+            self._key_for(engine, "com.example.Outer.A")
+            == "jX.com.example.Helpers.Outer.A"
+        )
+        assert (
+            self._key_for(engine, "com.example.Outer.B")
+            == "jX.com.example.Helpers.Outer.B"
+        )
+
+    def test_qualified_nested_name_owner_is_longer_module_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # The same layout with the owner record naming the longer module:
+        # the class is a top-level class of `Helpers/Outer.java` (package
+        # `com.example.Helpers`), so a written `com.example.Outer.A` must
+        # not bind to it.
+        engine.class_inheritance = {
+            "jX.com.example.Helpers.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+        engine.class_owner_module = {
+            "jX.com.example.Helpers.Outer.A": "jX.com.example.Helpers.Outer",
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.example.Helpers": Path("/test/repo/com/example/Helpers.java"),
+            "jX.com.example.Helpers.Outer": Path(
+                "/test/repo/com/example/Helpers/Outer.java"
+            ),
+            "jX.com.example.Base": Path("/test/repo/com/example/Base.java"),
+        }
+
+        assert self._key_for(engine, "com.example.Outer.A") is None
+
     def test_qualified_nested_name_wrong_package_returns_none(
         self, engine: JavaTypeInferenceEngine
     ) -> None:

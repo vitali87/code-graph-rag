@@ -78,6 +78,7 @@ class TypeInferenceEngine:
         "csharp_call_shapes",
         "csharp_class_generic_arity",
         "csharp_class_owner_module",
+        "class_owner_module",
         "csharp_class_namespaced",
         "csharp_namespaced_qns",
         "csharp_method_return_types",
@@ -135,6 +136,7 @@ class TypeInferenceEngine:
         csharp_call_shapes: dict[str, CSharpCallShape] | None = None,
         csharp_class_generic_arity: dict[str, int] | None = None,
         csharp_class_owner_module: dict[str, str] | None = None,
+        class_owner_module: dict[str, str] | None = None,
         csharp_class_namespaced: dict[str, str] | None = None,
         csharp_namespaced_qns: dict[str, set[str]] | None = None,
         csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
@@ -240,6 +242,13 @@ class TypeInferenceEngine:
         # exception was SWALLOWED -- the arity map is populated earlier, so a
         # probe checking only that map still looked correct (#1769 review).
         self.csharp_class_owner_module = _shared(csharp_class_owner_module, dict)
+        # Shared reference (as with class_field_types): {class qn: module
+        # qn of the file that declared it}, written at class ingest
+        # (issue #1772) and read by the Java variable analyzer to tell
+        # the file that declares a nested class from a same-named file
+        # in a subpackage (Greptile P1 on #3525). Forwarded to the Java
+        # engine below.
+        self.class_owner_module = _shared(class_owner_module, dict)
         self.csharp_class_namespaced = _shared(csharp_class_namespaced, dict)
         self.csharp_namespaced_qns = _shared(csharp_namespaced_qns, dict)
         self.csharp_method_return_types = _shared(csharp_method_return_types, dict)
@@ -302,6 +311,7 @@ class TypeInferenceEngine:
                 module_qn_to_file_path=self.module_qn_to_file_path,
                 class_inheritance=self.class_inheritance,
                 simple_name_lookup=self.simple_name_lookup,
+                class_owner_module=self.class_owner_module,
                 java_call_sites=self.java_call_sites,
                 java_external_sites=self.java_external_sites,
                 function_locations=self.function_locations,
