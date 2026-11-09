@@ -545,16 +545,20 @@ def _js_unary_operator(expression: Node) -> str | None:
     return safe_decode_text(operator) if operator is not None else None
 
 
-def _is_create_require(value: Node | None, factories: frozenset[str]) -> bool:
-    # `createRequire(import.meta.url)`, the same under a name the module
-    # imports it as, or `module.createRequire(...)`.
+def _is_create_require(value: Node | None, bindings: LocalBindings) -> bool:
+    # `createRequire(import.meta.url)` through the binding the module imports
+    # it as, under any name, or `module.createRequire(...)`.
     if value is None or value.type != cs.TS_CALL_EXPRESSION:
         return False
     func = value.child_by_field_name(cs.FIELD_FUNCTION)
     if func is not None and func.type == cs.TS_MEMBER_EXPRESSION:
         prop = func.child_by_field_name(cs.FIELD_PROPERTY)
         return prop is not None and safe_decode_text(prop) == cs.JS_CREATE_REQUIRE
-    return func is not None and safe_decode_text(func) in factories
+    return (
+        func is not None
+        and func.type == cs.TS_IDENTIFIER
+        and bindings.calls_factory(func, cs.JS_CREATE_REQUIRE)
+    )
 
 
 def _is_js_whole_module_import(entry: DeferredImportEdge) -> bool:
@@ -5024,9 +5028,7 @@ class ImportProcessor:
                 # (Greptile and CodeRabbit, PR #3284).
                 bindings = bindings or LocalBindings(root_node)
                 bound, value = bindings.binding(require)
-                if bound and not _is_create_require(
-                    value, bindings.factory_names(cs.JS_CREATE_REQUIRE)
-                ):
+                if bound and not _is_create_require(value, bindings):
                     continue
             target = self._resolve_js_import_target(
                 specifier, module_qn, require is not None

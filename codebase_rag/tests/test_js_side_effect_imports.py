@@ -267,6 +267,9 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
         "function run(require) {\n  {\n"
         "    const require = createRequire(import.meta.url);\n  }\n"
         '  require("./db");\n}\n',
+        'import { createRequire as makeRequire } from "node:module";\n'
+        "function run(makeRequire) {\n  const require = makeRequire();\n"
+        '  require("./db");\n}\nrun(() => () => {});\n',
     ],
     ids=[
         "parameter",
@@ -278,6 +281,7 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
         "module-level-helper",
         "module-level-function",
         "parameter-beside-a-block-loader",
+        "parameter-spelled-like-the-factory",
     ],
 )
 def test_a_call_to_a_local_named_require_is_no_import(
@@ -335,8 +339,10 @@ def test_strict_code_keeps_a_block_s_function_to_the_block(
         "const require = makeRequire(import.meta.url);\n",
         'const { createRequire: makeRequire } = require("node:module");\n'
         "const require = makeRequire(import.meta.url);\n",
+        'const { createRequire } = require("node:module");\n'
+        "const require = createRequire(import.meta.url);\n",
     ],
-    ids=["create-require", "renamed-import", "renamed-destructure"],
+    ids=["create-require", "renamed-import", "renamed-destructure", "destructure"],
 )
 def test_a_module_level_require_made_by_create_require_still_imports(
     temp_repo: Path, mock_ingestor: MagicMock, factory: str

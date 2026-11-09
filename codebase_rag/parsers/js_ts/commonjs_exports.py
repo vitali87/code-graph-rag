@@ -180,6 +180,10 @@ def commonjs_export_bindings(root: Node) -> dict[str, CommonjsBinding]:
     return published
 
 
+# A name and the scope (by `_key`) whose binding of it imports a factory.
+type _FactoryBinding = tuple[str, tuple[int, int, str]]
+
+
 class LocalBindings:
     """What a name means where it is written: whether a scope of the module,
     from the innermost out to its top level, binds it, and the value that
@@ -190,14 +194,29 @@ class LocalBindings:
     def __init__(self, root: Node) -> None:
         self._module = _Module(root, strict_blocks=True)
         self._root = root
-        self._factories: dict[str, frozenset[str]] = {}
+        self._factories: dict[str, frozenset[_FactoryBinding]] = {}
 
-    def factory_names(self, factory: str) -> frozenset[str]:
-        """The local names the module imports `factory` under, its own
-        name included (Greptile, PR #3284)."""
-        if (names := self._factories.get(factory)) is None:
-            names = self._factories[factory] = _factory_names(self._root, factory)
-        return names
+    def calls_factory(self, callee: Node, factory: str) -> bool:
+        """Whether `callee` reaches a binding that imports `factory`, under
+        whatever name: a parameter or local that only shares the spelling is
+        whatever it holds (Greptile, PR #3284). An unbound `factory` is it."""
+        name = safe_decode_text(callee)
+        if not name:
+            return False
+        scope = self._module.binding_scope(callee)
+        if scope is None:
+            return name == factory
+        return (name, _key(scope)) in self._factory_bindings(factory)
+
+    def _factory_bindings(self, factory: str) -> frozenset[_FactoryBinding]:
+        if (found := self._factories.get(factory)) is None:
+            found = self._factories[factory] = frozenset(
+                (name, _key(scope))
+                for local in _factory_locals(self._root, factory)
+                if (name := safe_decode_text(local))
+                and (scope := self._module.binding_scope(local)) is not None
+            )
+        return found
 
     def binding(self, identifier: Node) -> tuple[bool, Node | None]:
         """(bound, value): whether a scope binds the name, and the value its
@@ -930,25 +949,28 @@ def _scope_declarations(scope: Node) -> Iterator[Node]:
             yield statement
 
 
-def _factory_names(root: Node, factory: str) -> frozenset[str]:
-    # The local names the module's imports bind `factory` to, the name itself
-    # included: `import { createRequire as makeRequire }` and
-    # `const { createRequire: makeRequire } = require("node:module")`.
-    names = {factory}
+def _factory_locals(root: Node, factory: str) -> Iterator[Node]:
+    # The identifiers the module's imports bind `factory` to:
+    # `import { createRequire }`, `import { createRequire as makeRequire }`,
+    # `const { createRequire } = require("node:module")` and
+    # `const { createRequire: makeRequire } = require(...)`.
     for node in _subtree(root):
         local: Node | None = None
         if node.type == cs.TS_IMPORT_SPECIFIER:
             imported = node.child_by_field_name(cs.FIELD_NAME)
             if imported is not None and safe_decode_text(imported) == factory:
-                local = node.child_by_field_name(cs.FIELD_ALIAS)
+                local = node.child_by_field_name(cs.FIELD_ALIAS) or imported
         elif node.type == cs.TS_PAIR_PATTERN and (
             _property_key(node.child_by_field_name(cs.FIELD_KEY)) == factory
         ):
             local = node.child_by_field_name(cs.FIELD_VALUE)
-        if local is not None and local.type == cs.TS_IDENTIFIER:
-            if text := safe_decode_text(local):
-                names.add(text)
-    return frozenset(names)
+        elif (
+            node.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN
+            and safe_decode_text(node) == factory
+        ):
+            local = node
+        if local is not None:
+            yield local
 
 
 def _is_es_module(root: Node) -> bool:
