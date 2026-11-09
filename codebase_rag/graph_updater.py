@@ -1674,16 +1674,23 @@ def _without_stale_targets(
     # A target defined in a file this re-parse deletes loses its inbound
     # edges with it, so the name that reached it must be resolved again
     # rather than counted as bound (issue #3007 meets #1527).
-    if not fact.resolved_targets:
+    if not fact.resolved_returns and not fact.resolved_accepts:
         return fact
-    kept = frozenset(
-        target
-        for target in fact.resolved_targets
-        if not any(
-            target.startswith(f"{module}{cs.SEPARATOR_DOT}") for module in stale_modules
+
+    def kept(targets: frozenset[str]) -> frozenset[str]:
+        return frozenset(
+            target
+            for target in targets
+            if not any(
+                target.startswith(f"{module}{cs.SEPARATOR_DOT}")
+                for module in stale_modules
+            )
         )
+
+    return fact._replace(
+        resolved_returns=kept(fact.resolved_returns),
+        resolved_accepts=kept(fact.resolved_accepts),
     )
-    return fact._replace(resolved_targets=kept)
 
 
 def _package_modules(module_files: Mapping[str, Path]) -> frozenset[str]:
@@ -1740,9 +1747,9 @@ class GraphUpdater:
         # path -> module qualified name as the graph records it, read once
         # per rehydration for the requeues (issue #1935).
         self._module_qns_by_path: dict[str, str] | None = None
-        # qn -> the types its RETURNS/ACCEPTS reach, read once per
-        # incremental rehydration (issue #3007).
-        self._resolved_type_targets: dict[str, set[str]] = {}
+        # qn -> relationship type -> the types its RETURNS / ACCEPTS reach,
+        # read once per incremental rehydration (issue #3007).
+        self._resolved_type_targets: dict[str, dict[str, set[str]]] = {}
         if repo_path.is_file():
             resolved = repo_path.resolve()
             self._single_file = resolved
@@ -3895,8 +3902,16 @@ class GraphUpdater:
                 if isinstance(param_types, list)
                 else None,
                 path,
-                frozenset(self._resolved_type_targets.get(qn, ())),
+                *self._resolved_targets_of(qn),
             )
+        )
+
+    def _resolved_targets_of(self, qn: str) -> tuple[frozenset[str], frozenset[str]]:
+        # (RETURNS targets, ACCEPTS targets), as PendingTypeFact takes them.
+        by_rel = self._resolved_type_targets.get(qn, {})
+        return (
+            frozenset(by_rel.get(cs.RelationshipType.RETURNS.value, ())),
+            frozenset(by_rel.get(cs.RelationshipType.ACCEPTS.value, ())),
         )
 
     def _read_resolved_type_targets(self, project_params: PropertyParams) -> None:
@@ -3914,8 +3929,11 @@ class GraphUpdater:
         )
         for row in rows:
             qn, target = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_TARGET_QN)
-            if isinstance(qn, str) and isinstance(target, str):
-                self._resolved_type_targets.setdefault(qn, set()).add(target)
+            rel = row.get(cs.KEY_REL_TYPE)
+            if isinstance(qn, str) and isinstance(target, str) and isinstance(rel, str):
+                self._resolved_type_targets.setdefault(qn, {}).setdefault(
+                    rel, set()
+                ).add(target)
 
     def _requeue_member_types[P: (PendingParameterType, PendingFieldType)](
         self,

@@ -1646,7 +1646,11 @@ class _StatefulIngestor:
                     cs.RelationshipType.ACCEPTS.value,
                 }
                 return [
-                    {cs.KEY_QUALIFIED_NAME: _text(fv), cs.KEY_TARGET_QN: _text(tv)}
+                    {
+                        cs.KEY_QUALIFIED_NAME: _text(fv),
+                        cs.KEY_REL_TYPE: rel,
+                        cs.KEY_TARGET_QN: _text(tv),
+                    }
                     for (fl, fv, rel, _tl, tv) in sorted(self.edges, key=str)
                     if fl in callables
                     and rel in type_rels

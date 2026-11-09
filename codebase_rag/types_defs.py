@@ -1401,12 +1401,15 @@ class PendingTypeFact(NamedTuple):
     # RETURNS/ACCEPTS unbuilt (issue #1892). None only when the definition
     # was ingested without a file, in which case the module qn is the key.
     path: str | None = None
-    # The types the definition's RETURNS/ACCEPTS already reach, set only on a
-    # fact requeued from an unchanged file. Its file's imports are not loaded
-    # on such a run, so re-resolving a name its import bound fell back to the
-    # nearest same-named type and added a wrong edge beside the right one
-    # (issue #3007); only a name none of these reach needs resolving.
-    resolved_targets: frozenset[str] = frozenset()
+    # The types the definition's RETURNS, and its ACCEPTS, already reach, set
+    # only on a fact requeued from an unchanged file. Its file's imports are
+    # not loaded on such a run, so re-resolving a name its import bound fell
+    # back to the nearest same-named type and added a wrong edge beside the
+    # right one (issue #3007); only a name none of these reach needs
+    # resolving. Kept apart, so a parameter's edge never stands in for a
+    # return edge that is missing (CodeRabbit, PR #3218).
+    resolved_returns: frozenset[str] = frozenset()
+    resolved_accepts: frozenset[str] = frozenset()
 
 
 class DeferredImportEdge(NamedTuple):

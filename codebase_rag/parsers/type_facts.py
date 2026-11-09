@@ -306,7 +306,7 @@ def queue_type_facts(
 
 def _resolved_by(name: str, resolved_targets: frozenset[str]) -> list[str]:
     # The targets a name was already bound to through its file's imports at
-    # the last parse; see PendingTypeFact.resolved_targets (issue #3007). A
+    # the last parse; see PendingTypeFact.resolved_returns (issue #3007). A
     # bare `Match` is one binding in its file, so a target of that name is
     # it; a qualified `crate::later::Match` is bound only by a target it
     # spells the tail of, never by an edge to `matcher::Match`.
@@ -559,7 +559,7 @@ def _emit_returns(
         fact.return_type,
         fact.module_qn,
         fact.path,
-        fact.resolved_targets,
+        fact.resolved_returns,
         resolver.is_unparsed(fact.qualified_name),
     )
     for target_qn in targets:
@@ -581,7 +581,7 @@ def _emit_accepts(
         if not annotation:
             continue
         for target_qn in resolver.resolve_annotation(
-            annotation, fact.module_qn, fact.path, fact.resolved_targets, requeued
+            annotation, fact.module_qn, fact.path, fact.resolved_accepts, requeued
         ):
             accepted.setdefault(target_qn, None)
     for target_qn in accepted:

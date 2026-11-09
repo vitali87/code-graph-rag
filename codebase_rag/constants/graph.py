@@ -1233,10 +1233,12 @@ CYPHER_PROJECT_CONSTANT_TYPES = (
 )
 # The type edges each definition already has, for an incremental run's
 # requeued annotations: a name one of them reaches stays as resolved (#3007).
+# By relationship, so a parameter's target never settles the return type.
 CYPHER_PROJECT_TYPE_EDGE_TARGETS = (
-    "MATCH (f)-[:RETURNS|ACCEPTS]->(t) WHERE (f:Function OR f:Method) "
+    "MATCH (f)-[r:RETURNS|ACCEPTS]->(t) WHERE (f:Function OR f:Method) "
     "AND f.qualified_name STARTS WITH $project_prefix "
-    "RETURN f.qualified_name AS qualified_name, t.qualified_name AS target_qn"
+    "RETURN f.qualified_name AS qualified_name, type(r) AS rel_type, "
+    "t.qualified_name AS target_qn"
 )
 
 CYPHER_ALL_DEFINITION_QNS = (

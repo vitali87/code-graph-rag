@@ -276,3 +276,36 @@ def test_deleting_the_imported_type_falls_back_as_fresh(tmp_path: Path) -> None:
     fresh = _fresh(tmp_path / "fresh", files)
     assert ("printer.util.trim RETURNS", "printer.jsont.Match") in fresh, fresh
     assert after == fresh, after
+
+
+def test_a_parameter_s_edge_does_not_settle_the_return_type(tmp_path: Path) -> None:
+    # `x: alpha.models.Foo` binds an ACCEPTS edge to alpha's `Foo`, while the
+    # bare `-> Foo` is ambiguous between alpha's and beta's and gets none.
+    # Deleting beta's leaves one `Foo`, which a fresh index binds the return
+    # to; the parameter's edge to that same type must not count as the return
+    # already being bound (CodeRabbit, PR #3218).
+    files = {
+        "alpha/__init__.py": "",
+        "alpha/models.py": "class Foo:\n    pass\n",
+        "beta/__init__.py": "",
+        "beta/models.py": "class Foo:\n    pass\n",
+        "app/__init__.py": "",
+        "app/use.py": (
+            "import alpha.models\n\n\n"
+            "def f(x: alpha.models.Foo) -> Foo:\n    return x\n"
+        ),
+    }
+    root = tmp_path / "repo"
+    _write(root, files)
+    store = _StatefulIngestor()
+    before = _sync(root, store, force=True)
+    assert ("app.use.f ACCEPTS", "alpha.models.Foo") in before, before
+    assert not any(edge.endswith("RETURNS") for edge, _ in before), before
+
+    (root / "beta/models.py").unlink()
+    after = _sync(root, store, force=False)
+
+    del files["beta/models.py"]
+    fresh = _fresh(tmp_path / "fresh", files)
+    assert ("app.use.f RETURNS", "alpha.models.Foo") in fresh, fresh
+    assert after == fresh, after
