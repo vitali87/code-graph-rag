@@ -272,6 +272,11 @@ PROXY = "\n\nclass Proxy:\n    discounted = staticmethod(lambda price: -price)\n
             id="reference-not-call",
         ),
         pytest.param(
+            "def total(x: util.discounted(1.0)) -> util.discounted(2.0):\n    return x",
+            True,
+            id="annotations-run-outside",
+        ),
+        pytest.param(
             "BASE = util.discounted(1.0)\nutil = Proxy", False, id="rebound-later"
         ),
     ],

@@ -461,13 +461,23 @@ def _module_attribute_uses(
 
 
 def _evaluated_outside(node: ast.AST) -> list[ast.AST]:
-    """The parts of a definition that run in the scope around it."""
+    """The parts of a definition that run in the scope around it.
+
+    A function's annotations count: evaluated eagerly or postponed, their
+    names resolve in the scope around it, so leaving `x: util.helper()`
+    on the old module rolled a correct move back (Greptile).
+    """
     if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
         arguments = node.args
         parts: list[ast.AST] = [*arguments.defaults]
         parts += [d for d in arguments.kw_defaults if d is not None]
         if not isinstance(node, ast.Lambda):
             parts += node.decorator_list
+            every = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+            every += [a for a in (arguments.vararg, arguments.kwarg) if a is not None]
+            parts += [a.annotation for a in every if a.annotation is not None]
+            if node.returns is not None:
+                parts.append(node.returns)
         return parts
     if isinstance(node, ast.ClassDef):
         return [*node.decorator_list, *node.bases, *(k.value for k in node.keywords)]
