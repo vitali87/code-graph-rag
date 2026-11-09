@@ -1633,3 +1633,71 @@ class TestInheritanceKeyFor:
         }
 
         assert self._key_for(engine, "com.example.Outer.A") is None
+
+    def test_qualified_nested_name_flat_layout_java_package_segment_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Greptile P1 / CodeRabbit Minor on #3525: in a flat layout a
+        # package segment can itself be named `java`, so the source-root
+        # helper skips past the real package (`com.acme.java`) and the
+        # written qualified name never matches. The package must also be
+        # tried right after the project segment.
+        engine.class_inheritance = {
+            "jX.com.acme.java.Errors.Outer.A": ["jX.com.acme.java.Base.Base"],
+            "jX.com.acme.java.Errors.Outer.B": ["jX.com.acme.java.Base.Base"],
+            "jX.com.acme.java.Base.Base": ["java.lang.RuntimeException"],
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.acme.java.Errors": Path("/test/repo/com/acme/java/Errors.java"),
+            "jX.com.acme.java.Base": Path("/test/repo/com/acme/java/Base.java"),
+        }
+
+        assert (
+            self._key_for(engine, "com.acme.java.Outer.A")
+            == "jX.com.acme.java.Errors.Outer.A"
+        )
+        assert (
+            self._key_for(engine, "com.acme.java.Outer.B")
+            == "jX.com.acme.java.Errors.Outer.B"
+        )
+
+    def test_qualified_nested_name_flat_layout_src_package_segment_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Same root cause as the `java` segment above: a flat-layout
+        # package segment named `src` is read as a source root, so the
+        # written package must also be tried after the project segment.
+        engine.class_inheritance = {
+            "jX.com.acme.src.Errors.Outer.A": ["jX.com.acme.src.Base.Base"],
+            "jX.com.acme.src.Base.Base": ["java.lang.RuntimeException"],
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.acme.src.Errors": Path("/test/repo/com/acme/src/Errors.java"),
+            "jX.com.acme.src.Base": Path("/test/repo/com/acme/src/Base.java"),
+        }
+
+        assert (
+            self._key_for(engine, "com.acme.src.Outer.A")
+            == "jX.com.acme.src.Errors.Outer.A"
+        )
+
+    def test_qualified_nested_name_stem_sibling_module_does_not_bind(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # CodeRabbit Minor on #3525: the stem guard must check the
+        # candidate's actual declaring module, not just that some module
+        # with the stem's name exists. A `sub.java` file beside the `sub/`
+        # directory puts `jX.com.example.sub` in the map, but the
+        # candidate `jX.com.example.sub.Outer.A` is declared by
+        # `jX.com.example.sub.Outer`, so a written `com.example.Outer.A`
+        # must not bind to it.
+        engine.class_inheritance = {
+            "jX.com.example.sub.Outer.A": ["jX.com.example.sub.Base.Base"],
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.example.sub.Outer": Path("/test/repo/com/example/sub/Outer.java"),
+            "jX.com.example.sub.Base": Path("/test/repo/com/example/sub/Base.java"),
+            "jX.com.example.sub": Path("/test/repo/com/example/sub.java"),
+        }
+
+        assert self._key_for(engine, "com.example.Outer.A") is None

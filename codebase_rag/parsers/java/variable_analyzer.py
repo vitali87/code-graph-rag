@@ -595,13 +595,21 @@ class JavaVariableAnalyzerMixin:
         # (`find_package_start_index`, the same helper the rest of the Java
         # frontend uses): a Maven key keeps `src.main.java` between the
         # project segment and the package, so matching right after the
-        # project segment would reject every qualified type in that layout.
-        # The file-stem form is only accepted when the stem names a real
-        # module in the declaring package: the segment before the class path
-        # may be a package segment of a longer package instead (a top-level
-        # class in `com/example/sub/Outer.java` is keyed
-        # `<project>.com.example.sub.Outer.A`), and without that check a
-        # written `com.example.Outer.A` would bind to it.
+        # project segment alone would reject every qualified type in that
+        # layout. But a package segment named like a source root (`java`,
+        # `src`, ...) makes the helper skip past the real package, so the
+        # position right after the project segment is tried as well; a key
+        # only ever matches when its package and class path line up exactly
+        # at one of the two.
+        # The file-stem form is only accepted when the stem names the
+        # candidate's actual declaring module: the longest module qn
+        # prefixing the key (`_is_declaring_module`). The segment before
+        # the class path may be a package segment of a longer package
+        # instead (a top-level class in `com/example/sub/Outer.java` is
+        # keyed `<project>.com.example.sub.Outer.A`), and a same-named
+        # file beside that package's directory (`com/example/sub.java`)
+        # must not stand in for the declaring file, so a written
+        # `com.example.Outer.A` never binds to it.
         matches: set[str] = set()
         for split in range(1, len(parts)):
             package, class_path = parts[:split], parts[split:]
@@ -609,19 +617,38 @@ class JavaVariableAnalyzerMixin:
                 continue
             for qn in self.class_inheritance:
                 segments = qn.split(cs.SEPARATOR_DOT)
-                package_start = find_package_start_index(segments) or 1
-                if segments[package_start : package_start + len(package)] != package:
-                    continue
-                rest = segments[package_start + len(package) :]
-                if rest == class_path or rest == [*class_path, class_path[-1]]:
-                    matches.add(qn)
-                elif len(rest) == len(class_path) + 1 and rest[1:] == class_path:
-                    stem_module_qn = cs.SEPARATOR_DOT.join(
-                        segments[: package_start + len(package) + 1]
-                    )
-                    if stem_module_qn in self.module_qn_to_file_path:
+                # Both candidate package starts: the helper's answer and
+                # the position right after the project segment (see above).
+                package_starts = {find_package_start_index(segments) or 1, 1}
+                for package_start in package_starts:
+                    if (
+                        segments[package_start : package_start + len(package)]
+                        != package
+                    ):
+                        continue
+                    rest = segments[package_start + len(package) :]
+                    if rest == class_path or rest == [*class_path, class_path[-1]]:
                         matches.add(qn)
+                    elif len(rest) == len(class_path) + 1 and rest[1:] == class_path:
+                        stem_module_qn = cs.SEPARATOR_DOT.join(
+                            segments[: package_start + len(package) + 1]
+                        )
+                        if self._is_declaring_module(qn, stem_module_qn):
+                            matches.add(qn)
         return matches.pop() if len(matches) == 1 else None
+
+    def _is_declaring_module(self, class_qn: str, module_qn: str) -> bool:
+        # True when `module_qn` is the file that declares the top-level
+        # class of `class_qn`: the longest module qn prefixing the key.
+        # Walk the key's own prefixes from longest to shortest; the first
+        # module found is the declaring one, so a same-named file beside
+        # the real file's directory never stands in for it.
+        segments = class_qn.split(cs.SEPARATOR_DOT)
+        for end in range(len(segments) - 1, 0, -1):
+            candidate = cs.SEPARATOR_DOT.join(segments[:end])
+            if candidate in self.module_qn_to_file_path:
+                return candidate == module_qn
+        return False
 
     def _java_superclass_chain(self, class_qn: str) -> list[str]:
         chain: list[str] = []
