@@ -274,6 +274,15 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
         "function run(make) {\n  const createRequire = make;\n"
         "  const require = createRequire();\n"
         '  require("./db");\n}\nrun(() => () => {});\n',
+        "const helpers = { createRequire: () => () => {} };\n"
+        "const make = helpers.createRequire;\n"
+        'const require = make();\nrequire("./db");\n',
+        'import { createRequire } from "node:module";\n'
+        "let make = createRequire;\nmake = () => () => {};\n"
+        'const require = make();\nrequire("./db");\n',
+        'import { createRequire } from "node:module";\n'
+        "let require = createRequire(import.meta.url);\n"
+        'require = () => {};\nrequire("./db");\n',
     ],
     ids=[
         "parameter",
@@ -287,6 +296,9 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
         "parameter-beside-a-block-loader",
         "parameter-spelled-like-the-factory",
         "alias-of-a-parameter",
+        "another-object-s-factory",
+        "reassigned-factory-alias",
+        "reassigned-loader",
     ],
 )
 def test_a_call_to_a_local_named_require_is_no_import(
@@ -352,6 +364,10 @@ def test_strict_code_keeps_a_block_s_function_to_the_block(
         'import { createRequire } from "node:module";\n'
         "const make = createRequire;\nconst makeLoader = make;\n"
         "const require = makeLoader(import.meta.url);\n",
+        'const { createRequire } = await import("node:module");\n'
+        "const require = createRequire(import.meta.url);\n",
+        'import nodeModule from "node:module";\n'
+        "const require = nodeModule.createRequire(import.meta.url);\n",
     ],
     ids=[
         "create-require",
@@ -360,6 +376,8 @@ def test_strict_code_keeps_a_block_s_function_to_the_block(
         "destructure",
         "property-read",
         "alias-chain",
+        "dynamic-import",
+        "default-import",
     ],
 )
 def test_a_module_level_require_made_by_create_require_still_imports(

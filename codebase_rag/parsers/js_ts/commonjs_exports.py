@@ -35,7 +35,7 @@ shadows in the registry or the import map; any other value drops its name.
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -46,6 +46,7 @@ from ..utils import safe_decode_text
 _EXPORTS = cs.JS_EXPORTS_KEYWORD.encode()
 _MODULE = cs.JS_MODULE_KEYWORD.encode()
 _REQUIRE = cs.JS_REQUIRE_KEYWORD.encode()
+_CREATE_REQUIRE = cs.JS_CREATE_REQUIRE.encode()
 _ARGUMENTS = cs.JS_ARGUMENTS_NAME.encode()
 _EVAL = cs.JS_EVAL_NAME.encode()
 
@@ -180,68 +181,129 @@ def commonjs_export_bindings(root: Node) -> dict[str, CommonjsBinding]:
     return published
 
 
-# A name and the scope (by `_key`) whose binding of it imports a factory.
-type _FactoryBinding = tuple[str, tuple[int, int, str]]
+# A name and the scope (by `_key`) whose binding of it is an import.
+type _Binding = tuple[str, tuple[int, int, str]]
+
+
+class _NodeModuleBindings(NamedTuple):
+    """The bindings a module imports Node's `createRequire` and `module` as."""
+
+    factories: frozenset[_Binding]
+    modules: frozenset[_Binding]
+
+
 # How many `const a = b` aliases a factory check follows: a cycle of them
 # (`const a = b; const b = a;`) must end.
 _FACTORY_ALIAS_HOPS = 8
 
 
 class LocalBindings:
-    """What a name means where it is written: whether a scope of the module,
-    from the innermost out to its top level, binds it, and the value that
-    binding gives it. One module's scopes are read once."""
+    """Whether a `require` call's callee is Node's loader, decided from the
+    scopes of one module, read once."""
 
-    __slots__ = ("_module", "_root", "_factories")
+    __slots__ = ("_module", "_root", "_node_module", "_reassigned")
 
     def __init__(self, root: Node) -> None:
         self._module = _Module(root, strict_blocks=True)
         self._root = root
-        self._factories: dict[str, frozenset[_FactoryBinding]] = {}
+        self._node_module: _NodeModuleBindings | None = None
+        self._reassigned: frozenset[str] | None = None
 
-    def calls_factory(self, callee: Node, factory: str, hops: int = 0) -> bool:
-        """Whether `callee` reaches `factory`: through a binding that imports
-        it, under whatever name, or a variable whose initializer leads there
-        (`const make = module.createRequire`, `const make = createRequire`).
-        A parameter or local that only shares the spelling is whatever it
-        holds (Greptile, PR #3284). An unbound `factory` is it."""
-        name = safe_decode_text(callee)
-        if not name or hops > _FACTORY_ALIAS_HOPS:
-            return False
-        scope = self._module.binding_scope(callee)
-        if scope is None:
-            return name == factory
-        if (name, _key(scope)) in self._factory_bindings(factory):
-            return True
-        value = _unwrapped(_declared_value(scope, name))
-        if value is None:
-            return False
-        if value.type == cs.TS_IDENTIFIER:
-            return self.calls_factory(value, factory, hops + 1)
-        if value.type == cs.TS_MEMBER_EXPRESSION:
-            prop = value.child_by_field_name(cs.FIELD_PROPERTY)
-            return prop is not None and safe_decode_text(prop) == factory
-        return False
-
-    def _factory_bindings(self, factory: str) -> frozenset[_FactoryBinding]:
-        if (found := self._factories.get(factory)) is None:
-            found = self._factories[factory] = frozenset(
-                (name, _key(scope))
-                for local in _factory_locals(self._root, factory)
-                if (name := safe_decode_text(local))
-                and (scope := self._module.binding_scope(local)) is not None
-            )
-        return found
-
-    def binding(self, identifier: Node) -> tuple[bool, Node | None]:
-        """(bound, value): whether a scope binds the name, and the value its
-        nearest `var` / `let` / `const` there gives it; None for a parameter,
-        a function, a class or an import."""
+    def is_loader(self, identifier: Node) -> bool:
+        """The global `require`, which nothing in the module binds, or a
+        binding nothing reassigns whose value a `createRequire` from Node's
+        `module` makes. Anything else (a parameter, a local helper, another
+        object's `createRequire`, a replaced alias) loads nothing that can be
+        told, so it records no import (Greptile and CodeRabbit, PR #3284)."""
         scope = self._module.binding_scope(identifier)
         if scope is None:
-            return False, None
+            return True
+        value = self._settled_value(identifier, scope)
+        return (
+            value is not None
+            and value.type == cs.TS_CALL_EXPRESSION
+            and self._is_factory(value.child_by_field_name(cs.FIELD_FUNCTION), 0)
+        )
+
+    def _is_factory(self, node: Node | None, hops: int) -> bool:
+        # Node's `createRequire`: imported or destructured from `module`,
+        # read off `module`, or a never-reassigned alias of either.
+        node = _unwrapped(node)
+        if node is None or hops > _FACTORY_ALIAS_HOPS:
+            return False
+        if node.type == cs.TS_MEMBER_EXPRESSION:
+            prop = node.child_by_field_name(cs.FIELD_PROPERTY)
+            return (
+                prop is not None
+                and safe_decode_text(prop) == cs.JS_CREATE_REQUIRE
+                and self._is_node_module(
+                    node.child_by_field_name(cs.FIELD_OBJECT), hops + 1
+                )
+            )
+        return self._resolves(node, hops, self._bindings().factories, self._is_factory)
+
+    def _is_node_module(self, node: Node | None, hops: int) -> bool:
+        # Node's `module` itself: `import * as m` / `import m` from it, a
+        # `require("node:module")`, or a never-reassigned alias of either.
+        node = _unwrapped(node)
+        if node is None or hops > _FACTORY_ALIAS_HOPS:
+            return False
+        if _loads_node_module(node):
+            return True
+        return self._resolves(
+            node, hops, self._bindings().modules, self._is_node_module
+        )
+
+    def _resolves(
+        self,
+        node: Node,
+        hops: int,
+        imported: frozenset[_Binding],
+        through: Callable[[Node | None, int], bool],
+    ) -> bool:
+        # An identifier whose binding is one of `imported`, or whose settled
+        # value `through` accepts.
+        if node.type != cs.TS_IDENTIFIER:
+            return False
+        scope = self._module.binding_scope(node)
+        name = safe_decode_text(node)
+        if scope is None or not name or name in self._reassigned_names():
+            return False
+        if (name, _key(scope)) in imported:
+            return True
+        return through(_unwrapped(_declared_value(scope, name)), hops + 1)
+
+    def _settled_value(self, identifier: Node, scope: Node) -> Node | None:
+        # The initializer of a binding nothing reassigns; None otherwise.
         name = safe_decode_text(identifier)
-        return True, _declared_value(scope, name) if name else None
+        if not name or name in self._reassigned_names():
+            return None
+        return _unwrapped(_declared_value(scope, name))
+
+    def _reassigned_names(self) -> frozenset[str]:
+        if self._reassigned is None:
+            self._reassigned = frozenset(
+                name
+                for node in _subtree(self._root)
+                for name in _reassigned_names(node, self._root)
+            )
+        return self._reassigned
+
+    def _bindings(self) -> _NodeModuleBindings:
+        if self._node_module is None:
+            factories, modules = _node_module_locals(self._root)
+            self._node_module = _NodeModuleBindings(
+                self._keyed(factories), self._keyed(modules)
+            )
+        return self._node_module
+
+    def _keyed(self, locals_: list[Node]) -> frozenset[_Binding]:
+        return frozenset(
+            (name, _key(scope))
+            for local in locals_
+            if (name := safe_decode_text(local))
+            and (scope := self._module.binding_scope(local)) is not None
+        )
 
 
 def _is_export_assignment(statement: Node) -> bool:
@@ -964,28 +1026,71 @@ def _scope_declarations(scope: Node) -> Iterator[Node]:
             yield statement
 
 
-def _factory_locals(root: Node, factory: str) -> Iterator[Node]:
-    # The identifiers the module's imports bind `factory` to:
-    # `import { createRequire }`, `import { createRequire as makeRequire }`,
-    # `const { createRequire } = require("node:module")` and
-    # `const { createRequire: makeRequire } = require(...)`.
+def _node_module_locals(root: Node) -> tuple[list[Node], list[Node]]:
+    # (createRequire locals, module-object locals) the module binds from
+    # Node's `module`: `import { createRequire [as X] }`, `import * as m` /
+    # `import m` from it, and `{ createRequire[: X] }` destructured from a
+    # `require` / `import()` of it.
+    factories: list[Node] = []
+    modules: list[Node] = []
     for node in _subtree(root):
-        local: Node | None = None
-        if node.type == cs.TS_IMPORT_SPECIFIER:
-            imported = node.child_by_field_name(cs.FIELD_NAME)
-            if imported is not None and safe_decode_text(imported) == factory:
-                local = node.child_by_field_name(cs.FIELD_ALIAS) or imported
-        elif node.type == cs.TS_PAIR_PATTERN and (
-            _property_key(node.child_by_field_name(cs.FIELD_KEY)) == factory
+        if node.type == cs.TS_IMPORT_STATEMENT:
+            source = _string_content(node.child_by_field_name(cs.FIELD_SOURCE))
+            if source not in cs.JS_NODE_MODULE_SPECIFIERS:
+                continue
+            for part in _subtree(node):
+                if part.type == cs.TS_IMPORT_SPECIFIER:
+                    name = part.child_by_field_name(cs.FIELD_NAME)
+                    if name is not None and name.text == _CREATE_REQUIRE:
+                        factories.append(
+                            part.child_by_field_name(cs.FIELD_ALIAS) or name
+                        )
+                elif (local := _import_local(part)) is not None:
+                    modules.append(local)
+        elif node.type == cs.TS_VARIABLE_DECLARATOR and _loads_node_module(
+            node.child_by_field_name(cs.FIELD_VALUE)
         ):
-            local = node.child_by_field_name(cs.FIELD_VALUE)
-        elif (
-            node.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN
-            and safe_decode_text(node) == factory
-        ):
-            local = node
-        if local is not None:
-            yield local
+            target = node.child_by_field_name(cs.FIELD_NAME)
+            if target is not None and target.type == cs.TS_OBJECT_PATTERN:
+                factories.extend(_destructured(target, _CREATE_REQUIRE))
+    return factories, modules
+
+
+def _destructured(pattern: Node, key: bytes) -> Iterator[Node]:
+    # The identifiers an object pattern binds the property `key` to.
+    for part in pattern.named_children:
+        if part.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
+            if part.text == key:
+                yield part
+        elif part.type == cs.TS_PAIR_PATTERN:
+            prop = part.child_by_field_name(cs.FIELD_KEY)
+            value = part.child_by_field_name(cs.FIELD_VALUE)
+            if (
+                prop is not None
+                and prop.text == key
+                and value is not None
+                and value.type == cs.TS_IDENTIFIER
+            ):
+                yield value
+
+
+def _loads_node_module(value: Node | None) -> bool:
+    # `require("node:module")` or `[await] import("module")`.
+    value = _unwrapped(value)
+    if value is not None and value.type == cs.TS_AWAIT_EXPRESSION:
+        value = _unwrapped(value.named_child(0))
+    if value is None or value.type != cs.TS_CALL_EXPRESSION:
+        return False
+    callee = value.child_by_field_name(cs.FIELD_FUNCTION)
+    if callee is None or (
+        callee.text != _REQUIRE and callee.type != cs.TS_JS_DYNAMIC_IMPORT
+    ):
+        return False
+    arguments = _arguments(value)
+    return (
+        bool(arguments)
+        and _string_content(arguments[0]) in cs.JS_NODE_MODULE_SPECIFIERS
+    )
 
 
 def _is_es_module(root: Node) -> bool:

@@ -545,22 +545,6 @@ def _js_unary_operator(expression: Node) -> str | None:
     return safe_decode_text(operator) if operator is not None else None
 
 
-def _is_create_require(value: Node | None, bindings: LocalBindings) -> bool:
-    # `createRequire(import.meta.url)` through the binding the module imports
-    # it as, under any name, or `module.createRequire(...)`.
-    if value is None or value.type != cs.TS_CALL_EXPRESSION:
-        return False
-    func = value.child_by_field_name(cs.FIELD_FUNCTION)
-    if func is not None and func.type == cs.TS_MEMBER_EXPRESSION:
-        prop = func.child_by_field_name(cs.FIELD_PROPERTY)
-        return prop is not None and safe_decode_text(prop) == cs.JS_CREATE_REQUIRE
-    return (
-        func is not None
-        and func.type == cs.TS_IDENTIFIER
-        and bindings.calls_factory(func, cs.JS_CREATE_REQUIRE)
-    )
-
-
 def _is_js_whole_module_import(entry: DeferredImportEdge) -> bool:
     # A JS/TS star re-export, namespace import or side-effect import targets
     # the module itself.
@@ -5022,13 +5006,12 @@ class ImportProcessor:
                 continue
             specifier, require = call
             if require is not None:
-                # The global loader, or one `createRequire(...)` makes,
+                # The global loader, or one Node's `createRequire` makes,
                 # imports; any other binding of `require` (a parameter, a
-                # local helper) is whatever it holds and loads nothing
+                # local helper, a replaced loader) is whatever it holds
                 # (Greptile and CodeRabbit, PR #3284).
                 bindings = bindings or LocalBindings(root_node)
-                bound, value = bindings.binding(require)
-                if bound and not _is_create_require(value, bindings):
+                if not bindings.is_loader(require):
                     continue
             target = self._resolve_js_import_target(
                 specifier, module_qn, require is not None

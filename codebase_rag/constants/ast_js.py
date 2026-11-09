@@ -80,6 +80,7 @@ JS_CALL_STATEMENT_QUERY = (
 JS_VOID_OPERATOR = "void"
 # `createRequire(import.meta.url)` (node:module) makes a CommonJS loader.
 JS_CREATE_REQUIRE = "createRequire"
+JS_NODE_MODULE_SPECIFIERS = frozenset({"module", "node:module"})
 CAPTURE_JS_CALL_STATEMENT = "statement"
 # JSX element nodes that carry a component name (javascript and tsx grammars
 # share these); the closing element repeats the name and must not double-emit.
