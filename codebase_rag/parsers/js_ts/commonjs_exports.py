@@ -185,10 +185,19 @@ class LocalBindings:
     from the innermost out to its top level, binds it, and the value that
     binding gives it. One module's scopes are read once."""
 
-    __slots__ = ("_module",)
+    __slots__ = ("_module", "_root", "_factories")
 
     def __init__(self, root: Node) -> None:
         self._module = _Module(root, strict_blocks=True)
+        self._root = root
+        self._factories: dict[str, frozenset[str]] = {}
+
+    def factory_names(self, factory: str) -> frozenset[str]:
+        """The local names the module imports `factory` under, its own
+        name included (Greptile, PR #3284)."""
+        if (names := self._factories.get(factory)) is None:
+            names = self._factories[factory] = _factory_names(self._root, factory)
+        return names
 
     def binding(self, identifier: Node) -> tuple[bool, Node | None]:
         """(bound, value): whether a scope binds the name, and the value its
@@ -864,22 +873,82 @@ def _function_names(function: Node, strict: bool = False) -> Iterator[str]:
 
 
 def _declared_value(scope: Node, name: str) -> Node | None:
-    # The value the shallowest `var` / `let` / `const` declarator of `scope`
-    # gives `name`, not looking inside nested functions.
-    pending = deque(scope.named_children)
-    while pending:
-        node = pending.popleft()
-        if node.type == cs.TS_VARIABLE_DECLARATOR:
-            target = node.child_by_field_name(cs.FIELD_NAME)
+    # The value a `var` / `let` / `const` that `scope` itself binds gives
+    # `name`. A declarator of a nested block binds a name of its own, so its
+    # value never stands for the scope's (Greptile, PR #3284).
+    for declaration in _scope_declarations(scope):
+        for declarator in declaration.named_children:
+            target = declarator.child_by_field_name(cs.FIELD_NAME)
             if (
-                target is not None
+                declarator.type == cs.TS_VARIABLE_DECLARATOR
+                and target is not None
                 and target.type == cs.TS_IDENTIFIER
                 and safe_decode_text(target) == name
             ):
-                return node.child_by_field_name(cs.FIELD_VALUE)
-        if node.type not in _FUNCTIONS:
-            pending.extend(node.named_children)
+                return declarator.child_by_field_name(cs.FIELD_VALUE)
     return None
+
+
+def _scope_declarations(scope: Node) -> Iterator[Node]:
+    # The declarations whose names `scope` binds: a function's `var`s outside
+    # nested functions and the `let` / `const` directly in its body; a `for`
+    # head's; and those directly in a block, a `switch` body or the module.
+    lexical = (cs.TS_LEXICAL_DECLARATION, cs.TS_VARIABLE_DECLARATION)
+    if scope.type in _FUNCTIONS:
+        body = scope.child_by_field_name(cs.FIELD_BODY)
+        if body is None or body.type != cs.TS_STATEMENT_BLOCK:
+            return
+        yield from (s for s in body.named_children if s.type in lexical)
+        pending = deque(
+            s for s in body.named_children if s.type != cs.TS_VARIABLE_DECLARATION
+        )
+        while pending:
+            node = pending.popleft()
+            if node.type == cs.TS_VARIABLE_DECLARATION:
+                yield node
+            elif node.type not in _FUNCTIONS:
+                pending.extend(node.named_children)
+        return
+    if scope.type == cs.TS_JS_FOR_STATEMENT:
+        initializer = scope.child_by_field_name(cs.TS_FIELD_INITIALIZER)
+        if initializer is not None and initializer.type in lexical:
+            yield initializer
+        return
+    statements = (
+        [
+            statement
+            for case in scope.named_children
+            for statement in case.children_by_field_name(cs.FIELD_BODY)
+        ]
+        if scope.type == cs.TS_JS_SWITCH_BODY
+        else scope.named_children
+    )
+    for statement in statements:
+        if statement.type == cs.TS_EXPORT_STATEMENT:
+            statement = statement.child_by_field_name(cs.FIELD_DECLARATION) or statement
+        if statement.type in lexical:
+            yield statement
+
+
+def _factory_names(root: Node, factory: str) -> frozenset[str]:
+    # The local names the module's imports bind `factory` to, the name itself
+    # included: `import { createRequire as makeRequire }` and
+    # `const { createRequire: makeRequire } = require("node:module")`.
+    names = {factory}
+    for node in _subtree(root):
+        local: Node | None = None
+        if node.type == cs.TS_IMPORT_SPECIFIER:
+            imported = node.child_by_field_name(cs.FIELD_NAME)
+            if imported is not None and safe_decode_text(imported) == factory:
+                local = node.child_by_field_name(cs.FIELD_ALIAS)
+        elif node.type == cs.TS_PAIR_PATTERN and (
+            _property_key(node.child_by_field_name(cs.FIELD_KEY)) == factory
+        ):
+            local = node.child_by_field_name(cs.FIELD_VALUE)
+        if local is not None and local.type == cs.TS_IDENTIFIER:
+            if text := safe_decode_text(local):
+                names.add(text)
+    return frozenset(names)
 
 
 def _is_es_module(root: Node) -> bool:

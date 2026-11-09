@@ -264,6 +264,9 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
         'function boot() {\n  {\n    function require() {}\n  }\n  require("./db");\n}\n',
         'export const ready = true;\nconst require = () => {};\nrequire("./db");\n',
         'function require(name) {\n  return name;\n}\nrequire("./db");\n',
+        "function run(require) {\n  {\n"
+        "    const require = createRequire(import.meta.url);\n  }\n"
+        '  require("./db");\n}\n',
     ],
     ids=[
         "parameter",
@@ -274,6 +277,7 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
         "sloppy-block-function",
         "module-level-helper",
         "module-level-function",
+        "parameter-beside-a-block-loader",
     ],
 )
 def test_a_call_to_a_local_named_require_is_no_import(
@@ -322,17 +326,27 @@ def test_strict_code_keeps_a_block_s_function_to_the_block(
     )
 
 
+@pytest.mark.parametrize(
+    "factory",
+    [
+        'import { createRequire } from "node:module";\n'
+        "const require = createRequire(import.meta.url);\n",
+        'import { createRequire as makeRequire } from "node:module";\n'
+        "const require = makeRequire(import.meta.url);\n",
+        'const { createRequire: makeRequire } = require("node:module");\n'
+        "const require = makeRequire(import.meta.url);\n",
+    ],
+    ids=["create-require", "renamed-import", "renamed-destructure"],
+)
 def test_a_module_level_require_made_by_create_require_still_imports(
-    temp_repo: Path, mock_ingestor: MagicMock
+    temp_repo: Path, mock_ingestor: MagicMock, factory: str
 ) -> None:
     # An ES module's `const require = createRequire(import.meta.url)` is the
-    # loader itself, so a call to it still imports the module.
+    # loader itself, under whatever name the module imports the factory as,
+    # so a call to it still imports the module (Greptile, PR #3284).
     (temp_repo / "db.js").write_text("module.exports = {};\n", encoding="utf-8")
     (temp_repo / "main.mjs").write_text(
-        'import { createRequire } from "node:module";\n'
-        "const require = createRequire(import.meta.url);\n"
-        'require("./db");\n',
-        encoding="utf-8",
+        f'{factory}require("./db");\n', encoding="utf-8"
     )
     create_and_run_updater(temp_repo, mock_ingestor)
 
