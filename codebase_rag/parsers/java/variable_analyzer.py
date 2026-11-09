@@ -16,6 +16,7 @@ from .utils import (
     extract_class_info,
     extract_field_info,
     extract_method_call_info,
+    find_package_start_index,
     get_root_node_from_module_qn,
     spread_element_type_node,
 )
@@ -532,13 +533,14 @@ class JavaVariableAnalyzerMixin:
         # matching on its suffix, in plain or doubled form. A QUALIFIED
         # name that starts lowercase carries its package, so it must prove
         # its identity from that package instead: the key must hold exactly
-        # the written package right after the project segment (project
-        # names never hold the separator, issue #2412), and the rest must
-        # be the class path in plain form, with the simple name doubled,
-        # or prefixed by the file stem — the stem form also covers the
-        # doubled outermost class, since the stem sits where the doubled
-        # segment is. Splits are tried at every segment boundary, so an
-        # uppercase package segment (`com.Example.Outer.A`) does not
+        # the written package after the source root (project names never
+        # hold the separator, issue #2412), and the rest must be the class
+        # path in plain form, with the simple name doubled, or prefixed by
+        # the file stem — the stem form also covers the doubled outermost
+        # class, since the stem sits where the doubled segment is, and it
+        # is only accepted when the stem names a real module in the
+        # declaring package. Splits are tried at every segment boundary, so
+        # an uppercase package segment (`com.Example.Outer.A`) does not
         # misplace the package/class boundary, and a nested class in a
         # file whose stem is not the outer class still matches through
         # its stem. A same-named class in another package never stands in
@@ -583,13 +585,23 @@ class JavaVariableAnalyzerMixin:
 
     def _package_anchored_inheritance_key(self, parts: list[str]) -> str | None:
         # Match a package-carrying qualified name against registry keys by
-        # structure, not by suffix: the key must be the project segment,
-        # then exactly the written package, then the class path in plain
-        # form, with the simple name doubled, or prefixed by one file-stem
-        # segment. Every package/class split is tried, so the boundary is
-        # not guessed from casing alone. A multi-segment class path must
-        # start with a class (an uppercase segment); a single-segment
-        # class path is a top-level class of any case.
+        # structure, not by suffix: the key must hold exactly the written
+        # package, then the class path in plain form, with the simple name
+        # doubled, or prefixed by one file-stem segment. Every package/class
+        # split is tried, so the boundary is not guessed from casing alone.
+        # A multi-segment class path must start with a class (an uppercase
+        # segment); a single-segment class path is a top-level class of any
+        # case. The package is matched after the source root
+        # (`find_package_start_index`, the same helper the rest of the Java
+        # frontend uses): a Maven key keeps `src.main.java` between the
+        # project segment and the package, so matching right after the
+        # project segment would reject every qualified type in that layout.
+        # The file-stem form is only accepted when the stem names a real
+        # module in the declaring package: the segment before the class path
+        # may be a package segment of a longer package instead (a top-level
+        # class in `com/example/sub/Outer.java` is keyed
+        # `<project>.com.example.sub.Outer.A`), and without that check a
+        # written `com.example.Outer.A` would bind to it.
         matches: set[str] = set()
         for split in range(1, len(parts)):
             package, class_path = parts[:split], parts[split:]
@@ -597,15 +609,18 @@ class JavaVariableAnalyzerMixin:
                 continue
             for qn in self.class_inheritance:
                 segments = qn.split(cs.SEPARATOR_DOT)
-                if segments[1 : 1 + len(package)] != package:
+                package_start = find_package_start_index(segments) or 1
+                if segments[package_start : package_start + len(package)] != package:
                     continue
-                rest = segments[1 + len(package) :]
-                if (
-                    rest == class_path
-                    or rest == [*class_path, class_path[-1]]
-                    or (len(rest) == len(class_path) + 1 and rest[1:] == class_path)
-                ):
+                rest = segments[package_start + len(package) :]
+                if rest == class_path or rest == [*class_path, class_path[-1]]:
                     matches.add(qn)
+                elif len(rest) == len(class_path) + 1 and rest[1:] == class_path:
+                    stem_module_qn = cs.SEPARATOR_DOT.join(
+                        segments[: package_start + len(package) + 1]
+                    )
+                    if stem_module_qn in self.module_qn_to_file_path:
+                        matches.add(qn)
         return matches.pop() if len(matches) == 1 else None
 
     def _java_superclass_chain(self, class_qn: str) -> list[str]:

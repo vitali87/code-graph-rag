@@ -1447,6 +1447,12 @@ class TestInheritanceKeyFor:
             "jX.com.example.Outer.Outer.B": ["jX.com.example.Base.Base"],
             "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
         }
+        # The doubled outer class is the stem form, so the stem's module
+        # must be in the map (CodeRabbit Minor on #3525).
+        engine.module_qn_to_file_path = {
+            "jX.com.example.Outer": Path("/test/repo/com/example/Outer.java"),
+            "jX.com.example.Base": Path("/test/repo/com/example/Base.java"),
+        }
 
         assert (
             self._key_for(engine, "com.example.Outer.A")
@@ -1502,6 +1508,12 @@ class TestInheritanceKeyFor:
             "jX.com.Example.Outer.Outer.B": ["jX.com.Example.Base.Base"],
             "jX.com.Example.Base.Base": ["java.lang.RuntimeException"],
         }
+        # The doubled outer class is the stem form, so the stem's module
+        # must be in the map (CodeRabbit Minor on #3525).
+        engine.module_qn_to_file_path = {
+            "jX.com.Example.Outer": Path("/test/repo/com/Example/Outer.java"),
+            "jX.com.Example.Base": Path("/test/repo/com/Example/Base.java"),
+        }
 
         assert (
             self._key_for(engine, "com.Example.Outer.A")
@@ -1522,6 +1534,13 @@ class TestInheritanceKeyFor:
             "jX.com.example.Helpers.Outer.A": ["jX.com.example.Base.Base"],
             "jX.com.example.Helpers.Outer.B": ["jX.com.example.Base.Base"],
             "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+        # The stem form only matches when the stem names a real module in
+        # the declaring package (CodeRabbit Minor on #3525): a stray
+        # package segment must not pose as a file stem.
+        engine.module_qn_to_file_path = {
+            "jX.com.example.Helpers": Path("/test/repo/com/example/Helpers.java"),
+            "jX.com.example.Base": Path("/test/repo/com/example/Base.java"),
         }
 
         assert (
@@ -1547,3 +1566,70 @@ class TestInheritanceKeyFor:
 
         assert self._key_for(engine, "example.Outer.A") is None
         assert self._key_for(engine, "example.Outer.B") is None
+
+    def test_qualified_nested_name_maven_layout_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Greptile P1 / CodeRabbit Minor on #3525: in a Maven layout the
+        # registry key keeps the source root, so the written package must
+        # be matched after it, not right after the project segment.
+        engine.class_inheritance = {
+            "jX.src.main.java.com.example.Outer.Outer.A": [
+                "jX.src.main.java.com.example.Base.Base"
+            ],
+            "jX.src.main.java.com.example.Outer.Outer.B": [
+                "jX.src.main.java.com.example.Base.Base"
+            ],
+            "jX.src.main.java.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+        # The doubled outer class is the stem form, so the stem's module
+        # must be in the map (CodeRabbit Minor on #3525).
+        engine.module_qn_to_file_path = {
+            "jX.src.main.java.com.example.Outer": Path(
+                "/test/repo/src/main/java/com/example/Outer.java"
+            ),
+            "jX.src.main.java.com.example.Base": Path(
+                "/test/repo/src/main/java/com/example/Base.java"
+            ),
+        }
+
+        assert (
+            self._key_for(engine, "com.example.Outer.A")
+            == "jX.src.main.java.com.example.Outer.Outer.A"
+        )
+        assert (
+            self._key_for(engine, "com.example.Outer.B")
+            == "jX.src.main.java.com.example.Outer.Outer.B"
+        )
+
+    def test_qualified_nested_name_maven_wrong_package_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # The source-root skip must not let a shorter written package
+        # stand in for the Maven key's real package.
+        engine.class_inheritance = {
+            "jX.src.main.java.com.example.Outer.Outer.A": [
+                "jX.src.main.java.com.example.Base.Base"
+            ],
+        }
+
+        assert self._key_for(engine, "example.Outer.A") is None
+
+    def test_qualified_nested_name_stem_segment_is_package_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # CodeRabbit Minor on #3525: a top-level class `A` in
+        # `com/example/sub/Outer.java` is keyed
+        # `jX.com.example.sub.Outer.A`; the `sub` segment is a package
+        # segment, not a file stem, so a written `com.example.Outer.A`
+        # must not bind to it. The real file's module qn is in the map;
+        # the stem-form parse's implied module qn is not.
+        engine.class_inheritance = {
+            "jX.com.example.sub.Outer.A": ["jX.com.example.sub.Base.Base"],
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.example.sub.Outer": Path("/test/repo/com/example/sub/Outer.java"),
+            "jX.com.example.sub.Base": Path("/test/repo/com/example/sub/Base.java"),
+        }
+
+        assert self._key_for(engine, "com.example.Outer.A") is None

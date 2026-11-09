@@ -544,6 +544,98 @@ def test_multi_catch_qualified_nested_wrong_package_never_binds(
     assert targets == set(), sorted(targets)
 
 
+def test_multi_catch_qualified_nested_maven_layout_resolves(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Greptile P1 / CodeRabbit Minor on #3525: in a Maven layout the
+    # registry key keeps the source root (`src.main.java`), so the
+    # qualified catch type must match the declared package after it.
+    root = temp_repo / "jmulticatchmaven"
+    pkg = root / "src" / "main" / "java" / "com" / "example"
+    pkg.mkdir(parents=True)
+    for name, text in {
+        "BaseError.java": (
+            "package com.example;\n"
+            "public class BaseError extends RuntimeException {\n"
+            '  public String detail() { return "base"; }\n'
+            "}\n"
+        ),
+        "Outer.java": (
+            "package com.example;\n"
+            "public class Outer {\n"
+            "  public static class A extends BaseError {}\n"
+            "  public static class B extends BaseError {}\n"
+            "}\n"
+        ),
+        "ErrorDecoy.java": _ERROR_DECOY,
+        "Main.java": (
+            "package com.example;\n"
+            "public class Main {\n"
+            "  String multi() {\n"
+            "    try {\n"
+            "      throw new Outer.A();\n"
+            "    } catch (com.example.Outer.A | com.example.Outer.B e) {\n"
+            "      return e.detail();\n"
+            "    }\n"
+            "  }\n"
+            "}\n"
+        ),
+    }.items():
+        (pkg / name).write_text(text, encoding="utf-8")
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    _assert_calls(
+        _calls(mock_ingestor),
+        ".Main.multi()",
+        ".BaseError.detail()",
+        ".ErrorDecoy.detail()",
+    )
+
+
+def test_multi_catch_qualified_nested_subpackage_stem_never_binds(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # CodeRabbit Minor on #3525: a top-level `A` in
+    # `com/example/sub/Outer.java` is keyed with `sub` as a package
+    # segment, not a file stem, so a written `com.example.Outer.A`
+    # must not type the catch parameter with its supertype.
+    root = temp_repo / "jmulticatchsubpkg"
+    sub = root / "com" / "example" / "sub"
+    sub.mkdir(parents=True)
+    (sub / "BaseError.java").write_text(
+        "package com.example.sub;\n"
+        "public class BaseError extends RuntimeException {\n"
+        '  public String detail() { return "base"; }\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    (sub / "Outer.java").write_text(
+        "package com.example.sub;\n"
+        "class A extends BaseError {}\n"
+        "class B extends BaseError {}\n",
+        encoding="utf-8",
+    )
+    pkg = root / "com" / "example"
+    (pkg / "Main.java").write_text(
+        "package com.example;\n"
+        "public class Main {\n"
+        "  String multi() {\n"
+        "    try {\n"
+        "      throw new RuntimeException();\n"
+        "    } catch (com.example.Outer.A | com.example.Outer.B e) {\n"
+        "      return e.detail();\n"
+        "    }\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    calls = _calls(mock_ingestor)
+    targets = {
+        t for f, t in calls if f.endswith(".Main.multi()") and t.endswith(".detail()")
+    }
+    assert targets == set(), sorted(targets)
+
+
 def test_java9_bare_resource_keeps_outer_type(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
