@@ -527,20 +527,26 @@ class JavaVariableAnalyzerMixin:
         # (`<module>.AppError.AppError`). An UNQUALIFIED name may therefore
         # match on its simple name, and only when exactly one parsed class
         # carries it (the same uniqueness rule `_resolve_java_type_name`
-        # applies to a nested type). A QUALIFIED name must prove its
-        # identity from its package path instead: an exact key, or a key
-        # that ends at the written path, in plain or doubled form. A
-        # same-named class in another package never stands in for a
-        # qualified name — in particular, `java.io.IOException` never
-        # resolves to a first-party `IOException`. A NESTED class is stored
-        # the same doubled way, but the extra segment sits in the middle:
-        # the module qn already ends in the file stem (the outermost class),
-        # and the class path repeats it, so `com.example.Outer.A` is keyed
-        # `<module>.com.example.Outer.Outer.A`. The plain and simple-doubled
-        # suffixes both miss that form, so a third candidate duplicates the
-        # first class segment (the first segment starting with an uppercase
-        # letter; package segments are lowercase by convention). As before,
-        # an ambiguous match resolves to nothing.
+        # applies to a nested type). A QUALIFIED name that starts with a
+        # class is a relative name (such as `Outer.Inner`) and keeps
+        # matching on its suffix, in plain or doubled form. A QUALIFIED
+        # name that starts lowercase carries its package, so it must prove
+        # its identity from that package instead: the key must hold exactly
+        # the written package right after the project segment (project
+        # names never hold the separator, issue #2412), and the rest must
+        # be the class path in plain form, with the simple name doubled,
+        # or prefixed by the file stem — the stem form also covers the
+        # doubled outermost class, since the stem sits where the doubled
+        # segment is. Splits are tried at every segment boundary, so an
+        # uppercase package segment (`com.Example.Outer.A`) does not
+        # misplace the package/class boundary, and a nested class in a
+        # file whose stem is not the outer class still matches through
+        # its stem. A same-named class in another package never stands in
+        # for a qualified name — in particular, `java.io.IOException`
+        # never resolves to a first-party `IOException`, and a written
+        # `example.Outer.A` never resolves to first-party
+        # `com.example.Outer.A`. As before, an ambiguous match resolves
+        # to nothing.
         if resolved_type in self.class_inheritance:
             return resolved_type
         if cs.SEPARATOR_DOT not in resolved_type:
@@ -550,8 +556,10 @@ class JavaVariableAnalyzerMixin:
                 if qn.rpartition(cs.SEPARATOR_DOT)[2] == resolved_type
             ]
             return matches[0] if len(matches) == 1 else None
-        simple_name = resolved_type.rpartition(cs.SEPARATOR_DOT)[2]
         parts = resolved_type.split(cs.SEPARATOR_DOT)
+        if not parts[0][:1].isupper():
+            return self._package_anchored_inheritance_key(parts)
+        simple_name = resolved_type.rpartition(cs.SEPARATOR_DOT)[2]
         doubled_nested: str | None = None
         for index, part in enumerate(parts):
             if part[:1].isupper():
@@ -572,6 +580,33 @@ class JavaVariableAnalyzerMixin:
             )
         ]
         return matches[0] if len(matches) == 1 else None
+
+    def _package_anchored_inheritance_key(self, parts: list[str]) -> str | None:
+        # Match a package-carrying qualified name against registry keys by
+        # structure, not by suffix: the key must be the project segment,
+        # then exactly the written package, then the class path in plain
+        # form, with the simple name doubled, or prefixed by one file-stem
+        # segment. Every package/class split is tried, so the boundary is
+        # not guessed from casing alone. A multi-segment class path must
+        # start with a class (an uppercase segment); a single-segment
+        # class path is a top-level class of any case.
+        matches: set[str] = set()
+        for split in range(1, len(parts)):
+            package, class_path = parts[:split], parts[split:]
+            if len(class_path) > 1 and not class_path[0][:1].isupper():
+                continue
+            for qn in self.class_inheritance:
+                segments = qn.split(cs.SEPARATOR_DOT)
+                if segments[1 : 1 + len(package)] != package:
+                    continue
+                rest = segments[1 + len(package) :]
+                if (
+                    rest == class_path
+                    or rest == [*class_path, class_path[-1]]
+                    or (len(rest) == len(class_path) + 1 and rest[1:] == class_path)
+                ):
+                    matches.add(qn)
+        return matches.pop() if len(matches) == 1 else None
 
     def _java_superclass_chain(self, class_qn: str) -> list[str]:
         chain: list[str] = []

@@ -1479,3 +1479,71 @@ class TestInheritanceKeyFor:
         }
 
         assert self._key_for(engine, "example.AppError") is None
+
+    def test_qualified_name_single_suffix_match_wrong_package_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # CodeRabbit Minor on #3525: even a unique same-suffix class in a
+        # longer package must not stand in for the written package.
+        engine.class_inheritance = {
+            "jX.com.example.AppError.AppError": ["jX.com.example.BaseError.BaseError"],
+        }
+
+        assert self._key_for(engine, "example.AppError") is None
+
+    def test_qualified_nested_name_uppercase_package_segment_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # CodeRabbit Minor on #3525: `com.Example.Outer.A` must double
+        # `Outer` (the outermost class), not `Example` (the first
+        # uppercase segment).
+        engine.class_inheritance = {
+            "jX.com.Example.Outer.Outer.A": ["jX.com.Example.Base.Base"],
+            "jX.com.Example.Outer.Outer.B": ["jX.com.Example.Base.Base"],
+            "jX.com.Example.Base.Base": ["java.lang.RuntimeException"],
+        }
+
+        assert (
+            self._key_for(engine, "com.Example.Outer.A")
+            == "jX.com.Example.Outer.Outer.A"
+        )
+        assert (
+            self._key_for(engine, "com.Example.Outer.B")
+            == "jX.com.Example.Outer.Outer.B"
+        )
+
+    def test_qualified_nested_name_other_file_stem_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # CodeRabbit Minor on #3525: a nested class in a file whose stem is
+        # not the outer class is keyed with that stem in the middle
+        # (`<module>.com.example.Helpers.Outer.A`).
+        engine.class_inheritance = {
+            "jX.com.example.Helpers.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.com.example.Helpers.Outer.B": ["jX.com.example.Base.Base"],
+            "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+
+        assert (
+            self._key_for(engine, "com.example.Outer.A")
+            == "jX.com.example.Helpers.Outer.A"
+        )
+        assert (
+            self._key_for(engine, "com.example.Outer.B")
+            == "jX.com.example.Helpers.Outer.B"
+        )
+
+    def test_qualified_nested_name_wrong_package_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # CodeRabbit Minor on #3525: a same-suffix class in a longer package
+        # must not stand in for the written package, even when it is the
+        # only candidate.
+        engine.class_inheritance = {
+            "jX.com.example.Outer.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.com.example.Outer.Outer.B": ["jX.com.example.Base.Base"],
+            "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+
+        assert self._key_for(engine, "example.Outer.A") is None
+        assert self._key_for(engine, "example.Outer.B") is None
