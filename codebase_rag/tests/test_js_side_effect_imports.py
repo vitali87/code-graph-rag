@@ -270,6 +270,10 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
         'import { createRequire as makeRequire } from "node:module";\n'
         "function run(makeRequire) {\n  const require = makeRequire();\n"
         '  require("./db");\n}\nrun(() => () => {});\n',
+        'import { createRequire } from "node:module";\n'
+        "function run(make) {\n  const createRequire = make;\n"
+        "  const require = createRequire();\n"
+        '  require("./db");\n}\nrun(() => () => {});\n',
     ],
     ids=[
         "parameter",
@@ -282,6 +286,7 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
         "module-level-function",
         "parameter-beside-a-block-loader",
         "parameter-spelled-like-the-factory",
+        "alias-of-a-parameter",
     ],
 )
 def test_a_call_to_a_local_named_require_is_no_import(
@@ -341,8 +346,21 @@ def test_strict_code_keeps_a_block_s_function_to_the_block(
         "const require = makeRequire(import.meta.url);\n",
         'const { createRequire } = require("node:module");\n'
         "const require = createRequire(import.meta.url);\n",
+        'import * as module from "node:module";\n'
+        "const createRequire = module.createRequire;\n"
+        "const require = createRequire(import.meta.url);\n",
+        'import { createRequire } from "node:module";\n'
+        "const make = createRequire;\nconst makeLoader = make;\n"
+        "const require = makeLoader(import.meta.url);\n",
     ],
-    ids=["create-require", "renamed-import", "renamed-destructure", "destructure"],
+    ids=[
+        "create-require",
+        "renamed-import",
+        "renamed-destructure",
+        "destructure",
+        "property-read",
+        "alias-chain",
+    ],
 )
 def test_a_module_level_require_made_by_create_require_still_imports(
     temp_repo: Path, mock_ingestor: MagicMock, factory: str
@@ -358,7 +376,7 @@ def test_a_module_level_require_made_by_create_require_still_imports(
 
     props = _imports(temp_repo, mock_ingestor).get(("main", "db"))
     assert props is not None, sorted(_imports(temp_repo, mock_ingestor))
-    assert props.get(cs.KEY_LINE) == 3, props
+    assert props.get(cs.KEY_LINE) == factory.count("\n") + 1, props
 
 
 def test_only_the_first_argument_names_the_module(

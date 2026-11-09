@@ -182,6 +182,9 @@ def commonjs_export_bindings(root: Node) -> dict[str, CommonjsBinding]:
 
 # A name and the scope (by `_key`) whose binding of it imports a factory.
 type _FactoryBinding = tuple[str, tuple[int, int, str]]
+# How many `const a = b` aliases a factory check follows: a cycle of them
+# (`const a = b; const b = a;`) must end.
+_FACTORY_ALIAS_HOPS = 8
 
 
 class LocalBindings:
@@ -196,17 +199,29 @@ class LocalBindings:
         self._root = root
         self._factories: dict[str, frozenset[_FactoryBinding]] = {}
 
-    def calls_factory(self, callee: Node, factory: str) -> bool:
-        """Whether `callee` reaches a binding that imports `factory`, under
-        whatever name: a parameter or local that only shares the spelling is
-        whatever it holds (Greptile, PR #3284). An unbound `factory` is it."""
+    def calls_factory(self, callee: Node, factory: str, hops: int = 0) -> bool:
+        """Whether `callee` reaches `factory`: through a binding that imports
+        it, under whatever name, or a variable whose initializer leads there
+        (`const make = module.createRequire`, `const make = createRequire`).
+        A parameter or local that only shares the spelling is whatever it
+        holds (Greptile, PR #3284). An unbound `factory` is it."""
         name = safe_decode_text(callee)
-        if not name:
+        if not name or hops > _FACTORY_ALIAS_HOPS:
             return False
         scope = self._module.binding_scope(callee)
         if scope is None:
             return name == factory
-        return (name, _key(scope)) in self._factory_bindings(factory)
+        if (name, _key(scope)) in self._factory_bindings(factory):
+            return True
+        value = _unwrapped(_declared_value(scope, name))
+        if value is None:
+            return False
+        if value.type == cs.TS_IDENTIFIER:
+            return self.calls_factory(value, factory, hops + 1)
+        if value.type == cs.TS_MEMBER_EXPRESSION:
+            prop = value.child_by_field_name(cs.FIELD_PROPERTY)
+            return prop is not None and safe_decode_text(prop) == factory
+        return False
 
     def _factory_bindings(self, factory: str) -> frozenset[_FactoryBinding]:
         if (found := self._factories.get(factory)) is None:
