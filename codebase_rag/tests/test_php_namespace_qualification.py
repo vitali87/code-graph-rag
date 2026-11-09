@@ -258,6 +258,7 @@ def test_a_class_use_does_not_resolve_to_a_php_function(tmp_path: Path) -> None:
     from codebase_rag.parsers.call_resolver import CallResolver
 
     resolver = object.__new__(CallResolver)
+    resolver.type_inference = SimpleNamespace(module_qn_to_file_path={})
     resolver.import_processor = SimpleNamespace(
         php_module_namespaces={"proj.text": "App.Text"},
         commonjs_direct_exports={},
@@ -310,6 +311,7 @@ def test_a_call_through_a_use_function_alias_is_case_insensitive(
     from codebase_rag.parsers.call_resolver import CallResolver
 
     resolver = object.__new__(CallResolver)
+    resolver.type_inference = SimpleNamespace(module_qn_to_file_path={})
     resolver.import_processor = SimpleNamespace(
         php_module_namespaces={"proj.text": "App.Text"},
         commonjs_direct_exports={},
@@ -368,6 +370,7 @@ def test_two_import_keys_differing_only_in_case_resolve_to_nothing(
     from codebase_rag.parsers.call_resolver import CallResolver
 
     resolver = object.__new__(CallResolver)
+    resolver.type_inference = SimpleNamespace(module_qn_to_file_path={})
     resolver.import_processor = SimpleNamespace(
         php_module_namespaces={"proj.text": "App.Text", "proj.money": "App.Money"},
         commonjs_direct_exports={},
@@ -410,6 +413,7 @@ def test_a_fully_qualified_import_resolves(tmp_path: Path) -> None:
     from codebase_rag.parsers.call_resolver import CallResolver
 
     resolver = object.__new__(CallResolver)
+    resolver.type_inference = SimpleNamespace(module_qn_to_file_path={})
     resolver.import_processor = SimpleNamespace(
         php_module_namespaces={"proj.text": "App.Text"},
         commonjs_direct_exports={},
@@ -448,6 +452,7 @@ def test_an_unknown_caller_module_does_not_resolve(tmp_path: Path) -> None:
     from codebase_rag.parsers.call_resolver import CallResolver
 
     resolver = object.__new__(CallResolver)
+    resolver.type_inference = SimpleNamespace(module_qn_to_file_path={})
     resolver.import_processor = SimpleNamespace(
         php_module_namespaces={"proj.text": "App.Text"},
         commonjs_direct_exports={},
@@ -483,6 +488,7 @@ def test_a_mixed_case_import_resolves_like_php_does(tmp_path: Path) -> None:
     from codebase_rag.parsers.call_resolver import CallResolver
 
     resolver = object.__new__(CallResolver)
+    resolver.type_inference = SimpleNamespace(module_qn_to_file_path={})
     resolver.import_processor = SimpleNamespace(
         php_module_namespaces={"proj.text": "App.Text"},
         commonjs_direct_exports={},
@@ -546,6 +552,7 @@ def test_a_non_php_caller_never_resolves_through_php_namespaces(
     from codebase_rag.parsers.call_resolver import CallResolver
 
     resolver = object.__new__(CallResolver)
+    resolver.type_inference = SimpleNamespace(module_qn_to_file_path={})
     resolver.import_processor = SimpleNamespace(
         php_module_namespaces={"proj.text": "App.Text"},
         # The non-PHP path falls through to the commonjs lookup, so the double

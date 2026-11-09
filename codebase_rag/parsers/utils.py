@@ -25,6 +25,7 @@ from ..types_defs import (
     TreeSitterNodeProtocol,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
+from . import native_trees
 from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
 from .endpoints import emit_endpoints, queue_endpoints
@@ -537,25 +538,15 @@ def is_stored_abstract_member(
     )
 
 
-_PY_NAMED_PARAMETERS = frozenset(
-    {cs.TS_PY_DEFAULT_PARAMETER, cs.TS_PY_TYPED_DEFAULT_PARAMETER}
-)
 _PY_KEYWORD_ONLY_BOUNDARIES = frozenset(
     {cs.TS_PY_KEYWORD_SEPARATOR, cs.TS_PY_LIST_SPLAT_PATTERN}
-)
-_PY_SCOPE_BOUNDARIES = frozenset(
-    {
-        cs.TS_PY_FUNCTION_DEFINITION,
-        cs.TS_PY_CLASS_DEFINITION,
-        cs.TS_PY_DECORATED_DEFINITION,
-    }
 )
 
 
 def _python_parameter_name(param_node: Node) -> str | None:
     if param_node.type == cs.TS_PY_IDENTIFIER:
         return safe_decode_text(param_node)
-    if param_node.type in _PY_NAMED_PARAMETERS:
+    if param_node.type in cs.PY_NAMED_PARAMETER_TYPES:
         name_node = param_node.child_by_field_name(cs.FIELD_NAME)
         if name_node is not None and name_node.type == cs.TS_PY_IDENTIFIER:
             return safe_decode_text(name_node)
@@ -567,7 +558,6 @@ def _python_parameter_name(param_node: Node) -> str | None:
     return None
 
 
-_PY_CLOSURE_SCOPES = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA})
 _GO_CLOSURE_SCOPES = frozenset({cs.TS_GO_FUNC_LITERAL})
 
 
@@ -585,8 +575,8 @@ class _CallableScanConfig(NamedTuple):
 _PY_SCAN = _CallableScanConfig(
     cs.TS_PY_CALL,
     cs.TS_PY_IDENTIFIER,
-    _PY_CLOSURE_SCOPES,
-    frozenset({cs.TS_PY_CLASS_DEFINITION}),
+    cs.PY_CALLABLE_CLOSURE_TYPES,
+    cs.PY_CALLABLE_OPAQUE_TYPES,
 )
 _GO_SCAN = _CallableScanConfig(
     cs.TS_GO_CALL_EXPRESSION,
@@ -594,21 +584,11 @@ _GO_SCAN = _CallableScanConfig(
     _GO_CLOSURE_SCOPES,
     frozenset(),
 )
-_JS_TS_CLOSURE_SCOPES = frozenset(
-    {
-        cs.TS_ARROW_FUNCTION,
-        cs.TS_FUNCTION_EXPRESSION,
-        cs.TS_FUNCTION_DECLARATION,
-    }
-)
 _JS_SCAN = _CallableScanConfig(
     cs.TS_CALL_EXPRESSION,
     cs.TS_IDENTIFIER,
-    _JS_TS_CLOSURE_SCOPES,
-    frozenset({cs.TS_CLASS_DECLARATION}),
-)
-_JS_TS_TYPED_PARAMETERS = frozenset(
-    {cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER}
+    cs.JS_TS_CALLABLE_CLOSURE_TYPES,
+    cs.JS_TS_CALLABLE_OPAQUE_TYPES,
 )
 _CPP_CLOSURE_SCOPES = frozenset({cs.TS_CPP_LAMBDA_EXPRESSION})
 _CPP_SCAN = _CallableScanConfig(
@@ -751,7 +731,7 @@ def _js_ts_parameter_name(param: Node) -> str | None:
     # A bare identifier, or the identifier `pattern` of a TS typed parameter.
     if param.type == cs.TS_IDENTIFIER:
         return safe_decode_text(param)
-    if param.type in _JS_TS_TYPED_PARAMETERS:
+    if param.type in cs.JS_TS_TYPED_PARAMETER_TYPES:
         pattern = param.child_by_field_name(cs.TS_FIELD_PATTERN)
         if pattern is not None and pattern.type == cs.TS_IDENTIFIER:
             return safe_decode_text(pattern)
@@ -843,7 +823,7 @@ def _python_collect_bound_targets(node: Node, out: set[str]) -> None:
     while stack:
         current = stack.pop()
         for child in current.children:
-            if child.type in _PY_SCOPE_BOUNDARIES:
+            if child.type in cs.PY_SCOPE_BOUNDARY_TYPES:
                 # A nested def/class NAME binds here, but its body has its own
                 # scope; record the name and do not descend.
                 if name := _python_scope_boundary_name(child):
@@ -859,11 +839,7 @@ def _python_scope_boundary_name(child: Node) -> str | None:
     named = child
     if child.type == cs.TS_PY_DECORATED_DEFINITION:
         named = next(
-            (
-                c
-                for c in child.children
-                if c.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
-            ),
+            (c for c in child.children if c.type in cs.PY_DECORATED_DEFINITION_TYPES),
             child,
         )
     name_node = named.child_by_field_name(cs.FIELD_NAME)
@@ -872,7 +848,7 @@ def _python_scope_boundary_name(child: Node) -> str | None:
 
 def _python_collect_direct_bindings(child: Node, out: set[str]) -> None:
     child_type = child.type
-    if child_type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT):
+    if child_type in cs.PY_CAPTURE_SHADOW_BINDERS:
         # Both bind whatever their `left` names.
         left = child.child_by_field_name(cs.TS_FIELD_LEFT)
         if left is not None:
@@ -880,7 +856,7 @@ def _python_collect_direct_bindings(child: Node, out: set[str]) -> None:
     elif child_type == cs.TS_PY_AS_PATTERN_TARGET:
         # `with ... as x` and `except ... as x` bind x here.
         _python_collect_target_identifiers(child, out)
-    elif child_type in _PY_IMPORT_STATEMENTS:
+    elif child_type in cs.PY_IMPORT_TYPES:
         _python_collect_import_bound_names(child, out)
     elif child_type == cs.TS_PY_GLOBAL_STATEMENT:
         # `global x` rebinds x to module scope: it is not a capture of the
@@ -921,11 +897,6 @@ def _python_collect_case_pattern_bindings(node: Node, out: set[str]) -> None:
                 out.add(name)
             continue
         stack.extend(current.children)
-
-
-_PY_IMPORT_STATEMENTS = frozenset(
-    {cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT}
-)
 
 
 def python_import_bound_names(node: Node) -> set[str]:
@@ -1064,7 +1035,22 @@ def callable_parameter_indices(
 ) -> dict[str, int]:
     # Maps each parameter invoked as a call inside the function body to its
     # positional index in the call-site argument list (self/cls dropped so the
-    # index lines up with how bound methods are invoked).
+    # index lines up with how bound methods are invoked). The Rust tree bridge
+    # scans Python and JS/TS bodies; the twin below scans every language and
+    # stays the reference.
+    if language is not None and (bridge := native_trees.callable_bridge()):
+        try:
+            found = bridge.callable_parameter_indices(func_node, language)
+        except native_trees.NotBorrowed:
+            found = None
+        if found is not None:
+            return dict(found)
+    return python_callable_parameter_indices(func_node, language)
+
+
+def python_callable_parameter_indices(
+    func_node: Node, language: cs.SupportedLanguage | None
+) -> dict[str, int]:
     if (inputs := _callable_scan_inputs(func_node, language)) is None:
         return {}
     names = inputs.names
@@ -1177,7 +1163,7 @@ def _js_ts_parameter_slot(child: Node) -> tuple[str | None, bool] | None:
         return None
     if node_type == cs.TS_IDENTIFIER:
         return safe_decode_text(child), False
-    if node_type in _JS_TS_TYPED_PARAMETERS:
+    if node_type in cs.JS_TS_TYPED_PARAMETER_TYPES:
         pattern = child.child_by_field_name(cs.TS_FIELD_PATTERN)
         if pattern is None:
             return None, False

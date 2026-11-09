@@ -22,6 +22,7 @@ from .go.interfaces import GoMethodSpec
 from .go.link_state import GoLinkState
 from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
+from .js_ts.reexports import js_ts_module_qn
 from .lua import utils as lua_utils
 from .parameter_nodes import c_family_parameter_list
 from .php import class_names as php_class_names
@@ -1496,12 +1497,18 @@ class CallResolver:
             # another `package` clause (a `//go:build ignore` generator's
             # `package main`) is another package too, never a build variant,
             # and its edge would carry the callee's `exact` label (#2571).
+            # A module qn drops its file's extension, so a `gen.py` or
+            # `preview.js` beside the package's `.go` files looked like another
+            # build variant and `main` called their `render` too (#3026). Only
+            # Go code is in a Go package.
             other_clause = self.go_package_names.get(other_module)
             if (
                 d2
                 and other_pkg == pkg_dir
                 and not other_file.endswith(cs.GO_TEST_FILE_SUFFIX)
                 and (clause is None or other_clause in (None, clause))
+                and self._definition_language(qn, other_module)
+                == cs.SupportedLanguage.GO
             ):
                 targets.add((label, qn))
         return targets
@@ -1598,7 +1605,8 @@ class CallResolver:
             )
             # The directory alone would let `pkg/helper.py`'s `helper` pass
             # for a Go function of `pkg`.
-            if self._module_language(qn) == cs.SupportedLanguage.GO
+            if self._definition_language(qn, self._parent_qn(qn))
+            == cs.SupportedLanguage.GO
             and self.go_declaration_is_visible(qn, module_qn)
         ]
 
@@ -4055,25 +4063,55 @@ class CallResolver:
         if imported_qn in self.function_registry:
             logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=imported_qn)
             return self.function_registry[imported_qn], imported_qn
+        for target in self._module_import_targets(imported_qn, call_name, language):
+            if target in self.function_registry:
+                logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=target)
+                return self.function_registry[target], target
+        return None
+
+    def _module_import_targets(
+        self,
+        imported_qn: str,
+        call_name: str,
+        language: cs.SupportedLanguage | None,
+    ) -> Iterator[str]:
+        """The definitions an import that names no definition stands for.
+
+        In the order the call should try them; the caller keeps the first
+        one that is registered.
+        """
         if language == cs.SupportedLanguage.JULIA:
             # A Julia selected import (`using .api: alpha`) binds the local
             # name to the source MODULE; resolve the member exactly before
             # the name trie, or a same-named function soaks the edge.
-            for member in self.import_processor.julia_member_qn_candidates(
+            yield from self.import_processor.julia_member_qn_candidates(
                 imported_qn, call_name
-            ):
-                if member in self.function_registry:
-                    logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=member)
-                    return self.function_registry[member], member
+            )
         # A whole-module require alias (`const f = require('./m'); f(x)`)
         # maps to the MODULE qn; when that module's entire export is one
         # function (`module.exports = function ... `), the call is a call to
         # that function (issue #991, fastify's error-serializer).
-        direct = self.import_processor.commonjs_direct_exports.get(imported_qn)
-        if direct is not None and direct in self.function_registry:
-            logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=direct)
-            return self.function_registry[direct], direct
-        return None
+        direct = self.import_processor.commonjs_direct_exports.get(
+            self._js_module_key(imported_qn)
+        )
+        if direct is not None:
+            yield direct
+        # An ES-module default import maps to `<module>.default`, which no
+        # definition is registered under; the module's `export default` names
+        # the definition the call reaches (issue #2724).
+        if imported_qn.endswith(cs.IMPORT_DEFAULT_SUFFIX):
+            default = self.import_processor.esm_default_exports.get(
+                self._js_module_key(imported_qn[: -len(cs.IMPORT_DEFAULT_SUFFIX)])
+            )
+            if default is not None:
+                yield default
+
+    def _js_module_key(self, module_qn: str) -> str:
+        # `require("./worker")` and `import run from "./worker"` name the
+        # directory, while the module both export maps key on is
+        # `worker/index.ts`; `worker.ts` wins when both exist, as on disk.
+        found = js_ts_module_qn(module_qn, self.type_inference.module_qn_to_file_path)
+        return found or module_qn
 
     def _try_resolve_qualified_call(
         self,
@@ -4981,6 +5019,22 @@ class CallResolver:
                 return None
         return None
 
+    def _definition_language(
+        self, definition_qn: str, module_qn: str
+    ) -> cs.SupportedLanguage | None:
+        # The language of the file declaring `definition_qn`, a definition at
+        # the top of `module_qn`. _module_language probes the definition's own
+        # qn first, which can name another module: `gen.py`'s `render` is
+        # `pkg.gen.render`, the module qn of `gen/render.go` too.
+        if (
+            rehydrated := self.rehydrated_definition_paths.get(definition_qn)
+        ) is not None:
+            return _file_language(PurePath(rehydrated).suffix)
+        modules = self.type_inference.module_qn_to_file_path
+        if (path := modules.get(module_qn)) is not None:
+            return _file_language(path.suffix)
+        return self._module_language(module_qn)
+
     def _module_language(self, qualified_name: str) -> cs.SupportedLanguage | None:
         # The language of the module a qn lives in, found by walking off its
         # trailing segments until one names an ingested module (a caller's own
@@ -5071,12 +5125,18 @@ class CallResolver:
             # its own class body, which lives in the caller's module. So a
             # local `run` handed on as a callback, or a variable named like
             # some property, never names another module's method (#2360).
-            own_module = f"{module_qn}{cs.SEPARATOR_DOT}"
+            # Another module's function is no closer: only an import binds
+            # it, so with none naming the call (and no star import) the name
+            # is a builtin or a local, not that function (issue #2929).
+            places = self._python_binding_places(call_name, module_qn)
             possible_matches = [
                 qn
                 for qn in possible_matches
-                if self.function_registry[qn] != cs.NodeLabel.METHOD.value
-                or qn.startswith(own_module)
+                if self._in_python_module(qn, module_qn)
+                or (
+                    self.function_registry[qn] != cs.NodeLabel.METHOD.value
+                    and any(_place_may_bind(qn, call_name, place) for place in places)
+                )
             ]
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
@@ -5090,6 +5150,40 @@ class CallResolver:
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
         self.last_resolution = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best_candidate_qn], best_candidate_qn
+
+    def _in_python_module(self, qn: str, module_qn: str) -> bool:
+        # Defined in the module itself, not in a module under it: a package's
+        # `__init__` qn prefixes every module of the package, and a module
+        # under a plain directory (`lib/tools/output.py`, no `__init__.py`)
+        # sits deeper than the first segment, so every prefix is checked.
+        own_module = f"{module_qn}{cs.SEPARATOR_DOT}"
+        if not qn.startswith(own_module):
+            return False
+        rest = qn[len(own_module) :].split(cs.SEPARATOR_DOT)
+        modules = self.type_inference.module_qn_to_file_path
+        return not any(
+            f"{own_module}{cs.SEPARATOR_DOT.join(rest[:depth])}" in modules
+            for depth in range(1, len(rest))
+        )
+
+    def _python_binding_places(self, call_name: str, module_qn: str) -> list[str]:
+        # Every qn the caller's name may stand for, hop by hop through the
+        # modules that pass it on: `from api import *` names `api.helper`,
+        # which api's own `from impl import helper` turns into `impl.helper`.
+        # Judging only the first hop dropped a call whose function sits
+        # outside the module the caller imports from (bot review on PR #2968).
+        imports = self.import_processor.import_mapping
+        places: dict[str, None] = {}
+        queue = deque(_python_import_sources(imports.get(module_qn, {}), call_name))
+        while queue:
+            place = queue.popleft()
+            if place in places:
+                continue
+            places[place] = None
+            if place not in self.function_registry:
+                owner, _, name = place.rpartition(cs.SEPARATOR_DOT)
+                queue.extend(_python_import_sources(imports.get(owner, {}), name))
+        return list(places)
 
     def _best_trie_candidate(self, possible_matches: list[str], module_qn: str) -> str:
         if len(possible_matches) == 1:
@@ -7685,3 +7779,44 @@ class CallResolver:
         if func.type == cs.TS_PY_ATTRIBUTE:
             return func.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
         return None
+
+
+def _qn_within(qn: str, module: str) -> bool:
+    # `qn` sits under `module`, which may be written with or without the
+    # project prefix.
+    return bool(module) and (
+        qn.startswith(f"{module}{cs.SEPARATOR_DOT}")
+        or f"{cs.SEPARATOR_DOT}{module}{cs.SEPARATOR_DOT}" in f"{cs.SEPARATOR_DOT}{qn}"
+    )
+
+
+def _qn_under(qn: str, target: str) -> bool:
+    # `qn` is `target` written with the project prefix.
+    return qn.endswith(f"{cs.SEPARATOR_DOT}{target}")
+
+
+def _python_import_sources(import_map: Mapping[str, str], name: str) -> list[str]:
+    # What a module's imports bind `name` to: a named or aliased import's
+    # target, else the same name in each module it star-imports.
+    if (target := import_map.get(name)) is not None:
+        return [target]
+    return [
+        f"{source}{cs.SEPARATOR_DOT}{name}"
+        for key, source in import_map.items()
+        if key.startswith(cs.IMPORTED_NAME_WILDCARD)
+    ]
+
+
+def _place_may_bind(qn: str, call_name: str, place: str) -> bool:
+    # A place binds its own definition, or a function under its module that
+    # the module may hand out at run time (`log = _make_logger()`). An
+    # external package's `get` leaves a project `get` out. A re-export keeps
+    # its function's name, so under an alias (`from lib import _wrap as
+    # shout`) a `lib.shout` only shares the local name and is a sibling the
+    # import never names.
+    owner, _, name = place.rpartition(cs.SEPARATOR_DOT)
+    return (
+        qn == place
+        or _qn_under(qn, place)
+        or (name == call_name and _qn_within(qn, owner))
+    )

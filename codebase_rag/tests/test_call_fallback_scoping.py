@@ -83,8 +83,13 @@ def test_module_level_candidate_beats_another_functions_closure(
     # Same language, two same-named candidates: one at module level, one
     # scoped inside another function's body. The module-level definition is
     # the one a caller elsewhere can name, so it wins.
+    # The star imports leave `helper` to the name fallback; with no import
+    # at all a bare Python name is a builtin or a local (issue #2929).
     files = {
-        "svc/worker.py": ("def run():\n    helper()\n"),
+        "svc/worker.py": (
+            "from .other import *\nfrom .shared import *\n\n\n"
+            "def run():\n    helper()\n"
+        ),
         "svc/other.py": ("def outer():\n    def helper():\n        return 1\n"),
         "svc/shared.py": ("def helper():\n    return 2\n"),
     }
@@ -132,7 +137,7 @@ def test_module_level_candidate_still_binds(tmp_path: Path) -> None:
     # The fallback itself must keep working: a module-level definition in the
     # caller's own language is exactly what it exists to find.
     files = {
-        "svc/worker.py": ("def run():\n    helper()\n"),
+        "svc/worker.py": ("from .other import *\n\n\ndef run():\n    helper()\n"),
         "svc/other.py": ("def helper():\n    return 1\n"),
         "web/src/sse.ts": TS_CLOSURE_HOLDER,
     }
