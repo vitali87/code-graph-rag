@@ -410,3 +410,168 @@ def test_aliases_referring_to_each_other_through_unions_are_read_once_per_hop(
 
     assert calls.get("loop") == {("Box", cs.EdgeResolution.HEURISTIC)}, calls
     assert len(reads) <= cs.TS_ALIAS_MAX_DEPTH + 1, len(reads)
+
+
+def _calls_through_alias(subclass: str, temp_repo: Path) -> set[tuple[str, str]]:
+    # `h.size()` on `h: Handler`, `Handler` aliasing the class `Sub` that
+    # `subclass` declares over `Base`; only `Base` and the alias imported.
+    types = (
+        "export class Base {\n  size(): number {\n    return 0;\n  }\n}\n\n"
+        f"{subclass}\n\nexport type Handler = Sub;\n"
+    )
+    use = (
+        'import { Base, Handler } from "./types";\n\n'
+        "export function viaAlias(h: Handler): number {\n  return h.size();\n}\n"
+    )
+    calls = _size_calls({"src/types.ts": types, "src/use.ts": use}, temp_repo / "proj")
+    return calls.get("viaAlias", set())
+
+
+@pytest.mark.parametrize(
+    "subclass",
+    [
+        pytest.param(
+            "export class Sub extends Base {\n"
+            "  static size(): number {\n    return 2;\n  }\n}",
+            id="static-method",
+        ),
+        pytest.param(
+            "export class Sub extends Base {\n  static size = 2;\n}",
+            id="static-field",
+        ),
+        pytest.param(
+            "export class Sub extends Base {\n"
+            "  #size(): number {\n    return 2;\n  }\n}",
+            id="private-name",
+        ),
+        pytest.param(
+            "export interface Sized {\n  size(): number;\n}\n\n"
+            "export class Sub extends Base implements Sized {}",
+            id="implemented-interface",
+        ),
+    ],
+)
+def test_a_member_no_instance_reaches_hides_no_inherited_method(
+    temp_repo: Path, subclass: str
+) -> None:
+    # A static member is the class's, not its instances', `#size` is a name
+    # of its own, and an implemented interface adds no member: `h.size()`
+    # runs `Base.size`, so it stays exact.
+    assert _calls_through_alias(subclass, temp_repo) == {
+        ("Base", cs.EdgeResolution.EXACT)
+    }
+
+
+@pytest.mark.parametrize(
+    "subclass",
+    [
+        pytest.param(
+            "export abstract class Sub extends Base {\n  abstract size(): number;\n}",
+            id="abstract",
+        ),
+        pytest.param(
+            "export class Sub extends Base {\n  declare size: () => number;\n}",
+            id="declare-field",
+        ),
+        pytest.param(
+            "export class Sub extends Base {\n  size?(): number;\n}",
+            id="optional-method",
+        ),
+        pytest.param(
+            "export class Sub extends Base {}\n\n"
+            "export interface Sub {\n  size(): number;\n}",
+            id="merged-interface",
+        ),
+        pytest.param(
+            "export class Sub extends Base {\n"
+            "  'size'(): number {\n    return 2;\n  }\n}",
+            id="quoted-key",
+        ),
+        pytest.param(
+            "export class Sub extends Base {\n"
+            "  ['size'](): number {\n    return 2;\n  }\n}",
+            id="computed-key",
+        ),
+        pytest.param(
+            "export class Sub extends Base {\n"
+            "  get size(): () => number {\n    return () => 2;\n  }\n}",
+            id="getter",
+        ),
+        pytest.param(
+            "export class Sub extends Base {\n  size = (): number => 2;\n}",
+            id="arrow-field",
+        ),
+        pytest.param(
+            "export class Sub extends Base {\n  size(): number;\n"
+            "  size(n?: number): number {\n    return n ?? 2;\n  }\n}",
+            id="overloads",
+        ),
+    ],
+)
+def test_an_instance_declaration_of_any_kind_hides_the_inherited_method(
+    temp_repo: Path, subclass: str
+) -> None:
+    # Negative: each declares `size` for `Sub`'s instances, which TypeScript
+    # reads as `Sub`'s own member (an abstract or merged one is what a
+    # subclass or a mixin supplies), so the call is no exact `Base.size`.
+    assert ("Base", cs.EdgeResolution.EXACT) not in _calls_through_alias(
+        subclass, temp_repo
+    )
+
+
+def test_an_instance_call_takes_no_exact_static_method(temp_repo: Path) -> None:
+    # Negative: `Only` declares `size` only as static, which no instance
+    # reaches, so `h.size()` on an `h: Handler` keeps the pick by name as a
+    # heuristic rather than an exact edge.
+    types = (
+        "export class Only {\n  static size(): number {\n    return 1;\n  }\n}\n\n"
+        "export type Handler = Only;\n"
+    )
+    use = (
+        'import { Handler } from "./only";\n\n'
+        "export function viaAlias(h: Handler): number {\n  return h.size();\n}\n"
+    )
+    calls = _size_calls({"src/only.ts": types, "src/use.ts": use}, temp_repo / "proj")
+
+    assert calls.get("viaAlias") == {("Only", cs.EdgeResolution.HEURISTIC)}, calls
+
+
+def test_an_instance_method_beside_a_static_field_stays_exact(
+    temp_repo: Path,
+) -> None:
+    # `static size = 2` is the class's own value and registers nothing, so
+    # the `size()` picked is the instance method, and it stays exact.
+    types = (
+        "export class Box {\n  size(): number {\n    return 1;\n  }\n\n"
+        "  static size = 2;\n}\n\nexport type Handler = Box;\n"
+    )
+    use = (
+        'import { Handler } from "./box";\n\n'
+        "export function viaAlias(h: Handler): number {\n  return h.size();\n}\n"
+    )
+    calls = _size_calls({"src/box.ts": types, "src/use.ts": use}, temp_repo / "proj")
+
+    assert calls.get("viaAlias") == {("Box", cs.EdgeResolution.EXACT)}, calls
+
+
+def test_an_interface_restating_a_method_hides_its_base_interface_s(
+    temp_repo: Path,
+) -> None:
+    # `IFoo` restates `size`, so an `h: IFoo` calls `IFoo.size`, not the
+    # `IBase.size` picked by name; `IKeep` restates nothing and stays exact.
+    types = (
+        "export interface IBase {\n  size(): number;\n}\n\n"
+        "export interface IFoo extends IBase {\n  size(): number;\n}\n\n"
+        "export interface IKeep extends IBase {}\n\n"
+        "export type Restating = IFoo;\nexport type Keeping = IKeep;\n"
+    )
+    use = (
+        'import { IBase, Restating, Keeping } from "./types";\n\n'
+        "export function restating(h: Restating): number {\n"
+        "  return h.size();\n}\n\n"
+        "export function keeping(h: Keeping): number {\n  return h.size();\n}\n"
+    )
+    calls = _size_calls({"src/types.ts": types, "src/use.ts": use}, temp_repo / "proj")
+
+    assert ("IBase", cs.EdgeResolution.EXACT) not in calls.get("restating", set())
+    assert calls.get("keeping") == {("IBase", cs.EdgeResolution.EXACT)}, calls

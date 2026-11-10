@@ -6688,22 +6688,51 @@ class CallProcessor:
         return callee_info
 
     def _js_class_owns(self, class_qn: str, callee_info: tuple[str, str]) -> bool:
-        # The callee is what the class's instances run: its own member, or a
-        # base's that no class nearer in the chain overrides. A pick of
-        # `Base.size` on a `Box` overriding `size` names the wrong method
-        # (issue #3276). A bodiless member (an interface's, an abstract one)
-        # runs nothing, so it overrides nothing.
+        # The callee is what the class's instances run: an instance member of
+        # the class, or of a base that no class nearer in the chain hides. A
+        # pick of `Base.size` on a `Box` overriding `size` names the wrong
+        # method, and so does a static `size`, which no instance reaches
+        # (issue #3276).
         owner_qn, _, method = callee_info[1].rpartition(cs.SEPARATOR_DOT)
         for ancestor in self._resolver._mro(class_qn):
             if ancestor == owner_qn:
-                return True
-            member_qn = f"{ancestor}{cs.SEPARATOR_DOT}{method}"
-            if (
-                member_qn in self._resolver.function_registry
-                and not self._resolver._is_bodiless_declaration(member_qn)
-            ):
+                return not self._js_declares_static_member(owner_qn, method)
+            if self._js_hides_instance_member(ancestor, method):
                 return False
         return False
+
+    def _js_hides_instance_member(self, class_qn: str, method: str) -> bool:
+        # Whether the class declares `method` for its instances, hiding a
+        # base's: as a method, accessor, field, overload or abstract
+        # signature, all of which TypeScript reads as the class's own member
+        # (an abstract one is what each concrete subclass supplies). A static
+        # member belongs to the class, not its instances, so it hides nothing.
+        registered = (
+            f"{class_qn}{cs.SEPARATOR_DOT}{method}" in self._resolver.function_registry
+        )
+        sides = self._resolver.type_inference.js_member_sides(class_qn, method)
+        if sides is None:
+            # No class body to read (an interface, a constructor function):
+            # a member registered under it is the nearer declaration, as an
+            # `interface IFoo extends IBase` restating `size` is IFoo's.
+            return registered
+        instance, static = sides
+        # A member registered with no declaration in the body comes from
+        # outside it: a merged `interface` (a mixin's), a prototype write.
+        return instance or (registered and not static)
+
+    def _js_declares_static_member(self, class_qn: str, method: str) -> bool:
+        # The pick may be the class's static `method`, which no instance
+        # reaches. Beside an instance member of the name, a static field
+        # registers nothing, so the pick is the instance one; a static method
+        # may be the pick.
+        sides = self._resolver.type_inference.js_member_sides(class_qn, method)
+        if sides is None or not sides[1]:
+            return False
+        return (
+            not sides[0]
+            or self._resolver._js_static_member_target(class_qn, method) is not None
+        )
 
     def _js_receiver_declaration(
         self, ctx: _CallScanContext, receiver: Node | None
