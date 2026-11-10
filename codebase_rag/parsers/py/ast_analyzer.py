@@ -22,6 +22,8 @@ from .. import native_trees
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import get_cached_query, safe_decode_text
 from .definition_index import PythonDefinitionIndexes
+from .utils import call_head
+from .utils import split_top_level as _split_top_level
 from .with_analyzer import WithTarget
 
 _WITH_STMT_CAPTURE = "with_stmt"
@@ -30,31 +32,123 @@ _PY_TRAVERSE_QUERY = (
     f"({cs.TS_PY_LIST_COMPREHENSION}) @comprehension "
     f"({cs.TS_PY_FOR_STATEMENT}) @for_stmt "
     f"({cs.TS_PY_WITH_STATEMENT}) @{_WITH_STMT_CAPTURE} "
+    f"({cs.TS_PY_NAMED_EXPRESSION}) @named_expr "
+    f"({cs.TS_PY_CASE_CLAUSE}) @case_clause "
     f"({cs.TS_PY_RETURN_STATEMENT}) @return_stmt"
 )
 
 
-def _split_top_level(inner: str, separator: str = cs.CHAR_COMMA) -> list[str]:
-    """Split `A, dict[str, B], C` on the separators outside any brackets --
-    the commas between positions, or the `|` between union members, which a
-    plain `str.split` would also find INSIDE `tuple[Widget | None, Banner]`."""
-    parts: list[str] = []
-    depth = 0
-    current: list[str] = []
-    for char in inner:
-        if char in "[(":
-            depth += 1
-        elif char in "])":
-            depth = max(0, depth - 1)
-        if char == separator and depth == 0:
-            parts.append("".join(current).strip())
-            current = []
-        else:
-            current.append(char)
-    tail = "".join(current).strip()
-    if tail:
-        parts.append(tail)
-    return parts
+def _identifier_type(node: Node, local_var_types: dict[str, str]) -> str | None:
+    """The type a bare-name value holds in `local_var_types`: the copy a
+    plain assignment gets from the alias pass, which the expression
+    passes never read for an identifier."""
+    if node.type != cs.TS_PY_IDENTIFIER:
+        return None
+    return local_var_types.get(safe_decode_text(node) or "")
+
+
+def _walrus_scope_id(node: Node) -> int | None:
+    """Id of the def, class, module or lambda whose body a walrus sits in
+    directly. A lambda IS a scope for a walrus (PEP 572): only a
+    comprehension leaks into the enclosing body, so `_scope_of`, which
+    walks past lambdas, would wrongly give a lambda's walrus to the
+    enclosing function."""
+    current = node.parent
+    while current is not None and current.type not in (
+        *cs.PY_SCOPE_TYPES,
+        cs.TS_PY_LAMBDA,
+    ):
+        current = current.parent
+    return current.id if current is not None else None
+
+
+def _walrus_belongs_to(walrus: Node, scope: Node) -> bool:
+    """Whether a walrus binds into `scope`'s own names: it sits in
+    `scope`'s body (a comprehension leaks into it), or in a nested def
+    that declares its name `nonlocal` and resolves to `scope`, the rule
+    `_belongs_to` applies to assignments (CodeRabbit review on #3585). A
+    walrus directly in a lambda binds the lambda's own name: a lambda
+    cannot declare `nonlocal`."""
+    scope_id = _walrus_scope_id(walrus)
+    if scope_id == scope.id:
+        return True
+    own = _own_scope(walrus)
+    if own is None or own.id != scope_id:
+        return False
+    name, _ = _walrus_parts(walrus)
+    return name is not None and name in _nonlocal_names(walrus, scope)
+
+
+def _walrus_parts(node: Node) -> tuple[str | None, Node | None]:
+    """(name, value) of a `named_expression`, or (None, None) when the
+    grammar gives it no fields: the name is then the first named child,
+    the value the second."""
+    name_node = node.child_by_field_name(cs.FIELD_NAME)
+    value_node = node.child_by_field_name(cs.FIELD_VALUE)
+    if name_node is None or value_node is None:
+        children = node.named_children
+        if len(children) >= 2:
+            name_node, value_node = children[0], children[1]
+    name = safe_decode_text(name_node) if name_node is not None else None
+    return name, value_node
+
+
+def _walrus_nodes_under(node: Node) -> Iterator[Node]:
+    """`named_expression` nodes under `node`, not inside a nested def,
+    class or lambda body: a walrus inside any of those binds there, not
+    in the enclosing body."""
+    stack = list(node.children)
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_PY_NAMED_EXPRESSION:
+            yield current
+        if current.type not in (
+            cs.TS_PY_FUNCTION_DEFINITION,
+            cs.TS_PY_CLASS_DEFINITION,
+            cs.TS_PY_LAMBDA,
+        ):
+            stack.extend(current.children)
+
+
+def _references_any(node: Node, names: frozenset[str]) -> bool:
+    """Whether any identifier under `node` names one of `names`: a walrus
+    value reading a comprehension loop variable, for example."""
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_PY_IDENTIFIER and safe_decode_text(current) in names:
+            return True
+        stack.extend(current.children)
+    return False
+
+
+def _match_pattern_class(pattern: Node) -> str | None:
+    """The class a case pattern matches, or None: exactly one
+    `class_pattern`, or a union of class patterns naming the same class.
+    A capture, a value pattern or a union of different classes names no
+    single class, so the alias stays untyped."""
+    if pattern.type == cs.TS_PY_CASE_PATTERN:
+        children = pattern.named_children
+        if len(children) != 1:
+            return None
+        return _match_pattern_class(children[0])
+    if pattern.type == cs.TS_PY_CLASS_PATTERN:
+        if not pattern.named_children:
+            return None
+        class_name = safe_decode_text(pattern.named_children[0])
+        return (
+            class_name
+            if class_name
+            and all(part.isidentifier() for part in class_name.split(cs.SEPARATOR_DOT))
+            else None
+        )
+    if pattern.type == cs.TS_PY_UNION_PATTERN:
+        classes = {_match_pattern_class(child) for child in pattern.named_children}
+        return classes.pop() if len(classes) == 1 else None
+    if pattern.type == cs.TS_PY_AS_PATTERN:
+        children = pattern.named_children
+        return _match_pattern_class(children[0]) if children else None
+    return None
 
 
 def _identifiers_in(target: Node) -> Iterator[Node]:
@@ -142,6 +236,208 @@ def _capture_targets(pattern: Node) -> Iterator[Node]:
             and safe_decode_text(child) != cs.TS_PY_WILDCARD_NODE
         ):
             yield child.named_children[0]
+
+
+def _pattern_aliases(pattern: Node) -> Iterator[Node]:
+    """The `as t` alias identifiers under a `case` pattern, at any depth:
+    an alias binds its name even when the class it matches cannot be
+    typed, so every binding census must see it or a later untypable
+    alias leaves a stale earlier type in place (#3340). Only alias
+    identifiers are yielded: class names inside a class pattern are
+    matched values, not bindings."""
+    stack = list(pattern.children)
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_AS_PATTERN:
+            children = node.named_children
+            if len(children) >= 2 and children[-1].type == cs.TS_PY_IDENTIFIER:
+                yield children[-1]
+        stack.extend(node.children)
+
+
+def _case_patterns(case_clauses: list[Node]) -> list[tuple[Node, Node]]:
+    """(clause, pattern) for each `case` clause that has a pattern."""
+    found: list[tuple[Node, Node]] = []
+    for clause in case_clauses:
+        pattern = next(
+            (
+                child
+                for child in clause.named_children
+                if child.type == cs.TS_PY_CASE_PATTERN
+            ),
+            None,
+        )
+        if pattern is not None:
+            found.append((clause, pattern))
+    return found
+
+
+def _match_last_bindings(scope: Node, case_clauses: list[Node]) -> dict[str, int]:
+    """The latest byte at which `scope` binds each name, `case ... as`
+    aliases included, for the match passes' last-binding rule."""
+    last: dict[str, int] = {}
+    for _binder, identifier in _bindings_in(scope):
+        if name := safe_decode_text(identifier):
+            last[name] = max(last.get(name, -1), identifier.start_byte)
+    for name, position in _alias_positions(case_clauses).items():
+        last[name] = max(last.get(name, -1), position)
+    return last
+
+
+class _BindingDecisions:
+    """What the match passes decided for a name whose last binding is a
+    `case` alias or capture, and what a with target a factory left
+    untyped decided: a type, or None for none. `last` is where each
+    name is last bound, `since` where each decision starts to hold: a
+    name's first `case` binding, every one of which agrees with the
+    decision, or the with target. A read before that (`a, b = t.pair()`
+    ahead of a later `case t:`) still sees the type the map holds from
+    the earlier binding (Greptile P1 on #3585). `apply` writes every
+    decision into the map."""
+
+    __slots__ = ("last", "since", "types")
+
+    def __init__(
+        self,
+        last: dict[str, int],
+        since: dict[str, int],
+        types: dict[str, str | None],
+    ) -> None:
+        self.last = last
+        self.since = since
+        self.types = types
+
+    def reads_at(
+        self, local_var_types: dict[str, str], position: int
+    ) -> dict[str, str]:
+        """The map as a read at `position` sees it. Read only: with
+        nothing decided it is the map itself."""
+        if not self.types:
+            return local_var_types
+        view = dict(local_var_types)
+        for name, decided in self.types.items():
+            if position < self.since.get(name, -1):
+                continue
+            if decided:
+                view[name] = decided
+            else:
+                view.pop(name, None)
+        return view
+
+    def apply(self, local_var_types: dict[str, str]) -> None:
+        for name, decided in self.types.items():
+            if decided:
+                local_var_types[name] = decided
+            else:
+                local_var_types.pop(name, None)
+
+
+def _pattern_nodes(pattern: Node) -> Iterator[Node]:
+    """Every node under a `case` pattern, the pattern itself included."""
+    stack = [pattern]
+    while stack:
+        node = stack.pop()
+        yield node
+        stack.extend(node.named_children)
+
+
+def _alias_parts(node: Node) -> tuple[Node, Node] | None:
+    """(matched pattern, alias identifier) of a `... as t` pattern node,
+    else None."""
+    if node.type != cs.TS_PY_AS_PATTERN:
+        return None
+    children = node.named_children
+    if len(children) >= 2 and children[-1].type == cs.TS_PY_IDENTIFIER:
+        return children[0], children[-1]
+    return None
+
+
+def _pattern_binders(node: Node) -> list[Node]:
+    """The identifiers one pattern node binds itself: a capture of a
+    `case_pattern`, or the alias of an `as_pattern`."""
+    if node.type == cs.TS_PY_CASE_PATTERN:
+        return list(_capture_targets(node))
+    alias = _alias_parts(node)
+    return [alias[1]] if alias is not None else []
+
+
+def _match_binding_positions(case_clauses: list[Node]) -> dict[str, set[int]]:
+    """The bytes at which `case_clauses` bind each name, by an alias or a
+    capture at any depth of a pattern."""
+    positions: dict[str, set[int]] = {}
+    for _clause, pattern in _case_patterns(case_clauses):
+        for node in _pattern_nodes(pattern):
+            for identifier in _pattern_binders(node):
+                if name := safe_decode_text(identifier):
+                    positions.setdefault(name, set()).add(identifier.start_byte)
+    return positions
+
+
+def _note_last(last: dict[str, int], identifier: Node) -> None:
+    """Record `identifier` as its name's binding if it is the latest yet."""
+    if name := safe_decode_text(identifier):
+        last[name] = max(last.get(name, -1), identifier.start_byte)
+
+
+def _case_patterns_in(scope: Node) -> Iterator[Node]:
+    """The `case` patterns of `scope`'s own body, not a nested scope's."""
+    stack = list(scope.children)
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_CASE_PATTERN:
+            yield node
+        elif node.type not in cs.PY_NESTED_SCOPE_TYPES:
+            stack.extend(node.children)
+
+
+def _comprehension_last_bindings(scope: Node) -> dict[str, int]:
+    """The last byte at which `scope` binds each name, for the
+    comprehension pass: it runs after the assignment passes, so without
+    it a loop-derived walrus write would clobber a later rebinding of the
+    same name. Pattern aliases are deliberately absent from the
+    `_bindings_in` census (the native bridge's scope facts must match
+    it), so they are merged here the way `_type_match_aliases` reads
+    them, or a walrus before a `case C() as t` would clobber the alias
+    it binds later."""
+    last: dict[str, int] = {}
+    for _binder, identifier in _bindings_in(scope):
+        _note_last(last, identifier)
+    for pattern in _case_patterns_in(scope):
+        for alias in _pattern_aliases(pattern):
+            _note_last(last, alias)
+    return last
+
+
+def _walrus_target_start(walrus: Node) -> int:
+    """Where a walrus's target name starts: the point it binds from."""
+    target = walrus.child_by_field_name(cs.FIELD_NAME)
+    if target is None and walrus.named_children:
+        target = walrus.named_children[0]
+    return target.start_byte if target is not None else walrus.start_byte
+
+
+def _alias_positions(case_clauses: list[Node]) -> dict[str, int]:
+    """The latest byte at which each name is bound by a `case ... as t`
+    alias in `case_clauses`, for the last-binding rule. Kept out of
+    `_binding_targets` on purpose: that census feeds `scope_facts`,
+    which the native bridge must match, and the bridge does not count
+    pattern aliases there; these maps are local to the type passes."""
+    last: dict[str, int] = {}
+    for clause in case_clauses:
+        pattern = next(
+            (
+                child
+                for child in clause.named_children
+                if child.type == cs.TS_PY_CASE_PATTERN
+            ),
+            None,
+        )
+        if pattern is None:
+            continue
+        for alias in _pattern_aliases(pattern):
+            if name := safe_decode_text(alias):
+                last[name] = max(last.get(name, -1), alias.start_byte)
+    return last
 
 
 def _binding_targets(node: Node) -> Iterator[Node]:
@@ -914,7 +1210,9 @@ def _function_binds(scope: Node, name: str) -> bool:
     return False
 
 
-def _with_targets(scope: Node, statements: list[Node]) -> list[WithTarget]:
+def _with_targets(
+    scope: Node, statements: list[Node], case_clauses: list[Node]
+) -> list[WithTarget]:
     """The with targets `scope`'s own body binds, each only where no later
     binding in that body rebinds the name.
 
@@ -922,7 +1220,9 @@ def _with_targets(scope: Node, statements: list[Node]) -> list[WithTarget]:
     `v = Other()` (or another `with ... as v`) describes the value from
     there on and keeps its type; the with target must not overwrite it,
     whichever pass happens to run first. An earlier binding is superseded by
-    the with target, which is written over it.
+    the with target, which is written over it. A later `case ... as v`
+    alias rebinds the name the same way, even when the class it matches
+    cannot be typed.
     """
     targets = [
         target
@@ -936,6 +1236,8 @@ def _with_targets(scope: Node, statements: list[Node]) -> list[WithTarget]:
     for _binder, identifier in _bindings_in(scope):
         if name := safe_decode_text(identifier):
             last[name] = max(last.get(name, -1), identifier.start_byte)
+    for name, position in _alias_positions(case_clauses).items():
+        last[name] = max(last.get(name, -1), position)
     return [target for target in targets if last.get(target.name) == target.binds_at]
 
 
@@ -1018,6 +1320,7 @@ if TYPE_CHECKING:
             targets: list[WithTarget],
             local_var_types: dict[str, str],
             module_qn: str,
+            dropped: set[str] | None = None,
         ) -> list[WithTarget]: ...
 
     _AstBase: type = _AstAnalyzerDeps
@@ -1032,6 +1335,18 @@ class PythonAstAnalyzerMixin(_AstBase):
         """`local_names` under the caller's module's import map."""
         import_map = self.import_processor.import_mapping.get(module_qn) or {}
         return local_names(caller, import_map)
+
+    def binder_names(self, node: Node) -> list[str]:
+        """The names ONE statement or expression binds itself, by every
+        binding form `_binding_targets` knows (`for`, `with ... as`,
+        unpacking, `except ... as`, `import`, a nested def or class, a
+        `case` capture), for a census that must not miss a rebinding."""
+        return [
+            name
+            for target in _binding_targets(node)
+            for identifier in _identifiers_in(target)
+            if (name := safe_decode_text(identifier))
+        ]
 
     def own_class_rebinds_import(
         self, module_qn: str, name: str, scope: Node | None = None
@@ -1119,18 +1434,27 @@ class PythonAstAnalyzerMixin(_AstBase):
         self, callee: str, module_qn: str
     ) -> str | None: ...
 
+    @abstractmethod
+    def _resolved_type(self, type_name: str, module_qn: str) -> str | None: ...
+
     _return_stmt_cache: dict[Node, list[Node]]
     _definition_indexes: PythonDefinitionIndexes
 
     def _traverse_single_pass(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
-    ) -> tuple[list[Node], list[Node]]:
+    ) -> tuple[list[Node], list[Node], _BindingDecisions]:
         """Types locals in one traversal; returns (comprehensions, for
         statements) so the coordinator can re-run loop inference after the
-        attribute passes populate ``self.x`` types."""
-        assignments, comprehensions, for_statements, with_statements = (
-            self._collect_traverse_nodes(node)
-        )
+        attribute passes populate ``self.x`` types, and the match and
+        with decisions, which it applies again after that run."""
+        (
+            assignments,
+            comprehensions,
+            for_statements,
+            with_statements,
+            named_expressions,
+            case_clauses,
+        ) = self._collect_traverse_nodes(node)
 
         # Only what THIS body binds. The captures above walk the whole
         # subtree, so a name bound inside a nested def or class body would
@@ -1148,6 +1472,21 @@ class PythonAstAnalyzerMixin(_AstBase):
         # exception -- it binds the module name, and the enclosing
         # function's local of the same name is untouched.
         assignments = [a for a in assignments if _belongs_to(a, node)]
+        # A walrus binds into the scope it sits in directly, like an
+        # assignment; one inside a nested def, class or lambda body belongs
+        # to that body, not this one. A walrus inside a comprehension binds
+        # here too (PEP 572): the comprehension is no scope for it. A
+        # `case` arm's captures belong to the `match`'s own body the same way.
+        named_expressions = [
+            w for w in named_expressions if _walrus_belongs_to(w, node)
+        ]
+        # A walrus a nested def rebinds through `nonlocal` reads its value
+        # in that def's scope, not this one, so it never reads this map
+        # (Greptile P1 on #3585).
+        nested_walruses = {
+            w.id for w in named_expressions if _walrus_scope_id(w) != node.id
+        }
+        case_clauses = [c for c in case_clauses if _scope_of(c) == node.id]
         # Every other writer into the map takes the same rule (#2124). A
         # nested `for` target is the nested body's local unless declared
         # `nonlocal` there. A comprehension is a scope of its own that
@@ -1158,38 +1497,42 @@ class PythonAstAnalyzerMixin(_AstBase):
         for_statements = [f for f in for_statements if _belongs_to(f, node)]
         comprehensions = [c for c in comprehensions if _scope_of(c) == node.id]
 
-        for assignment in assignments:
-            self._process_assignment_simple(assignment, local_var_types, module_qn)
+        # Assignments and walrus expressions run in document order within
+        # each pass: the flat map holds one type per name, and a later
+        # binding of either form describes the value from there on. A
+        # walrus types exactly as an assignment to the same value: the
+        # simple pass first, the complex pass after the with targets, so
+        # `(t := session.fork())` reads the entered type (#3340).
+        binders = sorted((*assignments, *named_expressions), key=lambda n: n.start_byte)
+        self._type_binders_simple(binders, nested_walruses, local_var_types, module_qn)
 
         # Between the two assignment passes: a with target types from its
         # manager, which the simple pass may have typed, and the complex pass
         # types `r = conn.send()` from the target. A manager only the complex
         # pass types is retried after it.
-        with_targets = _with_targets(node, with_statements)
-        pending = self._type_with_targets(with_targets, local_var_types, module_qn)
-
-        for assignment in assignments:
-            self._process_assignment_complex(assignment, local_var_types, module_qn)
-        # The complex pass went by an assignment reading a target typed only
-        # by the retry (`forked = session.fork()`), so it runs again whenever
-        # a retry types a manager; it types only names still untyped. Each
-        # round types at least one more manager, so the loop ends.
-        while pending:
-            retried = self._type_with_targets(pending, local_var_types, module_qn)
-            if len(retried) == len(pending):
-                break
-            typed_now = [target for target in pending if target not in retried]
-            pending = retried
-            for assignment in assignments:
-                self._retype_after_with_targets(
-                    assignment, typed_now, local_var_types, module_qn
-                )
-        self._process_assignment_annotation(
-            node, assignments, local_var_types, module_qn
+        with_targets = _with_targets(node, with_statements, case_clauses)
+        dropped_targets: set[str] = set()
+        pending = self._type_with_targets(
+            with_targets, local_var_types, module_qn, dropped_targets
         )
-        self._process_assignment_unpacking(
-            node, assignments, local_var_types, module_qn
+        self._type_binders_complex(binders, nested_walruses, local_var_types, module_qn)
+        self._retry_with_targets(
+            pending,
+            assignments,
+            [w for w in named_expressions if w.id not in nested_walruses],
+            local_var_types,
+            module_qn,
+            dropped_targets,
         )
+        decisions = self._decide_case_bindings(
+            node, case_clauses, assignments, dropped_targets, local_var_types, module_qn
+        )
+        # The decisions go into the map over whatever the passes above
+        # wrote, so an annotation cannot restore a type an alias dropped
+        # (CodeRabbit review on #3585). They go in again after the
+        # comprehension and `for` passes, which also write the map
+        # without the last-binding rule.
+        decisions.apply(local_var_types)
 
         self.analyze_scoped_comprehensions(
             node, comprehensions, local_var_types, module_qn
@@ -1197,11 +1540,134 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         for for_stmt in for_statements:
             self._analyze_for_loop(for_stmt, local_var_types, module_qn)
+        decisions.apply(local_var_types)
 
         self._infer_instance_variable_types_from_assignments(
             assignments, local_var_types, module_qn
         )
-        return comprehensions, for_statements
+        return comprehensions, for_statements, decisions
+
+    def _type_binders_simple(
+        self,
+        binders: list[Node],
+        nested_walruses: set[int],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        """The simple pass over assignments and walruses, in document
+        order. A walrus a nested def rebinds through `nonlocal` reads its
+        value in that def's scope, not this one."""
+        for binder in binders:
+            if binder.type == cs.TS_PY_ASSIGNMENT:
+                self._process_assignment_simple(binder, local_var_types, module_qn)
+            elif binder.id in nested_walruses:
+                self._process_nonlocal_walrus(binder, local_var_types, module_qn)
+            else:
+                self._process_walrus_simple(binder, local_var_types, module_qn)
+
+    def _type_binders_complex(
+        self,
+        binders: list[Node],
+        nested_walruses: set[int],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        """The complex pass over assignments and walruses, in document
+        order; a nested def's `nonlocal` walrus never reads this map."""
+        for binder in binders:
+            if binder.type == cs.TS_PY_ASSIGNMENT:
+                self._process_assignment_complex(binder, local_var_types, module_qn)
+            elif binder.id not in nested_walruses:
+                self._process_walrus_complex(binder, local_var_types, module_qn)
+
+    def _retry_with_targets(
+        self,
+        pending: list[WithTarget],
+        assignments: list[Node],
+        walruses: list[Node],
+        local_var_types: dict[str, str],
+        module_qn: str,
+        dropped_targets: set[str],
+    ) -> None:
+        """Type the with targets whose managers only the complex pass
+        typed. The complex pass went by an assignment reading a target
+        typed only by the retry (`forked = session.fork()`), so it runs
+        again over the assignments and walruses whenever a retry types a
+        manager; it types only names still untyped. Each round types at
+        least one more manager, so the loop ends."""
+        while pending:
+            retried = self._type_with_targets(
+                pending, local_var_types, module_qn, dropped_targets
+            )
+            if len(retried) == len(pending):
+                return
+            typed_now = [target for target in pending if target not in retried]
+            pending = retried
+            for assignment in assignments:
+                self._retype_after_with_targets(
+                    assignment, typed_now, local_var_types, module_qn
+                )
+            for walrus in walruses:
+                self._retype_walrus_after_with_targets(
+                    walrus, typed_now, local_var_types, module_qn
+                )
+
+    def _decide_case_bindings(
+        self,
+        node: Node,
+        case_clauses: list[Node],
+        assignments: list[Node],
+        dropped_targets: set[str],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> _BindingDecisions:
+        """What the match passes decide, with the annotation and unpacking
+        passes that run between them.
+
+        `case C(...) as t` types `t` as C (#3340), and a bare `case t:` as
+        its subject's type. Like a with target a `@contextmanager` factory
+        left untyped, such a binding decides its name's type only when it
+        is the last binding, and only from the name's first `case` binding
+        on: the decisions are kept aside until the comprehension and `for`
+        passes, and the capture and unpacking passes read them by
+        position. An unpacking in a case body (`a, b = t.pair()`) reads
+        the alias's or capture's type, one before the `match` the earlier
+        binding's (Greptile P1s on #3585)."""
+        last_bindings = _match_last_bindings(node, case_clauses)
+        decisions = _BindingDecisions(
+            last_bindings,
+            {
+                name: min(positions)
+                for name, positions in _match_binding_positions(case_clauses).items()
+            }
+            | {name: last_bindings.get(name, -1) for name in dropped_targets},
+            dict.fromkeys(dropped_targets),
+        )
+        decisions.types |= self._type_match_aliases(node, case_clauses, module_qn)
+        self._process_assignment_annotation(
+            node, assignments, local_var_types, module_qn
+        )
+        # Bare captures run on both sides of the unpacking pass: a capture
+        # whose subject only the unpacking types (`s, other =
+        # make_pair()`) is typed after it. The unpacking pass fills only
+        # untyped names, so running it again once such a capture is typed
+        # fills what its body unpacks from it without overwriting anything.
+        captured = self._type_match_captures(
+            node, case_clauses, decisions, local_var_types, module_qn
+        )
+        decisions.types |= captured
+        self._process_assignment_unpacking(
+            node, assignments, local_var_types, module_qn, decisions
+        )
+        recaptured = self._type_match_captures(
+            node, case_clauses, decisions, local_var_types, module_qn
+        )
+        if recaptured != captured:
+            decisions.types |= recaptured
+            self._process_assignment_unpacking(
+                node, assignments, local_var_types, module_qn, decisions
+            )
+        return decisions
 
     def _retype_after_with_targets(
         self,
@@ -1225,10 +1691,31 @@ class PythonAstAnalyzerMixin(_AstBase):
         finally:
             local_var_types.update(later)
 
+    def _retype_walrus_after_with_targets(
+        self,
+        walrus: Node,
+        typed_now: list[WithTarget],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        """The walrus form of `_retype_after_with_targets`: a walrus
+        reading a target typed only by the retry (`(w := session.fork())`)
+        is retyped with the same later-binding guard."""
+        later = {
+            target.name: local_var_types.pop(target.name)
+            for target in typed_now
+            if target.binds_at > walrus.start_byte and target.name in local_var_types
+        }
+        try:
+            self._process_walrus_complex(walrus, local_var_types, module_qn)
+        finally:
+            local_var_types.update(later)
+
     def _collect_traverse_nodes(
         self, node: Node
-    ) -> tuple[list[Node], list[Node], list[Node], list[Node]]:
-        """(assignments, comprehensions, for statements, with statements) under `node`.
+    ) -> tuple[list[Node], list[Node], list[Node], list[Node], list[Node], list[Node]]:
+        """(assignments, comprehensions, for statements, with statements,
+        named expressions, case clauses) under `node`.
 
         Uses the cached query when the Python grammar is loaded, and falls
         back to a plain tree walk when it is not or the query fails.
@@ -1247,6 +1734,8 @@ class PythonAstAnalyzerMixin(_AstBase):
                     captures.get("comprehension", []),
                     captures.get("for_stmt", []),
                     captures.get(_WITH_STMT_CAPTURE, []),
+                    captures.get("named_expr", []),
+                    captures.get("case_clause", []),
                 )
             except Exception:  # noqa: S110 - a failed query falls back to the walk below
                 pass
@@ -1255,6 +1744,8 @@ class PythonAstAnalyzerMixin(_AstBase):
         comprehensions: list[Node] = []
         for_statements: list[Node] = []
         with_statements: list[Node] = []
+        named_expressions: list[Node] = []
+        case_clauses: list[Node] = []
         stack: list[Node] = [node]
         while stack:
             current = stack.pop()
@@ -1268,9 +1759,20 @@ class PythonAstAnalyzerMixin(_AstBase):
                 for_statements.append(current)
             elif node_type == cs.TS_PY_WITH_STATEMENT:
                 with_statements.append(current)
+            elif node_type == cs.TS_PY_NAMED_EXPRESSION:
+                named_expressions.append(current)
+            elif node_type == cs.TS_PY_CASE_CLAUSE:
+                case_clauses.append(current)
 
             stack.extend(reversed(current.children))
-        return assignments, comprehensions, for_statements, with_statements
+        return (
+            assignments,
+            comprehensions,
+            for_statements,
+            with_statements,
+            named_expressions,
+            case_clauses,
+        )
 
     def analyze_scoped_comprehensions(
         self,
@@ -1289,13 +1791,14 @@ class PythonAstAnalyzerMixin(_AstBase):
         if not comprehensions:
             return
         own_names = _own_bound_names(scope)
+        last = _comprehension_last_bindings(scope)
         for comp in comprehensions:
-            names = _comprehension_names(comp) - own_names
-            if not names:
-                continue
             scratch = dict(local_var_types)
             self._analyze_comprehension(comp, scratch, module_qn)
-            for name in names:
+            self._type_comprehension_walrus(
+                comp, scratch, local_var_types, module_qn, last
+            )
+            for name in _comprehension_names(comp) - own_names:
                 if name in scratch:
                     local_var_types[name] = scratch[name]
 
@@ -1339,6 +1842,311 @@ class PythonAstAnalyzerMixin(_AstBase):
         ):
             local_var_types[var_name] = inferred_type
             logger.debug(lg.PY_TYPE_COMPLEX, var=var_name, type=inferred_type)
+
+    def _process_walrus_simple(
+        self, walrus_node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        """Type a walrus target from its value, exactly as an assignment
+        to the same value: `(t := Thing())` types `t` as `Thing()` does
+        for `t = Thing()` (#3340). A bare-name value reads the name's
+        type from the map built so far, the copy the alias pass makes
+        for plain assignments, which never sees a walrus."""
+        name, value_node = _walrus_parts(walrus_node)
+        if not name or value_node is None:
+            return
+        inferred_type = self._infer_type_from_expression_simple(
+            value_node, module_qn
+        ) or _identifier_type(value_node, local_var_types)
+        if inferred_type:
+            local_var_types[name] = inferred_type
+            logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=inferred_type)
+
+    def _process_nonlocal_walrus(
+        self, walrus_node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        """Type a walrus a nested def rebinds through `nonlocal`: its value
+        is read in the nested def's scope, where this map's names may mean
+        something else, so only a value read without any local (a
+        constructor call) types it. Any other value makes the name
+        unknown rather than copying a type from the wrong scope."""
+        name, value_node = _walrus_parts(walrus_node)
+        if not name or value_node is None:
+            return
+        # The nested def may bind the constructor's name itself (a
+        # parameter `Thing`), and then calls its own binding (CodeRabbit
+        # review on #3585).
+        own = _own_scope(walrus_node)
+        head = call_head(value_node)
+        shadowed = (
+            own is not None
+            and head is not None
+            and safe_decode_text(head) in self.locally_bound_names(own, module_qn)
+        )
+        if not shadowed and (
+            inferred := self._infer_type_from_expression_simple(value_node, module_qn)
+        ):
+            local_var_types[name] = inferred
+            logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=inferred)
+        else:
+            local_var_types.pop(name, None)
+
+    def _process_walrus_complex(
+        self, walrus_node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        name, value_node = _walrus_parts(walrus_node)
+        if not name or value_node is None or name in local_var_types:
+            return
+        inferred_type = self._infer_type_from_expression_complex(
+            value_node, module_qn, local_var_types
+        ) or _identifier_type(value_node, local_var_types)
+        if inferred_type:
+            local_var_types[name] = inferred_type
+            logger.debug(lg.PY_TYPE_COMPLEX, var=name, type=inferred_type)
+
+    def _type_match_aliases(
+        self,
+        scope: Node,
+        case_clauses: list[Node],
+        module_qn: str,
+    ) -> dict[str, str | None]:
+        """Type `case C(...) as t` aliases as `C`, resolved the way a
+        constructor name is (#3340); `_type_match_captures` types the
+        bare captures. Returns each name whose last binding an alias is,
+        with the type it decided (None for none), for the caller to
+        apply from the name's first `case` binding on, all of them
+        agreeing. Only the alias or capture is typed:
+        narrowing the matched subject, or a capture inside the pattern,
+        is a flow-sensitive question this flat map cannot answer, and a
+        union of different classes names no single class. A binding a
+        later binding of the same name supersedes is not typed: the map
+        holds one type per name, and a with target keeps the same rule.
+        When the last binding of a name is an alias, every alias of that
+        name in the scope must name the same class: the body of an
+        earlier `case Thing() as t` reads the map too, so `Other` from a
+        later `case Other() as t` would be wrong there. An alias or
+        capture that is the last binding but types nothing drops the
+        name's earlier type instead of leaving it to describe a value
+        the pattern replaced (Codex review on #3585)."""
+        last = _match_last_bindings(scope, case_clauses)
+        # A class name the function binds itself (`Thing = Other`, a
+        # parameter) is not the module's class: `case Thing()` matches
+        # whatever the local holds, so such a pattern types nothing
+        # (Greptile P1 on #3585).
+        shadowed = (
+            self.locally_bound_names(scope, module_qn)
+            if scope.type == cs.TS_PY_FUNCTION_DEFINITION
+            else frozenset()
+        )
+        alias_types, alias_last, captured = self._collect_match_aliases(
+            case_clauses, shadowed, module_qn
+        )
+        # A capture of the name in another arm (`case t if flag:` before
+        # `case Thing() as t`) binds whatever was matched there, so the
+        # arms agree on no single class (CodeRabbit review on #3585).
+        for name in captured & alias_types.keys():
+            alias_types[name].add(None)
+        decided: dict[str, str | None] = {}
+        for name, types in alias_types.items():
+            if last.get(name, -1) > alias_last[name]:
+                continue
+            typed = next(iter(types)) if len(types) == 1 else None
+            decided[name] = typed
+            if typed:
+                logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=typed)
+        return decided
+
+    def _collect_match_aliases(
+        self, case_clauses: list[Node], shadowed: frozenset[str], module_qn: str
+    ) -> tuple[dict[str, set[str | None]], dict[str, int], set[str]]:
+        """For each name a `case ... as` alias binds: the classes its
+        aliases name and the position of the last one; with the names a
+        capture binds anywhere in the patterns."""
+        alias_types: dict[str, set[str | None]] = {}
+        alias_last: dict[str, int] = {}
+        captured: set[str] = set()
+        for _clause, pattern in _case_patterns(case_clauses):
+            for node in _pattern_nodes(pattern):
+                if node.type == cs.TS_PY_CASE_PATTERN:
+                    captured.update(
+                        name
+                        for identifier in _capture_targets(node)
+                        if (name := safe_decode_text(identifier))
+                    )
+                alias = _alias_parts(node)
+                if alias is None or not (name := safe_decode_text(alias[1])):
+                    continue
+                alias_types.setdefault(name, set()).add(
+                    self._alias_class_type(alias[0], shadowed, module_qn)
+                )
+                alias_last[name] = max(alias_last.get(name, -1), alias[1].start_byte)
+        return alias_types, alias_last, captured
+
+    def _type_match_captures(
+        self,
+        scope: Node,
+        case_clauses: list[Node],
+        decisions: _BindingDecisions,
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> dict[str, str | None]:
+        """Type each bare capture `case t:` as its `match` subject's type,
+        returning what each capture that is its name's last binding
+        decided. As with aliases, every `case` binding of the name must
+        agree: an alias, a capture inside a larger pattern, or a capture
+        of a subject of another type leaves the name untyped (CodeRabbit
+        review on #3585). The subject is read where it sits, with what is
+        decided before it: a nested `match t: case u:` in a `case Thing()
+        as t` body reads the alias type, and one in a `case t:` body the
+        outer capture's, the captures being taken in document order. Run
+        again after the unpacking pass, for a subject only an unpacking
+        types (Greptile P1s on #3585)."""
+        last = decisions.last
+        seen = _BindingDecisions(last, decisions.since, dict(decisions.types))
+        types: dict[str, set[str | None]] = {}
+        bare: dict[str, set[int]] = {}
+        for clause, pattern in sorted(
+            _case_patterns(case_clauses), key=lambda found: found[1].start_byte
+        ):
+            capture = self._type_bare_capture(
+                clause, pattern, seen, local_var_types, module_qn
+            )
+            if capture is None:
+                continue
+            name, position, inferred = capture
+            types.setdefault(name, set()).add(inferred)
+            bare.setdefault(name, set()).add(position)
+            if last.get(name, -1) <= position:
+                seen.types[name] = inferred
+        bound = _match_binding_positions(case_clauses)
+        decided: dict[str, str | None] = {}
+        for name, found in types.items():
+            if last.get(name, -1) > max(bare[name]):
+                continue
+            if bound.get(name, set()) - bare[name]:
+                found.add(None)
+            decided[name] = next(iter(found)) if len(found) == 1 else None
+        return decided
+
+    def _alias_class_type(
+        self, pattern: Node, shadowed: frozenset[str], module_qn: str
+    ) -> str | None:
+        """The class a `case <pattern> as t` alias binds, or None when the
+        pattern names no single class, or one the function rebinds."""
+        class_name = _match_pattern_class(pattern)
+        if not class_name or class_name.split(cs.SEPARATOR_DOT, 1)[0] in shadowed:
+            return None
+        return self._resolved_type(class_name, module_qn)
+
+    def _type_bare_capture(
+        self,
+        clause: Node,
+        pattern: Node,
+        decisions: _BindingDecisions,
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> tuple[str, int, str | None] | None:
+        """Type a bare capture `case t:` as the `match` subject's type:
+        the capture binds the subject itself, so it takes whatever type
+        the subject already has in the map. Only a whole-pattern single
+        identifier counts: a dotted name is a value pattern, `_` binds
+        nothing, and a capture inside a larger pattern is left to the
+        flow pass. An untyped subject leaves the capture untyped, and
+        so does a subject rebound after the `match`: the map holds the
+        later type, and this pass runs after the assignment passes, so
+        the type at the `match` is not recoverable from it. Left
+        untyped as the name's last binding, the capture drops any
+        earlier type of the name, which describes a value it replaced.
+        Returns the capture's name, where it binds and its type, or None
+        for a pattern that is no bare capture; the map is only read."""
+        last = decisions.last
+        children = pattern.named_children
+        if len(children) != 1 or children[0].type != cs.TS_PY_DOTTED_NAME:
+            return None
+        parts = children[0].named_children
+        if len(parts) != 1 or parts[0].type != cs.TS_PY_IDENTIFIER:
+            return None
+        name = safe_decode_text(parts[0])
+        if not name:
+            return None
+        position = parts[0].start_byte
+        statement = clause.parent
+        while statement is not None and statement.type != cs.TS_PY_MATCH_STATEMENT:
+            statement = statement.parent
+        subject = (
+            statement.child_by_field_name(cs.FIELD_SUBJECT)
+            if statement is not None
+            else None
+        )
+        if subject is None or statement is None:
+            return name, position, None
+        if (
+            subject.type == cs.TS_PY_IDENTIFIER
+            and (subject_name := safe_decode_text(subject))
+            and last.get(subject_name, -1) > subject.end_byte
+        ):
+            # The subject is rebound after the `match` statement's
+            # subject: the map already holds the later type, which is
+            # not the value the capture binds, so it stays untyped. A
+            # walrus inside the subject itself binds before its end, so
+            # it does not trigger the skip.
+            return name, position, None
+        reads = decisions.reads_at(local_var_types, subject.start_byte)
+        inferred = (
+            self._infer_type_from_expression_simple(subject, module_qn)
+            or self._infer_type_from_expression_complex(subject, module_qn, reads)
+            or _identifier_type(subject, reads)
+        )
+        if inferred:
+            logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=inferred)
+        return name, position, inferred
+
+    def _type_comprehension_walrus(
+        self,
+        comprehension: Node,
+        scratch: dict[str, str],
+        local_var_types: dict[str, str],
+        module_qn: str,
+        last: dict[str, int],
+    ) -> None:
+        """Type walrus targets inside `comprehension` from `scratch`,
+        which holds the comprehension's loop variables: a walrus leaks
+        into the enclosing body (PEP 572), so its type belongs in the
+        enclosing map, unlike a loop variable's. A name the enclosing
+        body already types keeps its type -- except when the walrus
+        value reads one of this comprehension's loop variables: the
+        loop variable shadows the outer name inside the comprehension,
+        so the enclosing-map type describes a different value and the
+        scratch type wins. That win is only against the type the body
+        held when the walrus runs: a binding of the same name after
+        the walrus decides the map, typed or not, and the deferred
+        write must not replace it. Walruses run in document order,
+        each seeing the ones before it."""
+        loop_names = _comprehension_names(comprehension)
+        view = dict(scratch)
+        for walrus in sorted(
+            _walrus_nodes_under(comprehension), key=lambda node: node.start_byte
+        ):
+            name, value_node = _walrus_parts(walrus)
+            if not name or value_node is None:
+                continue
+            if not (
+                inferred := self._infer_type_from_expression_simple(
+                    value_node, module_qn
+                )
+                or self._infer_type_from_expression_complex(value_node, module_qn, view)
+                or _identifier_type(value_node, view)
+            ):
+                continue
+            view[name] = inferred
+            # A later binding of the name, typed or not, supersedes the
+            # walrus: `t = opaque()` after the comprehension leaves `t`
+            # unknown, not the loop variable's type (CodeRabbit review on
+            # #3585).
+            if last.get(name, -1) <= _walrus_target_start(walrus) and (
+                name not in local_var_types or _references_any(value_node, loop_names)
+            ):
+                local_var_types[name] = inferred
+                logger.debug(lg.PY_TYPE_COMPLEX, var=name, type=inferred)
 
     def _process_assignment_annotation(
         self,
@@ -1418,6 +2226,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         assignments: list[Node],
         local_var_types: dict[str, str],
         module_qn: str,
+        decisions: _BindingDecisions | None = None,
     ) -> None:
         """`_ol, _oc, inner = parsed`: bind each target to its element type.
 
@@ -1433,7 +2242,8 @@ class PythonAstAnalyzerMixin(_AstBase):
         which is exactly what unpacking consumes position by position. The
         walk captures every assignment under the caller, including a nested
         def's, whose targets are that def's locals, not the caller's
-        (CodeRabbit).
+        (CodeRabbit). Each unpacking reads the map as `decisions` say it
+        stands where the unpacking is.
         """
         # `nonlocal` is the same exception the value passes make: an
         # unpacking in a nested body whose target is declared `nonlocal`
@@ -1450,8 +2260,13 @@ class PythonAstAnalyzerMixin(_AstBase):
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         bound = _locally_bound_names(caller, import_map)
         for assignment in unpackings:
+            reads = (
+                decisions.reads_at(local_var_types, assignment.start_byte)
+                if decisions is not None
+                else local_var_types
+            )
             self._bind_unpacked_targets(
-                assignment, caller, bound, local_var_types, module_qn
+                assignment, caller, bound, reads, local_var_types, module_qn
             )
 
     def _bind_unpacked_targets(
@@ -1459,16 +2274,17 @@ class PythonAstAnalyzerMixin(_AstBase):
         assignment: Node,
         caller: Node,
         bound: frozenset[str],
+        reads: dict[str, str],
         local_var_types: dict[str, str],
         module_qn: str,
     ) -> None:
+        """Bind the targets in `local_var_types`, reading the value's
+        types from `reads`."""
         left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
         right = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
         if left is None or right is None:
             return
-        elements = self._unpacked_elements(
-            right, caller, bound, local_var_types, module_qn
-        )
+        elements = self._unpacked_elements(right, caller, bound, reads, module_qn)
         targets = [t for t in left.named_children if t.type != cs.TS_COMMENT]
         if len(elements) == 1 and elements[0][1]:
             elements = [elements[0]] * len(targets)  # `tuple[T, ...]`
