@@ -61,9 +61,13 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Rust Upgrade**: Updated Rust to version 1.99.1-slim-trixie.
-- **Signature Functionality**: Added support for reading and writing JavaScript headers for change signatures, including the ability to change the signature of JavaScript functions or methods.
-- **macOS Compatibility**: The build now leaves macOS-14 support.
+- **Type Handling**: Improved handling of type context managers, walrus operators, and match binding targets in both Python and TypeScript.
+- **Rename Refinement**: Prevented Go renames from unexporting names used by other packages.
+- **Profile Naming**: Corrected the naming of pprof profiles to avoid "malformed" errors when no samples are present.
+- **Output Budget**: Increased the Anthropic output budget to improve the default thinking experience.
+- **Module Resolution**: Resolved issues with module resolution in various scenarios, including ES module default imports and bare name bindings.
+- **Dead Code Elimination**: Removed dead code roots associated with IPython rich-display methods.
+- **Incremental Refresh**: Improved incremental refresh to ensure callers are updated when dispatch targets change.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -144,7 +148,7 @@ To upgrade an existing install, run `uv tool upgrade code-graph-rag` (with pipx,
 You also need Python 3.12+ and `ripgrep`. The graph lives in an embedded SQLite file by default, so there is no database server to run: no Docker and no `cmake`. Memgraph and Neo4j remain available as opt-in backends ([Graph Backends](docs/architecture/embedded-graph.md)). Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
 
 > [!NOTE]
-> The wheel is pure Python (`py3-none-any`), so it installs on any platform with Python 3.12 or newer. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md#older-system-interpreters) for the commands.
+> cgr requires its native extension, `cgr-graph-rs`, which ships for CPython 3.12 or newer on Linux (x86_64, aarch64), macOS and Windows x64, so it installs on those platforms only. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md#older-system-interpreters) for the commands.
 
 ## Quick Start
 

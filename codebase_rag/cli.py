@@ -2436,6 +2436,75 @@ def rename_command(
 
 
 @app.command(
+    name=ch.CLICommandName.MOVE,
+    help=ch.CMD_MOVE,
+    short_help=ch.CMD_MOVE,
+    epilog=ch.EXAMPLES_MOVE,
+    rich_help_panel=ch.PANEL_USE,
+)
+def move_command(
+    qualified_name: str = typer.Argument(..., help=ch.HELP_MOVE_QN),
+    target_module: str = typer.Argument(..., help=ch.HELP_MOVE_TARGET),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    keep_alias: bool = typer.Option(
+        False, "--keep-alias", help=ch.HELP_MOVE_KEEP_ALIAS
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_MOVE_DRY_RUN),
+) -> None:
+    from .editing.move import MoveRefused, move
+    from .graph_cli import _project_and_fetch
+    from .graph_query import source_root_for
+
+    name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    with ingestor:
+        # An explicit --project may name a graph indexed from another
+        # checkout; its repo-relative paths must not be edited under this one.
+        if source_root_for(fetch_all, name, repo_path) is None:
+            typer.echo(
+                cs.MOVE_CLI_WRONG_ROOT.format(project=name, root=repo_path.resolve()),
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        parsers, queries = load_parsers()
+        from .graph_updater import GraphUpdater
+
+        updater = GraphUpdater(
+            ingestor=ingestor,
+            repo_path=repo_path.resolve(),
+            parsers=parsers,
+            queries=queries,
+            project_name=name,
+        )
+        try:
+            report = move(
+                repo_path.resolve(),
+                fetch_all,
+                name,
+                qualified_name,
+                target_module,
+                keep_alias=keep_alias,
+                dry_run=dry_run,
+                reingest=updater.reingest,
+            )
+        except MoveRefused as refused:
+            typer.echo(str(refused), err=True)
+            raise typer.Exit(code=1) from refused
+    payload = dict(report._asdict())
+    if report.verdict is not None:
+        payload[cs.KEY_VERDICT] = report.verdict._asdict()
+    typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
+    if not report.applied and not dry_run:
+        raise typer.Exit(code=1)
+
+
+@app.command(
     name=ch.CLICommandName.CHANGE_SIGNATURE,
     help=ch.CMD_CHANGE_SIGNATURE,
     short_help=ch.CMD_CHANGE_SIGNATURE,
@@ -3217,6 +3286,19 @@ def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
         typer.echo(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, err=True)
 
 
+def _refuse_without_endpoint_data(
+    error: ex.EndpointDataMissingError, show_progress: bool
+) -> NoReturn:
+    """No verdict, rather than one that reads as nothing unreachable. A
+    machine format owns stdout, so the refusal goes to stderr there, as the
+    single-project notice does."""
+    if show_progress:
+        app_context.console.print(style(str(error), cs.Color.RED))
+    else:
+        typer.echo(str(error), err=True)
+    raise typer.Exit(1)
+
+
 @app.command(
     name=ch.CLICommandName.DEAD_CODE,
     help=ch.DESC_DEAD_CODE,
@@ -3291,26 +3373,33 @@ def dead_code(
     choice = ProjectChoice(None)
     rows: list[ResultRow] = []
     structural_tier_symbols = 0
+    endpoint_gap: ex.EndpointDataMissingError | None = None
     try:
         with connect_memgraph(batch_size=1) as ingestor:
             projects = ingestor.list_projects()
             choice = choose_project(chosen, repo_path, projects, ingestor)
             if (resolved := choice.name) is not None:
                 logger.info(ls.DEADCODE_SCANNING.format(project_name=resolved))
-                rows, structural_tier_symbols = collect_dead_code_with_coverage(
-                    ingestor,
-                    resolved,
-                    _dead_code_config(
-                        include_tests,
-                        include_classes,
-                        entry_point,
-                        decorator_root,
-                        min_resolution,
-                        endpoint_roots,
-                        public_roots,
-                    ),
-                )
-                if not endpoint_roots and len(projects) <= 1:
+                try:
+                    rows, structural_tier_symbols = collect_dead_code_with_coverage(
+                        ingestor,
+                        resolved,
+                        _dead_code_config(
+                            include_tests,
+                            include_classes,
+                            entry_point,
+                            decorator_root,
+                            min_resolution,
+                            endpoint_roots,
+                            public_roots,
+                        ),
+                    )
+                except ex.EndpointDataMissingError as e:
+                    # Held until the connection closes: a finding about the
+                    # project, which the service layer would log on exit as a
+                    # failed session with a traceback (issue #2896).
+                    endpoint_gap = e
+                if not endpoint_roots and len(projects) <= 1 and not endpoint_gap:
                     _notice_single_project_endpoint_roots(show_progress)
     except GraphUnavailableError:
         raise
@@ -3321,6 +3410,8 @@ def dead_code(
         logger.exception(ls.DEADCODE_ERROR.format(error=e))
         raise typer.Exit(1) from e
 
+    if endpoint_gap is not None:
+        _refuse_without_endpoint_data(endpoint_gap, show_progress)
     resolved = _require_project(choice)
 
     candidates = [
