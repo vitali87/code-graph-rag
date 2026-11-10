@@ -657,7 +657,8 @@ class _StatefulIngestor:
                 or _shadowed_by_longer_owner(source_qn, longer_project_prefixes)
             ):
                 continue
-            for _fl, fv, rel, tl, tv, _site in self._out.get(node_id, ()):
+            for edge in self._out.get(node_id, ()):
+                _fl, fv, rel, tl, tv, _site = edge
                 if (
                     rel == cs.RelationshipType.IMPORTS.value
                     and tl == module
@@ -669,6 +670,9 @@ class _StatefulIngestor:
                             cs.KEY_FROM_QN: _result(fv),
                             cs.KEY_FROM_PATH: _result(props.get(cs.KEY_PATH)),
                             cs.KEY_TO_QN: _result(tv),
+                            cs.KEY_IMPORTED_NAME: _result(
+                                self.props_for(edge).get(cs.KEY_IMPORTED_NAME)
+                            ),
                         }
                     )
         return rows
@@ -1159,6 +1163,16 @@ class _StatefulIngestor:
                         rows.append(
                             self._graph_edge_row(edge, self._GRAPH_IMPORT_KEYS, source)
                         )
+        elif query == cq.CYPHER_GRAPH_IMPORTS_OF:
+            for source in targets:
+                for edge in self._out.get(source, ()):
+                    if edge[2] != cs.RelationshipType.IMPORTS.value:
+                        continue
+                    row = self._graph_edge_row(
+                        edge, self._GRAPH_IMPORT_KEYS, (edge[3], edge[4])
+                    )
+                    row[cs.KEY_TO_QN] = _result(edge[4])
+                    rows.append(row)
         return rows
 
     # --- context slice reads (issue #1536) -----------------------------------
@@ -1400,6 +1414,7 @@ class _StatefulIngestor:
                 | cq.CYPHER_GRAPH_IMPLEMENTORS
                 | cq.CYPHER_GRAPH_OVERRIDES
                 | cq.CYPHER_GRAPH_IMPORTERS
+                | cq.CYPHER_GRAPH_IMPORTS_OF
                 | cq.CYPHER_GRAPH_RESOLVE_NAME
                 | cq.CYPHER_GRAPH_RESOLVE_LOCATION
                 | cq.CYPHER_GRAPH_CALLEES
@@ -1605,6 +1620,12 @@ class _StatefulIngestor:
                             raw_param_types := props.get(cs.KEY_PARAM_TYPES), list
                         )
                         else None,
+                        cs.KEY_FIRST_RETURN_TYPE: _text(
+                            props.get(cs.KEY_FIRST_RETURN_TYPE)
+                        ),
+                        cs.KEY_CHAIN_RETURN_TYPE: _text(
+                            props.get(cs.KEY_CHAIN_RETURN_TYPE)
+                        ),
                         cs.KEY_NAMESPACE: _text(props[cs.KEY_NAMESPACE])
                         if cs.KEY_NAMESPACE in props
                         else None,
@@ -1637,6 +1658,26 @@ class _StatefulIngestor:
                     }
                     defs.append(row)
                 return defs
+            case cs.CYPHER_PROJECT_TYPE_EDGE_TARGETS:
+                # The type edges an incremental run leaves resolved on its
+                # requeued annotations (issue #3007).
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                callables = {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value}
+                type_rels = {
+                    cs.RelationshipType.RETURNS.value,
+                    cs.RelationshipType.ACCEPTS.value,
+                }
+                return [
+                    {
+                        cs.KEY_QUALIFIED_NAME: _text(fv),
+                        cs.KEY_REL_TYPE: rel,
+                        cs.KEY_TARGET_QN: _text(tv),
+                    }
+                    for (fl, fv, rel, _tl, tv) in sorted(self.edges, key=str)
+                    if fl in callables
+                    and rel in type_rels
+                    and _str(fv).startswith(prefix)
+                ]
             case cs.CYPHER_PROJECT_PARAMETER_TYPES:
                 prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 return [
@@ -1861,6 +1902,7 @@ class _StatefulIngestor:
                     module_row: ResultRow = {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
                         cs.KEY_LABEL: label,
+                        cs.KEY_GO_PACKAGE: _text(props.get(cs.KEY_GO_PACKAGE)),
                         cs.KEY_PHP_NAMESPACE: _text(props.get(cs.KEY_PHP_NAMESPACE)),
                     }
                     module_rows.append(module_row)
