@@ -43,6 +43,8 @@ TS_SCALA_MODIFIERS = "modifiers"
 TS_SCALA_PRIVATE = "private"
 # Where a definition is a member or a top-level one, not a local.
 SCALA_API_SCOPES = frozenset({"template_body", "compilation_unit"})
+# Scala 3's `extension (x: Int) def twice`: the def's body-less wrapper.
+TS_SCALA_EXTENSION_DEFINITION = "extension_definition"
 TS_SCALA_LAMBDA_EXPRESSION = "lambda_expression"
 TS_SCALA_IDENTIFIER = "identifier"
 TS_SCALA_INSTANCE_EXPRESSION = "instance_expression"

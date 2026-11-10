@@ -1337,3 +1337,273 @@ int Alias::api() { return helper(); }
     }
 
     assert not {qn for qn in dead if qn.endswith((".Alias.api", ".helper"))}
+
+
+# Greptile on PR #2952: every function that is no class member, a friend
+# defined in its class included, takes the same linkage check: its namespace,
+# through an alias at any part of its qualifier, lies in no unnamed
+# namespace, and no earlier declaration of it there is `static`.
+ONE_LINKAGE_CPP = """\
+struct X;
+static void friend_after_static(X&);
+struct X { friend void friend_after_static(X&) {} };
+
+namespace FN {
+struct Y;
+static void friend_in_namespace(Y&);
+struct Y { friend void friend_in_namespace(Y&) {} };
+}
+
+namespace FV { struct V2; static void friend_of_qualified_class(V2&); }
+struct FV::V2 { friend void friend_of_qualified_class(V2&) {} };
+
+namespace { namespace FH { struct Z; } }
+struct FH::Z { friend void friend_in_internal_namespace(Z&) {} };
+
+struct Pub;
+void friend_declared_extern(Pub&);
+struct Pub { friend void friend_declared_extern(Pub&) {} };
+
+namespace N3 { static void alias_inside_namespace(); }
+namespace W { namespace A = N3; }
+void W::A::alias_inside_namespace() {}
+
+namespace N4 { static void chained_alias(); }
+namespace B1 = N4;
+namespace B2 = B1;
+void B2::chained_alias() {}
+
+namespace N5 { void later_alias_public(); }
+namespace W5 { namespace A5 = N5; }
+void W5::A5::later_alias_public() {}
+
+namespace { namespace H6 { void later_alias_internal(); } }
+namespace W6 { namespace A6 = H6; }
+void W6::A6::later_alias_internal() {}
+
+namespace N7 { struct Box7 { void using_decl_later_part(); }; }
+namespace W7 { using N7::Box7; }
+void W7::Box7::using_decl_later_part() {}
+
+namespace outer8 { namespace { namespace deep8 { void deep_internal(); } } }
+void outer8::deep8::deep_internal() {}
+
+namespace IN { inline namespace v1 { static void inline_static(); } }
+void IN::inline_static() {}
+
+namespace { template <class T> struct Tmpl; }
+template <> struct Tmpl<int> { void internal_template_spec() {} };
+
+namespace { static void twin(int); }
+void twin(int) {}
+
+namespace NU { namespace { void unnamed_decl_qualified(); } }
+void NU::unnamed_decl_qualified() {}
+
+namespace NU2 { namespace { void unnamed_decl_unqualified(); } }
+namespace NU2 { void unnamed_decl_unqualified() {} }
+
+static void const_param(int);
+void const_param(const int n) {}
+
+class Sealed final { protected: void final_protected() {} };
+
+namespace { template <class T> struct FT; }
+template <> struct FT<int> { friend void friend_of_internal_spec(FT&) {} };
+
+namespace { namespace detail { int hidden_twin(); } }
+namespace detail { int named_twin(); }
+int detail::named_twin() { return 1; }
+"""
+
+
+@pytest.fixture
+def linkage_check(tmp_path: Path) -> dict[tuple[str, int], bool]:
+    # By name and line: a definition and the declaration before it can share
+    # a qualified name, which `_one` cannot tell apart.
+    graph = _indexed(tmp_path, {"one_linkage.cpp": ONE_LINKAGE_CPP})
+    return {
+        (str(props[cs.KEY_NAME]), int(props[cs.KEY_START_LINE])): bool(
+            props[cs.KEY_IS_EXPORTED]
+        )
+        for props in graph.nodes.values()
+        if cs.KEY_IS_EXPORTED in props and cs.KEY_START_LINE in props
+    }
+
+
+@pytest.mark.parametrize(
+    ("symbol", "line", "is_exported"),
+    [
+        ("friend_after_static", 3, False),
+        ("friend_in_namespace", 8, False),
+        ("friend_of_qualified_class", 12, False),
+        ("friend_in_internal_namespace", 15, False),
+        ("friend_declared_extern", 19, True),
+        ("alias_inside_namespace", 23, False),
+        ("chained_alias", 28, False),
+        ("later_alias_public", 32, True),
+        ("later_alias_internal", 36, False),
+        ("using_decl_later_part", 40, False),
+        ("deep_internal", 43, False),
+        ("inline_static", 46, False),
+        ("internal_template_spec", 49, False),
+        ("twin", 52, True),
+        ("unnamed_decl_qualified", 55, False),
+        ("unnamed_decl_unqualified", 58, True),
+        ("const_param", 61, False),
+        ("final_protected", 63, False),
+        ("friend_of_internal_spec", 66, False),
+        ("named_twin", 70, True),
+    ],
+    ids=[
+        "friend-after-a-static-declaration",
+        "friend-after-a-static-declaration-in-its-namespace",
+        "friend-of-a-class-defined-through-its-namespace",
+        "friend-of-a-class-in-an-unnamed-namespace",
+        "friend-after-an-extern-declaration",
+        "alias-in-a-later-part-of-the-qualifier",
+        "alias-of-an-alias",
+        "alias-in-a-later-part-naming-a-public-namespace",
+        "alias-in-a-later-part-naming-an-unnamed-namespace-one",
+        "using-declaration-in-a-later-part",
+        "unnamed-namespace-deep-inside-a-named-one",
+        "static-declaration-in-an-inline-namespace",
+        "specialization-of-a-template-in-an-unnamed-namespace",
+        "static-declaration-of-another-function-in-an-unnamed-namespace",
+        "qualified-definition-of-a-function-of-an-unnamed-namespace",
+        "unqualified-definition-beside-one-of-an-unnamed-namespace",
+        "static-declaration-spelling-a-parameter-without-const",
+        "protected-member-of-a-final-class",
+        "friend-of-a-specialization-of-a-template-in-an-unnamed-namespace",
+        "namespace-named-like-one-inside-an-unnamed-namespace",
+    ],
+)
+def test_one_linkage_check_for_every_function(
+    linkage_check: dict[tuple[str, int], bool],
+    symbol: str,
+    line: int,
+    is_exported: bool,
+) -> None:
+    assert linkage_check[(symbol, line)] is is_exported
+
+
+def test_a_friend_after_a_static_declaration_is_dead(tmp_path: Path) -> None:
+    source = """\
+static int callee() { return 1; }
+
+struct X;
+static int unused(X&);
+struct X { friend int unused(X&) { return callee(); } };
+"""
+    graph = _indexed(tmp_path, {"friend.cpp": source})
+    config = default_dead_code_config(include_tests=True, include_classes=False)
+
+    dead = collect_dead_code(_Graph(graph), graph.project, config)
+
+    assert {row["name"] for row in dead} >= {"unused", "callee"}
+
+
+def test_a_private_function_defined_through_a_nested_alias_is_dead(
+    tmp_path: Path,
+) -> None:
+    source = """\
+namespace N { static int helper(); }
+namespace W { namespace A = N; }
+int W::A::helper() { return 1; }
+"""
+    graph = _indexed(tmp_path, {"nested_alias.cpp": source})
+    config = default_dead_code_config(include_tests=True, include_classes=False)
+
+    dead = {
+        str(row["qualified_name"])
+        for row in collect_dead_code(_Graph(graph), graph.project, config)
+    }
+
+    assert any(qn.endswith(".W.A.helper") for qn in dead)
+
+
+# Code no build compiles is no API: under `#if 0`, or after `#if 1` in its
+# chain. And a Scala 3 extension method is a member of where its
+# `extension` stands.
+LITERAL_CPP = """\
+#if 0
+void under_if_zero() {}
+#endif
+#if 1
+void under_if_one() {}
+#else
+void after_if_one() {}
+#endif
+class Literal {
+#if 0
+public:
+#endif
+    void label_under_if_zero() {}
+#if 1
+public:
+#endif
+    void label_under_if_one() {}
+};
+"""
+LITERAL_C = """\
+#if 0
+int c_under_if_zero(void) { return 0; }
+#endif
+"""
+EXTENSIONS_SCALA = """\
+object Ext {
+  extension (x: Int) def twice: Int = x * 2
+  extension (s: String)
+    private def hiddenExt: Int = 1
+    def shout: String = s
+}
+extension (x: Long) def topExt: Long = x
+private object Closed { extension (x: Int) def closedExt: Int = x }
+"""
+
+
+@pytest.fixture
+def literal(tmp_path: Path) -> dict[str, bool]:
+    return _run(
+        tmp_path,
+        {
+            "literal.cpp": LITERAL_CPP,
+            "literal_c.c": LITERAL_C,
+            "Ext.scala": EXTENSIONS_SCALA,
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("symbol", "is_exported"),
+    [
+        ("under_if_zero", False),
+        ("under_if_one", True),
+        ("after_if_one", False),
+        ("label_under_if_zero", False),
+        ("label_under_if_one", True),
+        ("c_under_if_zero", False),
+        ("twice", True),
+        ("shout", True),
+        ("topExt", True),
+        ("hiddenExt", False),
+        ("closedExt", False),
+    ],
+    ids=[
+        "function-under-if-zero",
+        "function-under-if-one",
+        "function-after-if-one",
+        "public-label-under-if-zero",
+        "public-label-under-if-one",
+        "c-function-under-if-zero",
+        "scala-extension-method-in-an-object",
+        "scala-extension-method-of-a-block",
+        "scala-top-level-extension-method",
+        "scala-private-extension-method",
+        "scala-extension-method-in-a-private-object",
+    ],
+)
+def test_dead_branches_and_extension_methods(
+    literal: dict[str, bool], symbol: str, is_exported: bool
+) -> None:
+    assert _one(literal, f".{symbol}") is is_exported

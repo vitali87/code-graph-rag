@@ -155,6 +155,12 @@ TS_CPP_STORAGE_CLASS_SPECIFIER = "storage_class_specifier"
 CPP_PRIVATE_BY_DEFAULT = frozenset({"class_specifier"})
 CPP_ACCESS_PRIVATE = "private"
 CPP_ACCESS_PUBLIC = "public"
+CPP_ACCESS_PROTECTED = "protected"
+# `class Box final`: no subclass can exist, so `protected` hides a member as
+# `private` does (PR #2952).
+TS_CPP_VIRTUAL_SPECIFIER = "virtual_specifier"
+CPP_KEYWORD_FINAL = "final"
+CPP_FINAL_CLASS_HIDDEN_ACCESSES = frozenset({CPP_ACCESS_PRIVATE, CPP_ACCESS_PROTECTED})
 TS_FIELD_DECLARATION_LIST = "field_declaration_list"
 TS_CPP_TYPE_QUALIFIER = "type_qualifier"
 CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
@@ -351,8 +357,6 @@ TS_CPP_INIT_DECLARATOR = "init_declarator"
 TS_CPP_PARAMETER_DECLARATION = "parameter_declaration"
 TS_CPP_IDENTIFIER = "identifier"
 TS_CPP_QUALIFIED_IDENTIFIER = "qualified_identifier"
-# An optional parameter's default (`int x = 0`).
-TS_CPP_FIELD_DEFAULT_VALUE = "default_value"
 # `Reader<T>(...)` as a call target: the callee wraps name + template args.
 TS_CPP_TEMPLATE_FUNCTION = "template_function"
 # `&fn` / `*p`: the unary address-of or dereference, told apart by its
@@ -561,6 +565,14 @@ CPP_PREPROC_UNDEF = "#undef"
 TS_CPP_NAMESPACE_ALIAS_DEFINITION = "namespace_alias_definition"
 TS_CPP_USING_DECLARATION = "using_declaration"
 CPP_KEYWORD_NAMESPACE = "namespace"
+# `namespace a::b` and `namespace A = ::N`: a namespace name with parts.
+TS_CPP_NESTED_NAMESPACE_SPECIFIER = "nested_namespace_specifier"
+# `inline namespace v1 {}`: its members are members of the namespace around
+# it too.
+CPP_KEYWORD_INLINE = "inline"
+# The path part an unnamed namespace adds: each namespace has one, and what
+# has it in its path is file-private (PR #2952).
+CPP_UNNAMED_NAMESPACE = ""
 CPP_TYPE_ALIAS_TYPES = frozenset({"alias_declaration", "type_definition"})
 # Aliases of aliases are followed this far, so a cycle in broken code ends.
 CPP_MAX_ALIAS_HOPS = 8
