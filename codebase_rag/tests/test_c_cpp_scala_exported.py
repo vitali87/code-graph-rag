@@ -938,3 +938,162 @@ private:
     dead = collect_dead_code(_Graph(graph), graph.project, config)
 
     assert {row["name"] for row in dead} >= {"unused", "callee"}
+
+
+# Greptile on PR #2952: a `#define` or `#undef` inside the class changes the
+# macro between two blocks that test it, so those blocks need not agree; and
+# a specialization's qualifier names a class of this file only where C++
+# name lookup finds one, not wherever a class of that name lives.
+REDEFINED_CPP = """\
+class Undefined {
+#ifdef FEATURE
+public:
+#endif
+#undef FEATURE
+#ifdef FEATURE
+private:
+#endif
+    void after_undef() {}
+};
+class DefinedBetween {
+#ifndef LATE
+public:
+#endif
+#define LATE
+#ifndef LATE
+private:
+#endif
+    void after_define() {}
+};
+class UndefinedInNested {
+#ifdef NESTED
+public:
+#endif
+    struct Inner {
+#undef NESTED
+    };
+#ifdef NESTED
+private:
+#endif
+    void after_nested_undef() {}
+};
+class ExpressionUndefined {
+#if LEVEL > 1
+public:
+#endif
+#undef LEVEL
+#if LEVEL > 1
+private:
+#endif
+    void after_expression_undef() {}
+};
+class UnrelatedDefine {
+#ifdef FEATURE
+public:
+#endif
+#define HELPER 1
+#ifdef FEATURE
+private:
+#endif
+    void after_unrelated_define() {}
+};
+"""
+SCOPED_QUALIFIER_CPP = """\
+namespace app { struct fmt {}; }
+struct Foo { int v; };
+struct Bar { int v; };
+
+template <> struct fmt::formatter<Foo> {
+    int format_beside_app_fmt(const Foo& f) const { return f.v; }
+};
+
+template <> struct ::fmt::formatter<Bar> {
+    int format_from_global(const Bar& b) const { return b.v; }
+};
+
+namespace app {
+class own { template <class T> struct formatter; };
+template <> struct own::formatter<int> { void own_member_template() {} };
+}
+
+namespace lib { class V {}; }
+namespace V { void beside_lib_v(); }
+void V::beside_lib_v() {}
+"""
+
+
+@pytest.fixture
+def redefined(tmp_path: Path) -> dict[str, bool]:
+    return _run(
+        tmp_path,
+        {"redefined.cpp": REDEFINED_CPP, "scoped.cpp": SCOPED_QUALIFIER_CPP},
+    )
+
+
+@pytest.mark.parametrize(
+    ("symbol", "is_exported"),
+    [
+        ("after_undef", True),
+        ("after_define", True),
+        ("after_nested_undef", True),
+        ("after_expression_undef", True),
+        ("after_unrelated_define", False),
+        ("format_beside_app_fmt", True),
+        ("format_from_global", True),
+        ("own_member_template", False),
+        ("beside_lib_v", True),
+    ],
+    ids=[
+        "undef-between-two-tests-of-one-flag",
+        "define-between-two-tests-of-one-flag",
+        "undef-in-a-nested-class-between-the-tests",
+        "undef-between-two-tests-of-one-expression",
+        "define-of-another-macro-keeps-the-flags-together",
+        "qualifier-named-like-a-class-of-another-namespace",
+        "qualifier-from-the-global-namespace",
+        "qualifier-naming-a-class-of-the-enclosing-namespace",
+        "namespace-function-named-like-a-class-of-another-namespace",
+    ],
+)
+def test_macro_changes_and_qualifier_lookup(
+    redefined: dict[str, bool], symbol: str, is_exported: bool
+) -> None:
+    assert _one(redefined, f".{symbol}") is is_exported
+
+
+def test_a_public_method_after_an_undef_is_not_dead(tmp_path: Path) -> None:
+    source = """\
+static int helper() { return 1; }
+
+class Box {
+#ifdef FEATURE
+public:
+#endif
+#undef FEATURE
+#ifdef FEATURE
+private:
+#endif
+    int api() { return helper(); }
+};
+"""
+    graph = _indexed(tmp_path, {"box.cpp": source})
+    config = default_dead_code_config(include_tests=True, include_classes=False)
+
+    assert collect_dead_code(_Graph(graph), graph.project, config) == []
+
+
+def test_a_formatter_beside_a_class_of_that_name_is_not_dead(tmp_path: Path) -> None:
+    source = """\
+namespace app { struct fmt {}; }
+struct Foo { int v; };
+
+static int render(int v) { return v * 31; }
+
+template <> struct fmt::formatter<Foo> {
+    int format(const Foo& f) const { return render(f.v); }
+};
+"""
+    graph = _indexed(tmp_path, {"formatter.cpp": source})
+    config = default_dead_code_config(include_tests=True, include_classes=False)
+
+    assert collect_dead_code(_Graph(graph), graph.project, config) == []

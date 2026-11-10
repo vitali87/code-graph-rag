@@ -546,6 +546,13 @@ CPP_OP_NOT = "!"
 # tried, so two blocks testing the same flag agree; past it each branch is
 # taken or not on its own, which can only make a member look public.
 CPP_MAX_CORRELATED_CONDITIONS = 6
+# `#define X` and `#define X(a)` give `X` a definition, `#undef X` (a
+# generic `preproc_call`) takes it away; either may change a flag between
+# two blocks that test it.
+CPP_PREPROC_DEFINE_TYPES = frozenset({"preproc_def", "preproc_function_def"})
+TS_CPP_PREPROC_CALL = "preproc_call"
+CPP_FIELD_DIRECTIVE = "directive"
+CPP_PREPROC_UNDEF = "#undef"
 # Nodes that hold file-scope declarations without opening a scope of their
 # own: preprocessor conditionals and an `extern "C" { ... }` block.
 C_FILE_SCOPE_CONTAINER_TYPES = frozenset(
