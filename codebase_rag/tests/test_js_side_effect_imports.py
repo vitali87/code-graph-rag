@@ -690,6 +690,23 @@ def _write_loader_module(repo: Path, name: str, source: str) -> None:
             '  require("./setup");\n}\nload();\n',
             "setup",
         ),
+        (
+            "main.mjs",
+            'import "node:module";\nasync function boot() {\n'
+            '  var { createRequire } = await import("node:module");\n'
+            "  {\n    function createRequire() {}\n  }\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n}\nboot();\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            'var { createRequire } = await import("node:module");\n'
+            "{\n  function createRequire() {}\n}\n"
+            "const require = createRequire(import.meta.url);\n"
+            'require("./setup");\nexport {};\n',
+            "src.setup",
+        ),
     ],
     ids=[
         "as-cast",
@@ -716,6 +733,8 @@ def _write_loader_module(repo: Path, name: str, source: str) -> None:
         "empty-url",
         "import-meta-dirname",
         "commonjs-dirname",
+        "a-strict-block-s-own-function",
+        "a-strict-module-block-s-own-function",
     ],
 )
 def test_a_create_require_loader_spelled_any_way_node_reads_still_imports(
@@ -725,7 +744,9 @@ def test_a_create_require_loader_spelled_any_way_node_reads_still_imports(
     # change nothing about the file a loader is made for, so each still
     # records its import, from that file's directory (Greptile, PR #3284).
     # A directory path has no trailing slash, which `createRequire` reads as
-    # a file, so `createRequire(__dirname)` resolves from the parent.
+    # a file, so `createRequire(__dirname)` resolves from the parent. Strict
+    # code keeps a block's function to the block, so it leaves the factory
+    # around it settled.
     _write_loader_module(temp_repo, name, source)
     create_and_run_updater(temp_repo, mock_ingestor)
 
@@ -846,6 +867,29 @@ def test_a_create_require_loader_spelled_any_way_node_reads_still_imports(
             "var make = () => () => {};\n"
             'const require = make(import.meta.url);\nrequire("./setup");\n',
         ),
+        (
+            "main.mjs",
+            'import "node:module";\nasync function boot() {\n'
+            '  var { createRequire } = await import("node:module");\n'
+            "  function createRequire() {}\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n}\nboot();\n',
+        ),
+        (
+            "main.js",
+            "function boot() {\n"
+            '  var { createRequire } = require("node:module");\n'
+            "  {\n    function createRequire() {}\n  }\n"
+            "  const require = createRequire(__filename);\n"
+            '  require("./setup");\n}\nboot();\n',
+        ),
+        (
+            "main.js",
+            'var { createRequire } = require("node:module");\n'
+            "{\n  function createRequire() {}\n}\n"
+            "function boot() {\n  const require = createRequire(__filename);\n"
+            '  require("./setup");\n}\nboot();\n',
+        ),
     ],
     ids=[
         "a-local-converter",
@@ -864,6 +908,9 @@ def test_a_create_require_loader_spelled_any_way_node_reads_still_imports(
         "a-loader-declared-twice",
         "a-filename-declared-twice",
         "a-factory-alias-declared-twice",
+        "a-factory-beside-a-function-of-its-name",
+        "a-sloppy-block-function-hoisted-over-the-factory",
+        "a-sloppy-module-block-function-over-the-factory",
     ],
 )
 def test_a_create_require_loader_whose_file_cannot_be_told_imports_nothing(
@@ -874,7 +921,9 @@ def test_a_create_require_loader_whose_file_cannot_be_told_imports_nothing(
     # the loader's directory unknown, so it records no edge (Greptile, PR
     # #3284). Only a name one `const` binds and nothing writes holds a
     # value the graph can trust: a second `var entry` rebinds it, and so
-    # can any `let` or `var`.
+    # can any `let` or `var`. A function beside the factory in its scope
+    # rebinds it, as does one in a block of sloppy code, which Node hoists
+    # into the scope around it.
     _write_loader_module(temp_repo, name, source)
     create_and_run_updater(temp_repo, mock_ingestor)
 

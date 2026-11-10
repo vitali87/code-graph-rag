@@ -38,6 +38,7 @@ import posixpath
 from collections import deque
 from collections.abc import Callable, Iterator
 from functools import partial
+from itertools import chain
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -438,8 +439,7 @@ class LocalBindings:
         return (
             bool(name)
             and (name, _key(scope)) not in self._reassigned()
-            and sum(1 for bound in _scope_names(scope, self._root) if bound == name)
-            == 1
+            and self._module.declarations_in(scope, name) == 1
         )
 
     def _reassigned(self) -> frozenset[_Binding]:
@@ -452,7 +452,12 @@ class LocalBindings:
 
     def _reassignments(self) -> Iterator[_Binding]:
         root_key = _key(self._root)
+        # Strict code keeps a block's function declaration to that block, so
+        # it rewrites no module-level name (Greptile, PR #3284).
+        strict = self._module.strict_at(self._root)
         for node in _subtree(self._root):
+            if strict and node.type in _HOISTED_FUNCTIONS:
+                continue
             for target, module_level in _reassignment_targets(node, self._root):
                 if name := safe_decode_text(target):
                     yield name, self._writer_key(target, module_level, root_key)
@@ -751,9 +756,34 @@ class _Module:
     def _names_bound_by(self, scope: Node) -> frozenset[str]:
         key = _key(scope)
         if (names := self._bound.get(key)) is None:
-            strict = self._strict_blocks and self._is_strict(scope)
+            strict = self.strict_at(scope)
             names = self._bound[key] = frozenset(_declared_names(scope, strict))
         return names
+
+    def strict_at(self, scope: Node) -> bool:
+        """Whether this module reads `scope` with strict code's block rules."""
+        return self._strict_blocks and self._is_strict(scope)
+
+    def declarations_in(self, scope: Node, name: str) -> int:
+        """How many declarations bind `name` in `scope`, read by the rules
+        `binding_scope` places names with: a strict block's own function
+        stays in that block, so it never counts against the name around it
+        (Greptile, PR #3284). A function's parameters and `var`s count in
+        its body too, which `binding_scope` gives the name whenever a
+        declaration in the body binds it."""
+        if scope == self._root:
+            names = _module_names(scope)
+        else:
+            strict = self.strict_at(scope)
+            names = _declared_names(scope, strict)
+            function = scope.parent
+            if (
+                function is not None
+                and function.type in _FUNCTIONS
+                and function.child_by_field_name(cs.FIELD_BODY) == scope
+            ):
+                names = chain(names, _declared_names(function, strict))
+        return sum(1 for bound in names if bound == name)
 
     def _is_strict(self, scope: Node) -> bool:
         # An ES module and a class body are strict code, as is code under a
@@ -1179,11 +1209,6 @@ def _is_const(declaration: Node | None) -> bool:
         else None
     )
     return kind is not None and kind.type == cs.JS_CONST_KEYWORD
-
-
-def _scope_names(scope: Node, root: Node) -> Iterator[str]:
-    # Every name `scope` binds, once per declaration that binds it.
-    return _module_names(root) if scope == root else _declared_names(scope)
 
 
 _DECLARATIONS = frozenset({cs.TS_LEXICAL_DECLARATION, cs.TS_VARIABLE_DECLARATION})
