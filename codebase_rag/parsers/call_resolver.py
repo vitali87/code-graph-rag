@@ -32,7 +32,7 @@ from .py import resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
-from .utils import safe_decode_text
+from .utils import module_qn_for_entity, safe_decode_text
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
 # One initializer block's scope record, as held per module by
@@ -4681,12 +4681,7 @@ class CallResolver:
         )
 
     def _rust_crate_is_external(self, crate: str, module_qn: str) -> bool:
-        imports = self.import_processor
-        return crate in cs.RS_STDLIB_CRATES or (
-            not imports.rust_head_is_repo_crate(crate)
-            and not imports.rust_head_is_member_dep(crate, module_qn)
-            and imports.rust_head_is_external_dep(crate, module_qn)
-        )
+        return self.import_processor.rust_crate_is_external(crate, module_qn)
 
     def _rust_file_use_is_external(self, name: str, module_qn: str) -> bool:
         target = self.import_processor.import_mapping.get(module_qn, {}).get(name)
@@ -5889,7 +5884,7 @@ class CallResolver:
             )
             if not field_type:
                 return None
-            class_qn = self._chain_class_qn(field_type, module_qn)
+            class_qn = self._field_type_class_qn(field_type, class_qn, module_qn)
         if not class_qn:
             return None
         method_name = parts[-1]
@@ -6723,14 +6718,50 @@ class CallResolver:
         imported = set(processor.import_mapping.get(module_qn, {}).values())
         for libraries in processor.dart_import_aliases.get(module_qn, {}).values():
             imported.update(libraries)
-        visible = {module_qn, *imported}
-        frontier = list(imported)
+        return self._dart_with_exposed({module_qn, *imported}, list(imported))
+
+    def _dart_bare_visible_libraries(self, module_qn: str, name: str) -> set[str]:
+        """The libraries whose `name` `module_qn` can write bare: those its
+        plain `import` and `part` directives bring in, unless a `show` /
+        `hide` clause keeps `name` out, and whatever those hand on through
+        `export` / `part`. An `as p` import names them `p.Name` instead, and
+        an `export` hands names to importers without bringing them in
+        (issue #3286)."""
+        roots = [
+            directive.library
+            for directive in self.import_processor.dart_bare_imports.get(module_qn, ())
+            if directive.admits(name)
+        ]
+        return self._dart_with_exposed(set(roots), roots, name)
+
+    def _dart_with_exposed(
+        self, visible: set[str], frontier: list[str], name: str | None = None
+    ) -> set[str]:
+        """`visible` plus whatever the `frontier` libraries hand on through
+        `export` / `part`, transitively; for a `name`, only through exports
+        whose `show` / `hide` clauses hand that name on."""
+        exposed_by = self.import_processor.dart_exposed_libraries
         while frontier:
-            for exposed in processor.dart_exposed_libraries.get(frontier.pop(), ()):
-                if exposed not in visible:
-                    visible.add(exposed)
-                    frontier.append(exposed)
+            library = frontier.pop()
+            for exposed in exposed_by.get(library, ()):
+                if exposed in visible or (
+                    name is not None and not self._dart_hands_on(library, exposed, name)
+                ):
+                    continue
+                visible.add(exposed)
+                frontier.append(exposed)
         return visible
+
+    def _dart_hands_on(self, library: str, exposed: str, name: str) -> bool:
+        # `export 'b.dart' hide Cart;` hands on b's names but `Cart` (Greptile,
+        # PR #3292). A part has no clauses, and one export admitting the name
+        # is enough when the library exports the same file twice.
+        exports = [
+            export
+            for export in self.import_processor.dart_exports.get(library, ())
+            if export.library == exposed
+        ]
+        return not exports or any(export.admits(name) for export in exports)
 
     def _drop_named_constructor(self, name: str, target: str) -> str:
         """`Box.named` -> `Box` when the dotted name is not a definition but
@@ -6921,6 +6952,64 @@ class CallResolver:
         # is a constructor and the receiver's type is the head.
         member = self._drop_named_constructor(name, target)
         return f"{target}{cs.SEPARATOR_DOT}{member}"
+
+    def _field_type_class_qn(
+        self, field_type: str, owner_qn: str, caller_module_qn: str
+    ) -> str:
+        # A field's type is written in the file declaring its class, so it
+        # names what THAT file imports: `car.rs`'s `use crate::motor::Engine`
+        # types `Car.engine` whatever the caller imports (issue #3286). The
+        # caller's module is the fallback for an owner no module is known for.
+        owner_module = module_qn_for_entity(
+            owner_qn, self.type_inference.module_qn_to_file_path
+        )
+        language = self._module_language(owner_module) if owner_module else None
+        if owner_module and language == cs.SupportedLanguage.DART:
+            # What the declaring library sees is the whole answer: a name it
+            # cannot see uniquely (a package's, or two libraries') is no
+            # same-named class found anywhere else in the project.
+            return self._dart_visible_type(field_type, owner_module) or ""
+        # A Rust struct inside an inline `mod` reads that mod's `use` before
+        # the file's, so the owner stands where a caller would.
+        return self._chain_class_qn(
+            field_type,
+            owner_module or caller_module_qn,
+            _rust_caller(language, owner_qn),
+        )
+
+    def _dart_visible_type(self, type_name: str, module_qn: str) -> str | None:
+        # A part file is a piece of its library and has no imports of its
+        # own: it writes names in the library's scope, so `shop_model.dart`
+        # sees what `shop.dart` imports.
+        library = self.import_processor.dart_part_of.get(module_qn, module_qn)
+        # The library's own declaration shadows every imported one, and a
+        # class in any of its parts is one of the library's own.
+        for unit in self._dart_library_units(library):
+            if own := self._dart_declared_type(unit, type_name):
+                return own
+        # A Dart import brings in a LIBRARY, never a name, so the import map
+        # has no key for `Cart`: the type is the one the libraries visible
+        # from `library` declare, when exactly one of them does.
+        found = {
+            qn
+            for visible in self._dart_bare_visible_libraries(library, type_name)
+            if (qn := self._dart_declared_type(visible, type_name))
+        }
+        return next(iter(found)) if len(found) == 1 else None
+
+    def _dart_library_units(self, library: str) -> list[str]:
+        """`library`'s defining file and every part its `part` directives
+        name: one Dart library, so one scope, whichever file declares a
+        name (#3286)."""
+        part_of = self.import_processor.dart_part_of
+        exposed = self.import_processor.dart_exposed_libraries.get(library, ())
+        return [library, *(unit for unit in exposed if part_of.get(unit) == library)]
+
+    def _dart_declared_type(self, library: str, type_name: str) -> str | None:
+        qn = f"{library}{cs.SEPARATOR_DOT}{type_name}"
+        return (
+            qn if self.function_registry.get(qn) in _CONSTRUCTIBLE_NODE_TYPES else None
+        )
 
     def _chain_class_qn(
         self, type_name: str, module_qn: str, rust_caller: str | None = None

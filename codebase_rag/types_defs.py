@@ -1401,6 +1401,15 @@ class PendingTypeFact(NamedTuple):
     # RETURNS/ACCEPTS unbuilt (issue #1892). None only when the definition
     # was ingested without a file, in which case the module qn is the key.
     path: str | None = None
+    # The types the definition's RETURNS, and its ACCEPTS, already reach, set
+    # only on a fact requeued from an unchanged file. Its file's imports are
+    # not loaded on such a run, so re-resolving a name its import bound fell
+    # back to the nearest same-named type and added a wrong edge beside the
+    # right one (issue #3007); only a name none of these reach needs
+    # resolving. Kept apart, so a parameter's edge never stands in for a
+    # return edge that is missing (CodeRabbit, PR #3218).
+    resolved_returns: frozenset[str] = frozenset()
+    resolved_accepts: frozenset[str] = frozenset()
 
 
 class DeferredImportEdge(NamedTuple):
@@ -1637,7 +1646,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, broken_links: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?, interface_fingerprint: string?, php_namespace: string?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, go_package: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, broken_links: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?, interface_fingerprint: string?, php_namespace: string?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
@@ -1645,11 +1654,11 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, first_return_type: string?, chain_return_type: string?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, member_aliases: list[string]?, overrides_external: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, signature: string?, declared_in_class: boolean?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, member_aliases: list[string]?, overrides_external: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, chain_return_type: string?, signature: string?, declared_in_class: boolean?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,

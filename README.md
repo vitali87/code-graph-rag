@@ -61,10 +61,13 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Continuous Integration Improvements**: Enhanced release cadence tracking and ensured accurate green status for deferred releases.
-- **Code Quality & Clarity**: Resolved several code style and correctness issues including foreach loop variable typing and Python method receiver handling.
-- **Build Process Refinement**: Reduced the default install package count and improved makefile functionality for host/port watching.
-- **Feature Control**: Prevented the use of `--no-endpoint-roots` when endpoint data is absent.
+- **Type Handling**: Improved handling of type context managers, walrus operators, and match binding targets in both Python and TypeScript.
+- **Rename Refinement**: Prevented Go renames from unexporting names used by other packages.
+- **Profile Naming**: Corrected the naming of pprof profiles to avoid "malformed" errors when no samples are present.
+- **Output Budget**: Increased the Anthropic output budget to improve the default thinking experience.
+- **Module Resolution**: Resolved issues with module resolution in various scenarios, including ES module default imports and bare name bindings.
+- **Dead Code Elimination**: Removed dead code roots associated with IPython rich-display methods.
+- **Incremental Refresh**: Improved incremental refresh to ensure callers are updated when dispatch targets change.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
