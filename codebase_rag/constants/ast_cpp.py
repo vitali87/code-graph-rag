@@ -542,9 +542,10 @@ TS_CPP_PREPROC_DEFINED = "preproc_defined"
 # `#ifndef X` and `#elifndef X` hold when `X` is not defined.
 CPP_PREPROC_NEGATED_DIRECTIVES = frozenset({"#ifndef", "#elifndef"})
 CPP_OP_NOT = "!"
-# Up to this many distinct conditions in one class body every build is
-# tried, so two blocks testing the same flag agree; past it each branch is
-# taken or not on its own, which can only make a member look public.
+# Up to this many distinct conditions before a member, in the classes and
+# `#if` blocks around it, every build is tried, so two blocks testing the
+# same flag agree; past it each branch is taken or not on its own, which can
+# only make a member look public.
 CPP_MAX_CORRELATED_CONDITIONS = 6
 # `#define X` and `#define X(a)` give `X` a definition, `#undef X` (a
 # generic `preproc_call`) takes it away; either may change a flag between
@@ -553,6 +554,16 @@ CPP_PREPROC_DEFINE_TYPES = frozenset({"preproc_def", "preproc_function_def"})
 TS_CPP_PREPROC_CALL = "preproc_call"
 CPP_FIELD_DIRECTIVE = "directive"
 CPP_PREPROC_UNDEF = "#undef"
+# What can stand for a qualifier besides a namespace or class definition:
+# `namespace A = N;`, `using namespace Q;` (a `using_declaration` holding
+# the `namespace` keyword), `using N::Box;`, and the type aliases `using T =
+# Box;` and `typedef Box T;` (PR #2952).
+TS_CPP_NAMESPACE_ALIAS_DEFINITION = "namespace_alias_definition"
+TS_CPP_USING_DECLARATION = "using_declaration"
+CPP_KEYWORD_NAMESPACE = "namespace"
+CPP_TYPE_ALIAS_TYPES = frozenset({"alias_declaration", "type_definition"})
+# Aliases of aliases are followed this far, so a cycle in broken code ends.
+CPP_MAX_ALIAS_HOPS = 8
 # Nodes that hold file-scope declarations without opening a scope of their
 # own: preprocessor conditionals and an `extern "C" { ... }` block.
 C_FILE_SCOPE_CONTAINER_TYPES = frozenset(

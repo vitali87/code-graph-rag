@@ -222,13 +222,18 @@ so no name or path is cut to fit 80 columns.
    - **C:** a function without `static`, outside another function's body.
    - **C++:** besides a C++20 module `export`:
      - a non-`static` function at namespace scope, outside an anonymous
-       namespace;
+       namespace, including one defined as `void N::f() {}` when `N` is a
+       namespace (also through a namespace alias or `using namespace`) that
+       is not inside an anonymous namespace;
      - a member defined inside a class under `public:` or `protected:` (a
        `struct` starts public, a `class` private), unless the class is local
-       to a function or private in a class around it.
+       to a function or private in a class around it;
+     - a friend function defined inside a class (a hidden friend such as
+       `operator==`): no access label applies to it.
 
-     Access labels inside `#if` / `#ifdef` blocks count, and a member counts
-     unless it is private in every build. An out-of-line member definition (`int Box::f() {}`) or class
+     Access labels inside `#if` / `#ifdef` blocks count. A member counts
+     when one build both compiles it and makes it public in every class
+     around it. An out-of-line member definition (`int Box::f() {}`) or class
      (`struct Outer::Inner {}`) takes its access from a class declaration in
      another file, so it is not counted. A class template specialization at
      namespace scope (`template <> struct std::hash<Foo> {...}`, or a partial

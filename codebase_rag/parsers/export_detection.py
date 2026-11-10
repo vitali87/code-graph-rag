@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from itertools import product
 from typing import NamedTuple
 
@@ -769,10 +769,7 @@ def _declared_static_before(definition: Node, *, cpp: bool = False) -> bool:
     key = _defined_function_key(definition, cpp=cpp)
     if key is None:
         return False
-    root = definition
-    while root.parent is not None:
-        root = root.parent
-    pending = list(reversed(root.children))
+    pending = list(reversed(_tree_root(definition).children))
     while pending:
         node = pending.pop()
         if node.start_byte >= definition.start_byte:
@@ -793,12 +790,24 @@ def _defined_function_key(definition: Node, *, cpp: bool) -> _FunctionKey | None
     if not cpp:
         return _FunctionKey(name)
     # `void N::helper() {}` defines `helper` of namespace `N` (Greptile,
-    # PR #2952); the empty qualifier of `::helper` is the global one.
+    # PR #2952), and so does `void A::helper() {}` after `namespace A = N;`;
+    # the empty qualifier of `::helper` is the global one.
     *qualifier, name = (part.strip() for part in name.split(cs.SEPARATOR_DOUBLE_COLON))
-    namespace = _cpp_namespace_path(definition) + tuple(
-        part for part in qualifier if part
-    )
+    namespace = _cpp_resolved_namespace(definition)
+    if namespace is None:
+        namespace = _cpp_namespace_path(definition) + tuple(
+            part for part in qualifier if part
+        )
     return _FunctionKey(name, namespace, _cpp_parameter_types(definition))
+
+
+def _cpp_resolved_namespace(definition: Node) -> _CppPath | None:
+    # The full path a qualified definition's qualifier stands for in this
+    # file; None when it has none or the file does not declare it.
+    name = _cpp_declarator_name(definition)
+    if name is None or name.type != cs.TS_CPP_QUALIFIED_IDENTIFIER:
+        return None
+    return _cpp_qualifier_path(name, definition)
 
 
 def _static_declaration_of(node: Node, key: _FunctionKey, *, cpp: bool) -> bool:
@@ -866,16 +875,27 @@ def _cpp_written_parameter_type(parameter: Node, text: bytes) -> str:
 
 
 def _cpp_declared_name(node: Node) -> str | None:
-    # The plain name a function definition or declaration declares.
+    # The name a function definition or declaration declares, as written.
+    name = _cpp_declarator_name(node)
+    return safe_decode_text(name) if name is not None else None
+
+
+def _cpp_declarator_name(node: Node) -> Node | None:
     declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
     while declarator is not None and declarator.type != cs.TS_CPP_FUNCTION_DECLARATOR:
         declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
-    name = (
+    return (
         declarator.child_by_field_name(cs.FIELD_DECLARATOR)
         if declarator is not None
         else None
     )
-    return safe_decode_text(name) if name is not None else None
+
+
+def _tree_root(node: Node) -> Node:
+    root = node
+    while root.parent is not None:
+        root = root.parent
+    return root
 
 
 def _cpp_static(node: Node) -> bool:
@@ -907,11 +927,20 @@ def _cpp_public_api(node: Node) -> bool:
         return False
     if scope.type == cs.TS_FIELD_DECLARATION_LIST:
         return _cpp_reachable_member(definition)
+    if scope.type == cs.CppNodeType.FRIEND_DECLARATION:
+        # A friend defined in its class is no member, so no access label
+        # applies: it has its class's linkage, and argument-dependent lookup
+        # finds it from any translation unit, as it does a hidden-friend
+        # `operator==` (PR #2952).
+        return not any(
+            _cpp_out_of_line_class(body.parent)
+            for body in _cpp_enclosing_bodies(definition)
+        )
     return (
         scope.type in cs.CPP_NAMESPACE_SCOPE_TYPES
         and not _cpp_static(definition)
         and not _declared_static_before(definition, cpp=True)
-        and not _cpp_defined_out_of_line(definition)
+        and not _cpp_qualifier_hides(_cpp_declarator_name(definition), definition)
     )
 
 
@@ -964,20 +993,29 @@ def _cpp_reachable_member(member: Node) -> bool:
     # defined out of line (`struct Outer::Hidden {}`) takes its access from
     # `Outer`, usually in another file, so it is left alone like an
     # out-of-line member (Greptile, PR #2952).
-    body = member.parent
-    while body is not None:
-        if body.type == cs.TS_FIELD_DECLARATION_LIST:
-            owner = body.parent
-            if _cpp_private_member(member, body) or (
-                owner is not None
-                and not _cpp_library_specialization(owner)
-                and _cpp_qualified_by_class(
-                    owner.child_by_field_name(cs.FIELD_NAME), owner
-                )
-            ):
-                return False
-        body = body.parent
-    return True
+    bodies = _cpp_enclosing_bodies(member)
+    if any(_cpp_out_of_line_class(body.parent) for body in bodies):
+        return False
+    return _cpp_public_in_some_build(member, bodies)
+
+
+def _cpp_enclosing_bodies(node: Node) -> list[Node]:
+    # The bodies of the classes around `node`, innermost first.
+    bodies: list[Node] = []
+    current = node.parent
+    while current is not None:
+        if current.type == cs.TS_FIELD_DECLARATION_LIST:
+            bodies.append(current)
+        current = current.parent
+    return bodies
+
+
+def _cpp_out_of_line_class(owner: Node | None) -> bool:
+    return (
+        owner is not None
+        and not _cpp_library_specialization(owner)
+        and _cpp_qualifier_hides(owner.child_by_field_name(cs.FIELD_NAME), owner)
+    )
 
 
 def _cpp_library_specialization(owner: Node) -> bool:
@@ -999,11 +1037,14 @@ def _cpp_library_specialization(owner: Node) -> bool:
         return False
     # `template <> struct Outer::Hidden<int> {}` specializes a member
     # template of a class, so that class's access to it decides (Greptile,
-    # PR #2952).
-    return qualifier is None or (
-        qualifier.type != cs.TS_TEMPLATE_TYPE
-        and not _cpp_qualifier_kind(name, owner).names_class
-    )
+    # PR #2952); a template of a namespace inside an unnamed one is
+    # file-private.
+    if qualifier is None:
+        return True
+    if qualifier.type == cs.TS_TEMPLATE_TYPE:
+        return False
+    kind = _cpp_qualifier_kind(name, owner)
+    return not kind.names_class and not kind.internal
 
 
 class _PreprocFlag(NamedTuple):
@@ -1016,77 +1057,148 @@ class _PreprocFlag(NamedTuple):
 type _PreprocBuild = dict[_PreprocFlag, bool]
 
 
-def _cpp_private_member(node: Node, body: Node) -> bool:
-    # Private only when private in every build: a label inside `#ifdef`
-    # still governs what follows it, and after `#if X public: #else
-    # private: #endif` a member is public in one build. Blocks that test the
-    # same flag are in or out together, so `#ifdef F public: #endif #ifdef F
-    # private: #endif` leaves no public build (Greptile, PR #2952). `node`
-    # is any node inside the member.
+def _cpp_public_in_some_build(member: Node, bodies: list[Node]) -> bool:
+    # One build has to compile the member and make it public in every class
+    # around it at once: with `Inner` public in `Outer` only under `#ifdef
+    # F` and the member public in `Inner` only under `#ifndef F`, no build
+    # exposes it (Greptile, PR #2952). The `#if` blocks around the outermost
+    # class count too, and only the tests written before the member decide.
+    tests = [
+        (position, flag)
+        for position, flag in _cpp_tests_around(member, bodies)
+        if position < member.start_byte
+    ]
+    flags = sorted({flag for _, flag in tests})
+    builds: list[_PreprocBuild | None] = (
+        [
+            dict(zip(flags, values, strict=True))
+            for values in product((False, True), repeat=len(flags))
+        ]
+        if _cpp_flags_correlate(tests, member)
+        else [None]
+    )
+    return any(
+        _cpp_compiled(member, build)
+        and all(_cpp_public_in(member, body, build) for body in bodies)
+        for build in builds
+    )
+
+
+def _cpp_public_in(member: Node, body: Node, build: _PreprocBuild | None) -> bool:
+    # Whether `build`, or with none some build, compiles `member` in the
+    # class `body` other than as private. A label inside `#ifdef` still
+    # governs what follows it, and after `#if X public: #else private:
+    # #endif` a member is public in one build. Blocks that test the same
+    # flag are in or out together, so `#ifdef F public: #endif #ifdef F
+    # private: #endif` leaves no public build (Greptile, PR #2952).
     owner = body.parent
     default = (
         cs.CPP_ACCESS_PRIVATE
         if owner is not None and owner.type in cs.CPP_PRIVATE_BY_DEFAULT
         else cs.CPP_ACCESS_PUBLIC
     )
-    flags = sorted(_cpp_preproc_flags(body))
-    builds: list[_PreprocBuild | None] = (
-        [
-            dict(zip(flags, values, strict=True))
-            for values in product((False, True), repeat=len(flags))
-        ]
-        if _cpp_flags_correlate(flags, body)
-        else [None]
-    )
-    for build in builds:
-        accesses, found = _cpp_accesses_at(body, node, frozenset({default}), build)
-        if found and accesses != {cs.CPP_ACCESS_PRIVATE}:
-            return False
+    accesses, found = _cpp_accesses_at(body, member, frozenset({default}), build)
+    return found and accesses != {cs.CPP_ACCESS_PRIVATE}
+
+
+def _cpp_compiled(node: Node, build: _PreprocBuild | None) -> bool:
+    # Whether `build` compiles `node`: every `#if` chain around it takes the
+    # branch that holds it. Without a build any branch may be taken.
+    if build is None:
+        return True
+    child, current = node, node.parent
+    while current is not None:
+        if current.type in cs.CPP_PREPROC_CONDITIONAL_TYPES and not (
+            _cpp_is_alternative(current, child)
+        ):
+            taken = _cpp_taken_branch(current, build)
+            if taken is None or taken.id != current.id:
+                return False
+        child, current = current, current.parent
     return True
 
 
-def _cpp_flags_correlate(flags: list[_PreprocFlag], body: Node) -> bool:
+def _cpp_taken_branch(branch: Node, build: _PreprocBuild) -> Node | None:
+    # The branch of `branch`'s `#if` chain that `build` compiles, if any.
+    head = branch
+    while head.parent is not None and _cpp_is_alternative(head.parent, head):
+        head = head.parent
+    return next(
+        (taken for taken in _cpp_chain(head) if _cpp_branch_taken(taken, build)),
+        None,
+    )
+
+
+def _cpp_is_alternative(conditional: Node, node: Node) -> bool:
+    # Whether `node` is the `#elif` or `#else` that follows `conditional`.
+    alternative = conditional.child_by_field_name(cs.FIELD_ALTERNATIVE)
+    return alternative is not None and alternative.id == node.id
+
+
+def _cpp_chain(head: Node) -> Iterator[Node]:
+    # The branches of an `#if` chain: the `#if`, its `#elif`s and `#else`.
+    branch: Node | None = head
+    while branch is not None:
+        yield branch
+        branch = branch.child_by_field_name(cs.FIELD_ALTERNATIVE)
+
+
+def _cpp_flags_correlate(tests: list[tuple[int, _PreprocFlag]], member: Node) -> bool:
     # Blocks on one flag agree only while nothing changes it between them:
     # after `#ifdef F public: #endif #undef F #ifdef F private: #endif` a
-    # member is public when `F` starts defined. So a `#define` or `#undef`
-    # of a macro some block tests, anywhere in the class (the preprocessor
-    # is textual, so one in a nested class or a method body counts too),
-    # leaves each branch to be taken or not on its own (Greptile, PR #2952).
-    if len(flags) > cs.CPP_MAX_CORRELATED_CONDITIONS:
-        return False
-    if not flags:
+    # member is public when `F` starts defined. A `#define` or `#undef`
+    # anywhere between two tests of its macro (the preprocessor is textual,
+    # so one in a nested class or a method body counts too) leaves each
+    # branch to be taken or not on its own (Greptile, PR #2952). One before
+    # a macro's first test or after its last, as an include guard's
+    # `#define` is, changes nothing the tests see.
+    if not tests:
         return True
-    tested = {
-        name
-        for flag in flags
-        for name in re.findall(
-            cs.CPP_IDENTIFIER_PATTERN, flag.text.encode(cs.ENCODING_UTF8)
-        )
-    }
-    return tested.isdisjoint(_cpp_changed_macros(body))
+    if len({flag for _, flag in tests}) > cs.CPP_MAX_CORRELATED_CONDITIONS:
+        return False
+    spans = _cpp_test_spans(tests)
+    return not any(
+        name in spans and spans[name][0] < position < spans[name][1]
+        for position, name in _cpp_macro_changes(member)
+    )
 
 
-# 1-slot memo of the last class body's changed macros, as `_last_script_scan`:
-# a class's members are resolved one after another.
-_last_changed_macros: tuple[Node, frozenset[bytes]] | None = None
+def _cpp_test_spans(
+    tests: list[tuple[int, _PreprocFlag]],
+) -> dict[bytes, tuple[int, int]]:
+    # Each macro the tests name, with where its first and its last test is.
+    spans: dict[bytes, tuple[int, int]] = {}
+    for position, flag in tests:
+        text = flag.text.encode(cs.ENCODING_UTF8)
+        for name in re.findall(cs.CPP_IDENTIFIER_PATTERN, text):
+            first, last = spans.get(name, (position, position))
+            spans[name] = (min(first, position), max(last, position))
+    return spans
 
 
-def _cpp_changed_macros(body: Node) -> frozenset[bytes]:
-    # The macros a `#define` or `#undef` anywhere inside `body` names.
-    global _last_changed_macros
-    if _last_changed_macros is not None and _last_changed_macros[0] == body:
-        return _last_changed_macros[1]
-    changed: set[bytes] = set()
-    pending = [body]
+# 1-slot memo of the last root's `#define` and `#undef` directives, as
+# `_last_script_scan`: every member under a preprocessor test asks, and the
+# answer is per file.
+_last_macro_changes: tuple[Node, tuple[tuple[int, bytes], ...]] | None = None
+
+
+def _cpp_macro_changes(node: Node) -> tuple[tuple[int, bytes], ...]:
+    # Where the file of `node` `#define`s or `#undef`s which macro.
+    global _last_macro_changes
+    root = _tree_root(node)
+    if _last_macro_changes is not None and _last_macro_changes[0] == root:
+        return _last_macro_changes[1]
+    changes: list[tuple[int, bytes]] = []
+    pending = [root]
     while pending:
-        node = pending.pop()
-        name = _cpp_changed_macro(node)
+        current = pending.pop()
+        name = _cpp_changed_macro(current)
         if name is not None:
-            changed.add(name)
+            changes.append((current.start_byte, name))
         else:
-            pending.extend(node.named_children)
-    _last_changed_macros = (body, frozenset(changed))
-    return _last_changed_macros[1]
+            pending.extend(current.named_children)
+    _last_macro_changes = (root, tuple(changes))
+    return _last_macro_changes[1]
 
 
 def _cpp_changed_macro(node: Node) -> bytes | None:
@@ -1162,18 +1274,41 @@ def _cpp_branch_taken(branch: Node, build: _PreprocBuild) -> bool:
     return build.get(flag, False) != negated
 
 
-def _cpp_preproc_flags(block: Node) -> set[_PreprocFlag]:
-    flags: set[_PreprocFlag] = set()
+def _cpp_tests_around(
+    member: Node, bodies: list[Node]
+) -> Iterator[tuple[int, _PreprocFlag]]:
+    # The tests in the class bodies around `member` and those of the `#if`
+    # chains around the outermost class.
+    for body in bodies:
+        yield from _cpp_preproc_tests(body)
+    yield from _cpp_wrapper_tests(bodies[-1] if bodies else member)
+
+
+def _cpp_preproc_tests(block: Node) -> Iterator[tuple[int, _PreprocFlag]]:
+    # Every test of the `#if` chains in `block`, nested ones included.
     for item in block.children:
         if item.type not in cs.CPP_PREPROC_IF_TYPES:
             continue
-        branch: Node | None = item
-        while branch is not None:
-            if branch.type != cs.TS_CPP_PREPROC_ELSE:
-                flags.add(_cpp_preproc_test(branch)[0])
-            flags |= _cpp_preproc_flags(branch)
-            branch = branch.child_by_field_name(cs.FIELD_ALTERNATIVE)
-    return flags
+        for branch in _cpp_chain(item):
+            yield from _cpp_branch_test(branch)
+            yield from _cpp_preproc_tests(branch)
+
+
+def _cpp_wrapper_tests(node: Node) -> Iterator[tuple[int, _PreprocFlag]]:
+    # The tests of the `#if` chains around `node`, an include guard's among
+    # them, without those of the blocks inside.
+    current = node.parent
+    while current is not None:
+        if current.type in cs.CPP_PREPROC_IF_TYPES:
+            for branch in _cpp_chain(current):
+                yield from _cpp_branch_test(branch)
+        current = current.parent
+
+
+def _cpp_branch_test(branch: Node) -> Iterator[tuple[int, _PreprocFlag]]:
+    # The test a branch makes, with where it is written; `#else` makes none.
+    if branch.type != cs.TS_CPP_PREPROC_ELSE:
+        yield branch.start_byte, _cpp_preproc_test(branch)[0]
 
 
 def _cpp_preproc_test(branch: Node) -> tuple[_PreprocFlag, bool]:
@@ -1209,29 +1344,18 @@ def _cpp_preproc_test(branch: Node) -> tuple[_PreprocFlag, bool]:
     return _PreprocFlag(False, "".join(text.split())), negated
 
 
-def _cpp_defined_out_of_line(node: Node) -> bool:
-    # `int Box::f() {}` defines a class member outside its class; `void
-    # V::f() {}` with `V` a namespace of the file is a namespace function
-    # and keeps its linkage (bot review on PR #2952).
-    declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
-    while declarator is not None and declarator.type != cs.TS_CPP_FUNCTION_DECLARATOR:
-        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
-    name = (
-        declarator.child_by_field_name(cs.FIELD_DECLARATOR)
-        if declarator is not None
-        else None
-    )
-    return _cpp_qualified_by_class(name, node)
-
-
-def _cpp_qualified_by_class(name: Node | None, context: Node) -> bool:
-    # The whole qualifier decides: `ns::Box::f` names a member of class
-    # `Box` though `ns` is a namespace (Greptile, PR #2952). Any qualifier
-    # that is no namespace of the file is a class, usually in another file.
+def _cpp_qualifier_hides(name: Node | None, context: Node) -> bool:
+    # Whether a qualifier keeps what it qualifies out of the API: a class,
+    # since the access is in that class, usually in another file, or a
+    # namespace inside an unnamed one. `ns::Box::f` names a member of class
+    # `Box` though `ns` is a namespace (Greptile, PR #2952), and a qualifier
+    # the file does not declare is taken for a class. `void V::f() {}` with
+    # `V` a namespace of the file is a namespace function and keeps its
+    # linkage (bot review on PR #2952).
     if name is None or name.type != cs.TS_CPP_QUALIFIED_IDENTIFIER:
         return False
     qualifier = _cpp_qualifier_kind(name, context)
-    return qualifier.names_class or not qualifier.names_namespace
+    return qualifier.names_class or qualifier.internal or not qualifier.names_namespace
 
 
 def _cpp_split_qualified(name: Node) -> tuple[Node | None, Node | None]:
@@ -1245,29 +1369,44 @@ def _cpp_split_qualified(name: Node) -> tuple[Node | None, Node | None]:
 
 
 class _CppQualifier(NamedTuple):
-    # What a qualified name's qualifier is among the file's own scopes.
+    # What a qualified name's qualifier is among the file's own scopes; an
+    # `internal` namespace sits inside an unnamed one, so what it holds is
+    # file-private.
     names_namespace: bool
     names_class: bool
+    internal: bool = False
 
 
 def _cpp_qualifier_kind(name: Node, context: Node) -> _CppQualifier:
-    # The qualifier of `name` (`app::fmt` of `app::fmt::formatter<Foo>`),
-    # looked up as C++ does: from the namespaces around `context` outward,
-    # the first that declares its first part decides. So a class `app::fmt`
-    # is no `fmt` at global scope (Greptile, PR #2952). A leading `::`
-    # starts at the global namespace; `::f` has the global one as qualifier.
-    qualifier = _cpp_written_path(name)[:-1]
-    if not qualifier:
+    # The qualifier of `name` (`app::fmt` of `app::fmt::formatter<Foo>`)
+    # looked up from the namespace around `context`, so a class `app::fmt`
+    # is no `fmt` at global scope (Greptile, PR #2952). `::f` has the global
+    # namespace as qualifier.
+    path = _cpp_qualifier_path(name, context)
+    if path is None:
+        return _CppQualifier(names_namespace=False, names_class=False)
+    if not path:
         return _CppQualifier(names_namespace=True, names_class=False)
-    namespaces, classes = _cpp_file_scope_paths(context)
-    anchored = name.child_by_field_name(cs.FIELD_SCOPE) is None
-    around = () if anchored else _cpp_namespace_path(context)
-    for depth in range(len(around), -1, -1):
-        first = around[:depth] + qualifier[:1]
-        if first in namespaces or first in classes:
-            resolved = around[:depth] + qualifier
-            return _CppQualifier(resolved in namespaces, resolved in classes)
-    return _CppQualifier(names_namespace=False, names_class=False)
+    scopes = _cpp_file_scopes(context)
+    return _CppQualifier(
+        path in scopes.namespaces, path in scopes.classes, path in scopes.internal
+    )
+
+
+def _cpp_qualifier_path(name: Node, context: Node) -> _CppPath | None:
+    # The full path the qualifier of the qualified `name` stands for: `()`
+    # for the global namespace, None when the file does not declare it.
+    written = _cpp_written(name, _cpp_lookup_scope(context))
+    if len(written.parts) < 2:
+        return ()
+    qualifier = written._replace(parts=written.parts[:-1])
+    return _cpp_resolve(_cpp_file_scopes(context), qualifier)
+
+
+def _cpp_lookup_scope(node: Node) -> _CppPath:
+    # The namespace `node` is written in, spelled as `_CppScopes` spells
+    # paths: an unnamed namespace adds no part.
+    return tuple(part.strip() for part in _cpp_namespace_path(node) if part.strip())
 
 
 def _cpp_written_path(name: Node) -> tuple[str, ...]:
@@ -1295,59 +1434,190 @@ def _cpp_plain_name(node: Node) -> str:
     return "".join((text or "").split())
 
 
-type _CppScopePaths = frozenset[tuple[str, ...]]
-# 1-slot memo of the last root's scope paths, as `_last_script_scan`: every
-# qualified definition of a file asks, and the answer is per file.
-_last_scope_paths: tuple[Node, tuple[_CppScopePaths, _CppScopePaths]] | None = None
+def _cpp_written(name: Node, scope: _CppPath) -> _CppWritten:
+    # A name as written in namespace `scope`. A qualified identifier is read
+    # part by part, template arguments dropped; a namespace name (`a::b`,
+    # `::a::b`) holds no template, so its text splits on `::`.
+    if name.type == cs.TS_CPP_QUALIFIED_IDENTIFIER:
+        anchored = name.child_by_field_name(cs.FIELD_SCOPE) is None
+        return _CppWritten(scope, _cpp_written_path(name), anchored)
+    text = safe_decode_text(name) or ""
+    parts = [part.strip() for part in text.split(cs.SEPARATOR_DOUBLE_COLON)]
+    anchored = len(parts) > 1 and not parts[0]
+    return _CppWritten(scope, tuple(part for part in parts if part), anchored)
 
 
-def _cpp_file_scope_paths(node: Node) -> tuple[_CppScopePaths, _CppScopePaths]:
-    # The full paths of the namespaces and classes a file declares outside
-    # function bodies: `namespace app { struct fmt {}; }` declares namespace
-    # `("app",)` and class `("app", "fmt")`.
-    global _last_scope_paths
-    root = node
-    while root.parent is not None:
-        root = root.parent
-    if _last_scope_paths is not None and _last_scope_paths[0] == root:
-        return _last_scope_paths[1]
-    namespaces: set[tuple[str, ...]] = set()
-    classes: set[tuple[str, ...]] = set()
-    pending: list[tuple[Node, tuple[str, ...]]] = [(root, ())]
+type _CppPath = tuple[str, ...]
+
+
+class _CppWritten(NamedTuple):
+    # A name as written: the namespace it is written in, its parts, and
+    # whether a leading `::` starts it at the global namespace.
+    scope: _CppPath
+    parts: _CppPath
+    anchored: bool
+
+
+class _CppScopes(NamedTuple):
+    # What a file declares outside function bodies, by full path. An unnamed
+    # namespace adds no part: what it declares is found from the namespace
+    # around it. `namespaces` holds namespace aliases too and `internal` the
+    # namespaces inside an unnamed one; `classes` holds type aliases too.
+    # `aliases` maps a namespace alias or a using-declaration to the name it
+    # stands for, `usings` a namespace to those its using-directives bring
+    # in (PR #2952).
+    namespaces: frozenset[_CppPath]
+    internal: frozenset[_CppPath]
+    classes: frozenset[_CppPath]
+    aliases: Mapping[_CppPath, _CppWritten]
+    usings: Mapping[_CppPath, tuple[_CppWritten, ...]]
+
+
+def _cpp_resolve(
+    scopes: _CppScopes, written: _CppWritten, *, usings: bool = True, hops: int = 0
+) -> _CppPath | None:
+    # The full path a written name stands for, looked up as C++ does: in
+    # each namespace from where it is written outward, and in those a
+    # using-directive there brings in, the first that declares its first
+    # part decides. A namespace alias or using-declaration found there
+    # stands for the name it names. None when the file declares no first
+    # part.
+    if not written.parts or hops > cs.CPP_MAX_ALIAS_HOPS:
+        return None
+    for base in _cpp_lookup_bases(scopes, written, usings=usings):
+        first = base + written.parts[:1]
+        if first in scopes.aliases:
+            target = _cpp_resolve(
+                scopes, scopes.aliases[first], usings=usings, hops=hops + 1
+            )
+            return (first if target is None else target) + written.parts[1:]
+        if first in scopes.namespaces or first in scopes.classes:
+            return first + written.parts[1:]
+    return None
+
+
+def _cpp_lookup_bases(
+    scopes: _CppScopes, written: _CppWritten, *, usings: bool
+) -> Iterator[_CppPath]:
+    # Where a name's first part is looked for, innermost first: each
+    # namespace around where it is written, each followed by the namespaces
+    # its using-directives bring in, whose own using-directives are not
+    # followed.
+    around = () if written.anchored else written.scope
+    for depth in range(len(around), -1, -1):
+        scope = around[:depth]
+        yield scope
+        if not usings:
+            continue
+        for directive in scopes.usings.get(scope, ()):
+            target = _cpp_resolve(scopes, directive, usings=False)
+            if target is not None:
+                yield target
+
+
+class _CppScopeRecorder:
+    # Collects a file's `_CppScopes` in one walk.
+
+    def __init__(self) -> None:
+        self.namespaces: set[_CppPath] = set()
+        self.internal: set[_CppPath] = set()
+        self.classes: set[_CppPath] = set()
+        self.aliases: dict[_CppPath, _CppWritten] = {}
+        self.usings: dict[_CppPath, list[_CppWritten]] = {}
+
+    def enter(
+        self, node: Node, path: _CppPath, internal: bool
+    ) -> tuple[_CppPath, bool]:
+        # Records what `node` declares in the namespace or class `path`, and
+        # returns where, and whether file-privately, its children declare.
+        named = node.child_by_field_name(cs.FIELD_NAME)
+        if node.type == cs.TS_NAMESPACE_DEFINITION:
+            return self._namespace(named, path, internal)
+        if node.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES and named is not None:
+            path += _cpp_written_path(named)
+            self.classes.add(path)
+        elif node.type == cs.TS_CPP_NAMESPACE_ALIAS_DEFINITION:
+            self._namespace_alias(node, named, path)
+        elif node.type == cs.TS_CPP_USING_DECLARATION:
+            self._using(node, path)
+        elif node.type in cs.CPP_TYPE_ALIAS_TYPES:
+            self._type_alias(node, path)
+        return path, internal
+
+    def _namespace(
+        self, named: Node | None, path: _CppPath, internal: bool
+    ) -> tuple[_CppPath, bool]:
+        if named is None:
+            return path, True
+        # `namespace a::b {}` declares `a` too.
+        for part in _cpp_written(named, path).parts:
+            path += (part,)
+            self.namespaces.add(path)
+            if internal:
+                self.internal.add(path)
+        return path, internal
+
+    def _namespace_alias(self, node: Node, named: Node | None, path: _CppPath) -> None:
+        # An alias names a namespace, maybe one of another file. It is not
+        # file-private for sitting in an unnamed namespace: what it names
+        # decides.
+        target = node.named_children[-1] if node.named_child_count > 1 else None
+        if named is None or target is None:
+            return
+        alias = path + (_cpp_plain_name(named),)
+        self.namespaces.add(alias)
+        self.aliases[alias] = _cpp_written(target, path)
+
+    def _using(self, node: Node, path: _CppPath) -> None:
+        # `using namespace Q;` brings `Q` into `path`; `using N::Box;`
+        # declares `Box` there, standing for `N::Box`.
+        target = node.named_children[-1] if node.named_child_count else None
+        if target is None:
+            return
+        written = _cpp_written(target, path)
+        if any(child.type == cs.CPP_KEYWORD_NAMESPACE for child in node.children):
+            self.usings.setdefault(path, []).append(written)
+        elif written.parts:
+            self.aliases[path + written.parts[-1:]] = written
+
+    def _type_alias(self, node: Node, path: _CppPath) -> None:
+        # `using T = Box;` and `typedef Box T;` name a type, which can
+        # qualify a name as its class does.
+        for field in (cs.FIELD_NAME, cs.FIELD_DECLARATOR):
+            for named in node.children_by_field_name(field):
+                if named.type == cs.TS_TYPE_IDENTIFIER:
+                    self.classes.add(path + (_cpp_plain_name(named),))
+
+    def scopes(self) -> _CppScopes:
+        return _CppScopes(
+            frozenset(self.namespaces),
+            frozenset(self.internal),
+            frozenset(self.classes),
+            dict(self.aliases),
+            {scope: tuple(found) for scope, found in self.usings.items()},
+        )
+
+
+# 1-slot memo of the last root's scopes, as `_last_script_scan`: every
+# qualified name of a file asks, and the answer is per file.
+_last_file_scopes: tuple[Node, _CppScopes] | None = None
+
+
+def _cpp_file_scopes(node: Node) -> _CppScopes:
+    global _last_file_scopes
+    root = _tree_root(node)
+    if _last_file_scopes is not None and _last_file_scopes[0] == root:
+        return _last_file_scopes[1]
+    recorder = _CppScopeRecorder()
+    pending: list[tuple[Node, _CppPath, bool]] = [(root, (), False)]
     while pending:
-        current, path = pending.pop()
+        current, path, internal = pending.pop()
         if current.type == cs.TS_CPP_FUNCTION_DEFINITION:
             continue
-        parts = _cpp_declared_scope_parts(current)
-        if current.type == cs.TS_NAMESPACE_DEFINITION:
-            # `namespace a::b {}` declares `a` too.
-            namespaces.update(
-                path + parts[:depth] for depth in range(1, len(parts) + 1)
-            )
-        elif parts:
-            classes.add(path + parts)
-        path += parts
-        pending.extend((child, path) for child in current.named_children)
-    _last_scope_paths = (root, (frozenset(namespaces), frozenset(classes)))
-    return _last_scope_paths[1]
-
-
-def _cpp_declared_scope_parts(node: Node) -> tuple[str, ...]:
-    # The parts a namespace or class definition adds to the path of what it
-    # holds. An unnamed namespace adds none: what it declares is found from
-    # the namespace around it.
-    is_namespace = node.type == cs.TS_NAMESPACE_DEFINITION
-    named = (
-        node.child_by_field_name(cs.FIELD_NAME)
-        if is_namespace or node.type in cs.CPP_CLASS_TYPES
-        else None
-    )
-    if named is None:
-        return ()
-    if is_namespace:
-        text = safe_decode_text(named) or ""
-        return tuple(part.strip() for part in text.split(cs.SEPARATOR_DOUBLE_COLON))
-    return _cpp_written_path(named)
+        path, internal = recorder.enter(current, path, internal)
+        pending.extend((child, path, internal) for child in current.named_children)
+    _last_file_scopes = (root, recorder.scopes())
+    return _last_file_scopes[1]
 
 
 def _scala_exported(node: Node) -> bool:

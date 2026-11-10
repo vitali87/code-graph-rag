@@ -1097,3 +1097,243 @@ template <> struct fmt::formatter<Foo> {
     config = default_dead_code_config(include_tests=True, include_classes=False)
 
     assert collect_dead_code(_Graph(graph), graph.project, config) == []
+
+
+# Greptile on PR #2952: one build has to expose a member in every class and
+# `#if` block around it at once, and a qualifier is looked up through
+# namespace aliases, using-directives and using-declarations, type aliases
+# and unnamed namespaces before it is called a class.
+ONE_BUILD_CPP = """\
+class OuterFlag {
+#ifdef FEATURE
+public:
+#endif
+    class Inner {
+#ifndef FEATURE
+    public:
+#endif
+        void opposite_flags() {}
+    };
+};
+class OuterSame {
+#ifdef FEATURE
+public:
+#endif
+    class Inner {
+#ifdef FEATURE
+    public:
+#endif
+        void same_flags_nested() {}
+    };
+};
+class OuterBlock {
+public:
+#ifdef FEATURE
+    class Inner {
+#ifndef FEATURE
+    public:
+#endif
+        void block_opposite() {}
+    };
+#endif
+};
+#ifndef WRAPPED
+class Wrapped {
+#ifdef WRAPPED
+public:
+#endif
+    void wrapper_opposite() {}
+};
+#endif
+class DefinedFirst {
+#define EARLY
+#ifdef EARLY
+public:
+#endif
+#ifdef EARLY
+private:
+#endif
+    void defined_before_tests() {}
+};
+"""
+GUARDED_H = """\
+#ifndef GUARDED_H
+#define GUARDED_H
+class Guarded {
+#ifdef FEATURE
+public:
+#endif
+    void guarded_public() {}
+};
+class GuardedPrivate {
+#ifdef FEATURE
+public:
+#endif
+#ifdef FEATURE
+private:
+#endif
+    void guarded_private() {}
+};
+#endif
+"""
+LOOKUP_CPP = """\
+namespace N { void alias_api(); }
+namespace Alias = N;
+void Alias::alias_api() {}
+
+namespace outer { namespace inner { void nested_alias_api(); } }
+namespace AN = outer::inner;
+void AN::nested_alias_api() {}
+
+namespace ext = lib::detail;
+void ext::external_alias_api() {}
+
+namespace Q { namespace W { void using_api(); } }
+using namespace Q;
+void W::using_api() {}
+
+namespace { namespace Hidden { void anon_api(); } }
+void Hidden::anon_api() {}
+
+namespace S { static void via_alias(); }
+namespace SA = S;
+void SA::via_alias() {}
+
+namespace app2 { class fmt2 { template <class T> struct formatter; }; }
+using app2::fmt2;
+template <> struct fmt2::formatter<int> { void using_decl_member_template() {} };
+
+class Real { template <class T> struct Nested; };
+using RealAlias = Real;
+template <> struct RealAlias::Nested<int> { void type_alias_member_template() {} };
+
+namespace { class anonfmt { template <class T> struct formatter; }; }
+template <> struct anonfmt::formatter<int> { void anon_class_member_template() {} };
+
+namespace { namespace ilib { template <class T> struct trait; } }
+template <> struct ilib::trait<int> { void internal_lib_spec() {} };
+
+namespace { namespace iv { struct Box; } }
+struct iv::Box { void internal_out_of_line_class() {} };
+"""
+FRIENDS_CPP = """\
+class Point {
+    int x;
+    friend bool operator==(const Point& a, const Point& b) { return a.x == b.x; }
+    friend void swap_points(Point& a, Point& b) { int t = a.x; a.x = b.x; b.x = t; }
+};
+namespace { struct AnonFriend { friend void anon_friend(AnonFriend) {} }; }
+"""
+
+
+@pytest.fixture
+def one_build(tmp_path: Path) -> dict[str, bool]:
+    return _run(
+        tmp_path,
+        {
+            "one_build.cpp": ONE_BUILD_CPP,
+            "guarded.h": GUARDED_H,
+            "lookup.cpp": LOOKUP_CPP,
+            "friends.cpp": FRIENDS_CPP,
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("symbol", "is_exported"),
+    [
+        ("opposite_flags", False),
+        ("same_flags_nested", True),
+        ("block_opposite", False),
+        ("wrapper_opposite", False),
+        ("defined_before_tests", False),
+        ("guarded_public", True),
+        ("guarded_private", False),
+        ("alias_api", True),
+        ("nested_alias_api", True),
+        ("external_alias_api", True),
+        ("using_api", True),
+        ("anon_api", False),
+        ("via_alias", False),
+        ("using_decl_member_template", False),
+        ("type_alias_member_template", False),
+        ("anon_class_member_template", False),
+        ("internal_lib_spec", False),
+        ("internal_out_of_line_class", False),
+        ("operator_equal", True),
+        ("swap_points", True),
+        ("anon_friend", False),
+    ],
+    ids=[
+        "nested-class-public-only-under-the-opposite-flag",
+        "nested-class-public-under-the-same-flag",
+        "nested-class-compiled-only-under-the-opposite-flag",
+        "class-compiled-only-under-the-opposite-flag",
+        "define-before-every-test-keeps-the-flags-together",
+        "include-guard-keeps-a-public-build",
+        "include-guard-keeps-the-flags-together",
+        "namespace-alias-qualifier",
+        "alias-of-a-nested-namespace",
+        "alias-of-a-namespace-of-another-file",
+        "qualifier-found-through-using-namespace",
+        "namespace-inside-an-unnamed-namespace",
+        "static-declaration-reached-through-an-alias",
+        "class-qualifier-from-a-using-declaration",
+        "class-qualifier-through-a-type-alias",
+        "class-qualifier-inside-an-unnamed-namespace",
+        "specialization-in-an-unnamed-namespace",
+        "out-of-line-class-in-an-unnamed-namespace",
+        "hidden-friend-operator-before-any-label",
+        "hidden-friend-function-before-any-label",
+        "friend-of-a-class-in-an-unnamed-namespace",
+    ],
+)
+def test_one_build_and_full_qualifier_lookup(
+    one_build: dict[str, bool], symbol: str, is_exported: bool
+) -> None:
+    assert _one(one_build, f".{symbol}") is is_exported
+
+
+def test_a_method_no_build_exposes_is_dead(tmp_path: Path) -> None:
+    source = """\
+static int callee() { return 1; }
+
+class Outer {
+#ifdef FEATURE
+public:
+#endif
+    class Inner {
+#ifndef FEATURE
+    public:
+#endif
+        int unused() { return callee(); }
+    };
+};
+"""
+    graph = _indexed(tmp_path, {"outer.cpp": source})
+    config = default_dead_code_config(include_tests=True, include_classes=False)
+
+    dead = collect_dead_code(_Graph(graph), graph.project, config)
+
+    assert {row["name"] for row in dead} >= {"unused", "callee"}
+
+
+def test_a_function_defined_through_an_alias_is_not_dead(tmp_path: Path) -> None:
+    source = """\
+static int helper() { return 1; }
+
+namespace N { int api(); }
+namespace Alias = N;
+int Alias::api() { return helper(); }
+"""
+    graph = _indexed(tmp_path, {"alias.cpp": source})
+    config = default_dead_code_config(include_tests=True, include_classes=False)
+
+    # The prototype `N::api` stays a node of its own, as for any namespace
+    # function defined with a qualified name; this checks the definition.
+    dead = {
+        str(row["qualified_name"])
+        for row in collect_dead_code(_Graph(graph), graph.project, config)
+    }
+
+    assert not {qn for qn in dead if qn.endswith((".Alias.api", ".helper"))}
