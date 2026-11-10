@@ -1244,11 +1244,17 @@ def call_site_properties(node: Node) -> PropertyDict:
     the callback passes read argument slots from it.
     """
     props = node_site_properties(node)
-    # A member call's node spans its receiver, so every hop of a chain began
-    # where the chain begins: callers showed the wrong line for a multi-line
-    # chain, and two `.put(...)` hops of one chain merged into one edge on
-    # their shared (line, col) (issue #3166). The site starts at the name.
-    row, col = call_site_start(node)
+    if node.type == cs.TS_DART_SELECTOR:
+        # A Dart call node is the argument-list selector alone; the site
+        # starts at the callee so a rename finds the name in it (#2769).
+        row, col = dart_utils.dart_call_site_start(node).start_point
+    else:
+        # A member call's node spans its receiver, so every hop of a chain
+        # began where the chain begins: callers showed the wrong line for a
+        # multi-line chain, and two `.put(...)` hops of one chain merged into
+        # one edge on their shared (line, col) (issue #3166). The site starts
+        # at the name.
+        row, col = call_site_start(node)
     props[cs.KEY_LINE] = row + 1
     props[cs.KEY_COL] = col
     args_node = _find_call_arguments_node(node)
@@ -7209,11 +7215,17 @@ class CallProcessor:
             # An untyped C# MEMBER call retains the generic fallback. A
             # bare call has already exhausted C#'s legitimate scopes
             # (local function, enclosing type, and static import), so a
-            # miss is external rather than a name-wide guess (#2005).
+            # miss is external rather than a name-wide guess (#2005). It
+            # reads the method's types as this call sees them, as the C#
+            # resolver did: a pattern, out or lambda variable named like a
+            # field never takes the field's type (bot review on PR #2990).
+            engine = self._resolver.type_inference.csharp_type_inference
             callee_info = ctx.resolve_func(
                 call_name,
                 ctx.module_qn,
-                call_var_types,
+                None
+                if call_var_types is None
+                else engine.site_types(call_node, call_var_types),
                 ctx.class_context,
                 ctx.caller_qn,
                 ctx.language,
@@ -9012,6 +9024,21 @@ class CallProcessor:
             cs.TS_PY_BOOLEAN_OPERATOR,
         ):
             self._emit_conditional_rhs_refs(value, scope)
+            return
+        if (
+            value.type in _INLINE_FUNC_VALUE_TYPES
+            and node.type == cs.TS_VARIABLE_DECLARATOR
+            and js_ts_utils.arrow_binding_name(value) is not None
+            and not js_ts_utils.name_is_body_scoped(value)
+        ):
+            # `const foo = () => {}` is foo's own definition, not a use of
+            # it: referencing it from the scope rooted every arrow const and
+            # dead-code never reported one (issue #2857). Its uses reference
+            # it by name like any function's. That holds only when it is
+            # registered as foo: `const run = function worker() {}` registers
+            # worker and `const b = (() => {}).bind(x)` an anonymous function,
+            # which calls to run or b never resolve to, so those keep the
+            # reference.
             return
         if (
             value.type in _ASSIGNMENT_RHS_REF_TYPES

@@ -69,6 +69,13 @@ TS_PY_LIST_SPLAT = "list_splat"
 TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
 TS_PY_DEFAULT_PARAMETER = "default_parameter"
 TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
+# `from __future__ import annotations` (PEP 563) keeps every annotation in
+# its module as a string that never runs.
+TS_PY_FUTURE_IMPORT_STATEMENT = "future_import_statement"
+PY_FUTURE_ANNOTATIONS = "annotations"
+# The literal sequence values an unpacking assignment pairs its targets with
+# by position (`a, b = x, y`, `(a, b) = (x, y)`, `[a, b] = [x, y]`).
+PY_UNPACKING_VALUE_TYPES = frozenset({"expression_list", "tuple", "list"})
 TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
 TS_PY_POSITIONAL_SEPARATOR = "positional_separator"
 TS_PY_KEYWORD_SEPARATOR = "keyword_separator"
@@ -76,6 +83,7 @@ TS_PY_KEYWORD_SEPARATOR = "keyword_separator"
 # carry (`f(*args)`, `f(**opts)`); the `_pattern` forms above are the
 # definition-side spellings.
 TS_PY_PARAMETERS = "parameters"
+TS_PY_LAMBDA_PARAMETERS = "lambda_parameters"
 TS_PY_LIST_SPLAT = "list_splat"
 TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
 # Scopes nested in a function body, where a parameter's name may be re-bound
@@ -129,6 +137,8 @@ TS_PY_UNION_PATTERN = "union_pattern"
 # `Foo(x=<pattern>)`, `*rest` / `**rest` inside a case pattern.
 TS_PY_KEYWORD_PATTERN = "keyword_pattern"
 TS_PY_SPLAT_PATTERN = "splat_pattern"
+# `Foo(...)` in a case pattern: the class whose instances the arm matches.
+TS_PY_CLASS_PATTERN = "class_pattern"
 # `import x as y` / `from m import x as y`; the alias is a local binding.
 TS_PY_ALIASED_IMPORT = "aliased_import"
 TS_PY_WILDCARD_NODE = "_"
@@ -422,6 +432,32 @@ ABSTRACT_DECORATORS: frozenset[str] = frozenset({"abstractmethod", "abstractprop
 STATIC_DECORATORS: frozenset[str] = frozenset({"staticmethod"})
 # A class method binds `cls` even when called through its class.
 CLASSMETHOD_DECORATORS: frozenset[str] = frozenset({"classmethod"})
+# contextlib's generator-based context manager factories: a `with` target
+# takes the generator's yield type, not the factory's return type (#3340).
+PY_CONTEXTLIB_MODULE = "contextlib"
+# Where generator annotations live: an aliased annotation base counts only
+# when the import map resolves it here (#3340).
+PY_GENERATOR_ANNOTATION_MODULES: frozenset[str] = frozenset(
+    {"typing", "typing_extensions", "collections.abc"}
+)
+CONTEXTMANAGER_DECORATORS: frozenset[str] = frozenset(
+    {"contextmanager", "asynccontextmanager"}
+)
+# The return annotations a contextmanager factory carries, each yielding
+# its first type argument.
+PY_GENERATOR_ANNOTATIONS: frozenset[str] = frozenset(
+    {"Iterator", "Generator", "AsyncIterator", "AsyncGenerator"}
+)
+# The fully qualified spellings, precomputed once: the decorator and
+# yield-type checks rebuilt these sets on every call (#3340).
+PY_CONTEXTMANAGER_DECORATOR_QNS: frozenset[str] = frozenset(
+    f"{PY_CONTEXTLIB_MODULE}.{name}" for name in CONTEXTMANAGER_DECORATORS
+)
+PY_GENERATOR_ANNOTATION_QNS: frozenset[str] = frozenset(
+    f"{module}.{name}"
+    for module in PY_GENERATOR_ANNOTATION_MODULES
+    for name in PY_GENERATOR_ANNOTATIONS
+)
 
 # Eager builtins that invoke a callable argument synchronously in the caller's
 # stack frame, so the trace attributes the call to the enclosing function (no
@@ -523,6 +559,21 @@ PY_COMPREHENSION_TYPES = frozenset(
         TS_PY_DICTIONARY_COMPREHENSION,
         TS_PY_GENERATOR_EXPRESSION,
     }
+)
+# Nodes whose parts may not be evaluated at all: the right operand of
+# `and` / `or`, either arm of `a if c else b`, a comprehension's body and
+# filters, an `elif` condition and a `case` pattern or guard. A binding
+# inside one may never run (#3340).
+PY_MAYBE_SKIPPED_TYPES = (
+    frozenset(
+        {
+            TS_PY_BOOLEAN_OPERATOR,
+            TS_PY_CONDITIONAL_EXPRESSION,
+            TS_PY_ELIF_CLAUSE,
+            TS_PY_CASE_CLAUSE,
+        }
+    )
+    | PY_COMPREHENSION_TYPES
 )
 # Trees whose scope walks stay cached (`ast_analyzer.scope_facts`). A cached
 # tree stays alive outside the AST cache's memory cap, so the cache holds a
