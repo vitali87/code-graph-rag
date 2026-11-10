@@ -2554,6 +2554,9 @@ class GraphUpdater:
         # After rehydration, which tells a re-export from a definition, and
         # before every stage below that resolves through the import maps.
         self._restore_reached_import_state()
+        # After rehydration, which reads the impl methods back, and before the
+        # Rust inline-mod arbitration below, which a restored map waits for.
+        self._restore_unparsed_rust_impl_self_paths()
 
         # After rehydration: an incremental run re-parses the `.cpp` holding
         # an out-of-class method while its class stays in an unchanged
@@ -2742,6 +2745,56 @@ class GraphUpdater:
                     )
                 pending.append(holder)
         return restored
+
+    def _restore_unparsed_rust_impl_self_paths(self) -> None:
+        """Re-read the self path of each unparsed Rust impl block away from
+        its type.
+
+        A call written with its type's path (`crate::model::Foo::run()`)
+        binds such a block only when the block's own self path names that
+        type, and parsing records the path only for the files it reads. An
+        incremental run that re-parsed only the caller lost the edge into an
+        unchanged `impl crate::model::Foo { fn run() }` that a clean index
+        emits (PR #2993 review). A bare `impl Foo` names what its file's
+        `use` binds, so that file's imports come back too.
+        """
+        modules = self._unparsed_rust_impl_modules()
+        if not modules:
+            return
+        # Read only now: the view loads a grammar on first access, and a
+        # project with no Rust must not pay for one.
+        lang_queries = self.queries.get(cs.SupportedLanguage.RUST)
+        if lang_queries is None:
+            return
+        dp = self.factory.definition_processor
+        mapping = self.factory.import_processor.import_mapping
+        for module_qn in sorted(modules):
+            path = dp.module_qn_to_file_path.get(module_qn)
+            if path is None:
+                continue
+            # First: restoring a Rust file's imports drops the impl paths it
+            # recorded.
+            if module_qn not in mapping:
+                self._restore_requeued_imports(module_qn)
+            entry = self.ast_cache.load(path)
+            if entry is not None:
+                dp.restore_rust_impl_self_paths(entry[0], module_qn, lang_queries)
+
+    def _unparsed_rust_impl_modules(self) -> set[str]:
+        # The files of the Rust methods read back from the graph whose impl
+        # block sits away from its type: only such a block's owner is
+        # unregistered, and only its written path says which type it is on.
+        modules: set[str] = set()
+        rehydrated = self.factory.definition_processor.rehydrated_definition_paths
+        for qn, path in rehydrated.items():
+            if (
+                path.endswith(cs.EXT_RS)
+                and self.function_registry.get(qn) == NodeType.METHOD
+                and _natural_qn(qn).rpartition(cs.SEPARATOR_DOT)[0]
+                not in self.function_registry
+            ):
+                modules.add(self._recorded_module_qn(path))
+        return modules
 
     def _restore_requeued_imports(self, module_qn: str) -> None:
         """Parse the imports of an unchanged module for its requeued
