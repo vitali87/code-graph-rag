@@ -64,6 +64,7 @@ from .utils import (
     ingest_method,
     is_method_node,
     mark_js_ts_module_private,
+    mark_rust_restricted,
     python_positional_parameter_names,
     record_cpp_definition_span,
     safe_decode_text,
@@ -1519,6 +1520,12 @@ class FunctionIngestMixin:
 
         self.function_registry[resolution.qualified_name] = NodeType.FUNCTION
         mark_js_ts_module_private(
+            self.function_registry,
+            resolution.qualified_name,
+            resolution.is_exported,
+            language,
+        )
+        mark_rust_restricted(
             self.function_registry,
             resolution.qualified_name,
             resolution.is_exported,

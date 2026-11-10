@@ -16,7 +16,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    force_mtime_after_cache,
+    get_relationships,
+)
+from evals.cgr_graph import _StatefulIngestor
 
 _RUST = {
     "Cargo.toml": '[package]\nname = "rsglob"\nversion = "0.1.0"\nedition = "2021"\n',
@@ -134,16 +141,15 @@ def rust_visibility(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
     )
 
 
-def test_a_name_two_globs_supply_is_not_claimed_exact(
+def test_two_globs_supplying_a_name_bind_the_one_they_can_see(
     rust_visibility: _Calls,
 ) -> None:
-    # Negative: `hidden::helper` is private, so rustc takes `visible`'s.
-    # Which one the glob reaches is not known here, so neither is exact;
-    # `other`, which only `hidden` supplies, still is.
-    callees = _callees(rust_visibility, "src.pick.go")
-    assert callees.get("src.hidden.other") == "exact", rust_visibility
-    assert "exact" not in {
-        res for to, res in callees.items() if to.endswith(".helper")
+    # `hidden::helper` is private, so `use crate::hidden::*;` does not import
+    # it and rustc takes `visible`'s; `other`, which only `hidden` supplies,
+    # is exact too.
+    assert _callees(rust_visibility, "src.pick.go") == {
+        "src.visible.helper": "exact",
+        "src.hidden.other": "exact",
     }, rust_visibility
 
 
@@ -155,3 +161,105 @@ def test_a_glob_does_not_follow_a_private_use_of_its_base(
     assert _callees(rust_visibility, "src.app.go") == {"src.util.build": "exact"}, (
         rust_visibility
     )
+
+
+_RUST_PRIVATE = {
+    "Cargo.toml": '[package]\nname = "rspriv"\nversion = "0.1.0"\nedition = "2021"\n',
+    "src/lib.rs": (
+        "pub mod hidden;\npub mod shapes;\npub mod user;\nfn secret() -> u32 { 1 }\n"
+    ),
+    # `drop` is private to `hidden`: a glob outside it does not import it,
+    # and `drop(v)` there calls the prelude's. `hidden::below` sees it.
+    "src/hidden.rs": "pub mod below;\nfn drop<T>(_value: T) {}\npub fn keep() {}\n",
+    "src/hidden/below.rs": "use super::*;\npub fn go(v: u32) { keep(); drop(v) }\n",
+    "src/user.rs": (
+        "use crate::hidden::*;\nuse super::*;\n"
+        "pub fn go(v: u32) -> u32 { keep(); drop(v); secret() }\n"
+    ),
+    # `inner::child` sees `inner`'s private `drop`, but `shapes` does not,
+    # so its `pub use self::inner::*;` does not pass `drop` on.
+    "src/shapes/mod.rs": "pub mod inner;\npub use self::inner::*;\n",
+    "src/shapes/inner.rs": "pub mod child;\nfn drop<T>(_value: T) {}\n",
+    "src/shapes/inner/child.rs": (
+        "use crate::shapes::*;\npub fn go(v: u32) { drop(v) }\n"
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def rust_private(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
+    return _calls(
+        tmp_path_factory.mktemp("rs3242priv") / "rspriv", _RUST_PRIVATE, "rust"
+    )
+
+
+def test_a_private_function_outside_the_globbing_module_is_not_exact(
+    rust_private: _Calls,
+) -> None:
+    callees = _callees(rust_private, "src.user.go")
+    assert callees.get("src.hidden.keep") == "exact", rust_private
+    assert callees.get("src.hidden.drop") != "exact", rust_private
+
+
+def test_a_private_function_the_glob_can_see_stays_exact(
+    rust_private: _Calls,
+) -> None:
+    # A private item is visible to its module and every module below it, so
+    # `use super::*;` imports it, from a crate root's sibling files as well.
+    assert _callees(rust_private, "src.user.go").get("src.lib.secret") == "exact"
+    assert _callees(rust_private, "src.hidden.below.go") == {
+        "src.hidden.keep": "exact",
+        "src.hidden.drop": "exact",
+    }, rust_private
+
+
+def test_a_function_the_reexporting_module_cannot_see_is_not_exact(
+    rust_private: _Calls,
+) -> None:
+    callees = _callees(rust_private, "src.shapes.inner.child.go")
+    assert callees.get("src.shapes.inner.drop") != "exact", rust_private
+
+
+def _store_calls(store: _StatefulIngestor, caller: str) -> dict[str, str]:
+    return {
+        str(edge[4]): str(store.props_for(edge).get(cs.KEY_RESOLUTION))
+        for edge in store.edges
+        if edge[2] == cs.RelationshipType.CALLS.value and edge[1] == caller
+    }
+
+
+def _index(store: _StatefulIngestor, root: Path, *, force: bool = False) -> None:
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.RUST not in parsers:
+        pytest.skip("rust parser not available")
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    ).run(force=force)
+
+
+def test_an_unchanged_private_function_stays_not_exact_after_a_sync(
+    tmp_path: Path,
+) -> None:
+    # Only the caller is re-parsed; `hidden.rs` is read back from the graph,
+    # and its private `drop` must not turn exact there.
+    root = tmp_path / "proj"
+    for rel, text in _RUST_PRIVATE.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    store = _StatefulIngestor()
+    _index(store, root)
+    caller = root / "src/user.rs"
+    caller.write_text(
+        _RUST_PRIVATE["src/user.rs"] + "pub fn unrelated() {}\n", encoding="utf-8"
+    )
+    force_mtime_after_cache(root, caller)
+    _index(store, root)
+    clean = _StatefulIngestor()
+    _index(clean, root, force=True)
+    synced = _store_calls(store, "proj.src.user.go")
+    assert synced == _store_calls(clean, "proj.src.user.go"), synced
+    assert synced.get("proj.src.hidden.drop") != "exact", synced

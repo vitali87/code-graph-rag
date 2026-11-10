@@ -224,6 +224,19 @@ def mark_js_ts_module_private(
         function_registry.mark_module_private(qualified_name)
 
 
+def mark_rust_restricted(
+    function_registry: FunctionRegistryTrieProtocol,
+    qualified_name: str,
+    is_exported: bool,
+    language: cs.SupportedLanguage | None,
+) -> None:
+    # A Rust glob imports only what is visible where it is written. The flag
+    # the node carries says whether a function is plain `pub`; the resolver
+    # asks it before calling a glob-imported function's binding certain.
+    if language == cs.SupportedLanguage.RUST and not is_exported:
+        function_registry.mark_rust_restricted(qualified_name)
+
+
 def function_span_key(module_qn: str, node: Node) -> FunctionSpanKey:
     # tree-sitter points are 0-based; recorded lines are 1-based.
     return (module_qn, node.start_point[0] + 1, node.start_point[1])

@@ -4305,23 +4305,59 @@ class CallResolver:
     ) -> tuple[str, str] | None:
         # rustc resolves a glob at compile time, as it does a named `use`;
         # only Python's `import *` can hang on a run-time `__all__` (issue
-        # #3172). Two globs supplying the name are told apart by the items'
-        # visibility, which the registry does not hold, so neither is
-        # claimed exact.
-        direct: list[tuple[str, str]] = []
-        through: list[tuple[str, str]] = []
+        # #3172). A glob imports only what it can see: under `use hidden::*;`
+        # a private `hidden::drop` is not what `drop(v)` calls, the
+        # prelude's is, so a function the glob may not see is never certain
+        # (PR #3242 review). Two visible providers are an ambiguity rustc
+        # rejects, so neither is claimed exact.
+        hits = self._rust_glob_hits(call_name, wildcards, module_qn)
+        if not hits:
+            return None
+        visible = [hit for hit, sees in hits.items() if sees]
+        self.last_resolution = (
+            cs.EdgeResolution.EXACT
+            if len(visible) == 1
+            else cs.EdgeResolution.HEURISTIC
+        )
+        return (visible or list(hits))[0]
+
+    def _rust_glob_hits(
+        self,
+        call_name: str,
+        wildcards: list[tuple[str, str]],
+        module_qn: str | None,
+    ) -> dict[tuple[str, str], bool]:
+        # Every function the globs supply under the name, a globbed module's
+        # own members before those it re-exports, each with whether some
+        # glob supplying it can see it.
+        direct: list[tuple[tuple[str, str], str]] = []
+        through: list[tuple[tuple[str, str], str]] = []
         for _, imported_qn in wildcards:
             if hit := self._try_wildcard_qns(call_name, imported_qn):
-                direct.append(hit)
+                direct.append((hit, imported_qn))
             elif hit := self._rust_glob_reexport(call_name, imported_qn, module_qn):
-                through.append(hit)
-        found = list(dict.fromkeys((*direct, *through)))
-        if not found:
-            return None
-        self.last_resolution = (
-            cs.EdgeResolution.EXACT if len(found) == 1 else cs.EdgeResolution.HEURISTIC
+                through.append((hit, imported_qn))
+        hits: dict[tuple[str, str], bool] = {}
+        for hit, imported_qn in (*direct, *through):
+            hits[hit] = hits.get(hit, False) or self._rust_glob_sees(
+                hit[1], imported_qn, module_qn
+            )
+        return hits
+
+    def _rust_glob_sees(self, qn: str, imported_qn: str, module_qn: str | None) -> bool:
+        # Plain `pub` reaches every module. Any other visibility reaches at
+        # least the function's own module and those below it, which is all
+        # the graph keeps of a `pub(crate)` or `pub(super)`. The globbed
+        # module must see the function to hold or re-export it, and the
+        # caller's module to import it.
+        if not self.function_registry.is_rust_restricted(qn):
+            return True
+        owner = qn.rpartition(cs.SEPARATOR_DOT)[0]
+        return (
+            module_qn is not None
+            and self._rust_module_sees(module_qn, owner)
+            and self._rust_module_sees(imported_qn, owner)
         )
-        return found[0]
 
     def _rust_glob_reexport(
         self, call_name: str, imported_qn: str, module_qn: str | None
