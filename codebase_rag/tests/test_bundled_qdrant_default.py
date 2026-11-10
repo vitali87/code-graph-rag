@@ -30,6 +30,7 @@ from codebase_rag import constants as cs
 from codebase_rag import vector_store as vs
 from codebase_rag.config import AppConfig, settings
 from codebase_rag.stack import constants as stack_cs
+from codebase_rag.stack import manager as stack_manager
 
 _DB_PATH_SETTING = "QDRANT_DB_PATH"
 # What a real Qdrant 1.19 answers on `GET /`.
@@ -126,7 +127,8 @@ class _Compose:
     `ps` lists the project's running Qdrant container, if `running`, and
     `ps --format json memgraph` the running Memgraph with the addresses Docker
     publishes its Bolt port on: by default where the app connects (issue
-    #2878).
+    #2878). Docker's proxy takes connections wherever a running Memgraph's
+    Bolt port is published over TCP.
     """
 
     def __init__(self) -> None:
@@ -139,6 +141,7 @@ class _Compose:
         # None: published where settings say the app connects, read per call.
         self.memgraph_published: list[tuple[str, int]] | None = None
         self.memgraph_running = True
+        self.memgraph_protocol = stack_cs.COMPOSE_PS_PUBLISHER_TCP
         self.failing: set[str] = set()
         self.calls: list[list[str]] = []
         self.envs: list[dict[str, str]] = []
@@ -146,22 +149,24 @@ class _Compose:
     def publish(self, port: int | str, host_ip: str = stack_cs.LOOPBACK_HOST) -> None:
         self.published = (host_ip, str(port))
 
+    def _memgraph_binds(self) -> list[tuple[str, int]]:
+        if not self.memgraph_running:
+            return []
+        if self.memgraph_published is not None:
+            return self.memgraph_published
+        return [(stack_cs.LOOPBACK_HOST, settings.MEMGRAPH_PORT)]
+
     def _memgraph_ps(self) -> str:
         if not self.memgraph_running:
             return ""
-        published = (
-            self.memgraph_published
-            if self.memgraph_published is not None
-            else [(stack_cs.LOOPBACK_HOST, settings.MEMGRAPH_PORT)]
-        )
         publishers = [
             {
                 "URL": host,
                 "TargetPort": stack_cs.MEMGRAPH_CONTAINER_BOLT_PORT,
                 "PublishedPort": port,
-                "Protocol": "tcp",
+                "Protocol": self.memgraph_protocol,
             }
-            for host, port in published
+            for host, port in self._memgraph_binds()
         ]
         container = {
             "Service": stack_cs.SERVICE_MEMGRAPH,
@@ -169,6 +174,16 @@ class _Compose:
             "Publishers": publishers,
         }
         return json.dumps(container) + "\n"
+
+    def proxies(self, family: int, address: stack_manager._SocketAddress) -> bool:
+        """Whether Docker's proxy for the stack's Memgraph listens at `address`."""
+        if self.memgraph_protocol != stack_cs.COMPOSE_PS_PUBLISHER_TCP:
+            return False
+        return any(
+            port == address[1]
+            and stack_manager._publishes_on(bind, family, str(address[0]))
+            for bind, port in self._memgraph_binds()
+        )
 
     def which(self, name: str) -> str | None:
         return f"/usr/bin/{name}" if self.docker_installed else None
@@ -219,6 +234,12 @@ def compose(monkeypatch: pytest.MonkeyPatch) -> Generator[_Compose, None, None]:
     ):
         monkeypatch.delenv(name, raising=False)
     fake = _Compose()
+    probe = stack_manager._takes_connections
+    monkeypatch.setattr(
+        stack_manager,
+        "_takes_connections",
+        lambda family, address: fake.proxies(family, address) or probe(family, address),
+    )
     with (
         patch("codebase_rag.stack.manager.shutil.which", side_effect=fake.which),
         patch("codebase_rag.stack.manager.subprocess.run", side_effect=fake.run),

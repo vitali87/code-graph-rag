@@ -246,13 +246,52 @@ def test_the_stack_memgraph_behind_every_address_tried_shares_the_qdrant(
     assert _client_kwargs() == _bundled(open_qdrant.port)
 
 
+@pytest.mark.usefixtures("stack_home", "stack_memgraph_on_7687")
+def test_a_stack_address_that_refuses_is_passed_over_like_the_client_does(
+    open_qdrant: _Server, compose: _Compose, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `localhost` resolving to the stack's `127.0.0.1` first, which refuses
+    # while the stack's Memgraph starts, so the client goes on to `::1`,
+    # where another Memgraph answers (CodeRabbit on #3051).
+    _stack_on(open_qdrant.port, compose, monkeypatch)
+    _machine(monkeypatch, [_V4, _V6], listening={"::1"})
+    monkeypatch.setattr(settings, "MEMGRAPH_HOST", "localhost")
+    monkeypatch.setattr(settings, "MEMGRAPH_PORT", 7687)
+
+    assert _client_kwargs() == _embedded()
+    assert open_qdrant.paths == []
+
+
+@pytest.mark.usefixtures("stack_home", "stack_memgraph_on_7687")
+def test_a_udp_mapping_of_the_bolt_port_is_not_the_stack_memgraph(
+    open_qdrant: _Server, compose: _Compose, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bolt is TCP: a UDP mapping of 7687 publishes nothing the client
+    # connects to, whichever server answers there (CodeRabbit on #3051).
+    _stack_on(open_qdrant.port, compose, monkeypatch)
+    compose.memgraph_protocol = "udp"
+    _machine(monkeypatch, [_V4], listening={stack_cs.LOOPBACK_HOST})
+    monkeypatch.setattr(settings, "MEMGRAPH_HOST", stack_cs.LOOPBACK_HOST)
+    monkeypatch.setattr(settings, "MEMGRAPH_PORT", 7687)
+
+    assert _client_kwargs() == _embedded()
+    assert open_qdrant.paths == []
+
+
+# How long Windows retries a refused connection before it reports it.
+_WINDOWS_REFUSAL_DELAY_S = 2.0
+
+
 class _SlowRefusal:
     """A connection probe on Windows, which retries a refused connection for
     about two seconds before it reports the refusal: wherever nothing
-    listens, the probe's timeout runs out first."""
+    listens, a shorter timeout runs out first. A server in `silent` takes
+    the connection after any timeout (a full accept queue, say)."""
 
-    def __init__(self, listening: set[str]) -> None:
+    def __init__(self, listening: set[str], silent: set[str]) -> None:
         self._listening = listening
+        self._silent = silent
+        self._timeout: float | None = None
 
     def __enter__(self) -> _SlowRefusal:
         return self
@@ -260,12 +299,16 @@ class _SlowRefusal:
     def __exit__(self, *_exc: BaseException | type[BaseException] | None) -> None:
         return None
 
-    def settimeout(self, _timeout: float) -> None:
-        return None
+    def settimeout(self, timeout: float) -> None:
+        self._timeout = timeout
 
     def connect(self, address: tuple[str, int] | tuple[str, int, int, int]) -> None:
-        if address[0] not in self._listening:
-            raise TimeoutError
+        if address[0] in self._listening:
+            return
+        waited = self._timeout is None or self._timeout > _WINDOWS_REFUSAL_DELAY_S
+        if waited and address[0] not in self._silent:
+            raise ConnectionRefusedError
+        raise TimeoutError
 
 
 class _WindowsSockets:
@@ -275,11 +318,12 @@ class _WindowsSockets:
     AF_INET6 = socket.AF_INET6
     SOCK_STREAM = socket.SOCK_STREAM
 
-    def __init__(self, listening: set[str]) -> None:
+    def __init__(self, listening: set[str], silent: set[str]) -> None:
         self._listening = listening
+        self._silent = silent
 
     def socket(self, _family: int, _type: int) -> _SlowRefusal:
-        return _SlowRefusal(self._listening)
+        return _SlowRefusal(self._listening, self._silent)
 
 
 _REMOTE = (socket.AF_INET, ("10.255.255.1", 7687))
@@ -289,13 +333,14 @@ def _windows(
     monkeypatch: pytest.MonkeyPatch,
     order: list[tuple[int, tuple[str, int] | tuple[str, int, int, int]]],
     listening: set[str],
+    silent: frozenset[str] = frozenset(),
 ) -> None:
     # MEMGRAPH_HOST resolving in `order`, with the real probe, on Windows.
     monkeypatch.setattr(manager, "_addresses_to_try", lambda _host, _port: order)
     monkeypatch.setattr(
         manager, "_is_local_address", lambda host: host in {"::1", "127.0.0.1"}
     )
-    monkeypatch.setattr(manager, "socket", _WindowsSockets(listening))
+    monkeypatch.setattr(manager, "socket", _WindowsSockets(listening, set(silent)))
     monkeypatch.setattr(settings, "MEMGRAPH_HOST", "localhost")
     monkeypatch.setattr(settings, "MEMGRAPH_PORT", 7687)
 
@@ -331,11 +376,25 @@ def test_an_address_ahead_of_the_stack_that_may_answer_keeps_it_out(
     order: list[tuple[int, tuple[str, int] | tuple[str, int, int, int]]],
     listening: set[str],
 ) -> None:
-    # Negative: only a local address's timeout reads as a refusal.
+    # Negative: silence from an address the client tries first is no refusal.
     _stack_on(open_qdrant.port, compose, monkeypatch)
     _windows(monkeypatch, order, listening)
 
     assert _client_kwargs() == _embedded()
+
+
+@pytest.mark.usefixtures("stack_home", "stack_memgraph_on_7687")
+def test_a_slow_local_server_ahead_of_the_stack_keeps_it_out(
+    open_qdrant: _Server, compose: _Compose, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Another Memgraph on `::1` that outlasts the probe still takes the
+    # client's connection, which waits without a timeout; only a refusal
+    # sends the client on to the stack's `127.0.0.1` (CodeRabbit on #3051).
+    _stack_on(open_qdrant.port, compose, monkeypatch)
+    _windows(monkeypatch, [_V6, _V4], listening=set(), silent=frozenset({"::1"}))
+
+    assert _client_kwargs() == _embedded()
+    assert open_qdrant.paths == []
 
 
 def test_the_compose_file_takes_the_port_from_the_caller() -> None:

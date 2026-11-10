@@ -103,6 +103,9 @@ COMPOSE_PS_PUBLISHERS_KEY = "Publishers"
 COMPOSE_PS_PUBLISHER_HOST_KEY = "URL"
 COMPOSE_PS_PUBLISHER_TARGET_KEY = "TargetPort"
 COMPOSE_PS_PUBLISHER_PORT_KEY = "PublishedPort"
+COMPOSE_PS_PUBLISHER_PROTOCOL_KEY = "Protocol"
+# Bolt runs over TCP, Docker's default for a port mapping that names none.
+COMPOSE_PS_PUBLISHER_TCP = "tcp"
 # How long a start that did not finish waits for the services it started to
 # answer, so that one still initialising is checked too before it returns.
 STARTED_SERVICES_CHECK_TIMEOUT_S = 15.0
@@ -203,9 +206,12 @@ QDRANT_ROOT_MAX_BYTES = 65536
 # A stopped stack refuses the connection at once; a running one answers well
 # inside this, so the check costs nothing noticeable when the vector store opens.
 BUNDLED_QDRANT_PROBE_TIMEOUT_S = 1.0
-# How long the check of MEMGRAPH_HOST waits on one of its addresses the
-# stack's Memgraph is not published on, for another server answering there.
+# How long the check of MEMGRAPH_HOST waits on one of its addresses for a
+# server answering there.
 MEMGRAPH_ADDRESS_PROBE_TIMEOUT_S = 1.0
+# The same wait on an address of this machine: long enough for Windows, which
+# retries a refused connection for about two seconds before it reports it.
+MEMGRAPH_LOCAL_ADDRESS_PROBE_TIMEOUT_S = 5.0
 QDRANT_API_KEY_HEADER = "api-key"
 ERR_COMPOSE_AUTH_MISMATCH = (
     "Compose would start {variables} with a value that does not come from "

@@ -169,14 +169,21 @@ def _ps_containers(ps_output: str) -> list[JsonValue]:
 
 
 def _bolt_endpoint(publisher: JsonValue) -> tuple[str, int] | None:
-    """(bind address, port) of a `docker compose ps` publisher of Bolt."""
+    """(bind address, port) of a `docker compose ps` publisher of Bolt.
+
+    A UDP mapping of the Bolt port takes no connection from the client.
+    """
     if not isinstance(publisher, dict):
         return None
     port = publisher.get(cs.COMPOSE_PS_PUBLISHER_PORT_KEY)
     host = publisher.get(cs.COMPOSE_PS_PUBLISHER_HOST_KEY)
+    protocol = publisher.get(
+        cs.COMPOSE_PS_PUBLISHER_PROTOCOL_KEY, cs.COMPOSE_PS_PUBLISHER_TCP
+    )
     if (
         publisher.get(cs.COMPOSE_PS_PUBLISHER_TARGET_KEY)
         == cs.MEMGRAPH_CONTAINER_BOLT_PORT
+        and protocol == cs.COMPOSE_PS_PUBLISHER_TCP
         and isinstance(port, int)
         and port
     ):
@@ -228,20 +235,26 @@ def _publishes_on(bind: str, family: int, address: str) -> bool:
 
 
 def _takes_connections(family: int, address: _SocketAddress) -> bool:
-    """Whether a server accepts connections at `address`.
+    """Whether a server may accept connections at `address`.
 
-    One that does not answer in time may well, so it counts as one that
-    does, unless the address is this machine's: a server here accepts at
-    once, while Windows reports a refused connection only after retrying it
-    for about two seconds, so `localhost` as `::1` with nothing listening
-    there outlasts the probe and the client goes on to `127.0.0.1`.
+    Only a refusal says no: one that does not answer in time may be a slow
+    server, which the client, connecting without a timeout, waits for and
+    keeps. This machine's addresses are given long enough for Windows to
+    report a refusal, which it does only after retrying the connection for
+    about two seconds (`localhost` as `::1` with nothing listening there,
+    which the client passes over for `127.0.0.1`).
     """
+    timeout = (
+        cs.MEMGRAPH_LOCAL_ADDRESS_PROBE_TIMEOUT_S
+        if _is_local_address(str(address[0]))
+        else cs.MEMGRAPH_ADDRESS_PROBE_TIMEOUT_S
+    )
     try:
         with socket.socket(family, socket.SOCK_STREAM) as probe:
-            probe.settimeout(cs.MEMGRAPH_ADDRESS_PROBE_TIMEOUT_S)
+            probe.settimeout(timeout)
             probe.connect(address)
     except TimeoutError:
-        return not _is_local_address(str(address[0]))
+        return True
     except OSError:
         return False
     return True
@@ -251,15 +264,14 @@ def _reaches_published(host: str, port: int, binds: list[str]) -> bool:
     """Whether a client of `host:port` reaches the port published on `binds`.
 
     The client keeps the first of the host's addresses that takes the
-    connection, so one address the port is published on is not enough: an
-    earlier one another server answers on wins (`localhost` as `::1` ahead
-    of `127.0.0.1`).
+    connection, so that address alone decides: an earlier one another server
+    answers on wins (`localhost` as `::1` ahead of `127.0.0.1`), and one the
+    port is published on but that refuses, as while the stack's Memgraph
+    starts, is passed over for the next.
     """
     for family, address in _addresses_to_try(host, port):
-        if any(_publishes_on(bind, family, str(address[0])) for bind in binds):
-            return True
         if _takes_connections(family, address):
-            return False
+            return any(_publishes_on(bind, family, str(address[0])) for bind in binds)
     return False
 
 
