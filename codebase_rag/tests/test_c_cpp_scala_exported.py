@@ -1411,6 +1411,9 @@ void IS::inline_static() {}
 
 namespace IP { inline namespace v1 { void inline_public(); } }
 void IP::inline_public() {}
+
+namespace NS { namespace { static void unnamed_static(); } void unnamed_static(); }
+void NS::unnamed_static() {}
 """
 
 
@@ -1449,6 +1452,7 @@ def linkage_check(tmp_path: Path) -> dict[tuple[str, int], bool]:
         ("nested_inline_api", 61, True),
         ("inline_static", 64, False),
         ("inline_public", 67, True),
+        ("unnamed_static", 70, True),
     ],
     ids=[
         "friend-after-a-static-declaration",
@@ -1469,6 +1473,7 @@ def linkage_check(tmp_path: Path) -> dict[tuple[str, int], bool]:
         "namespace-inside-nested-inline-namespaces",
         "static-declaration-in-an-inline-namespace",
         "extern-declaration-in-an-inline-namespace",
+        "static-declaration-in-an-unnamed-namespace-of-the-qualifier",
     ],
 )
 def test_one_linkage_check_for_every_function(

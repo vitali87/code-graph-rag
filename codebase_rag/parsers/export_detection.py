@@ -893,11 +893,13 @@ def _cpp_external_function(definition: Node, scope: Node) -> bool:
     home = _cpp_function_home(definition, scope)
     if home is None or _cpp_internal(home) or _cpp_static(definition):
         return False
-    # A qualified name is looked up as its qualifier is: `void IN::f() {}`
-    # defines the `f` an inline namespace of `IN` declares (PR #2952).
+    # A qualified name names a member of its qualifier's namespace or of an
+    # inline namespace in it: `void IN::f() {}` defines the `f` an inline
+    # namespace of `IN` declares, never one of an unnamed namespace there
+    # (Greptile, PR #2952).
     declarator = _cpp_declarator_name(definition)
     namespaces = (
-        frozenset(_cpp_transparent(_cpp_file_scopes(definition), home))
+        frozenset(_cpp_transparent(_cpp_file_scopes(definition), home, unnamed=False))
         if declarator is not None and declarator.type == cs.TS_CPP_QUALIFIED_IDENTIFIER
         else frozenset({home})
     )
@@ -1567,14 +1569,21 @@ def _cpp_lookup_bases(
                 yield from _cpp_transparent(scopes, target)
 
 
-def _cpp_transparent(scopes: _CppScopes, scope: _CppPath) -> Iterator[_CppPath]:
+def _cpp_transparent(
+    scopes: _CppScopes, scope: _CppPath, *, unnamed: bool = True
+) -> Iterator[_CppPath]:
     # `scope`, then the unnamed and inline namespaces in it and in those:
-    # what they declare is found from `scope` too.
+    # what they declare is found from `scope` too. Without `unnamed`, only
+    # the inline ones.
     pending = [scope]
     while pending:
         current = pending.pop(0)
         yield current
-        pending.extend(scopes.transparent.get(current, ()))
+        pending.extend(
+            inner
+            for inner in scopes.transparent.get(current, ())
+            if unnamed or inner[-1] != cs.CPP_UNNAMED_NAMESPACE
+        )
 
 
 class _CppScopeRecorder:
