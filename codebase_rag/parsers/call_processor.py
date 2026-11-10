@@ -6688,9 +6688,22 @@ class CallProcessor:
         return callee_info
 
     def _js_class_owns(self, class_qn: str, callee_info: tuple[str, str]) -> bool:
-        # The callee is a member of the class or one of its bases.
-        owner_qn = callee_info[1].rpartition(cs.SEPARATOR_DOT)[0]
-        return owner_qn in self._resolver._mro(class_qn)
+        # The callee is what the class's instances run: its own member, or a
+        # base's that no class nearer in the chain overrides. A pick of
+        # `Base.size` on a `Box` overriding `size` names the wrong method
+        # (issue #3276). A bodiless member (an interface's, an abstract one)
+        # runs nothing, so it overrides nothing.
+        owner_qn, _, method = callee_info[1].rpartition(cs.SEPARATOR_DOT)
+        for ancestor in self._resolver._mro(class_qn):
+            if ancestor == owner_qn:
+                return True
+            member_qn = f"{ancestor}{cs.SEPARATOR_DOT}{method}"
+            if (
+                member_qn in self._resolver.function_registry
+                and not self._resolver._is_bodiless_declaration(member_qn)
+            ):
+                return False
+        return False
 
     def _js_receiver_declaration(
         self, ctx: _CallScanContext, receiver: Node | None
@@ -7031,15 +7044,13 @@ class CallProcessor:
             return self._ts_type_declaration(inner, module_qn, scope) if inner else None
         if node_type == cs.TS_UNION_TYPE:
             return self._ts_union_declaration(node, module_qn, scope)
-        if node_type == cs.TS_TYPE_IDENTIFIER:
+        if node_type in (cs.TS_TYPE_IDENTIFIER, cs.TS_NESTED_TYPE_IDENTIFIER):
+            # `Box` or `ns.Box`, read in the same scope: a dotted name read
+            # afresh restarted the alias depth, so `A = b.B` and `B = a.A`
+            # recursed until the stack ran out (issue #3276).
             return self._ts_type_identifier_declaration(node, module_qn, scope)
         if node_type == cs.TS_GENERIC_TYPE:
             return self._ts_generic_declaration(node, module_qn, scope)
-        if node_type == cs.TS_NESTED_TYPE_IDENTIFIER:
-            name = safe_decode_text(node)
-            return (
-                self._ts_type_name_declaration(name, node, module_qn) if name else None
-            )
         return None
 
     def _ts_type_identifier_declaration(
@@ -7121,12 +7132,21 @@ class CallProcessor:
         ]
         if len(members) == 1:
             return self._ts_type_declaration(members[0], module_qn, scope)
-        declared = [
-            self._ts_type_declaration(member, module_qn, scope) for member in members
-        ]
-        if declared and all(d is not None and d.foreign for d in declared):
+        # Read member by member, stopping at the first that is not foreign:
+        # reading every one expanded aliases that refer back to each other
+        # through unions (`W = V | V`, `V = W | W`) once per member at every
+        # level, exponentially in the depth limit (issue #3276).
+        if members and all(
+            self._ts_declares_foreign(member, module_qn, scope) for member in members
+        ):
             return _ReceiverDeclaration(safe_decode_text(node) or "", foreign=True)
         return None
+
+    def _ts_declares_foreign(
+        self, node: Node, module_qn: str, scope: _TsTypeScope
+    ) -> bool:
+        declared = self._ts_type_declaration(node, module_qn, scope)
+        return declared is not None and declared.foreign
 
     def _ts_generic_declaration(
         self, node: Node, module_qn: str, scope: _TsTypeScope = _NO_TS_SCOPE

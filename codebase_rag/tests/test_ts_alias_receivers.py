@@ -13,10 +13,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.call_resolver import CallResolver
 from evals.cgr_graph import _StatefulIngestor
 
 TYPES = (
@@ -25,6 +27,12 @@ TYPES = (
     "export type Handler = Box;\nexport type MaybeBox = Box | undefined;\n"
     "export type Maybe<T> = T | null;\nexport type Pair<A, B> = B;\n"
     "export type Twice = Handler;\n"
+)
+SHAPES = (
+    "export class Base {\n  size(): number {\n    return 0;\n  }\n}\n\n"
+    "export class Over extends Base {\n  size(): number {\n    return 1;\n  }\n}\n\n"
+    "export class Plain extends Base {}\n\n"
+    "export type Overriding = Over;\nexport type Inheriting = Plain;\n"
 )
 USE = """import { Handler, MaybeBox, Maybe, Pair, Twice, Box } from "./types";
 
@@ -326,3 +334,79 @@ def test_a_named_property_of_an_array_is_not_an_element(
     calls = _size_calls({"src/types.ts": TYPES, "src/use.ts": use}, temp_repo / "proj")
 
     assert ("Box", cs.EdgeResolution.EXACT) not in calls.get("named", set()), calls
+
+
+def test_an_alias_of_an_overriding_class_takes_no_base_method(
+    temp_repo: Path,
+) -> None:
+    # `Over` overrides `Base.size`. With `Base` imported by name, the pick
+    # is `Base.size`, which an `Over` never runs, so it is no exact edge:
+    # with `Over` in view beside `Base`, two classes define `size`, which
+    # binds nothing, as importing `Over` itself does. `Plain` inherits
+    # `Base.size`, which stays exact.
+    use = (
+        'import { Base, Overriding, Inheriting } from "./shapes";\n\n'
+        "export function overriding(h: Overriding): number {\n"
+        "  return h.size();\n}\n\n"
+        "export function inheriting(h: Inheriting): number {\n"
+        "  return h.size();\n}\n"
+    )
+    direct = (
+        'import { Base, Over } from "./shapes";\n\n'
+        "export function overDirect(h: Over): number {\n  return h.size();\n}\n"
+    )
+    calls = _size_calls(
+        {"src/shapes.ts": SHAPES, "src/use.ts": use, "src/direct.ts": direct},
+        temp_repo / "proj",
+    )
+
+    assert "overriding" not in calls, calls
+    assert "overDirect" not in calls, calls
+    assert calls.get("inheriting") == {("Base", cs.EdgeResolution.EXACT)}, calls
+
+
+def test_aliases_referring_to_each_other_through_namespaces_terminate(
+    temp_repo: Path,
+) -> None:
+    # Negative: `A = b.B` and `B = a.A`, each through a namespace import,
+    # name no class. A dotted name restarted the depth limit, so reading it
+    # recursed until the stack ran out and `loop` lost every call.
+    files = {
+        "src/types.ts": TYPES,
+        "src/a.ts": 'import * as b from "./b";\n\nexport type A = b.B;\n',
+        "src/b.ts": 'import * as a from "./a";\n\nexport type B = a.A;\n',
+        "src/use.ts": (
+            'import { A } from "./a";\nimport { Box } from "./types";\n\n'
+            "export function loop(h: A): number {\n  return h.size();\n}\n"
+        ),
+    }
+    calls = _size_calls(files, temp_repo / "proj")
+
+    # The alias declares nothing, so the pick by name stays a heuristic.
+    assert calls.get("loop") == {("Box", cs.EdgeResolution.HEURISTIC)}, calls
+
+
+def test_aliases_referring_to_each_other_through_unions_are_read_once_per_hop(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: `W = V | V | V | V` and `V = W | W | W | W` name no class.
+    # Every member was read at every level, so this one call read the two
+    # aliases 87,381 times; the first member that is not foreign settles a
+    # union, so each alias is read once per hop until the depth limit.
+    reads: list[str] = []
+    read_alias = CallResolver.ts_type_alias
+
+    def counting(resolver: CallResolver, module_qn: str, name: str) -> Node | None:
+        reads.append(name)
+        return read_alias(resolver, module_qn, name)
+
+    monkeypatch.setattr(CallResolver, "ts_type_alias", counting)
+    types = TYPES + "export type W = V | V | V | V;\nexport type V = W | W | W | W;\n"
+    use = (
+        'import { W, Box } from "./types";\n\n'
+        "export function loop(h: W): number {\n  return h.size();\n}\n"
+    )
+    calls = _size_calls({"src/types.ts": types, "src/use.ts": use}, temp_repo / "proj")
+
+    assert calls.get("loop") == {("Box", cs.EdgeResolution.HEURISTIC)}, calls
+    assert len(reads) <= cs.TS_ALIAS_MAX_DEPTH + 1, len(reads)
