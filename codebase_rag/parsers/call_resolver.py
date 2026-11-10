@@ -2709,6 +2709,15 @@ class CallResolver:
             self._remember_cacheable(cache_key, None)
             return True, None
 
+        # Likewise for a JS/TS name the export walk followed to another
+        # binding (`export { beta as renamed } from "left-pad"`): the import
+        # names that binding, which nothing above resolved, so no same-named
+        # function is it. The guard above reads only the importer's own
+        # target, which names the barrel (bot review on PR #2994).
+        if self._js_reexport_led_nowhere(call_name, module_qn, call.language):
+            self._remember_cacheable(cache_key, None)
+            return True, None
+
         # A dotted call on an import whose target still holds a raw
         # slash-separated module path (github.com/x/y) is a call into an
         # EXTERNAL module: local Go paths were rewritten to project qns at
@@ -3657,6 +3666,23 @@ class CallResolver:
             self.function_registry,
         )
         return None if followed == imported_qn else followed
+
+    def _js_reexport_led_nowhere(
+        self, call_name: str, module_qn: str, language: cs.SupportedLanguage | None
+    ) -> bool:
+        # Asked once every precise lookup has failed, so a followed name is
+        # one whose end resolved to nothing. An end behind a non-standard
+        # scheme (`ext:`) is first-party code the walk cannot read, and keeps
+        # the name-only fallback, as a direct import of it does.
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        if not import_map:
+            return False
+        followed = self._followed_js_reexport(
+            call_name, import_map, language, module_qn
+        )
+        return followed is not None and not (
+            self.import_processor.names_js_aliased_scheme(followed)
+        )
 
     def _try_resolve_via_imports(
         self,

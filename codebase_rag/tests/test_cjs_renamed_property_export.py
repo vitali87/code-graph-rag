@@ -76,6 +76,27 @@ FILES = {
         'import { renamed } from "./ext_esm_shadow.mjs";\n'
         "export function viaExtEsmShadow() {\n  return renamed();\n}\n"
     ),
+    "ext_barrel.mjs": 'export { beta as renamed } from "left-pad";\n',
+    "ext_barrel_user.mjs": (
+        'import { renamed } from "./ext_barrel.mjs";\n'
+        "export function viaExtBarrel() {\n  return renamed();\n}\n"
+    ),
+    # Negative: a name no export walk follows keeps the name-only fallback,
+    # and so does one whose walk ends behind a non-standard scheme, which
+    # aliases first-party code the walk cannot read.
+    "helpers.mjs": (
+        "export function unplaced() { return 1; }\n"
+        "export function aliased() { return 2; }\n"
+    ),
+    "unplaced_user.mjs": (
+        'import { unplaced } from "./missing.mjs";\n'
+        "export function viaMissing() {\n  return unplaced();\n}\n"
+    ),
+    "alias_barrel.mjs": 'export { aliased } from "ext:alias/helpers.mjs";\n',
+    "alias_user.mjs": (
+        'import { aliased } from "./alias_barrel.mjs";\n'
+        "export function viaAliasBarrel() {\n  return aliased();\n}\n"
+    ),
     # Bot review on PR #2994: `require("./target")` binds the whole module,
     # whose qn `pkg.target` also spells the name `target` in `pkg/index.js`,
     # which publishes another function under it. The whole-module import is
@@ -129,14 +150,20 @@ def test_a_same_named_local_does_not_hide_the_published_binding(
 
 @pytest.mark.parametrize(
     "caller",
-    ["ext_user.viaExtShadow", "ext_esm_user.viaExtEsmShadow"],
-    ids=["commonjs", "esm"],
+    [
+        "ext_user.viaExtShadow",
+        "ext_esm_user.viaExtEsmShadow",
+        "ext_barrel_user.viaExtBarrel",
+    ],
+    ids=["commonjs", "esm", "barrel"],
 )
 def test_an_unresolvable_published_binding_is_not_the_same_named_local(
     graph: RecordedGraph, caller: str
 ) -> None:
+    # Bot review on PR #2994: nor is any other same-named function, which
+    # the name-only fallback picked as a heuristic edge.
     callees = _callees(graph, caller)
-    assert "exact" not in callees.values(), callees
+    assert callees == {}, callees
 
 
 def test_a_whole_module_require_is_not_the_folders_export_of_its_name(
@@ -154,6 +181,21 @@ def test_a_named_require_of_the_folder_still_gets_its_export(
 ) -> None:
     callees = _callees(graph, "pkg_user.viaFolder")
     assert callees.get("pkg.index.other") == "exact", callees
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("unplaced_user.viaMissing", "helpers.unplaced"),
+        ("alias_user.viaAliasBarrel", "helpers.aliased"),
+    ],
+    ids=["no-walk", "aliased-scheme"],
+)
+def test_a_name_no_walk_places_keeps_the_name_only_fallback(
+    graph: RecordedGraph, caller: str, callee: str
+) -> None:
+    callees = _callees(graph, caller)
+    assert callees == {callee: "heuristic"}, callees
 
 
 def test_a_shorthand_and_an_inline_export_still_bind(graph: RecordedGraph) -> None:

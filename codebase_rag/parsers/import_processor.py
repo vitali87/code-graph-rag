@@ -5770,6 +5770,15 @@ class ImportProcessor:
         site = self._import_sites.get(module_qn, {}).get(local_name)
         return site is not None and _js_binds_whole_module(site)
 
+    @staticmethod
+    def names_js_aliased_scheme(qn: str) -> bool:
+        """Whether a JS/TS import's target qn is a non-standard scheme's.
+
+        `ext:alias/util.ts` keeps its scheme in the qn it maps to
+        (`ext:alias.util.ts`), and names first-party code no file path does.
+        """
+        return _has_aliased_scheme(qn)
+
     def follow_js_reexports(
         self,
         qn: str,
