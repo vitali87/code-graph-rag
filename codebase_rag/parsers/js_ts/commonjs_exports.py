@@ -284,16 +284,23 @@ class LocalBindings:
         # scope that binds it: a parameter's `require = null` leaves the
         # module's own `require` settled (Greptile, PR #3284).
         if self._rewritten is None:
-            root_key = _key(self._root)
-            found: set[_Binding] = set()
-            for node in _subtree(self._root):
-                for target, module_level in _reassignment_targets(node, self._root):
-                    if not (name := safe_decode_text(target)):
-                        continue
-                    scope = None if module_level else self._module.binding_scope(target)
-                    found.add((name, _key(scope) if scope is not None else root_key))
-            self._rewritten = frozenset(found)
+            self._rewritten = frozenset(self._reassignments())
         return self._rewritten
+
+    def _reassignments(self) -> Iterator[_Binding]:
+        root_key = _key(self._root)
+        for node in _subtree(self._root):
+            for target, module_level in _reassignment_targets(node, self._root):
+                if name := safe_decode_text(target):
+                    yield name, self._writer_key(target, module_level, root_key)
+
+    def _writer_key(
+        self, target: Node, module_level: bool, root_key: tuple[int, int, str]
+    ) -> tuple[int, int, str]:
+        # The scope whose binding a write to `target` lands on; the module's
+        # own when the write is module-level or no scope binds the name.
+        scope = None if module_level else self._module.binding_scope(target)
+        return _key(scope) if scope is not None else root_key
 
     def _bindings(self) -> _NodeModuleBindings:
         if self._node_module is None:
