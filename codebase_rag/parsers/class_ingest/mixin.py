@@ -1515,6 +1515,26 @@ class ClassIngestMixin:
         # this file can register them again.
         if non_method_members := _python_non_method_members(class_node, language):
             class_props[cs.KEY_NON_METHOD_MEMBERS] = non_method_members
+        # For a templated class the canonical node is the template_declaration
+        # wrapper, which has no `body` field. Its members (base clause, fields,
+        # methods) live on the inner class_specifier (type_spec). Extract them
+        # from there so they bind to the class's natural qn. For a plain class
+        # type_spec is class_node, so this is a no-op for non-templates and for
+        # Go/Rust (which never take the template_declaration branch).
+        member_node = type_spec if type_spec is not None else class_node
+        # Recorded before the node write so the field map rides on the type's
+        # one row: a second row for the same qn is a second node under an
+        # ingestor that CREATEs (`use_merge=False`).
+        self._record_class_field_types(
+            class_node,
+            member_node,
+            class_qn,
+            module_qn,
+            language,
+            modifiers,
+            file_path,
+        )
+        self._add_class_field_types_prop(class_qn, class_props)
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         mark_js_ts_module_private(
@@ -1546,13 +1566,6 @@ class ClassIngestMixin:
             module_qn,
             parent_span=parent_span,
         )
-        # For a templated class the canonical node is the template_declaration
-        # wrapper, which has no `body` field. Its members (base clause, fields,
-        # methods) live on the inner class_specifier (type_spec). Extract them
-        # from there so they bind to the class's natural qn. For a plain class
-        # type_spec is class_node, so this is a no-op for non-templates and for
-        # Go/Rust (which never take the template_declaration branch).
-        member_node = type_spec if type_spec is not None else class_node
         # Declared fields ride with their owner: same gate, same props source
         # for path/absolute_path, queued type for the deferred OF_TYPE pass.
         # Emitted AFTER the owner node so a batch flush never writes the edge
@@ -1608,16 +1621,6 @@ class ClassIngestMixin:
             self._ingest_go_interface_methods(
                 class_node, class_qn, module_qn, file_path
             )
-        self._record_class_field_types(
-            class_node,
-            member_node,
-            class_qn,
-            module_qn,
-            language,
-            modifiers,
-            file_path,
-        )
-        self._persist_class_field_types(node_type, class_qn)
         self._ingest_class_methods(
             member_node,
             class_qn,
@@ -1884,7 +1887,9 @@ class ClassIngestMixin:
                 member_node, class_qn, module_qn, modifiers, file_path
             )
 
-    def _persist_class_field_types(self, node_type: NodeType, class_qn: str) -> None:
+    def _add_class_field_types_prop(
+        self, class_qn: str, class_props: PropertyDict
+    ) -> None:
         # Only parsing fills `class_field_types`, so an incremental run that
         # re-parses `defs.rs` but not `lowargs.rs` lost `LowArgs.mode: Mode`
         # and `args.mode.update()` fell to a by-name guess (issue #3004).
@@ -1895,16 +1900,10 @@ class ClassIngestMixin:
         if not (fields := self.class_field_types.get(class_qn)):
             return
         guard_inner = self.class_field_guard_inner.get(class_qn, {})
-        self.ingestor.ensure_node_batch(
-            node_type,
-            {
-                cs.KEY_QUALIFIED_NAME: class_qn,
-                cs.KEY_FIELD_TYPES: [
-                    _field_type_entry(name, type_name, guard_inner.get(name))
-                    for name, type_name in sorted(fields.items())
-                ],
-            },
-        )
+        class_props[cs.KEY_FIELD_TYPES] = [
+            _field_type_entry(name, type_name, guard_inner.get(name))
+            for name, type_name in sorted(fields.items())
+        ]
 
     def _record_rust_class_field_types(self, class_node: Node, class_qn: str) -> None:
         # Record Rust struct field types so a field-hop receiver

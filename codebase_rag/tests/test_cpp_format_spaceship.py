@@ -144,9 +144,7 @@ void testSpaceshipOperator() {
         f"Expected at least 1 function, found {len(function_calls)}"
     )
 
-    # A class with typed fields also gets a partial `field_types` row that
-    # MERGEs into its node; only the full row carries the name.
-    class_names = {call[0][1]["name"] for call in class_calls if "name" in call[0][1]}
+    class_names = {call[0][1]["name"] for call in class_calls}
     expected_classes = {"Point", "CustomCompare"}
 
     assert expected_classes.issubset(class_names), (
@@ -217,7 +215,7 @@ void analyzeData() {
         f"Expected at least 1 function, found {len(function_calls)}"
     )
 
-    class_names = {call[0][1]["name"] for call in class_calls if "name" in call[0][1]}
+    class_names = {call[0][1]["name"] for call in class_calls}
     assert "DataPoint" in class_names, f"DataPoint struct not found in {class_names}"
 
 

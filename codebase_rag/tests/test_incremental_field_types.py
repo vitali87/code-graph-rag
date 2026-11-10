@@ -9,13 +9,17 @@ and to the caller itself, and C# dropped the edge (issue #3004).
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.tests.conftest import _MockIngestor, get_nodes, run_updater
 from evals.cgr_graph import _StatefulIngestor
 
 _RUST = {
@@ -104,6 +108,24 @@ _TO_OWN_LOCK = (
     "    pub fn lock(&self) -> Aaa {\n        Aaa {}\n    }\n}\n\n"
     "pub struct Shared {\n    pub state: Lock,",
 )
+
+# A C++ union's members and a Go struct's fields type a field hop too.
+_CPP_UNION = {
+    "src/slot.cpp": (
+        "struct Mode { void update() {} };\n"
+        "union Slot { Mode m; int n; };\n"
+        "void use(Slot s) { s.m.update(); }\n"
+    ),
+}
+_GO = {
+    "go.mod": "module ex\n\ngo 1.21\n",
+    "src/args.go": (
+        "package ex\n\ntype Mode struct{}\n\nfunc (m Mode) Update() {}\n\n"
+        "type Args struct {\n\tmode Mode\n}\n"
+    ),
+}
+
+_TYPE_LABELS = (cs.NodeLabel.CLASS, cs.NodeLabel.INTERFACE, cs.NodeLabel.UNION)
 
 _Calls = dict[tuple[str, str], str]
 
@@ -222,3 +244,72 @@ def test_a_re_ingested_struct_drops_its_old_field_metadata(
     (indexer if reuse_updater else _updater(root, store)).reingest([edited])
 
     assert _calls(store) == _sync(root, _StatefulIngestor(), force=True)
+
+
+def _created_type_nodes(ingestor: _MockIngestor) -> Counter[str]:
+    # Replay the parse's type-node rows through a Memgraph sink that CREATEs
+    # (`use_merge=False`) and count the nodes its queries make per key.
+    sink = MemgraphIngestor(host="localhost", port=7687, use_merge=False)
+    cursor = MagicMock()
+    sink.conn = MagicMock(cursor=MagicMock(return_value=cursor))
+    for label in _TYPE_LABELS:
+        for node in get_nodes(ingestor, label):
+            sink.ensure_node_batch(label, node.args[1])
+    sink.flush_nodes()
+    created: Counter[str] = Counter()
+    for query_call in cursor.execute.call_args_list:
+        query, params = query_call.args
+        if "CREATE (n:" in query:
+            created.update(str(row["id"]) for row in params["batch"])
+    return created
+
+
+@pytest.mark.parametrize(
+    ("files", "grammar", "label", "type_qn", "entries"),
+    [
+        (_RUST, "rust", cs.NodeLabel.CLASS, "flags.lowargs.LowArgs", ["mode\tMode"]),
+        (_CSHARP, "c_sharp", cs.NodeLabel.CLASS, "LowArgs.LowArgs", ["mode\tMode"]),
+        (
+            _CSHARP_INTERFACE,
+            "c_sharp",
+            cs.NodeLabel.INTERFACE,
+            "Args.IArgs",
+            ["mode\tMode"],
+        ),
+        (
+            _RUST_GUARD,
+            "rust",
+            cs.NodeLabel.CLASS,
+            "shared.Shared",
+            ["state\tMutex\tState"],
+        ),
+        (_CPP_UNION, "cpp", cs.NodeLabel.UNION, "slot.Slot", ["m\tMode"]),
+        (_GO, "go", cs.NodeLabel.CLASS, "args.Args", ["mode\tMode"]),
+    ],
+    ids=["rust", "csharp", "csharp-interface", "rust-guard", "cpp-union", "go"],
+)
+def test_a_typed_class_is_one_node_row(
+    tmp_path: Path,
+    mock_ingestor: _MockIngestor,
+    files: dict[str, str],
+    grammar: str,
+    label: cs.NodeLabel,
+    type_qn: str,
+    entries: list[str],
+) -> None:
+    # The field map rides on the type's own row. Written as a second, partial
+    # row, it made a second node with the same key under a sink that CREATEs
+    # every row: a uniqueness error, or a stray node with no name.
+    root = tmp_path / "repo"
+    _write(root, files)
+    run_updater(root, mock_ingestor, skip_if_missing=grammar)
+    qn = f"repo.src.{type_qn}"
+
+    rows = [c.args[1] for c in get_nodes(mock_ingestor, label)]
+    typed = [row for row in rows if row[cs.KEY_QUALIFIED_NAME] == qn]
+    assert len(typed) == 1, typed
+    assert typed[0][cs.KEY_NAME] == type_qn.rsplit(".", 1)[1]
+    assert typed[0][cs.KEY_FIELD_TYPES] == entries
+    created = _created_type_nodes(mock_ingestor)
+    assert created[qn] == 1
+    assert max(created.values()) == 1, created
