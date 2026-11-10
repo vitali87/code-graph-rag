@@ -34,6 +34,7 @@ shadows in the registry or the import map; any other value drops its name.
 
 from __future__ import annotations
 
+import posixpath
 from collections import deque
 from collections.abc import Callable, Iterator
 from typing import NamedTuple
@@ -208,20 +209,66 @@ class LocalBindings:
         self._node_module: _NodeModuleBindings | None = None
         self._rewritten: frozenset[_Binding] | None = None
 
-    def is_loader(self, identifier: Node) -> bool:
-        """The global `require`, which nothing in the module binds, or a
-        binding nothing reassigns whose value a `createRequire` from Node's
-        `module` makes. Anything else (a parameter, a local helper, another
-        object's `createRequire`, a replaced alias) loads nothing that can be
-        told, so it records no import (Greptile and CodeRabbit, PR #3284)."""
+    def loader_base(self, identifier: Node) -> str | None:
+        """The directory, relative to the module's own (`.`), that a loader
+        named `identifier` resolves a relative specifier from.
+
+        The global `require`, which nothing in the module binds, resolves
+        from the module's directory. A binding nothing reassigns whose value
+        a `createRequire` from Node's `module` makes resolves from the file
+        it was given, when the module spells that file out. Anything else (a
+        parameter, a local helper, another object's `createRequire`, a
+        replaced alias, a loader for a computed path) loads nothing that can
+        be told, so it is None and records no import (Greptile and
+        CodeRabbit, PR #3284)."""
         scope = self._module.binding_scope(identifier)
         if scope is None:
-            return True
+            return cs.PATH_CURRENT_DIR
         value = self._settled_value(identifier, scope)
+        if (
+            value is None
+            or value.type != cs.TS_CALL_EXPRESSION
+            or not self._is_factory(value.child_by_field_name(cs.FIELD_FUNCTION), 0)
+        ):
+            return None
+        return self._created_base(value)
+
+    def _created_base(self, factory_call: Node) -> str | None:
+        # `createRequire(import.meta.url)` loads from the module's own file;
+        # `createRequire(new URL("../plugins/entry.js", import.meta.url))`
+        # from `plugins/`, so its `require("./setup")` is `plugins/setup`
+        # (Greptile, PR #3284). Any other argument is a path the module
+        # computes, which the graph cannot follow.
+        args = _call_arguments(factory_call)
+        if len(args) != 1:
+            return None
+        if self._names_own_file(args[0]):
+            return cs.PATH_CURRENT_DIR
+        url = args[0]
+        if url.type != cs.TS_NEW_EXPRESSION or not self._is_global(
+            url.child_by_field_name(cs.FIELD_CONSTRUCTOR), cs.JS_URL_CONSTRUCTOR
+        ):
+            return None
+        url_args = _call_arguments(url)
+        if len(url_args) != cs.JS_URL_ARGUMENT_COUNT or not _is_import_meta(
+            url_args[1], cs.JS_IMPORT_META_URL_PROPERTIES
+        ):
+            return None
+        return _relative_url_directory(_plain_string(url_args[0]))
+
+    def _names_own_file(self, node: Node) -> bool:
+        return _is_import_meta(
+            node, cs.JS_IMPORT_META_FILE_PROPERTIES
+        ) or self._is_global(node, cs.JS_FILENAME_GLOBAL)
+
+    def _is_global(self, node: Node | None, name: str) -> bool:
+        # `name` itself, which no scope of the module binds or overwrites.
         return (
-            value is not None
-            and value.type == cs.TS_CALL_EXPRESSION
-            and self._is_factory(value.child_by_field_name(cs.FIELD_FUNCTION), 0)
+            node is not None
+            and node.type == cs.TS_IDENTIFIER
+            and safe_decode_text(node) == name
+            and self._module.binding_scope(node) is None
+            and (name, _key(self._root)) not in self._reassigned()
         )
 
     def _is_factory(self, node: Node | None, hops: int) -> bool:
@@ -1416,6 +1463,63 @@ def _written_names(target: Node | None) -> Iterator[str]:
 def _arguments(call: Node) -> list[Node]:
     arguments = call.child_by_field_name(cs.FIELD_ARGUMENTS)
     return arguments.named_children if arguments is not None else []
+
+
+def _call_arguments(call: Node) -> list[Node]:
+    # The arguments a call or `new` passes, without the comments between them.
+    return [arg for arg in _arguments(call) if arg.type != cs.TS_COMMENT]
+
+
+def _is_import_meta(node: Node, properties: frozenset[str]) -> bool:
+    # `import.meta.<property>` for one of `properties`; `new.target` is the
+    # other meta property.
+    if node.type != cs.TS_MEMBER_EXPRESSION:
+        return False
+    meta = node.child_by_field_name(cs.FIELD_OBJECT)
+    prop = node.child_by_field_name(cs.FIELD_PROPERTY)
+    return (
+        meta is not None
+        and meta.type == cs.TS_META_PROPERTY
+        and meta.child_count > 0
+        and meta.children[0].type == cs.TS_JS_IMPORT_META_KEYWORD
+        and prop is not None
+        and safe_decode_text(prop) in properties
+    )
+
+
+def _plain_string(node: Node) -> str | None:
+    # A string literal's text when it is one fragment: an escape would make
+    # the text the source spells differ from the value.
+    if node.type != cs.TS_STRING or len(node.named_children) != 1:
+        return None
+    fragment = node.named_children[0]
+    return (
+        safe_decode_text(fragment) if fragment.type == cs.TS_STRING_FRAGMENT else None
+    )
+
+
+def _relative_url_directory(url: str | None) -> str | None:
+    # The directory a relative file URL names, relative to the module's own
+    # and spelled the way a relative specifier is (`.`, `./sub`, `../plugins`):
+    # the URL itself when it ends in `/` or is `.` or `..`, else its parent,
+    # as `createRequire` reads it. None for an absolute URL, one with a
+    # scheme, query, fragment or escape, and an empty one.
+    if (
+        not url
+        or url.startswith(cs.SEPARATOR_SLASH)
+        or not cs.JS_URL_NON_PATH_CHARACTERS.isdisjoint(url)
+    ):
+        return None
+    names_directory = url.endswith(cs.SEPARATOR_SLASH) or posixpath.basename(url) in (
+        cs.PATH_CURRENT_DIR,
+        cs.PATH_PARENT_DIR,
+    )
+    directory = posixpath.normpath(url if names_directory else posixpath.dirname(url))
+    if directory in (cs.PATH_CURRENT_DIR, cs.PATH_PARENT_DIR) or directory.startswith(
+        f"{cs.PATH_PARENT_DIR}{cs.SEPARATOR_SLASH}"
+    ):
+        return directory
+    return f"{cs.PATH_CURRENT_DIR}{cs.SEPARATOR_SLASH}{directory}"
 
 
 def _final_value(publication: Node) -> Node | None:

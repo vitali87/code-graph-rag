@@ -82,6 +82,20 @@ JS_VOID_OPERATOR = "void"
 JS_CREATE_REQUIRE = "createRequire"
 JS_NODE_MODULE_SPECIFIERS = frozenset({"module", "node:module"})
 CAPTURE_JS_CALL_STATEMENT = "statement"
+# What a `createRequire` loader resolves from: the module's own file when it
+# is given `import.meta.url`, `import.meta.filename` or CommonJS's
+# `__filename`, or the file a `new URL("../plugins/entry.js",
+# import.meta.url)` names. `import.meta`'s first token tells it from the
+# other meta property, `new.target`.
+TS_JS_IMPORT_META_KEYWORD = "import"
+JS_IMPORT_META_URL_PROPERTIES = frozenset({"url"})
+JS_IMPORT_META_FILE_PROPERTIES = JS_IMPORT_META_URL_PROPERTIES | {"filename"}
+JS_FILENAME_GLOBAL = "__filename"
+JS_URL_CONSTRUCTOR = "URL"
+JS_URL_ARGUMENT_COUNT = 2
+# A `new URL()` input that is not a plain relative path: a scheme, a query, a
+# fragment, a percent escape, or a backslash the URL parser reads as `/`.
+JS_URL_NON_PATH_CHARACTERS = frozenset(":?#%\\")
 # JSX element nodes that carry a component name (javascript and tsx grammars
 # share these); the closing element repeats the name and must not double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"

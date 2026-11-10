@@ -379,6 +379,14 @@ def test_strict_code_keeps_a_block_s_function_to_the_block(
         "const require = make(import.meta.url);\n",
         'import { "createRequire" as make } from "node:module";\n'
         "const require = make(import.meta.url);\n",
+        'import { createRequire } from "node:module";\n'
+        "const require = createRequire(import.meta.filename);\n",
+        'const { createRequire } = require("node:module");\n'
+        "const require = createRequire(__filename);\n",
+        'import { createRequire } from "node:module";\n'
+        'const require = createRequire(new URL("./main.mjs", import.meta.url));\n',
+        'import { createRequire } from "node:module";\n'
+        'const require = createRequire(new URL(".", import.meta.url));\n',
     ],
     ids=[
         "create-require",
@@ -392,6 +400,10 @@ def test_strict_code_keeps_a_block_s_function_to_the_block(
         "a-parameter-reassigned-elsewhere",
         "quoted-destructure",
         "quoted-import",
+        "import-meta-filename",
+        "commonjs-filename",
+        "url-of-the-module-itself",
+        "url-of-the-module-s-directory",
     ],
 )
 def test_a_module_level_require_made_by_create_require_still_imports(
@@ -409,6 +421,98 @@ def test_a_module_level_require_made_by_create_require_still_imports(
     props = _imports(temp_repo, mock_ingestor).get(("main", "db"))
     assert props is not None, sorted(_imports(temp_repo, mock_ingestor))
     assert props.get(cs.KEY_LINE) == factory.count("\n") + 1, props
+
+
+def _write_plugin_layout(repo: Path, loader_source: str) -> None:
+    # `src/main.mjs` loads `./setup` through `loader_source`; a `setup.js`
+    # sits beside it, in `plugins/` and at the root.
+    for rel in ("src/setup.js", "plugins/setup.js", "setup.js"):
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text("module.exports = {};\n", encoding="utf-8")
+    (repo / "src/main.mjs").write_text(
+        f'import {{ createRequire }} from "node:module";\n{loader_source}'
+        'require("./setup");\n',
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize(
+    ("base", "target"),
+    [
+        ('new URL("../plugins/entry.js", import.meta.url)', "plugins.setup"),
+        ('new URL("../plugins/", import.meta.url)', "plugins.setup"),
+        ("new URL('../plugins/nested/../entry.js', import.meta.url)", "plugins.setup"),
+        ('new URL("../plugins", import.meta.url)', "setup"),
+    ],
+    ids=["a-file", "a-directory", "a-dotted-path", "a-file-named-like-the-directory"],
+)
+def test_a_create_require_loader_resolves_from_the_file_it_was_given(
+    temp_repo: Path, mock_ingestor: MagicMock, base: str, target: str
+) -> None:
+    # `createRequire` resolves from the file it is given, not the module
+    # that calls it: `require("./setup")` through a loader made for
+    # `../plugins/entry.js` loads `plugins/setup.js` (Greptile, PR #3284).
+    # `../plugins` without a slash names a file `plugins` at the root, so
+    # that loader resolves from the root.
+    _write_plugin_layout(temp_repo, f"const require = createRequire({base});\n")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    imports = _imports(temp_repo, mock_ingestor)
+    assert ("src.main", target) in imports, sorted(imports)
+    assert ("src.main", "src.setup") not in imports, sorted(imports)
+
+
+@pytest.mark.parametrize(
+    "loader_source",
+    [
+        "const somewhere = process.argv[2];\n"
+        "const require = createRequire(somewhere);\n",
+        'const require = createRequire("/opt/app/plugins/entry.js");\n',
+        'const require = createRequire(new URL("file:///opt/app/entry.js"));\n',
+        "const require = createRequire("
+        'new URL("https://example.com/entry.js", import.meta.url));\n',
+        'const require = createRequire(new URL("/plugins/entry.js", import.meta.url));\n',
+        'const require = createRequire(new URL("../plugins/entry.js", process.argv[2]));\n',
+        "const require = createRequire("
+        'new URL("../plugins/entry.js?v=1", import.meta.url));\n',
+        "class URL {\n  constructor(path, base) {}\n}\n"
+        'const require = createRequire(new URL("../plugins/entry.js", import.meta.url));\n',
+        "const __filename = process.argv[2];\n"
+        "const require = createRequire(__filename);\n",
+        "const require = createRequire();\n",
+    ],
+    ids=[
+        "a-computed-path",
+        "an-absolute-path",
+        "an-absolute-url",
+        "a-url-with-a-scheme",
+        "a-root-relative-url",
+        "a-url-against-a-computed-base",
+        "a-url-with-a-query",
+        "a-local-url-class",
+        "a-local-filename",
+        "no-argument",
+    ],
+)
+def test_a_create_require_loader_for_a_file_the_module_does_not_name_imports_nothing(
+    temp_repo: Path, mock_ingestor: MagicMock, loader_source: str
+) -> None:
+    # Negative: a loader whose base the module computes, or one outside the
+    # repository, resolves from a directory the graph cannot tell, so its
+    # `require("./setup")` records no edge rather than one to the caller's
+    # neighbour (Greptile, PR #3284).
+    _write_plugin_layout(temp_repo, loader_source)
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    imports = _imports(temp_repo, mock_ingestor)
+    assert (
+        not {
+            ("src.main", "src.setup"),
+            ("src.main", "plugins.setup"),
+            ("src.main", "setup"),
+        }
+        & imports.keys()
+    ), sorted(imports)
 
 
 def test_only_the_first_argument_names_the_module(

@@ -540,6 +540,16 @@ def _js_side_effect_call(statement: Node) -> tuple[str, Node | None] | None:
     return safe_decode_with_fallback(arg).strip("'\""), func if is_require else None
 
 
+def _rebased_js_specifier(specifier: str, base: str) -> str:
+    # A relative specifier a loader resolves from `base`, a directory
+    # relative to the importer's own, respelled relative to the importer:
+    # `require("./setup")` from a loader for `../plugins/entry.js` is
+    # `../plugins/./setup`. A package resolves the same from anywhere.
+    if base == cs.PATH_CURRENT_DIR or not specifier.startswith(cs.PATH_CURRENT_DIR):
+        return specifier
+    return f"{base}{cs.SEPARATOR_SLASH}{specifier}"
+
+
 def _js_unary_operator(expression: Node) -> str | None:
     operator = expression.child_by_field_name(cs.FIELD_OPERATOR)
     return safe_decode_text(operator) if operator is not None else None
@@ -5402,13 +5412,15 @@ class ImportProcessor:
                 continue
             specifier, require = call
             if require is not None:
-                # The global loader, or one Node's `createRequire` makes,
-                # imports; any other binding of `require` (a parameter, a
-                # local helper, a replaced loader) is whatever it holds
-                # (Greptile and CodeRabbit, PR #3284).
+                # The global loader, or one Node's `createRequire` makes for
+                # a file the module names, imports from where it resolves;
+                # any other binding of `require` (a parameter, a local
+                # helper, a replaced loader) is whatever it holds (Greptile
+                # and CodeRabbit, PR #3284).
                 bindings = bindings or LocalBindings(root_node)
-                if not bindings.is_loader(require):
+                if (base := bindings.loader_base(require)) is None:
                     continue
+                specifier = _rebased_js_specifier(specifier, base)
             target = self._resolve_js_import_target(
                 specifier, module_qn, require is not None
             )
