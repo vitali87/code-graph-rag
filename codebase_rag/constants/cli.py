@@ -38,6 +38,15 @@ class FileAction(StrEnum):
     EDIT = "edit"
 
 
+class PruneOutcome(StrEnum):
+    """What `cgr prune` did with one candidate (#2479)."""
+
+    PRUNED = "pruned"
+    FAILED = "failed"
+    # Its root came back, or the graph no longer names the root checked.
+    SKIPPED = "skipped"
+
+
 HELP_ARG = "help"
 
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
@@ -221,6 +230,24 @@ CLI_ERR_GRAPH_CONSTRAINTS_FAILED = (
     "marked as an unfinished sync until one finishes. Check the graph "
     "connection and retry."
 )
+# `cgr rename` and `cgr change-signature` plan their call sites from the graph,
+# so one a stopped run left partial hides callers the edit then never rewrites
+# (Greptile review, PR #2164).
+CLI_ERR_EDIT_GRAPH_PARTIAL = (
+    "Refusing to edit '{project}': a sync or re-ingest of its graph stopped "
+    "part-way, so call sites may be missing from it. Once no sync is running, "
+    "re-index it ('cgr start --update-graph', or update_repository on the MCP "
+    "server whose run stopped), then retry."
+)
+CLI_ERR_EDIT_MARKER_UNREADABLE = (
+    "Refusing to edit '{project}': could not read whether its last sync "
+    "finished ({error}). Check the graph connection and retry."
+)
+CLI_ERR_EDIT_MARKER_FAILED = (
+    "The graph for '{project}' may be partial after this edit, and the "
+    "incomplete-run marker that says so could not be written ({error}). Run "
+    "'cgr start --update-graph' before the next edit or MCP session."
+)
 CLI_STATUS_SYNC_INCOMPLETE = (
     "sync interrupted or in progress -- re-run if no sync is active"
 )
@@ -235,6 +262,7 @@ CLI_STATUS_SYNC_ROW = "  - {project}: {detail}"
 CLI_STATUS_SYNC_TIME = "last sync {time}"
 CLI_STATUS_SYNC_NOT_RECORDED = "last sync not recorded (the next sync records it)"
 CLI_STATUS_SYNC_MARKED = "({marker})"
+CLI_STATUS_SYNC_ROOT = "({root})"
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
 CLI_WARN_CLEAN_OTHER_PROJECTS = (
@@ -269,6 +297,55 @@ CLI_ERR_PROJECT_NAME_REQUIRED = (
     "Error: name the project with --project, or pass --repo-path."
 )
 CLI_ERR_DELETE_PROJECT_FAILED = "Failed to delete project '{project_name}': {error}"
+CLI_MSG_PRUNE_NO_CANDIDATES = "No indexed project has a missing root: nothing to prune."
+CLI_MSG_PRUNE_CANDIDATES = "Projects whose root no longer exists:"
+CLI_MSG_PRUNE_CANDIDATE = "  - {project_name}: {root}"
+CLI_MSG_PRUNE_DRY_RUN = (
+    "Dry run: {count} project(s) would be pruned. "
+    "Run cgr prune without --dry-run to remove them."
+)
+CLI_MSG_PRUNING_PROJECT = (
+    "Pruning project '{project_name}': root {root} no longer exists..."
+)
+CLI_MSG_PROJECT_PRUNED = "Pruned project '{project_name}'."
+CLI_MSG_PRUNE_DONE = "Pruned {count} project(s)."
+CLI_WARN_PRUNE_ROOT_BACK = (
+    "Root of '{project_name}' is reachable again -- skipping, it is no longer "
+    "a prune candidate."
+)
+CLI_WARN_PRUNE_ROOT_CHANGED = (
+    "'{project_name}' changed while it was being pruned -- its root moved or "
+    "a sync of it began writing -- skipping it."
+)
+# `cgr prune`'s own incomplete-run marker, put down only when it takes over
+# from exited runs' markers (#2479).
+PRUNE_RUN_ID_PREFIX = "prune-"
+CLI_WARN_PRUNE_RUN_WRITING = (
+    "A sync of '{project_name}' may still be writing the graph (its "
+    "incomplete-run marker is up) -- skipping it. Re-run prune once that sync "
+    "has finished."
+)
+CLI_WARN_PRUNE_VECTORS_KEPT = (
+    "Vectors of '{project_name}' could not be deleted and remain in the "
+    "vector store -- the graph purge stands; clear the store if the orphans "
+    "matter."
+)
+CLI_ERR_PRUNE_FAILED = "Failed to prune project '{project_name}': {error}"
+CLI_ERR_PRUNE_RUN_FAILED = "Failed to prune: {error}"
+CLI_ERR_PRUNE_VERIFY_FAILED = (
+    "Project '{project_name}' could not be verified as fully removed; it may "
+    "still be present in the graph. Inspect it with 'cgr delete-project -p "
+    "{project_name}' before retrying."
+)
+CLI_PROMPT_PRUNE_CONFIRM = (
+    "Prune {count} project(s) whose root no longer exists from the graph?"
+)
+CLI_ERR_PRUNE_NEEDS_CONFIRMATION = (
+    "Refusing to prune without a terminal to confirm on. Re-run with --yes "
+    "to prune without asking."
+)
+CLI_MSG_PRUNE_ABORTED = "Aborted: the graph was left untouched."
+CLI_STATUS_ROOT_MISSING = "(missing)"
 CLI_MSG_EXPORTING_TO = "Exporting project '{project}' to: {path}"
 CLI_MSG_GRAPH_UPDATED = "Graph update completed!"
 CLI_MSG_APP_TERMINATED = "\nApplication terminated by user."
@@ -543,7 +620,26 @@ CLI_MSG_AUTO_EXCLUDE = (
 UI_DIFF_FILE_HEADER = "[bold cyan]File: {path}[/bold cyan]"
 UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
 UI_SHELL_COMMAND_HEADER = "[bold cyan]Shell command:[/bold cyan]"
+UI_SENSITIVE_READ_HEADER = (
+    "[bold cyan]Read a file that may hold credentials "
+    "(its content goes to the model provider):[/bold cyan]"
+)
 UI_TOOL_APPROVAL = "[bold yellow]⚠️  Tool '{tool_name}' requires approval:[/bold yellow]"
+# The repository's .cgr.md, shown before it may reach the system prompt
+# (issue #3456). The titles are plain text: the path is not markup.
+UI_INSTRUCTIONS_NEW = "{path}: project instructions, not approved yet"
+UI_INSTRUCTIONS_CHANGED = "{path}: changed since you approved it"
+UI_INSTRUCTIONS_PROMPT = (
+    "This file comes from the repository and goes into the agent's system "
+    "prompt. Load it"
+)
+UI_INSTRUCTIONS_SKIPPED = (
+    "Continuing without the repository's .cgr.md. You will be asked again next session."
+)
+# Control characters (ANSI escapes, bidi overrides) are shown escaped, so
+# what the user approves is what the model reads.
+UI_VISIBLE_WHITESPACE = "\n\t"
+UI_ESCAPED_CHAR = "\\u{code:04x}"
 UI_FEEDBACK_PROMPT = "Feedback (why rejected, or press Enter to skip)"
 # `cgr start -a` has no operator to ask: what the model is told when it asks
 # for an edit or a non-read-only command without --no-confirm (issue #2657).
@@ -911,6 +1007,13 @@ RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "
     "so the rename would leave them under the old name"
 )
+# Go reads an identifier's first letter as its visibility (issue #2813).
+RENAME_GO_UNEXPORTS = (
+    "Refusing to rename {qn} to {name}: a Go name starting with a lower-case "
+    "letter is private to its package, and {count} site(s) are in another "
+    "package, where {name} would be undefined; keep the first letter upper-case "
+    "or move those uses into the package first"
+)
 RENAME_WRONG_ROOT = (
     "Project {project} was not indexed from this server's repository; "
     "rename it from the MCP server rooted at its source tree"
@@ -974,9 +1077,13 @@ RENAME_CONTRACT_UNMEASURED = (
 )
 # Change signature (issue #1533).
 SIGNATURE_PARAM_PROBE = "def _({text}): pass"
-SIGNATURE_NOT_PYTHON = (
-    "Cannot change the signature of {qn}: {path} is not Python, and only Python "
-    "definitions are supported for now (issue #{issue})"
+SIGNATURE_CLI_WRONG_ROOT = (
+    "Project {project} was not indexed from {root}; "
+    "pass the --repo-path it was indexed from"
+)
+SIGNATURE_UNSUPPORTED_LANGUAGE = (
+    "Cannot change the signature of {qn}: {path} is in a language it does not "
+    "support yet; Python and JavaScript are supported (issue #{issue})"
 )
 SIGNATURE_DEFINITION_UNREADABLE = (
     "Cannot change the signature of {qn}: its file {path} cannot be read "
@@ -993,6 +1100,10 @@ SIGNATURE_UNUSUAL_RECEIVER = (
     "it to self or cls first"
 )
 SIGNATURE_STAGE_FAILED = "Cannot stage the signature change: {error}"
+SIGNATURE_SOURCE_CHANGED = (
+    "Cannot stage the signature change: {files} changed on disk after the "
+    "change was planned; retry once the tree is settled"
+)
 SIGNATURE_BAD_PARAM = (
     "Not a parameter: `{text}` (expected `name`, `name: type`, `name = default` "
     "or `name: type = default`)"
@@ -1000,6 +1111,9 @@ SIGNATURE_BAD_PARAM = (
 SIGNATURE_DUPLICATE_NEW = "Parameter {name} is listed twice"
 SIGNATURE_REQUIRED_AFTER_DEFAULT = (
     "Parameter {name} has no default but comes after a defaulted parameter"
+)
+SIGNATURE_INVALID_HEADER = (
+    "The new parameter list of {qn} is not valid Python ({error}): `{text}`"
 )
 SIGNATURE_BODY_REBINDS = (
     "Cannot rename parameter {old} of {qn} to {new}: `{old}` is used inside a "
@@ -1018,6 +1132,10 @@ SIGNATURE_DROPPED_STILL_READ = (
 SIGNATURE_BODY_NAME_TAKEN = (
     "Cannot rename parameter {old} of {qn} to {new}: `{new}` is already used "
     "in its body"
+)
+SIGNATURE_NEW_NAME_TAKEN = (
+    "Cannot add parameter {name} to {qn}: `{name}` is already used in its "
+    "body, which would start reading the parameter instead"
 )
 SIGNATURE_HIERARCHY_MISMATCH = (
     "Cannot change the signature of {qn}: its override {member} declares "
@@ -1046,7 +1164,7 @@ SIGNATURE_SITE_NO_LOCATION = "site carries no location ({resolution})"
 SIGNATURE_SITE_GUESSED = (
     "site was resolved by {resolution}; pass allow_heuristic to rewrite it"
 )
-SIGNATURE_SITE_NOT_PYTHON = "{path} is not Python"
+SIGNATURE_SITE_OTHER_LANGUAGE = "{path} is not in the definition's language"
 SIGNATURE_SITE_UNREADABLE_FILE = "file cannot be read ({error})"
 SIGNATURE_SITE_NO_CALL = "no call found at the recorded position"
 SIGNATURE_SITE_UNREADABLE = "arguments cannot be read positionally: `{text}`"
@@ -1057,6 +1175,78 @@ SIGNATURE_SITE_TOO_MANY = (
 )
 SIGNATURE_SITE_NO_VALUE = "no value for `{name}`; map it or give it a default"
 SIGNATURE_SITE_OVERLAPS = "its arguments overlap another edit of this change"
+SIGNATURE_SITE_DROPS_EFFECT = (
+    "passes `{text}` for a dropped parameter, and leaving it out would skip "
+    "the code it runs"
+)
+SIGNATURE_SITE_EXPLICIT_RECEIVER = (
+    "reaches the method through its class and passes the receiver as an "
+    "argument (`{text}`); rewrite it by hand"
+)
+SIGNATURE_SITE_REORDERS_EFFECTS = (
+    "its arguments run code, and the new order would run them in another "
+    "order: `{text}`"
+)
+SIGNATURE_JS_HEADER_PROBE = "function _{params} {{}}"
+SIGNATURE_JS_CALL_PROBE = "_({args});"
+SIGNATURE_JS_BAD_LITERAL = (
+    "The value `{literal}` mapped to {name} is not one JavaScript expression; "
+    "written into a call it would not be exactly one argument"
+)
+SIGNATURE_JS_UNSUPPORTED_PARAMS = (
+    "Cannot change the signature of {qn}: `{text}` is not a plain parameter "
+    "(a name, with or without a default), and only those can be remapped"
+)
+SIGNATURE_JS_BAD_PARAM = (
+    "Not one plain parameter: `{text}` (expected `name` or `name = default`)"
+)
+SIGNATURE_JS_INVALID_HEADER = (
+    "The new parameter list of {qn} is not valid JavaScript: `{text}`"
+)
+SIGNATURE_JS_CONSTRUCTOR = (
+    "Cannot change the signature of {qn}: a constructor is called through `new` "
+    "and `super(...)`, which are not listed as its call sites"
+)
+SIGNATURE_JS_ACCESSOR = (
+    "Cannot change the signature of {qn}: a getter or setter is read or "
+    "assigned, never called with arguments"
+)
+SIGNATURE_JS_CALLS_EVAL = (
+    "Cannot add or drop a parameter of {qn}: its body uses `eval`, which can "
+    "read any parameter through a name written in a string"
+)
+SIGNATURE_JS_READS_ARGUMENTS = (
+    "Cannot change the signature of {qn}: its body reads `arguments`, which "
+    "sees every value by position"
+)
+SIGNATURE_JS_RENAME = (
+    "Cannot rename parameter {old} of {qn} to {new}: renaming is not supported "
+    "for JavaScript yet (issue #{issue})"
+)
+SIGNATURE_JS_DROPPED_STILL_READ = (
+    "Cannot drop parameter {name} of {qn}: its body still uses `{name}`, which "
+    "would then reach an outer name or throw ReferenceError; remove that use by "
+    "hand first"
+)
+SIGNATURE_JS_DUPLICATE_PARAM = (
+    "Cannot change the signature of {qn}: it declares parameter {name} more "
+    "than once, and the body sees only the last of them"
+)
+SIGNATURE_JS_REORDERS_DEFAULTS = (
+    "Cannot change the signature of {qn}: the defaults of {first} and {second} "
+    "would run in the other order when a call leaves both out, and one of them "
+    "runs code the other can observe"
+)
+SIGNATURE_JS_DEFAULT_READS_LATER = (
+    "Cannot change the signature of {qn}: the default of {name} reads `{later}`, "
+    "which is not bound yet when that default runs, so a call leaving {name} "
+    "out would throw ReferenceError"
+)
+SIGNATURE_JS_STRICT_DEFAULTS = (
+    "Cannot change the signature of {qn}: its body opens with a 'use strict' "
+    "directive, and JavaScript refuses that directive in a function with a "
+    "default parameter, so the new header would not load"
+)
 SIGNATURE_PLANNED = "{count} site(s) would be rewritten, {skipped} left unmapped"
 SIGNATURE_PARSE_FAILED = "Signature change rolled back: {files} would no longer parse"
 SIGNATURE_CONTRACT_FAILED = (
@@ -1089,6 +1279,85 @@ CONTEXT_WHY_ACCEPTS = "type it accepts"
 CONTEXT_WHY_TEST = "test reaching it at depth {depth} through {through}"
 CONTEXT_WHY_DOC = "documentation section whose file links to it"
 CONTEXT_UNRESOLVED = "Nothing in the graph matches {target}"
+CONTEXT_TARGET_OVER_BUDGET = (
+    "The first line of {target} does not fit in {budget} tokens, so the slice "
+    "is empty; raise --budget"
+)
+# move (issue #1534).
+MOVE_UNKNOWN = "No definition named {qn} in the graph"
+MOVE_METHOD = "{qn} is a method; move its class instead"
+MOVE_SAME_MODULE = "{path} already holds the definition"
+MOVE_NO_GRAMMAR = "No grammar for {path}; the definition cannot be moved"
+MOVE_NO_DEFINITION_TOKEN = "Could not locate the definition of {qn} in {path}"
+MOVE_CYCLE = "Refusing to move: it would create the import cycle {cycle}"
+MOVE_IMPORT_COLLISION = (
+    "{path} already binds {name}; the import the moved definition needs would rebind it"
+)
+MOVE_MAYBE_UNBOUND = (
+    "{names} may be unbound in {path}: it is set under a module-level if, "
+    "try or loop that does not bind it on every path, so the moved "
+    "definition cannot import it safely"
+)
+MOVE_SPLIT_GLOBAL = (
+    "{names} is a variable of {path} rebound through a global statement; "
+    "the destination would import it as a separate copy, so the moved "
+    "definition and {path} would stop seeing each other's updates"
+)
+MOVE_ASSIGNS_IMPORT = (
+    "{names} is a variable of {path} that the moved definition assigns; "
+    "imported into the destination it is a read-only binding, so the "
+    "assignment would throw"
+)
+MOVE_WILDCARD_IMPORTER = (
+    "{importers} import(s) everything from {path} with *, and would no "
+    "longer get {name} from it; pass keep_alias to keep {path} exporting it"
+)
+MOVE_STAR_PROVIDED = (
+    "{names} reaches {path} only through a star import from {modules}; "
+    "the destination would not bind it, so the moved definition would "
+    "raise NameError; import it by name in {path} first"
+)
+MOVE_FUTURE_ANNOTATIONS = (
+    "{enabled} enables from __future__ import annotations and {disabled} "
+    "does not; the move would change how the annotations in {changed} "
+    "evaluate"
+)
+MOVE_RELATIVE_IMPORT_ESCAPES = (
+    "{statement} in {qn} climbs above the top-level package of {path}, so "
+    "the move cannot respell it for the destination"
+)
+MOVE_READS_OWN_LOCATION = (
+    "{qn} reads {names}, the location of {path}; moved, it would resolve "
+    "against {new_path} instead, so the move would change which files it "
+    "reads"
+)
+MOVE_MODULE_NAME_TAKEN = (
+    "{path} calls {name} through its module and already uses the name "
+    "{local}, so the move cannot import the destination under it"
+)
+MOVE_PLANNED = "{importers} importer(s) would be rewritten, {unchanged} left unchanged"
+MOVE_PARSE_FAILED = "Move rolled back: {files} would no longer parse"
+MOVE_SOURCE_CHANGED = (
+    "Cannot stage the move: {files} changed on disk after the move was "
+    "planned; retry once the tree is settled"
+)
+MOVE_CONTRACT_FAILED = "Move rolled back, postcondition failed: {reasons}"
+MOVE_CONTRACT_UNMEASURED = (
+    "Move applied, but its postcondition could not be measured: {error}"
+)
+MOVE_ROLLBACK_UNMEASURED = (
+    "Move rolled back after its postcondition failed ({reasons}), but the "
+    "graph could not be re-ingested afterwards ({error}); rebuild the graph "
+    "before the next graph-backed operation"
+)
+MOVE_WRONG_ROOT = (
+    "Project {project} was not indexed from this server's repository; "
+    "move from the MCP server rooted at its source tree"
+)
+MOVE_CLI_WRONG_ROOT = (
+    "Project {project} was not indexed from {root}; "
+    "pass the --repo-path it was indexed from"
+)
 # Postcondition contract (issue #1531).
 CONTRACT_OP_RENAME = "rename"
 CONTRACT_OP_CHANGE_SIGNATURE = "change_signature"

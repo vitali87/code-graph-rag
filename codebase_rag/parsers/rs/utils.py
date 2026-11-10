@@ -232,6 +232,12 @@ def _impl_type_node_name(type_node: Node) -> tuple[bool, str | None]:
     # (decided, name) for one impl target/trait type node; not decided means
     # the node carries no name here and the caller keeps scanning.
     match type_node.type:
+        case cs.TS_RS_REFERENCE_TYPE | cs.TS_RS_POINTER_TYPE:
+            # `impl Serializer for &'a mut Ser` is on `Ser`: the reference only
+            # changes how `self` is held. Skipping it dropped every method of
+            # serde's Serializer/Deserializer impls (issue #3175).
+            inner = type_node.child_by_field_name(cs.FIELD_TYPE)
+            return _impl_type_node_name(inner) if inner is not None else (False, None)
         case cs.TS_GENERIC_TYPE:
             ident = next(
                 (c for c in type_node.children if c.type == cs.TS_TYPE_IDENTIFIER),
@@ -338,15 +344,17 @@ def extract_impl_target(impl_node: Node) -> str | None:
 
 
 def extract_impl_target_path(impl_node: Node) -> str | None:
-    """The impl block's self type as written, generics and references
-    peeled: `std::string::String`, `crate::shadow::String`, `String`, `u8`.
-    Its first segment is what decides which type the block is on."""
+    """The impl block's self type as written, generics, references and raw
+    pointers peeled: `std::string::String`, `crate::shadow::String`,
+    `String`, `u8`. Its first segment is what decides which type the block
+    is on."""
     if impl_node.type != cs.TS_IMPL_ITEM:
         return None
     type_node = impl_node.child_by_field_name(cs.FIELD_TYPE)
     while type_node is not None and type_node.type in (
         cs.TS_GENERIC_TYPE,
         cs.TS_RS_REFERENCE_TYPE,
+        cs.TS_RS_POINTER_TYPE,
     ):
         type_node = type_node.child_by_field_name(cs.FIELD_TYPE)
     if type_node is None or type_node.type not in (

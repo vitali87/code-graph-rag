@@ -1,16 +1,30 @@
-FROM ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff AS uv
+FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
 
-FROM python:3.14-slim@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8 AS builder
+# The crate the project depends on, cgr-graph-rs, is built from rust/ during
+# uv sync. Debian's cargo trails its locked dependencies (trixie ships rustc
+# 1.85; tree-sitter-language needs 1.90), so the toolchain comes from here,
+# no older than RUST_TOOLCHAIN in .clusterfuzzlite/Dockerfile, which the fuzz
+# build proves the crate with on every pull request.
+FROM rust:1.99.1-slim-trixie@sha256:b8e062b1c3a80183df83d9ba187cadd2b5ab84bc78d453dbfeb2fccd5f982247 AS rust
+
+FROM python:3.15-slim@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913 AS builder
 
 COPY --from=uv /uv /uvx /bin/
+COPY --chmod=755 scripts/distrust_ca_roots.sh /usr/local/sbin/
 
 # Naming ca-certificates upgrades it to the archive's current release: the
 # pinned base is a snapshot whose CA store can predate a root's removal, as
-# with emSign ECC Root CA - G3 in October 2026. cargo fetches through it.
+# with emSign ECC Root CA - G3 in October 2026. The eMudhra roots the archive
+# still ships are then deselected. cargo fetches through this store.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ca-certificates cmake build-essential git libssl-dev zlib1g-dev libzstd-dev cargo && \
-    rm -rf /var/lib/apt/lists/*
+        ca-certificates cmake build-essential git libssl-dev zlib1g-dev libzstd-dev && \
+    rm -rf /var/lib/apt/lists/* && \
+    distrust_ca_roots.sh
+
+COPY --from=rust /usr/local/rustup /usr/local/rustup
+COPY --from=rust /usr/local/cargo /usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/cargo/bin:$PATH
 
 WORKDIR /app
 
@@ -41,13 +55,16 @@ RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-inst
 COPY . .
 RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-binary-package pymgclient
 
-FROM python:3.14-slim@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8
+FROM python:3.15-slim@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913
 
-# ca-certificates as in the builder: the LLM clients verify TLS against this
-# store through httpx2's truststore context, not certifi.
+COPY --chmod=755 scripts/distrust_ca_roots.sh /usr/local/sbin/
+
+# The CA store as in the builder: the LLM clients verify TLS against it
+# through httpx2's truststore context, not certifi.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates ripgrep libssl3 zlib1g libzstd1 && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    distrust_ca_roots.sh
 
 RUN useradd --create-home appuser
 USER appuser

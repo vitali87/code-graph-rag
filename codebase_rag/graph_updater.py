@@ -29,9 +29,16 @@ from .ast_cache import BoundedASTCache
 from .capture import CaptureSelection, default_capture
 from .checkout_state import prepare_state_dir, state_dir
 from .config import settings
+from .dispatch_dependents import (
+    ScannedFile,
+    base_change_component_qns,
+    build_class_changes,
+    dispatch_target_prefixes,
+    scan_python_classes,
+)
 from .function_registry import FunctionRegistryTrie
 from .gloss_anchor import ParsedSource, parse_source
-from .gloss_repair import repair_unanchored
+from .gloss_repair import repair_mentions, repair_unanchored
 from .graph_query import _longer_project_prefixes
 from .interface_skip import (
     callers_to_reparse,
@@ -108,8 +115,10 @@ from .parsers.java_lombok import (
     current_lombok_identity,
     overlay_identity,
 )
+from .parsers.js_ts.reexports import js_ts_module_qn
 from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.parameter_nodes import PendingParameterType
+from .parsers.py.ast_analyzer import clear_scope_facts
 from .parsers.rs import utils as rs_utils
 from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import mark_js_ts_module_private, sorted_captures
@@ -1175,6 +1184,25 @@ def _file_module_holding(name: str, module_paths: Mapping[str, Path]) -> str | N
     return holder
 
 
+def _js_entry_modules(
+    targets: Iterable[str], module_paths: Mapping[str, Path]
+) -> list[str]:
+    """The JS/TS modules import `targets` name, a directory's `index` included.
+
+    `require("./worker")` names `worker` and `import run from "./worker"`
+    names `worker.default`, while the module is `worker/index.ts`, which no
+    prefix of either spells. A `worker/default.ts` beside it is a module
+    under that second qn, so the index is a target of its own rather than a
+    fallback for when nothing holds the name.
+    """
+    return [
+        module_qn
+        for target in targets
+        for name in (target, target.rpartition(cs.SEPARATOR_DOT)[0])
+        if (module_qn := js_ts_module_qn(name, module_paths)) is not None
+    ]
+
+
 def _project_root_for_single_file(target: Path) -> Path:
     """The project root owning `target`, or its parent when none is found.
 
@@ -1640,6 +1668,31 @@ def _advance_past_settled(progress: Progress, task: TaskID, scan: _FileScan) -> 
         progress.advance(task, scan.skipped_count + scan.unreadable_count)
 
 
+def _without_stale_targets(
+    fact: PendingTypeFact, stale_modules: set[str]
+) -> PendingTypeFact:
+    # A target defined in a file this re-parse deletes loses its inbound
+    # edges with it, so the name that reached it must be resolved again
+    # rather than counted as bound (issue #3007 meets #1527).
+    if not fact.resolved_returns and not fact.resolved_accepts:
+        return fact
+
+    def kept(targets: frozenset[str]) -> frozenset[str]:
+        return frozenset(
+            target
+            for target in targets
+            if not any(
+                target.startswith(f"{module}{cs.SEPARATOR_DOT}")
+                for module in stale_modules
+            )
+        )
+
+    return fact._replace(
+        resolved_returns=kept(fact.resolved_returns),
+        resolved_accepts=kept(fact.resolved_accepts),
+    )
+
+
 def _package_modules(module_files: Mapping[str, Path]) -> frozenset[str]:
     # The module qns that are a package's `__init__.py`: a relative import
     # there resolves against the package itself (issue #3192).
@@ -1694,6 +1747,9 @@ class GraphUpdater:
         # path -> module qualified name as the graph records it, read once
         # per rehydration for the requeues (issue #1935).
         self._module_qns_by_path: dict[str, str] | None = None
+        # qn -> relationship type -> the types its RETURNS / ACCEPTS reach,
+        # read once per incremental rehydration (issue #3007).
+        self._resolved_type_targets: dict[str, dict[str, set[str]]] = {}
         if repo_path.is_file():
             resolved = repo_path.resolve()
             self._single_file = resolved
@@ -1775,6 +1831,10 @@ class GraphUpdater:
         # not follow their qualified names onto a same-stem survivor.
         self._captured_trace_edges: list[CapturedTraceEdge] = []
         self._trace_gone_paths: frozenset[str] = frozenset()
+        # The edges into re-indexed files that `_process_files` captured, held
+        # for `run()` to restore once the deferred stages have registered
+        # every re-parsed definition (issue #3270).
+        self._pending_inbound_edges: list[ResultRow] = []
         # The file keys the current `reingest` call will delete and re-parse
         # (changed, deleted, dependents, same-stem survivors), published right
         # before `before_write` runs so a caller can capture exactly that set
@@ -2601,7 +2661,9 @@ class GraphUpdater:
         self._ungroup_rehydrated_non_partials()
         # Return/parameter annotations resolve against the complete registry
         # (issue #1527), so a type defined in a later file still gets its edge.
-        typed = self.factory.definition_processor.emit_type_edges()
+        typed = self.factory.definition_processor.emit_type_edges(
+            self._restore_requeued_imports
+        )
         if typed:
             logger.info(ls.TYPE_EDGES_EMITTED, count=typed)
         return known_module_paths
@@ -2659,6 +2721,7 @@ class GraphUpdater:
                 *mapping.get(scope, {}).values(),
                 *import_processor.rust_mod_scope_targets(scope),
             ]
+            targets += _js_entry_modules(targets, module_paths)
             for target in targets:
                 holder = _file_module_holding(target, module_paths)
                 if holder is None or holder in walked:
@@ -2679,6 +2742,20 @@ class GraphUpdater:
                     )
                 pending.append(holder)
         return restored
+
+    def _restore_requeued_imports(self, module_qn: str) -> None:
+        """Parse the imports of an unchanged module for its requeued
+        annotations, which resolve through them as a fresh index's do: no
+        re-parsed file need reach it (#3007 review)."""
+        module_paths = self.factory.definition_processor.module_qn_to_file_path
+        path = module_paths.get(module_qn)
+        if path is None or not self._restore_module_imports(module_qn, path):
+            return
+        import_processor = self.factory.import_processor
+        # Re-pointed as the closure walk re-points what it restores (#2586).
+        import_processor.point_module_imports_at_own_language_siblings(
+            module_qn, module_paths, import_processor.stem_sibling_modules(module_paths)
+        )
 
     def _restore_module_imports(self, module_qn: str, path: Path) -> bool:
         """Parse one unchanged module's imports; False when Pass 2 would not."""
@@ -2711,6 +2788,13 @@ class GraphUpdater:
             self.queries,
             self.factory.definition_processor.function_locations,
         )
+        if language in cs.JS_TS_LANGUAGES:
+            # A default import resolves through its module's recorded
+            # `export default`, which only Pass 2 records; an unchanged
+            # exporter has its definitions read back from the graph by now.
+            self.factory.definition_processor.record_esm_default_export(
+                entry[0], module_qn
+            )
         return True
 
     @property
@@ -2917,53 +3001,62 @@ class GraphUpdater:
         self._run_go_frontend()
 
         logger.info(ls.PASS_2_FILES)
-        self._process_files(force=force)
+        try:
+            self._process_files(force=force)
+            # Before the partial join on an incremental run: rebuild the type
+            # locations for unchanged .cs files so a partial part living in one
+            # still joins its group (issue #1229). Pass-2 entries for re-parsed
+            # files are already present and take precedence. A cacheless full build
+            # (force=False but _is_full_build) already re-parsed every file, so the
+            # project-wide query would be wasted work -- skip it.
+            if not force and not self._is_full_build:
+                self._rehydrate_csharp_type_locations()
+                # Same posture for the col-keyed indexes (issue #1240): the Go
+                # IMPLEMENTS and semantic-call joins below resolve against
+                # locations Pass 2 filled only for re-parsed files.
+                self._rehydrate_go_type_locations()
+                self._rehydrate_function_locations()
 
-        # Before the partial join on an incremental run: rebuild the type
-        # locations for unchanged .cs files so a partial part living in one
-        # still joins its group (issue #1229). Pass-2 entries for re-parsed
-        # files are already present and take precedence. A cacheless full build
-        # (force=False but _is_full_build) already re-parsed every file, so the
-        # project-wide query would be wasted work -- skip it.
-        if not force and not self._is_full_build:
-            self._rehydrate_csharp_type_locations()
-            # Same posture for the col-keyed indexes (issue #1240): the Go
-            # IMPLEMENTS and semantic-call joins below resolve against
-            # locations Pass 2 filled only for re-parsed files.
-            self._rehydrate_go_type_locations()
-            self._rehydrate_function_locations()
+            # Partial groups join AFTER Pass 2: the Roslyn declaration
+            # locations resolve against the Class qns Pass 2 just registered.
+            self._join_csharp_partials()
 
-        # Partial groups join AFTER Pass 2: the Roslyn declaration
-        # locations resolve against the Class qns Pass 2 just registered.
-        self._join_csharp_partials()
+            # Go IMPLEMENTS pairs join AFTER Pass 2 for the same reason: both ends
+            # resolve against the go_type_locations index Pass 2 just registered.
+            self._join_go_implements()
 
-        # Go IMPLEMENTS pairs join AFTER Pass 2 for the same reason: both ends
-        # resolve against the go_type_locations index Pass 2 just registered.
-        self._join_go_implements()
+            # The Jedi Python frontend runs AFTER Pass 2 (its facts join Pass 3
+            # calls against the function_locations Pass 2 just filled) and needs
+            # the parsed-file list, which Pass 2 produced (issue #1183).
+            self._run_python_frontend()
 
-        # The Jedi Python frontend runs AFTER Pass 2 (its facts join Pass 3
-        # calls against the function_locations Pass 2 just filled) and needs
-        # the parsed-file list, which Pass 2 produced (issue #1183).
-        self._run_python_frontend()
+            # Same posture for Java (issue #1181): the facts resolve against the
+            # method name-token locations Pass 2 registered.
+            self._run_java_frontend()
 
-        # Same posture for Java (issue #1181): the facts resolve against the
-        # method name-token locations Pass 2 registered.
-        self._run_java_frontend()
+            # Before known_module_paths is built from the map: the seed pass only
+            # ever adds, so a reused updater carries qns whose Module another
+            # writer has since deleted.
+            #
+            # A forced run prunes too. It re-parses every file but does NOT clear
+            # the map, so on a reused updater a qn whose Module and file are both
+            # gone survives a full rebuild -- measured, and the reason this is not
+            # gated on `not force`. Nothing this run parsed can be dropped
+            # (`_parsed_files` exempts it) and an unreadable or empty read is
+            # already a no-op, so the first full build of an empty graph is
+            # unaffected.
+            self._prune_stale_seeded_module_qns()
 
-        # Before known_module_paths is built from the map: the seed pass only
-        # ever adds, so a reused updater carries qns whose Module another
-        # writer has since deleted.
-        #
-        # A forced run prunes too. It re-parses every file but does NOT clear
-        # the map, so on a reused updater a qn whose Module and file are both
-        # gone survives a full rebuild -- measured, and the reason this is not
-        # gated on `not force`. Nothing this run parsed can be dropped
-        # (`_parsed_files` exempts it) and an unreadable or empty read is
-        # already a no-op, so the first full build of an empty graph is
-        # unaffected.
-        self._prune_stale_seeded_module_qns()
-
-        known_module_paths = self._resolve_deferred_definitions(rehydrate=not force)
+            known_module_paths = self._resolve_deferred_definitions(rehydrate=not force)
+        finally:
+            # After the deferred stages, as `_reingest_resolve` does, so an
+            # edge into a re-parsed Go receiver method finds it registered
+            # (#3270). In `finally`, with Pass 2 inside the `try`: a run
+            # stopped by a failing file, by the cache stash that closes Pass 2
+            # or by a later stage cannot capture these edges again, since
+            # their targets' subtrees are already gone, so it restores them
+            # on the way out, Go receiver methods included.
+            self._restore_pending_inbound_edges()
 
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
         # The resolver memoises name -> qn answers and module languages
@@ -3087,6 +3180,8 @@ class GraphUpdater:
             py_engine._method_return_type_cache.clear()
             py_engine._self_assignment_cache.clear()
             py_engine._class_member_type_cache.clear()
+            py_engine._definition_indexes.clear()
+        clear_scope_facts()
 
     def _finish_in_sync_run(self) -> None:
         logger.info(ls.GRAPH_ALREADY_IN_SYNC)
@@ -3807,8 +3902,38 @@ class GraphUpdater:
                 if isinstance(param_types, list)
                 else None,
                 path,
+                *self._resolved_targets_of(qn),
             )
         )
+
+    def _resolved_targets_of(self, qn: str) -> tuple[frozenset[str], frozenset[str]]:
+        # (RETURNS targets, ACCEPTS targets), as PendingTypeFact takes them.
+        by_rel = self._resolved_type_targets.get(qn, {})
+        return (
+            frozenset(by_rel.get(cs.RelationshipType.RETURNS.value, ())),
+            frozenset(by_rel.get(cs.RelationshipType.ACCEPTS.value, ())),
+        )
+
+    def _read_resolved_type_targets(self, project_params: PropertyParams) -> None:
+        # What each unchanged definition's annotations already resolved to,
+        # when its file was last parsed with its imports. Requeuing re-resolves
+        # without them, so a bound name is left alone (issue #3007).
+        self._resolved_type_targets = {}
+        if self._is_full_build or not isinstance(self.ingestor, QueryProtocol):
+            return
+        rows = self._owned_rows(
+            self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_TYPE_EDGE_TARGETS, project_params
+            ),
+            cs.KEY_QUALIFIED_NAME,
+        )
+        for row in rows:
+            qn, target = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_TARGET_QN)
+            rel = row.get(cs.KEY_REL_TYPE)
+            if isinstance(qn, str) and isinstance(target, str) and isinstance(rel, str):
+                self._resolved_type_targets.setdefault(qn, {}).setdefault(
+                    rel, set()
+                ).add(target)
 
     def _requeue_member_types[P: (PendingParameterType, PendingFieldType)](
         self,
@@ -3946,6 +4071,7 @@ class GraphUpdater:
                 self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params),
                 cs.KEY_QUALIFIED_NAME,
             )
+            self._read_resolved_type_targets(project_params)
         except Exception:
             # Rehydration completes cross-file resolution for files this run
             # did not re-parse: a FULL build parsed them all, so it degrades
@@ -3964,6 +4090,7 @@ class GraphUpdater:
         # After the loop: whether a method's owner is a trait needs the whole
         # registry, and its rows arrive in no particular order.
         self._rehydrate_rust_return_types(restored)
+        self._rehydrate_go_return_types(restored)
         self._rehydrate_go_method_sets(restored)
         # Module qns from unchanged files: deferred import verification and
         # C++20 module-impl resolution must count them as real targets, or
@@ -3980,7 +4107,14 @@ class GraphUpdater:
             return
         self._rehydrate_module_qns(module_rows)
         self._rehydrate_class_inheritance_from_graph()
-        self._rehydrate_interface_implementers(project_params)
+        # run() holds the inbound edges for the restore after the deferred
+        # stages (#3270), so an unchanged impl of a re-parsed trait that only
+        # its OVERRIDES edge records (`impl crate::Trait for u64`) is not in
+        # the graph yet: the held rows count as read, as reingest's captured
+        # ones do.
+        self._rehydrate_interface_implementers(
+            project_params, carried=self._pending_inbound_edges
+        )
         dp = self.factory.definition_processor
         self._requeue_member_types(
             cs.CYPHER_PROJECT_PARAMETER_TYPES,
@@ -4118,6 +4252,11 @@ class GraphUpdater:
                 self.factory.definition_processor.cpp_module_interfaces.add(qn)
             else:
                 self._rehydrated_module_qns.add(qn)
+            # An unchanged Go file's package clause, which same-package
+            # visibility compares a re-parsed requester against (#3272).
+            # setdefault: a file this run re-parsed recorded its own.
+            if isinstance(package := row.get(cs.KEY_GO_PACKAGE), str) and package:
+                dp.go_package_names.setdefault(qn, package)
             # An unchanged PHP file's declared namespace, which a
             # `use function App\\Util\\slug` is matched against (issue #3277).
             if (
@@ -4229,6 +4368,37 @@ class GraphUpdater:
         if isinstance(path := row.get(cs.KEY_PATH), str):
             self._rehydrate_definition_path(node_type, qn, path, row)
         return True
+
+    def _rehydrate_go_return_types(self, rows: list[ResultRow]) -> None:
+        # The result type names ingest records only while parsing the
+        # definition's own file: a re-parsed Go caller of an unchanged
+        # `NewBox` typed `b, _ := NewBox(2)` from nothing, and `b.Size()`
+        # bound by name to another type's `Size` (issue #3272). Only rows
+        # this run did not parse reach here (the caller skips registered
+        # qns), so a re-parsed definition keeps what it recorded itself.
+        type_inference = self.factory.type_inference
+        methods: dict[str, str] = {}
+        for row in sorted(rows, key=_registration_order):
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            if not isinstance(qn, str):
+                continue
+            first = row.get(cs.KEY_FIRST_RETURN_TYPE)
+            if isinstance(first, str) and first:
+                type_inference.go_function_return_types[qn] = first
+            chain = row.get(cs.KEY_CHAIN_RETURN_TYPE)
+            if not isinstance(chain, str) or not chain:
+                continue
+            if row.get(cs.KEY_LABEL) != cs.NodeLabel.METHOD.value:
+                type_inference.method_return_types[qn] = chain
+                continue
+            # Parsing keys a method's result by its natural qn, which each
+            # build file declaring it again (`Self`, `Self@5`) shares, and
+            # writes each over the last in registration order: replayed in
+            # that order, the last one stands, as a clean index has it.
+            methods[_natural_qn(qn)] = chain
+        for natural, chain in methods.items():
+            # A re-parsed build file's own record is current; keep it.
+            type_inference.method_return_types.setdefault(natural, chain)
 
     def _rehydrate_go_method_sets(self, rows: list[ResultRow]) -> None:
         # An unchanged Go file's methods and interfaces still count toward
@@ -5375,6 +5545,246 @@ class GraphUpdater:
                 )
         return known
 
+    def _dispatch_dependent_keys(
+        self,
+        added: list[tuple[str, bytes]],
+        modified: list[tuple[str, bytes]],
+        deleted: Collection[str] = (),
+    ) -> list[str]:
+        """Files whose CALLS edges a dispatch change rebinds (issue #3338).
+
+        A new subclass override or Protocol conformer changes the
+        dispatch target set of unchanged callers, with no edge pointing
+        at the new file and no unresolved reference for the waiter
+        lookups to follow. The callers are found from the OLD graph,
+        before the changed files' subtrees are deleted: the hierarchy
+        and method sets the new bytes are judged against, and the CALLS
+        edges into the targets the dispatch set gained or lost. The
+        dependency set is the union of the old and the new state, so a
+        removal prunes its callers' edges instead of orphaning them.
+
+        Callers enter through the `waiters` sets of both incremental
+        paths, which re-parse unconditionally: the interface-fingerprint
+        skip (issue #2531) can never retain a dispatch caller's edges,
+        because the skip is consulted only for dependents of a file
+        whose interface held, and a dispatch dependent is queued for
+        what a DIFFERENT file gained or lost. No fingerprint is read
+        or written here, and unchanged files keep theirs. A failed read
+        degrades to the previous behaviour, never worse.
+        """
+        entries = [
+            (key, data) for key, data in (*added, *modified) if key.endswith(cs.EXT_PY)
+        ]
+        deleted_keys = [key for key in deleted if key.endswith(cs.EXT_PY)]
+        changed_keys = [key for key, _data in entries] + deleted_keys
+        if not changed_keys or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        scanned_files = [
+            ScannedFile(
+                key,
+                base_module_qn(Path(key), self.project_name),
+                PurePosixPath(key).name in cs.PY_PACKAGE_INIT_FILES,
+                classes,
+                imports,
+            )
+            for key, data in entries
+            for classes, imports in [scan_python_classes(data)]
+        ]
+        prefix = self.project_name + cs.SEPARATOR_DOT
+        longer_project_prefixes = [
+            name for name in self._registered_project_names() if name.startswith(prefix)
+        ]
+        try:
+            old_rows = self._graph_rows(
+                cq.CYPHER_DELTA_DEFINITIONS,
+                {
+                    cs.KEY_PROJECT_PREFIX: prefix,
+                    cs.KEY_LONGER_PROJECT_PREFIXES: longer_project_prefixes,
+                    cs.CYPHER_PARAM_PATHS: changed_keys,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch definitions")
+            return []
+        old_classes: dict[str, str] = {}
+        old_methods: dict[str, set[str]] = {}
+        for row in old_rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            path = row.get(cs.KEY_PATH)
+            label = row.get(cs.KEY_LABEL)
+            if not isinstance(qn, str) or not isinstance(path, str):
+                continue
+            if label in (cs.NodeLabel.CLASS.value, cs.NodeLabel.INTERFACE.value):
+                old_classes[qn] = path
+            elif label == cs.NodeLabel.METHOD.value:
+                natural = qn_markers.natural_qn(qn)
+                parent, sep, leaf = natural.rpartition(cs.SEPARATOR_DOT)
+                if sep:
+                    old_methods.setdefault(parent, set()).add(leaf)
+        if not scanned_files and not old_classes:
+            return []
+        try:
+            hierarchy_rows = self._owned_rows(
+                self._graph_rows(
+                    cs.CYPHER_ALL_INHERITS, {cs.KEY_PROJECT_PREFIX: prefix}
+                ),
+                cs.KEY_CHILD_QN,
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch hierarchy")
+            return []
+        hierarchy: dict[str, list[str]] = {}
+        for row in hierarchy_rows:
+            child = row.get(cs.KEY_CHILD_QN)
+            base = row.get(cs.KEY_BASE_QN)
+            if isinstance(child, str) and isinstance(base, str):
+                hierarchy.setdefault(child, []).append(base)
+        # Every class and interface node the graph holds, so base
+        # resolution can tell a real base in an unchanged file from an
+        # import-resolved guess for an external base. A failed read
+        # falls back to the classes this run and the hierarchy name:
+        # the phantom guess is still dropped, and only a base in an
+        # unchanged file could then be missed for this run.
+        graph_class_qns: set[str] = set()
+        try:
+            class_qn_rows = self._owned_rows(
+                self._graph_rows(
+                    cs.CYPHER_DISPATCH_CLASS_QNS,
+                    {cs.KEY_PROJECT_PREFIX: prefix},
+                ),
+                cs.KEY_QUALIFIED_NAME,
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch class names")
+        else:
+            for row in class_qn_rows:
+                if isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str):
+                    graph_class_qns.add(qn)
+        changes = build_class_changes(
+            scanned_files,
+            old_classes,
+            old_methods,
+            hierarchy,
+            self.project_name,
+            changed_keys,
+            graph_class_qns,
+        )
+        if not changes:
+            return []
+        try:
+            protocol_rows = self._graph_rows(
+                cs.CYPHER_DISPATCH_PROTOCOL_METHODS,
+                {cs.KEY_PROJECT_PREFIX: prefix},
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch protocols")
+            return []
+        protocols: dict[str, set[str]] = {}
+        for row in protocol_rows:
+            class_qn = row.get(cs.KEY_CLASS_QN)
+            method_qn = row.get(cs.KEY_METHOD_QN)
+            if isinstance(class_qn, str) and isinstance(method_qn, str):
+                protocols.setdefault(class_qn, set()).add(
+                    qn_markers.strip_dup_marker(
+                        method_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                    )
+                )
+        method_names = {
+            name
+            for change in changes
+            for name in (*change.old_methods, *change.new_methods)
+        } | {name for names in protocols.values() for name in names}
+        try:
+            method_rows = self._graph_rows(
+                cs.CYPHER_DISPATCH_CLASS_METHODS,
+                {
+                    cs.KEY_PROJECT_PREFIX: prefix,
+                    cs.CYPHER_PARAM_NAMES: sorted(method_names),
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch methods")
+            return []
+        class_methods: dict[str, set[str]] = {}
+        for row in method_rows:
+            class_qn = row.get(cs.KEY_CLASS_QN)
+            method_qn = row.get(cs.KEY_METHOD_QN)
+            if isinstance(class_qn, str) and isinstance(method_qn, str):
+                class_methods.setdefault(class_qn, set()).add(
+                    qn_markers.strip_dup_marker(
+                        method_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                    )
+                )
+        # A class that changed bases can detach a descendant override
+        # whose name neither the changed nor the Protocol names can
+        # ask the filtered query for. Read the whole method sets of
+        # the affected hierarchy components, so the target computation
+        # below can name that override.
+        component_qns = base_change_component_qns(
+            changes, hierarchy, self.project_name, tuple(longer_project_prefixes)
+        )
+        if component_qns:
+            try:
+                component_rows = self._graph_rows(
+                    cs.CYPHER_DISPATCH_METHODS_FOR_CLASSES,
+                    {cs.KEY_QNS: sorted(component_qns)},
+                )
+            except Exception:
+                logger.warning(
+                    ls.PRUNE_QUERY_FAILED, label="dispatch component methods"
+                )
+            else:
+                for row in component_rows:
+                    class_qn = row.get(cs.KEY_CLASS_QN)
+                    method_qn = row.get(cs.KEY_METHOD_QN)
+                    if isinstance(class_qn, str) and isinstance(method_qn, str):
+                        class_methods.setdefault(class_qn, set()).add(
+                            qn_markers.strip_dup_marker(
+                                method_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                            )
+                        )
+        prefixes, base_qns = dispatch_target_prefixes(
+            changes,
+            hierarchy,
+            class_methods,
+            protocols,
+            self.project_name,
+            tuple(longer_project_prefixes),
+        )
+        if not prefixes and not base_qns:
+            return []
+        try:
+            caller_rows = (
+                self._graph_rows(
+                    cs.CYPHER_DISPATCH_CALLER_PATHS,
+                    {
+                        cs.CYPHER_PARAM_PATHS: changed_keys,
+                        cs.KEY_PROJECT_PREFIX: prefix,
+                        cs.CYPHER_PARAM_TARGET_PREFIXES: sorted(prefixes),
+                    },
+                )
+                if prefixes
+                else []
+            )
+            base_rows = (
+                self._graph_rows(
+                    cs.CYPHER_DISPATCH_BASE_PATHS,
+                    {cs.KEY_QNS: sorted(base_qns)},
+                )
+                if base_qns
+                else []
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch callers")
+            return []
+        return sorted(
+            {
+                path
+                for row in (*caller_rows, *base_rows)
+                if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
+            }
+        )
+
     def _defined_simple_names(self, key: str, file_bytes: bytes) -> set[str]:
         """The simple names of the functions and classes a file defines, from
         a parse of its bytes with the language's combined query: what a
@@ -5383,11 +5793,16 @@ class GraphUpdater:
         language = get_language_for_extension(PurePosixPath(key).suffix)
         parser = self.parsers.get(language) if language is not None else None
         query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language) if language else None
-        if parser is None or query is None:
+        if parser is None or query is None or language is None:
             return set()
         try:
-            tree = parser.parse(
-                grammar_bytes(file_bytes, language, self.repo_path / key)
+            # The same recovery the definition pass parses with, or an added
+            # SQL file offers only the routines a mis-lexed `$1,$2` left in
+            # its plain parse (issue #3180).
+            tree = parse_with_preproc_recovery(
+                parser,
+                grammar_bytes(file_bytes, language, self.repo_path / key),
+                language,
             )
             captures = sorted_captures(QueryCursor(query), tree.root_node)
         except Exception:
@@ -5825,6 +6240,23 @@ class GraphUpdater:
             (target_label, target_key, target_qn),
         )
 
+    def _restore_pending_inbound_edges(self) -> None:
+        captured, self._pending_inbound_edges = self._pending_inbound_edges, []
+        try:
+            if captured:
+                # A run stopped before the deferred stages reached the Go receiver
+                # methods registers them here, or every held edge into one is
+                # dropped for good: the next run re-parses the method's file but
+                # not the caller, and the edge is no longer in the graph to
+                # capture. A no-op once those stages ran; a stopped run never
+                # verifies parent links, so they still follow every registration.
+                self.factory.definition_processor.resolve_deferred_go_methods()
+        finally:
+            # Even when that registration raises (a run stopped BY it retries
+            # it here): the edges into every other target are placeable, and
+            # nothing captures them again either.
+            self._restore_inbound_edges(captured)
+
     def _restore_target_exists(self, label: str, qualified_name: str) -> bool:
         """Whether a captured edge's target is back after the re-parse.
 
@@ -6006,6 +6438,7 @@ class GraphUpdater:
         """Drop the import-side state a removed file's module qns recorded."""
         for prefix in module_qn_prefixes:
             self.factory.import_processor.commonjs_direct_exports.pop(prefix, None)
+            self.factory.import_processor.esm_default_exports.pop(prefix, None)
         if file_path.suffix in (*cs.C_EXTENSIONS, *cs.CPP_EXTENSIONS):
             for qn in recorded_qns:
                 self.factory.import_processor.drop_cpp_module_import_state(qn)
@@ -7196,6 +7629,14 @@ class GraphUpdater:
             *self._unresolved_importer_keys(added_keys),
             *self._unresolved_reference_waiters(added_entries, modified_entries),
             *self._dart_package_waiters({*present, *deleted_before_parse}),
+            # Dispatch dependents join the waiters, not the affected
+            # callers: a new override or conformer rebinds callers the
+            # caller query cannot see, and a waiter re-parses even when
+            # the changed file's interface fingerprint held (issue
+            # #3338; the fingerprint skip is issue #2531).
+            *self._dispatch_dependent_keys(
+                added_entries, modified_entries, deleted_before_parse
+            ),
         }
         # A foreign definer's definitions are rebuilt with the module it
         # defines into, so their callers are its dependents as a re-indexed
@@ -7337,7 +7778,11 @@ class GraphUpdater:
         deleted_keys = self._deleted_keys_for_run(old_hashes, preexisting_paths, scan)
         self._delete_reconciled_files(deleted_keys, deleted_set)
 
-        self._restore_inbound_edges(captured_inbound)
+        # Restored by `run()` after the deferred stages, not here: a Go
+        # receiver method joins the registry only there, so every edge into
+        # one was dropped as a target the re-index had not recreated, and
+        # the unchanged caller is never re-parsed to rebuild it (#3270).
+        self._pending_inbound_edges = captured_inbound
 
         self._log_process_counts(scan, changed_count)
         self._log_unparsable_manifests()
@@ -8288,9 +8733,14 @@ class GraphUpdater:
             return None
         # Transcoded exactly as the first parse was, or a declared-encoding
         # file's call pass would see names its definitions do not carry.
-        root_node = parse_with_preproc_recovery(
-            parser, grammar_bytes(file_bytes, language, file_path), language
-        ).root_node
+        parsed = grammar_bytes(file_bytes, language, file_path)
+        root_node = parse_with_preproc_recovery(parser, parsed, language).root_node
+        if language == cs.SupportedLanguage.SQL:
+            # The reload is the tree the call pass now walks, so its DDL must
+            # come from these bytes, not the first parse's (issue #3181).
+            self.factory.definition_processor.keep_sql_source(
+                file_path, root_node, parsed
+            )
         self.factory._func_class_captures_cache.pop(file_path, None)
         return (root_node, language)
 
@@ -8999,23 +9449,30 @@ class GraphUpdater:
         # Inbound edges find dependents of files that already existed; the
         # unresolved-import lookup finds importers of files this call CREATED,
         # which by construction have no inbound edges yet (issue #1682).
+        # Created files offer everything; modified files offer only the
+        # definitions they gained (bot review on PR #1979).
+        created_entries = [
+            (key, self._delombok_overlay.get(key, _read_bytes(path)))
+            for key, path in sorted(present.items())
+            if created is not None and key in created
+        ]
+        modified_entries = [
+            (key, self._delombok_overlay.get(key, _read_bytes(path)))
+            for key, path in sorted(present.items())
+            if created is None or key not in created
+        ]
         waiters = {
             *self._unresolved_importer_keys(sorted(present)),
-            # Created files offer everything; modified files offer only the
-            # definitions they gained (bot review on PR #1979).
-            *self._unresolved_reference_waiters(
-                [
-                    (key, self._delombok_overlay.get(key, _read_bytes(path)))
-                    for key, path in sorted(present.items())
-                    if created is not None and key in created
-                ],
-                [
-                    (key, self._delombok_overlay.get(key, _read_bytes(path)))
-                    for key, path in sorted(present.items())
-                    if created is None or key not in created
-                ],
-            ),
+            *self._unresolved_reference_waiters(created_entries, modified_entries),
             *self._dart_package_waiters(keys),
+            # Dispatch dependents join the waiters, as on the batch
+            # path: a new override or conformer rebinds callers the
+            # caller query cannot see, and a waiter re-parses even when
+            # the changed file's interface fingerprint held (issues
+            # #3338 and #2531).
+            *self._dispatch_dependent_keys(
+                created_entries, modified_entries, sorted(gone)
+            ),
         }
         for caller_key in (
             *self._dependent_keys(keys, stable or {}, waiters),
@@ -9096,7 +9553,7 @@ class GraphUpdater:
         } | {qn for qn, path in qn_to_path.items() if path in stale_paths}
         pending = self.factory.definition_processor.pending_type_facts
         pending[:] = [
-            fact
+            _without_stale_targets(fact, stale_modules)
             for fact in pending
             if (
                 fact.path not in stale_keys
@@ -9664,7 +10121,15 @@ class GraphUpdater:
                 self._read_project_source,
                 project_name=self.project_name,
             )
-            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS, scope)
+            # Mentions are placed the way the subject was: by name while the
+            # name holds the recorded code, else by hash or quote, else
+            # listed as lost rather than dropped or handed to a newcomer.
+            repair_mentions(
+                self.ingestor.fetch_all,
+                self.ingestor.execute_write,
+                self._read_project_source,
+                project_name=self.project_name,
+            )
             # Then grade: the subject's `anchor_hash` was just re-emitted by
             # the parse, so comparing it with the note's recorded hash here
             # is what makes a note about changed code read STALE.

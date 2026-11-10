@@ -111,7 +111,9 @@ nav:
     - Span-Preserving Patchers: architecture/patchers.md
     - Edit Transactions: architecture/edit-transactions.md
     - Rename Operation: architecture/rename.md
+    - Change Signature Operation: architecture/change-signature.md
     - Postcondition Contract: architecture/postcondition-contract.md
+    - Move: architecture/move.md
     - Context Slice: architecture/context-slice.md
   - Advanced:
     - Adding Languages: advanced/adding-languages.md

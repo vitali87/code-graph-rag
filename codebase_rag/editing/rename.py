@@ -78,6 +78,7 @@ from .transaction import (
 QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
 
 _IDENTIFIER_RE = r"(?<![\w])%s(?![\w])"
+_ANY_IDENTIFIER_RE = r"[^\W\d]\w*"
 
 
 _STRUCTURAL = "structural"
@@ -471,23 +472,37 @@ def _chain_links(
     if parser is None:
         return []
     root = parser.parse(source).root_node
+    # Each link's own site starts at its name (issue #3166); the links of
+    # its chain are the calls that start where the site's call starts.
+    starts = {call.start_point for call in calls_starting_at(root, line - 1, col)}
+    starts = starts or {(line - 1, col)}
     found: list[tuple[int, int]] = []
     stack: list[Node] = [root]
     while stack:
         node = stack.pop()
-        if node.start_point == (line - 1, col):
-            func = node.child_by_field_name(cs.FIELD_FUNCTION)
-            member = func.children[-1] if func is not None and func.children else None
-            if (
-                member is not None
-                and member.type in _MEMBER_NAME_TYPES
-                and member.text is not None
-                and member.text.decode(cs.ENCODING_UTF8, errors="replace") == name
-            ):
-                found.append((member.start_point[0] + 1, member.start_point[1]))
-        if node.start_point[0] <= line - 1 <= node.end_point[0]:
+        if (
+            node.start_point in starts
+            and (member := _called_member(node, name)) is not None
+        ):
+            found.append((member.start_point[0] + 1, member.start_point[1]))
+        if any(node.start_point[0] <= row <= node.end_point[0] for row, _ in starts):
             stack.extend(node.children)
     return sorted(found)
+
+
+def _called_member(call: Node, name: str) -> Node | None:
+    # The member name a call invokes (`name` in `obj.name(...)`), if it is
+    # `name`; None for a bare call or another member.
+    func = call.child_by_field_name(cs.FIELD_FUNCTION)
+    member = func.children[-1] if func is not None and func.children else None
+    if (
+        member is not None
+        and member.type in _MEMBER_NAME_TYPES
+        and member.text is not None
+        and member.text.decode(cs.ENCODING_UTF8, errors="replace") == name
+    ):
+        return member
+    return None
 
 
 def _jsx_closing_token(
@@ -580,6 +595,84 @@ def _chain_link_sites(
     ]
 
 
+def _names_something(
+    source: bytes,
+    line: int,
+    col: int,
+    end_line: int | None,
+    end_col: int | None,
+) -> bool:
+    """Whether a site's callee text holds any identifier at all."""
+    if end_line is None or end_col is None:
+        return True
+    start = line_col_to_byte(source, line, col)
+    end = line_col_to_byte(source, end_line, end_col)
+    text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
+    paren = text.find("(")
+    callee = text[:paren] if paren >= 0 else text
+    return re.search(_ANY_IDENTIFIER_RE, callee) is not None
+
+
+def _int_or_none(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
+def _outer_call_paren(text: str) -> int:
+    """Index of the `(` opening the argument list `text` ends with, else of
+    its last `(`; -1 when it has none."""
+    body = text.rstrip()
+    if body.endswith(cs.CHAR_PAREN_CLOSE):
+        depth = 0
+        for index in range(len(body) - 1, -1, -1):
+            if body[index] == cs.CHAR_PAREN_CLOSE:
+                depth += 1
+            elif body[index] == cs.CHAR_PAREN_OPEN:
+                depth -= 1
+                if depth == 0:
+                    return index
+    return text.rfind(cs.CHAR_PAREN_OPEN)
+
+
+def _syntactic_open_paren(
+    source: bytes, language: cs.SupportedLanguage | None, close_end: int
+) -> int | None:
+    """Byte offset of the `(` that the `)` ending at `close_end` closes, read
+    from the syntax tree; None without a grammar or such a `)`."""
+    if language is None or close_end <= 0:
+        return None
+    parsers, _queries = load_parsers()
+    parser = parsers.get(language)
+    if parser is None:
+        return None
+    root = parser.parse(source).root_node
+    close = root.descendant_for_byte_range(close_end - 1, close_end)
+    if close is None or close.type != cs.CHAR_PAREN_CLOSE or close.parent is None:
+        return None
+    openers = [
+        child.start_byte
+        for child in close.parent.children
+        if child.type == cs.CHAR_PAREN_OPEN and child.start_byte < close.start_byte
+    ]
+    return openers[-1] if openers else None
+
+
+def _call_paren(
+    source: bytes, language: cs.SupportedLanguage | None, start: int, end: int
+) -> int:
+    """Index in the span's text of the `(` opening the argument list the span
+    ends with, else of its last `(`; -1 when it has none.
+
+    A grammar finds it from the syntax, so a parenthesis inside a string
+    argument (`f(other.f("("))`, bot review on PR #2782) is not counted; a
+    language without one balances the span's parentheses.
+    """
+    span = source[start:end]
+    opener = _syntactic_open_paren(source, language, start + len(span.rstrip()))
+    if opener is not None and opener >= start:
+        return len(source[start:opener].decode(cs.ENCODING_UTF8, errors="replace"))
+    return _outer_call_paren(span.decode(cs.ENCODING_UTF8, errors="replace"))
+
+
 def _last_identifier(
     source: bytes,
     line: int,
@@ -614,13 +707,17 @@ def _last_identifier(
         # (a grammar whose call node has no `function` field, such as Java's
         # method_invocation) keeps the fallback.
         return _STALE_CALL
-    if callee is not None and callee[0] == start:
-        start, end = callee
+    if callee is not None and callee[0] <= start < callee[1]:
+        # The callee ends the token search, whether the site starts with it
+        # or at its member name (issue #3166): never inside the arguments.
+        end = callee[1]
     text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
     if callee is None:
-        # No grammar: cut at the last opening parenthesis so the arguments
-        # of a plain call are excluded (`helper(helper=2)`).
-        paren = text.rfind("(")
+        # No call node to read (no grammar, or Dart's, whose call is only a
+        # selector): cut where the argument list the span ends with opens,
+        # so the arguments are excluded (`helper(helper=2)`), even a nested
+        # call of the same name (`f(other.f(1))`, bot review on PR #2782).
+        paren = _call_paren(source, language, start, end)
         if paren >= 0:
             text = text[:paren]
     matches = list(re.finditer(_IDENTIFIER_RE % re.escape(name), text))
@@ -996,6 +1093,41 @@ class Renamer:
         )
         sites.append(RenameSite("unlocatable", path, line, col, owner, site_resolution))
 
+    def _add_unspelled_site(
+        self,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+        source: bytes,
+        *,
+        owner: str,
+        path: str,
+        line: int,
+        col: int,
+        end_line: int | None,
+        end_col: int | None,
+        resolution_text: str | None,
+    ) -> None:
+        """A site whose span does not spell the old name: an alias, or a
+        mislocated span."""
+        if _names_something(source, line, col, end_line, end_col):
+            # The site spells the symbol under an alias (`h(1, 2)` for
+            # `import helper as h`); the alias keeps binding, so nothing
+            # to rewrite here.
+            return
+        # A span with no name in it at all is a mislocated site, not an
+        # alias: dropping it would leave the caller under the old name
+        # and the plan silent about it (issue #2769).
+        self._record_unlocatable(
+            sites,
+            unlocatable,
+            owner=owner,
+            path=path,
+            line=line,
+            col=col,
+            resolution=resolution_text or "unknown",
+            site_resolution=resolution_text or _SITELESS,
+        )
+
     def _via_param(self, row: ResultRow | graph_query.CallSiteRow) -> str | None:
         """The parameter the row's owner runs the renamed symbol through.
 
@@ -1140,6 +1272,8 @@ class Renamer:
         owner = str(row.get("qualified_name") or "")
         path = row.get("path")
         line, col = row.get("line"), row.get("col")
+        end_line = _int_or_none(row.get("end_line"))
+        end_col = _int_or_none(row.get("end_col"))
         resolution = row.get("resolution")
         resolution_text = str(resolution) if isinstance(resolution, str) else None
         if (
@@ -1167,13 +1301,12 @@ class Renamer:
         )
         if source is None:
             return
-        end_line, end_col = row.get("end_line"), row.get("end_col")
         token = _last_identifier(
             source,
             line,
             col,
-            end_line if isinstance(end_line, int) else None,
-            end_col if isinstance(end_col, int) else None,
+            end_line,
+            end_col,
             old_name,
             get_language_for_extension(Path(path).suffix),
             is_call=kind == "call",
@@ -1191,9 +1324,18 @@ class Renamer:
             )
             return
         if token is None:
-            # The site spells the symbol under an alias (`h(1, 2)` for
-            # `import helper as h`); the alias keeps binding, so nothing to
-            # rewrite here.
+            self._add_unspelled_site(
+                sites,
+                unlocatable,
+                source,
+                owner=owner,
+                path=path,
+                line=line,
+                col=col,
+                end_line=end_line,
+                end_col=end_col,
+                resolution_text=resolution_text,
+            )
             return
         sites.append(RenameSite(kind, path, token[0], token[1], owner, resolution_text))
         _add_jsx_closing_site(sites, kind, path, source, token, owner, resolution_text)
@@ -1436,6 +1578,14 @@ class Renamer:
                 unplanned,
             )
         sites.extend(unplanned)
+        if crossing := self._go_sites_losing_visibility(qn, sites, old_name, new_name):
+            raise RenameRefused(
+                cs.RENAME_GO_UNEXPORTS.format(
+                    qn=qn, name=new_name, count=len(crossing)
+                ),
+                crossing,
+                unlocatable,
+            )
         sites.extend(
             RenameSite(
                 "import",
@@ -1467,6 +1617,39 @@ class Renamer:
             message=cs.RENAME_PLANNED.format(count=len(sites)),
             unplanned=tuple(unplanned),
             companions=companions,
+        )
+
+    def _go_sites_losing_visibility(
+        self, qn: str, sites: list[RenameSite], old_name: str, new_name: str
+    ) -> list[RenameSite]:
+        """Go sites outside the definition's package when the rename unexports.
+
+        Go reads an identifier's first letter as its visibility: `Slug` is
+        exported, `slug` is private to its package. Renaming one to the other
+        rewrote `strs.Slug(...)` in package `main` to `strs.slug(...)`, which
+        no build accepts, and every postcondition passed (issue #2813). A
+        package is a directory, except that an external test package
+        (`package strs_test`) beside it sees only exported names.
+        """
+        if not old_name[:1].isupper() or new_name[:1].isupper():
+            return []
+        home = next(
+            (
+                self._go_package(s.path)
+                for s in sites
+                if s.kind == "definition" and s.owner == qn and _is_go_path(s.path)
+            ),
+            None,
+        )
+        if home is None:
+            return []
+        return [
+            s for s in sites if _is_go_path(s.path) and self._go_package(s.path) != home
+        ]
+
+    def _go_package(self, rel_path: str) -> str:
+        return go_utils.package_key(
+            rel_path, read_package_clause(self.repo_root / rel_path)
         )
 
     def _unplanned(
