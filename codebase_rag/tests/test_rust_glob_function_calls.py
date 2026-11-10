@@ -55,7 +55,12 @@ _PYTHON = {
 _Calls = dict[tuple[str, str], str]
 
 
-def _calls(root: Path, files: dict[str, str], grammar: str) -> _Calls:
+def _calls(
+    root: Path,
+    files: dict[str, str],
+    grammar: str,
+    rel_types: tuple[cs.RelationshipType, ...] = (cs.RelationshipType.CALLS,),
+) -> _Calls:
     for rel, text in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
@@ -65,7 +70,8 @@ def _calls(root: Path, files: dict[str, str], grammar: str) -> _Calls:
         (str(c.args[0][2]).split(".", 1)[1], str(c.args[2][2]).split(".", 1)[1]): str(
             (c.kwargs.get("properties") or {}).get(cs.KEY_RESOLUTION)
         )
-        for c in get_relationships(mock, cs.RelationshipType.CALLS)
+        for rel_type in rel_types
+        for c in get_relationships(mock, rel_type)
     }
 
 
@@ -272,11 +278,14 @@ def test_an_unchanged_private_function_stays_not_exact_after_a_sync(
 _RUST_SCOPED = {
     "Cargo.toml": '[package]\nname = "rsscope"\nversion = "0.1.0"\nedition = "2021"\n',
     "src/lib.rs": (
-        "pub mod a;\npub mod amb;\npub mod b;\npub mod far;\npub mod nest;\n"
-        "pub mod sib;\n"
+        "pub mod a;\npub mod amb;\npub mod amb_kinds;\npub mod b;\npub mod far;\n"
+        "pub mod nest;\npub mod sib;\npub mod t;\n"
     ),
     "src/a.rs": "pub(crate) fn helper() -> u32 { 1 }\npub(crate) fn drop<T>(_value: T) {}\n",
-    "src/b.rs": "pub fn helper() -> u32 { 2 }\n",
+    "src/b.rs": "pub fn helper() -> u32 { 2 }\npub fn Make(x: u32) -> u32 { x }\n",
+    # Visible too, though only functions record visibility: also ambiguous.
+    "src/t.rs": "pub struct Make(pub u32);\n",
+    "src/amb_kinds.rs": "use crate::b::*;\nuse crate::t::*;\npub fn go() { Make(1); }\n",
     "src/sib.rs": "use crate::a::*;\npub fn go() -> u32 { drop(0u32); helper() }\n",
     # Both `helper`s are visible here, so rustc rejects the call as ambiguous.
     "src/amb.rs": "use crate::a::*;\nuse crate::b::*;\npub fn go() -> u32 { helper() }\n",
@@ -330,8 +339,72 @@ def test_a_restricted_function_the_glob_cannot_see_is_not_exact(
     assert _callees(rust_scoped, caller).get(callee) != "exact", rust_scoped
 
 
-def test_a_pub_crate_and_a_pub_provider_are_ambiguous(rust_scoped: _Calls) -> None:
-    # `a::helper` is `pub(crate)`, which `amb` sees as well as `b::helper`.
-    callees = _callees(rust_scoped, "src.amb.go")
+@pytest.mark.parametrize(
+    "caller", ["src.amb.go", "src.amb_kinds.go"], ids=["pub-crate-fn", "tuple-struct"]
+)
+def test_a_second_provider_the_glob_may_see_is_ambiguous(
+    rust_scoped: _Calls, caller: str
+) -> None:
+    # `a::helper` is `pub(crate)`, which `amb` sees as well as `b::helper`;
+    # `t::Make` is a struct, whose visibility the graph does not record.
+    callees = _callees(rust_scoped, caller)
     assert callees, rust_scoped
     assert "exact" not in callees.values(), rust_scoped
+
+
+_RUST_KINDS = {
+    "Cargo.toml": '[package]\nname = "rskinds"\nversion = "0.1.0"\nedition = "2021"\n',
+    "src/lib.rs": (
+        "#[macro_use]\nmod loud;\npub mod ffi;\npub mod mac;\npub mod shapes;\n"
+        "pub mod user;\n"
+    ),
+    # `loud`'s `shout!` is in scope by text order in every later module.
+    "src/loud.rs": "macro_rules! shout {\n    () => {};\n}\n",
+    # An `extern` block's declarations take visibility as a fn does.
+    "src/ffi.rs": 'extern "C" {\n    fn drop(value: u32);\n    pub fn open(value: u32);\n}\n',
+    # `mac`'s `shout!` is no path item of `mac`, so `use crate::mac::*;`
+    # does not import it; its own child sees it by text order.
+    "src/mac.rs": "macro_rules! shout {\n    () => {};\n}\npub mod kid;\n",
+    "src/mac/kid.rs": "use super::*;\npub fn go() { shout!(); }\n",
+    "src/shapes.rs": "struct Ok(u32);\n",
+    "src/user.rs": (
+        "use crate::ffi::*;\nuse crate::mac::*;\nuse crate::shapes::*;\n"
+        "pub fn go() {\n    unsafe { open(1) };\n    drop(1u32);\n    shout!();\n"
+        "    let _ = Ok::<u32, ()>(1);\n}\n"
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def rust_kinds(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
+    # A tuple struct's constructor call is an INSTANTIATES edge.
+    return _calls(
+        tmp_path_factory.mktemp("rs3242kinds") / "rskinds",
+        _RUST_KINDS,
+        "rust",
+        (cs.RelationshipType.CALLS, cs.RelationshipType.INSTANTIATES),
+    )
+
+
+@pytest.mark.parametrize(
+    "callee",
+    ["src.ffi.drop", "src.mac.shout", "src.shapes.Ok"],
+    ids=["private-extern-fn", "macro-rules", "private-tuple-struct"],
+)
+def test_what_a_glob_does_not_import_is_not_exact(
+    rust_kinds: _Calls, callee: str
+) -> None:
+    # Each is what `user`'s globs reach, and none is what the call names:
+    # `drop` and `Ok` are the prelude's, `shout!` is `loud`'s.
+    assert _callees(rust_kinds, "src.user.go").get(callee) != "exact", rust_kinds
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [("src.user.go", "src.ffi.open"), ("src.mac.kid.go", "src.mac.shout")],
+    ids=["pub-extern-fn", "macro-rules-in-its-child"],
+)
+def test_what_a_glob_does_import_stays_exact(
+    rust_kinds: _Calls, caller: str, callee: str
+) -> None:
+    assert _callees(rust_kinds, caller).get(callee) == "exact", rust_kinds

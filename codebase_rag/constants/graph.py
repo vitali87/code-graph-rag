@@ -50,7 +50,8 @@ KEY_IS_OBJECT_MEMBER = "is_object_member"
 KEY_IS_MACRO = "is_macro"
 # The path a Rust function's visibility is restricted to, as declared:
 # `self` for a private one, `crate`, `super` or the `in` path of a
-# `pub(...)`; absent for a plain `pub` one (PR #3242 review).
+# `pub(...)`; absent for a plain `pub` one (PR #3242 review). A
+# `macro_rules!` macro reads `self`: no glob of its module imports it.
 KEY_RUST_VISIBILITY = "rust_visibility"
 KEY_IS_BODY_SCOPED_NAME = "is_body_scoped_name"
 KEY_QUERY = "query"

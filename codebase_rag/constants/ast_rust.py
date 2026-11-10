@@ -100,6 +100,10 @@ TS_RS_VISIBILITY_MODIFIER = "visibility_modifier"
 # The syntax around a `pub(...)` restriction; what is left names its scope:
 # `crate`, `self`, `super`, or the path after `in`.
 RS_VISIBILITY_SYNTAX_TOKENS = frozenset({"pub", "(", ")", "in"})
+# The fn records whose declared visibility is their own: a `fn` item and an
+# `extern` block's declaration. A trait's signatures are methods, as
+# visible as their trait.
+RS_VISIBILITY_FN_TYPES = frozenset({TS_RS_FUNCTION_ITEM, TS_RS_FUNCTION_SIGNATURE_ITEM})
 TS_RS_FIELD_IDENTIFIER = "field_identifier"
 TS_RS_MATCH_EXPRESSION = "match_expression"
 TS_RS_MATCH_ARM = "match_arm"

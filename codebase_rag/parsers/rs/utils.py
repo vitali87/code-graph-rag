@@ -618,9 +618,15 @@ def function_visibility_props(node: Node) -> PropertyDict:
     Only a plain `pub` fn has none. A glob imports only what is visible
     where it is written, so the resolver needs the declared scope, which
     `is_exported` (plain `pub` or not) cannot tell apart: a `pub(crate)` fn
-    is visible to its whole crate, a private one to its module alone.
+    is visible to its whole crate, a private one to its module alone. An
+    `extern` block's declarations take visibility as a fn does. A
+    `macro_rules!` macro is never an item of its module's path namespace
+    (`#[macro_export]` places it at the crate root), so a glob of the module
+    does not import it: it reads as private, seen by name only below it.
     """
-    if node.type != cs.TS_RS_FUNCTION_ITEM:
+    if node.type == cs.TS_RS_MACRO_DEFINITION:
+        return {cs.KEY_RUST_VISIBILITY: cs.KEYWORD_SELF}
+    if node.type not in cs.RS_VISIBILITY_FN_TYPES:
         return {}
     if (path := use_visibility_path(node)) is None:
         return {}

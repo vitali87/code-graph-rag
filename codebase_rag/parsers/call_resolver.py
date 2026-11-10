@@ -4309,15 +4309,15 @@ class CallResolver:
         # a private `hidden::drop` is not what `drop(v)` calls, the
         # prelude's is, so a function the glob may not see is never certain
         # (PR #3242 review). Two visible providers are an ambiguity rustc
-        # rejects, so neither is claimed exact.
+        # rejects, and one whose visibility is unknown may be the second, so
+        # neither case is claimed exact.
         hits = self._rust_glob_hits(call_name, wildcards, module_qn)
         if not hits:
             return None
         visible = [hit for hit, sees in hits.items() if sees]
+        certain = len(visible) == 1 and None not in hits.values()
         self.last_resolution = (
-            cs.EdgeResolution.EXACT
-            if len(visible) == 1
-            else cs.EdgeResolution.HEURISTIC
+            cs.EdgeResolution.EXACT if certain else cs.EdgeResolution.HEURISTIC
         )
         return (visible or list(hits))[0]
 
@@ -4326,10 +4326,10 @@ class CallResolver:
         call_name: str,
         wildcards: list[tuple[str, str]],
         module_qn: str | None,
-    ) -> dict[tuple[str, str], bool]:
-        # Every function the globs supply under the name, a globbed module's
-        # own members before those it re-exports, each with whether some
-        # glob supplying it can see it.
+    ) -> dict[tuple[str, str], bool | None]:
+        # Everything the globs supply under the name, a globbed module's own
+        # members before those it re-exports, each with whether some glob
+        # supplying it can see it (None: not known).
         direct: list[tuple[tuple[str, str], str]] = []
         through: list[tuple[tuple[str, str], str]] = []
         for _, imported_qn in wildcards:
@@ -4337,19 +4337,25 @@ class CallResolver:
                 direct.append((hit, imported_qn))
             elif hit := self._rust_glob_reexport(call_name, imported_qn, module_qn):
                 through.append((hit, imported_qn))
-        hits: dict[tuple[str, str], bool] = {}
+        hits: dict[tuple[str, str], bool | None] = {}
         for hit, imported_qn in (*direct, *through):
-            hits[hit] = hits.get(hit, False) or self._rust_glob_sees(
-                hit[1], imported_qn, module_qn
-            )
+            if hits.get(hit) is not True:
+                hits[hit] = self._rust_glob_sees(hit, imported_qn, module_qn)
         return hits
 
-    def _rust_glob_sees(self, qn: str, imported_qn: str, module_qn: str | None) -> bool:
+    def _rust_glob_sees(
+        self, hit: tuple[str, str], imported_qn: str, module_qn: str | None
+    ) -> bool | None:
         # Plain `pub` reaches every module; any other visibility reaches the
         # subtree of the module it names, counted from the function's own
         # module (`crate`: the whole crate, `super`: the parent's). The
         # globbed module must see the function to hold or re-export it, and
-        # the caller's module to import it.
+        # the caller's module to import it. Only a function's visibility is
+        # recorded: a glob reaching a tuple struct's constructor, private
+        # or not, is not known to import it.
+        node_type, qn = hit
+        if node_type != NodeType.FUNCTION:
+            return None
         if (path := self.function_registry.rust_visibility(qn)) is None:
             return True
         root = self.import_processor.rust_visibility_root(
