@@ -1388,28 +1388,11 @@ void W7::Box7::using_decl_later_part() {}
 namespace outer8 { namespace { namespace deep8 { void deep_internal(); } } }
 void outer8::deep8::deep_internal() {}
 
-namespace IN { inline namespace v1 { static void inline_static(); } }
-void IN::inline_static() {}
-
-namespace { template <class T> struct Tmpl; }
-template <> struct Tmpl<int> { void internal_template_spec() {} };
-
 namespace { static void twin(int); }
 void twin(int) {}
 
-namespace NU { namespace { void unnamed_decl_qualified(); } }
-void NU::unnamed_decl_qualified() {}
-
-namespace NU2 { namespace { void unnamed_decl_unqualified(); } }
-namespace NU2 { void unnamed_decl_unqualified() {} }
-
 static void const_param(int);
 void const_param(const int n) {}
-
-class Sealed final { protected: void final_protected() {} };
-
-namespace { template <class T> struct FT; }
-template <> struct FT<int> { friend void friend_of_internal_spec(FT&) {} };
 
 namespace { namespace detail { int hidden_twin(); } }
 namespace detail { int named_twin(); }
@@ -1445,15 +1428,9 @@ def linkage_check(tmp_path: Path) -> dict[tuple[str, int], bool]:
         ("later_alias_internal", 36, False),
         ("using_decl_later_part", 40, False),
         ("deep_internal", 43, False),
-        ("inline_static", 46, False),
-        ("internal_template_spec", 49, False),
-        ("twin", 52, True),
-        ("unnamed_decl_qualified", 55, False),
-        ("unnamed_decl_unqualified", 58, True),
-        ("const_param", 61, False),
-        ("final_protected", 63, False),
-        ("friend_of_internal_spec", 66, False),
-        ("named_twin", 70, True),
+        ("twin", 46, True),
+        ("const_param", 49, False),
+        ("named_twin", 53, True),
     ],
     ids=[
         "friend-after-a-static-declaration",
@@ -1467,14 +1444,8 @@ def linkage_check(tmp_path: Path) -> dict[tuple[str, int], bool]:
         "alias-in-a-later-part-naming-an-unnamed-namespace-one",
         "using-declaration-in-a-later-part",
         "unnamed-namespace-deep-inside-a-named-one",
-        "static-declaration-in-an-inline-namespace",
-        "specialization-of-a-template-in-an-unnamed-namespace",
         "static-declaration-of-another-function-in-an-unnamed-namespace",
-        "qualified-definition-of-a-function-of-an-unnamed-namespace",
-        "unqualified-definition-beside-one-of-an-unnamed-namespace",
         "static-declaration-spelling-a-parameter-without-const",
-        "protected-member-of-a-final-class",
-        "friend-of-a-specialization-of-a-template-in-an-unnamed-namespace",
         "namespace-named-like-one-inside-an-unnamed-namespace",
     ],
 )
@@ -1522,34 +1493,7 @@ int W::A::helper() { return 1; }
     assert any(qn.endswith(".W.A.helper") for qn in dead)
 
 
-# Code no build compiles is no API: under `#if 0`, or after `#if 1` in its
-# chain. And a Scala 3 extension method is a member of where its
-# `extension` stands.
-LITERAL_CPP = """\
-#if 0
-void under_if_zero() {}
-#endif
-#if 1
-void under_if_one() {}
-#else
-void after_if_one() {}
-#endif
-class Literal {
-#if 0
-public:
-#endif
-    void label_under_if_zero() {}
-#if 1
-public:
-#endif
-    void label_under_if_one() {}
-};
-"""
-LITERAL_C = """\
-#if 0
-int c_under_if_zero(void) { return 0; }
-#endif
-"""
+# A Scala 3 extension method is a member of where its `extension` stands.
 EXTENSIONS_SCALA = """\
 object Ext {
   extension (x: Int) def twice: Int = x * 2
@@ -1563,26 +1507,13 @@ private object Closed { extension (x: Int) def closedExt: Int = x }
 
 
 @pytest.fixture
-def literal(tmp_path: Path) -> dict[str, bool]:
-    return _run(
-        tmp_path,
-        {
-            "literal.cpp": LITERAL_CPP,
-            "literal_c.c": LITERAL_C,
-            "Ext.scala": EXTENSIONS_SCALA,
-        },
-    )
+def extensions(tmp_path: Path) -> dict[str, bool]:
+    return _run(tmp_path, {"Ext.scala": EXTENSIONS_SCALA})
 
 
 @pytest.mark.parametrize(
     ("symbol", "is_exported"),
     [
-        ("under_if_zero", False),
-        ("under_if_one", True),
-        ("after_if_one", False),
-        ("label_under_if_zero", False),
-        ("label_under_if_one", True),
-        ("c_under_if_zero", False),
         ("twice", True),
         ("shout", True),
         ("topExt", True),
@@ -1590,20 +1521,14 @@ def literal(tmp_path: Path) -> dict[str, bool]:
         ("closedExt", False),
     ],
     ids=[
-        "function-under-if-zero",
-        "function-under-if-one",
-        "function-after-if-one",
-        "public-label-under-if-zero",
-        "public-label-under-if-one",
-        "c-function-under-if-zero",
-        "scala-extension-method-in-an-object",
-        "scala-extension-method-of-a-block",
-        "scala-top-level-extension-method",
-        "scala-private-extension-method",
-        "scala-extension-method-in-a-private-object",
+        "extension-method-in-an-object",
+        "extension-method-of-a-block",
+        "top-level-extension-method",
+        "private-extension-method",
+        "extension-method-in-a-private-object",
     ],
 )
-def test_dead_branches_and_extension_methods(
-    literal: dict[str, bool], symbol: str, is_exported: bool
+def test_scala_extension_methods(
+    extensions: dict[str, bool], symbol: str, is_exported: bool
 ) -> None:
-    assert _one(literal, f".{symbol}") is is_exported
+    assert _one(extensions, f".{symbol}") is is_exported

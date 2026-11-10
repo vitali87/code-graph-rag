@@ -228,19 +228,18 @@ so no name or path is cut to fit 80 columns.
        `static`, no earlier declaration of it is `static`, and its namespace
        is not inside an anonymous namespace at any depth. A definition
        written `void N::f() {}` belongs to the namespace `N` names, followed
-       through namespace aliases, `using namespace` and inline namespaces;
+       through namespace aliases and `using namespace`;
      - a member defined inside a class under `public:` or `protected:` (a
        `struct` starts public, a `class` private), unless the class is local
        to a function, inside an anonymous namespace, or private in a class
-       around it. In a `final` class, `protected:` counts as `private:`.
+       around it.
 
      Access labels inside `#if` / `#ifdef` blocks count. A member counts
      when one build both compiles it and makes it public in every class
-     around it. Code under `#if 0`, or after `#if 1` in its chain, is in no
-     build, so it is not counted. An out-of-line member definition
-     (`int Box::f() {}`) or class (`struct Outer::Inner {}`) takes its access
-     from a class declaration in another file, so it is not counted. A class
-     template specialization at namespace scope
+     around it. An out-of-line member definition (`int Box::f() {}`) or
+     class (`struct Outer::Inner {}`) takes its access from a class
+     declaration in another file, so it is not counted. A class template
+     specialization at namespace scope
      (`template <> struct std::hash<Foo> {...}`, or a partial one) is
      counted: the library it specializes calls its members. A specialization
      of a member template of a class in the same file

@@ -155,12 +155,6 @@ TS_CPP_STORAGE_CLASS_SPECIFIER = "storage_class_specifier"
 CPP_PRIVATE_BY_DEFAULT = frozenset({"class_specifier"})
 CPP_ACCESS_PRIVATE = "private"
 CPP_ACCESS_PUBLIC = "public"
-CPP_ACCESS_PROTECTED = "protected"
-# `class Box final`: no subclass can exist, so `protected` hides a member as
-# `private` does (PR #2952).
-TS_CPP_VIRTUAL_SPECIFIER = "virtual_specifier"
-CPP_KEYWORD_FINAL = "final"
-CPP_FINAL_CLASS_HIDDEN_ACCESSES = frozenset({CPP_ACCESS_PRIVATE, CPP_ACCESS_PROTECTED})
 TS_FIELD_DECLARATION_LIST = "field_declaration_list"
 TS_CPP_TYPE_QUALIFIER = "type_qualifier"
 CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
@@ -567,9 +561,6 @@ TS_CPP_USING_DECLARATION = "using_declaration"
 CPP_KEYWORD_NAMESPACE = "namespace"
 # `namespace a::b` and `namespace A = ::N`: a namespace name with parts.
 TS_CPP_NESTED_NAMESPACE_SPECIFIER = "nested_namespace_specifier"
-# `inline namespace v1 {}`: its members are members of the namespace around
-# it too.
-CPP_KEYWORD_INLINE = "inline"
 # The path part an unnamed namespace adds: each namespace has one, and what
 # has it in its path is file-private (PR #2952).
 CPP_UNNAMED_NAMESPACE = ""
