@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.5.8"
+version = "0.6.31"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -9,11 +9,15 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "Operating System :: OS Independent",
+    # cgr requires cgr-graph-rs, whose CPython wheels cover these systems only.
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Code Generators",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -49,7 +53,6 @@ dependencies = [
     "pydantic-settings>=2.12.0",
     "python-dotenv>=1.2.1",
     "tiktoken>=0.12.0",
-    "tomli-w>=1.2.0",
     "tree-sitter-python>=0.25.0",
     "tree-sitter==0.26.0",
     "watchdog>=6.0.0",
@@ -59,8 +62,9 @@ dependencies = [
     "diff-match-patch>=20241021",
     "click>=8.3.3",
     "protobuf>=6.33.5",
-    "defusedxml>=0.7.1",
-    "huggingface-hub[hf-xet]>=1.7.2",
+    # codebase_rag/stack/manager.py reads docker-compose files with it, and
+    # the CLI imports that module on every run.
+    "pyyaml>=6.0",
     "pathspec>=1.0.4",
     "pygments>=2.20.0",
     # Imported directly (embedder, health checks, token counting, web
@@ -75,11 +79,13 @@ dependencies = [
     # backtracking pattern stops at the query's deadline. tiktoken already
     # installs it.
     "regex>=2024.11.6",
-    # The embedded graph's Rust acceleration (rust/cgr_graph_rs), shipped as
-    # abi3 wheels for exactly these platforms; elsewhere the engine runs its
-    # Python twin of every part. The floor is the crate version this code
-    # was written against, raised with each crate release.
-    "cgr-graph-rs>=0.1.5,<0.2; platform_python_implementation == 'CPython' and ((sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64'))",
+    # The Rust half that does the work behind the Python interface
+    # (rust/cgr_graph_rs), required everywhere: cgr does not run without it.
+    # It ships as abi3 wheels for CPython on Linux x86_64/aarch64, macOS and
+    # Windows x64, and has no sdist, so other platforms cannot install cgr.
+    # The floor is the crate version this code was written against, raised
+    # with each crate release.
+    "cgr-graph-rs>=0.1.8,<0.2",
 ]
 
 [project.scripts]
@@ -198,6 +204,10 @@ semantic = [
     "sqlite-vec>=0.1.9; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64')",
     "torch>=2.6.0",
     "transformers>=5.0.0",
+    # transformers downloads the UniXcoder model through it, and nothing
+    # outside this extra imports it, so a default install leaves it out with
+    # the five packages it brings (hf-xet, fsspec, tqdm, filelock, packaging).
+    "huggingface-hub[hf-xet]>=1.7.2",
 ]
 
 milvus = [

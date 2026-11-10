@@ -3,6 +3,7 @@ import posixpath
 import re
 import tomllib
 from collections.abc import Iterator, Mapping, Sequence
+from enum import Enum, auto
 from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
@@ -37,7 +38,7 @@ from ..types_defs import (
     ScalaPackageScan,
     StemSiblingModules,
 )
-from ..utils.json_io import loads_json
+from ..utils.json_io import loads_json, strip_jsonc
 from ..utils.path_utils import (
     base_module_qn,
     cached_relative_path,
@@ -50,10 +51,13 @@ from ..utils.path_utils import (
 from ..utils.source_encoding import grammar_bytes
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
+    DartDirective,
     dart_binding_spans,
+    dart_combinators,
     dart_exposes_library,
     dart_extract_uri,
     dart_import_prefix,
+    dart_is_export,
     dart_local_name,
     dart_resolve_import,
     discover_dart_packages,
@@ -90,6 +94,7 @@ from .stdlib_extractor import (
     save_persistent_cache,
 )
 from .utils import (
+    PythonStarRules,
     follow_reexports,
     get_query_cursor,
     node_site_properties,
@@ -403,11 +408,6 @@ def _rs_top_level_char(c: str, depth: int, in_macro: bool) -> str:
     return c + "\n" if c == ";" else c
 
 
-_JSONC_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-_JSONC_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
-_JSONC_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
-
-
 def _js_destructured_names(pattern: Node) -> list[tuple[str, str]]:
     # (local, imported) name pairs bound by an object destructuring pattern:
     # `{ writeFileSync }` -> (writeFileSync, writeFileSync); `{ x: y }` -> (y, x).
@@ -474,26 +474,33 @@ def _names_js_module(site: PropertyDict | None) -> bool:
 
 
 def _load_jsonc(path: Path) -> dict | None:
-    # tsconfig.json is JSONC (comments, trailing commas). Try strict JSON first,
-    # then fall back to stripping comments/trailing commas. The naive strip can
-    # mangle `//` inside string values, so it is only a fallback; on any failure
-    # return None (aliases simply stay unresolved).
+    # tsconfig.json is JSONC (comments, trailing commas, a BOM), read the way
+    # TypeScript reads it. A config that still is not JSON, or that cannot be
+    # read or decoded, loses its `paths` and `baseUrl`, so every alias import
+    # turns external: say which file.
     try:
-        text = path.read_text(encoding=cs.ENCODING_UTF8)
+        stat = path.stat()
     except OSError:
         return None
-    for candidate in (text, None):
-        source = candidate
-        if source is None:
-            source = _JSONC_BLOCK_COMMENT_RE.sub("", text)
-            source = _JSONC_LINE_COMMENT_RE.sub("", source)
-            source = _JSONC_TRAILING_COMMA_RE.sub(r"\1", source)
+    try:
+        text = path.read_text(encoding=cs.ENCODING_UTF8_SIG)
+    except (OSError, UnicodeDecodeError):
+        _warn_unparseable_tsconfig(path, stat.st_mtime_ns)
+        return None
+    for source in (text, strip_jsonc(text)):
         try:
             parsed = loads_json(source)
         except ValueError:
             continue
         return parsed if isinstance(parsed, dict) else None
+    _warn_unparseable_tsconfig(path, stat.st_mtime_ns)
     return None
+
+
+@lru_cache(maxsize=256)
+def _warn_unparseable_tsconfig(path: Path, _mtime_ns: int) -> None:
+    # Once per file version: each config is read for `paths` and `baseUrl`.
+    logger.warning(ls.TSCONFIG_UNPARSEABLE, path=path)
 
 
 def _child_dirs(path: Path) -> list[Path]:
@@ -1069,6 +1076,322 @@ def _import_site_props(
     return site
 
 
+def _site_start(site: PropertyDict | None) -> tuple[int, int]:
+    """Where a recorded import site starts; (0, 0) when none was recorded."""
+    line = site.get(cs.KEY_LINE) if site else None
+    col = site.get(cs.KEY_COL) if site else None
+    return (line, col) if isinstance(line, int) and isinstance(col, int) else (0, 0)
+
+
+def _python_string_literal(node: Node) -> str | None:
+    if node.type != cs.TS_PY_STRING or node.text is None:
+        return None
+    match = re.fullmatch(
+        cs.PY_DUNDER_ALL_ENTRY_PATTERN, node.text.decode(cs.ENCODING_UTF8)
+    )
+    return match.group(cs.KEY_NAME) if match else None
+
+
+def _python_entries(node: Node) -> list[Node]:
+    # A comment between a literal's entries or a call's arguments is a named
+    # child too, and spells no entry (Greptile, PR #2989).
+    return [c for c in node.named_children if c.type != cs.TS_COMMENT]
+
+
+def _python_literal_names(node: Node | None) -> list[str] | None:
+    # The names a `__all__` list or tuple literal spells, None for anything
+    # computed (`base.__all__ + [...]`), whose entries cannot be read here.
+    if node is None or node.type not in (cs.TS_PY_LIST, cs.TS_PY_TUPLE):
+        return None
+    names = [_python_string_literal(c) for c in _python_entries(node)]
+    return None if None in names else [n for n in names if n is not None]
+
+
+def _python_dunder_all_part(statement: Node) -> list[str] | None:
+    """What one module-level statement adds to `__all__`: its assignment, an
+    `+=`, an `.extend([...])` or an `.append("x")`. None when it does not
+    touch `__all__`; raises _UnreadableDunderAll when it sets it to something
+    the source does not spell out."""
+    expression = next(iter(statement.named_children), None)
+    if expression is None:
+        return None
+    if expression.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT):
+        left = expression.child_by_field_name(cs.TS_FIELD_LEFT)
+        if left is None or left.text != cs.PY_DUNDER_ALL.encode():
+            return None
+        return _readable(
+            _python_literal_names(expression.child_by_field_name(cs.TS_FIELD_RIGHT))
+        )
+    if expression.type != cs.TS_PY_CALL:
+        return None
+    return _python_dunder_all_call_part(expression)
+
+
+def _python_dunder_all_call_part(call: Node) -> list[str] | None:
+    """What an `__all__.extend([...])` or `__all__.append("x")` call adds;
+    None when the call is not on `__all__`, raising _UnreadableDunderAll as
+    _python_dunder_all_part does."""
+    func = call.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    if func is None or func.type != cs.TS_PY_ATTRIBUTE:
+        return None
+    owner = func.child_by_field_name(cs.FIELD_OBJECT)
+    method = func.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+    if owner is None or owner.text != cs.PY_DUNDER_ALL.encode() or method is None:
+        return None
+    args = call.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+    arg = next(iter(_python_entries(args)), None) if args is not None else None
+    if method.text == cs.PY_LIST_APPEND.encode() and arg is not None:
+        name = _python_string_literal(arg)
+        return _readable(None if name is None else [name])
+    if method.text == cs.PY_LIST_EXTEND.encode():
+        return _readable(_python_literal_names(arg))
+    raise _UnreadableDunderAll
+
+
+class _UnreadableDunderAll(Exception):
+    """`__all__` is set in a way the source does not spell out."""
+
+
+class _LateDunderAll(_UnreadableDunderAll):
+    """`__all__` is changed in a def or lambda body, which can run after any
+    later statement, so no later literal settles what it holds."""
+
+
+def _readable(names: list[str] | None) -> list[str]:
+    if names is None:
+        raise _UnreadableDunderAll
+    return names
+
+
+class _NameUse(Enum):
+    """How one occurrence of a name uses it."""
+
+    BIND = auto()
+    MUTATE = auto()
+    GLOBAL = auto()
+    READ = auto()
+
+
+# The field of these nodes that holds what they bind.
+_PY_TARGET_FIELDS = {
+    **dict.fromkeys(cs.PY_LEFT_BINDERS | {cs.TS_PY_FOR_IN_CLAUSE}, cs.TS_FIELD_LEFT),
+    **dict.fromkeys(
+        cs.PY_NAME_BINDERS
+        | {cs.TS_PY_DEFAULT_PARAMETER, cs.TS_PY_TYPED_DEFAULT_PARAMETER},
+        cs.FIELD_NAME,
+    ),
+    cs.TS_PY_AS_PATTERN: cs.FIELD_ALIAS,
+    cs.TS_PY_ALIASED_IMPORT: cs.FIELD_ALIAS,
+}
+# Nodes that bind every name they hold.
+_PY_BINDING_HOLDERS = frozenset(
+    {
+        cs.TS_PY_PARAMETERS,
+        cs.TS_PY_LAMBDA_PARAMETERS,
+        cs.TS_PY_DELETE_STATEMENT,
+        cs.TS_PY_CASE_PATTERN,
+        cs.TS_PY_KEYWORD_PATTERN,
+        cs.TS_PY_SPLAT_PATTERN,
+    }
+)
+# The shapes a target is spelled in, climbed to reach what binds it:
+# `a, *b`, `(a)`, `del a, b`, `from m import a`, `*a: int`, `**a`.
+_PY_TARGET_SHAPES = cs.PY_BINDING_PATTERN_TYPES | {
+    cs.TS_PY_PARENTHESIZED_EXPRESSION,
+    cs.TS_PY_EXPRESSION_LIST,
+    cs.TS_PY_DOTTED_NAME,
+    cs.TS_PY_TYPED_PARAMETER,
+    cs.TS_PY_DICTIONARY_SPLAT_PATTERN,
+}
+
+
+def _is_field(node: Node, field: str, child: Node) -> bool:
+    found = node.child_by_field_name(field)
+    return found is not None and found.id == child.id
+
+
+def _python_name_use(identifier: Node) -> _NameUse:
+    """How one occurrence uses its name: binds it (an assignment, `for`,
+    `as`, walrus, def or class name, parameter, import, `del` or `case`
+    capture), mutates what it holds (a method call, or an item or attribute
+    of it as a target), declares it `global`, or reads it. A `nonlocal`
+    names a binding of an enclosing def, which that def's own uses show."""
+    child, node = identifier, identifier.parent
+    held = False
+    while node is not None:
+        if node.type == cs.TS_PY_ATTRIBUTE and _is_field(node, cs.FIELD_OBJECT, child):
+            call = node.parent
+            if (
+                call is not None
+                and call.type == cs.TS_PY_CALL
+                and _is_field(call, cs.TS_FIELD_FUNCTION, node)
+            ):
+                return _NameUse.MUTATE
+            held = True
+        elif node.type == cs.TS_PY_SUBSCRIPT and _is_field(node, cs.FIELD_VALUE, child):
+            held = True
+        elif node.type not in _PY_TARGET_SHAPES:
+            break
+        child, node = node, node.parent
+    use = _python_binding_use(node, child) if node is not None else _NameUse.READ
+    return _NameUse.MUTATE if held and use is _NameUse.BIND else use
+
+
+def _python_binding_use(node: Node, child: Node) -> _NameUse:
+    """How `node` uses the target shape `child` it holds."""
+    if node.type == cs.TS_PY_GLOBAL_STATEMENT:
+        return _NameUse.GLOBAL
+    if node.type in _PY_BINDING_HOLDERS or (
+        node.type in cs.PY_IMPORT_TYPES
+        and not _is_field(node, cs.FIELD_MODULE_NAME, child)
+    ):
+        return _NameUse.BIND
+    field = _PY_TARGET_FIELDS.get(node.type)
+    if field is not None and _is_field(node, field, child):
+        return _NameUse.BIND
+    return _NameUse.READ
+
+
+def _python_name_scope(node: Node, walrus: bool = False) -> Node:
+    """The def, class body, lambda or comprehension whose names `node` is
+    one of, else the module. A def's or class's own name, decorators and
+    bases are the enclosing scope's, and a walrus target is the scope's
+    around its comprehension, as Python binds them."""
+    child, current = node, node.parent
+    while current is not None and current.parent is not None:
+        if (
+            current.type == cs.TS_PY_LAMBDA
+            or (current.type in cs.PY_COMPREHENSION_TYPES and not walrus)
+            or (
+                current.type == cs.TS_PY_FUNCTION_DEFINITION
+                and not _is_field(current, cs.FIELD_NAME, child)
+            )
+            or (
+                current.type == cs.TS_PY_CLASS_DEFINITION
+                and _is_field(current, cs.FIELD_BODY, child)
+            )
+        ):
+            return current
+        child, current = current, current.parent
+    return current if current is not None else node
+
+
+def _python_module_owns(scope: Node, uses: Mapping[int, set[_NameUse]]) -> bool:
+    """Whether the name `scope` reads is the module's, by Python's scope
+    rules: the first scope out that declares it `global` makes it the
+    module's, one that binds it keeps it its own, and a class body is passed
+    over from the scopes inside it."""
+    from_inner = False
+    while scope.parent is not None:
+        if not (from_inner and scope.type == cs.TS_PY_CLASS_DEFINITION):
+            seen = uses.get(scope.id, set())
+            if _NameUse.GLOBAL in seen:
+                return True
+            if _NameUse.BIND in seen:
+                return False
+        from_inner = from_inner or scope.type != cs.TS_PY_CLASS_DEFINITION
+        scope = _python_name_scope(scope)
+    return True
+
+
+def _runs_later(node: Node, statement: Node) -> bool:
+    """Whether `node` sits in a def or lambda body inside `statement`, which
+    runs whenever it is called rather than where it is written."""
+    child, current = node, node.parent
+    while current is not None and child.id != statement.id:
+        if current.type == cs.TS_PY_LAMBDA or (
+            current.type == cs.TS_PY_FUNCTION_DEFINITION
+            and _is_field(current, cs.FIELD_BODY, child)
+        ):
+            return True
+        child, current = current, current.parent
+    return False
+
+
+def _python_dunder_all_names(statement: Node) -> Iterator[Node]:
+    """Each `__all__` name the statement holds, at any depth; another
+    object's `__all__` (`ns.__all__ = ...`) is not one."""
+    if statement.text is None or cs.PY_DUNDER_ALL.encode() not in statement.text:
+        return
+    stack = [statement]
+    while stack:
+        node = stack.pop()
+        stack.extend(node.children)
+        if node.type != cs.TS_PY_IDENTIFIER or node.text != cs.PY_DUNDER_ALL.encode():
+            continue
+        owner = node.parent
+        if owner is None or not _is_field(owner, cs.TS_PY_FIELD_ATTRIBUTE, node):
+            yield node
+
+
+def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
+    """Each `__all__` the statement rebinds or mutates that is the module's.
+    One a def, class body, lambda or comprehension binds as its own is not,
+    so a helper's local `__all__` leaves the module's list alone."""
+    found = []
+    uses: dict[int, set[_NameUse]] = {}
+    for name in _python_dunder_all_names(statement):
+        use = _python_name_use(name)
+        walrus = (
+            name.parent is not None and name.parent.type == cs.TS_PY_NAMED_EXPRESSION
+        )
+        scope = _python_name_scope(name, walrus=walrus and use is _NameUse.BIND)
+        uses.setdefault(scope.id, set()).add(use)
+        found.append((name, use, scope))
+    for name, use, scope in found:
+        if use in (_NameUse.BIND, _NameUse.MUTATE) and _python_module_owns(scope, uses):
+            yield name
+
+
+def _python_dunder_all_change(statement: Node) -> list[str] | None:
+    """What one top-level statement adds to `__all__`, as
+    _python_dunder_all_part reads it; None when it leaves `__all__` alone.
+    A change the literals do not spell (inside a block, by a function,
+    through `del` or an import) raises _UnreadableDunderAll, or
+    _LateDunderAll when it runs in a def or lambda."""
+    if statement.type == cs.TS_PY_EXPRESSION_STATEMENT and (
+        (part := _python_dunder_all_part(statement)) is not None
+    ):
+        return part
+    writes = list(_python_dunder_all_writes(statement))
+    if any(_runs_later(write, statement) for write in writes):
+        raise _LateDunderAll
+    if writes:
+        raise _UnreadableDunderAll
+    return None
+
+
+def _python_dunder_all(root: Node) -> frozenset[str] | None:
+    """The names a Python module's `__all__` lists, read from its literal.
+
+    None when the module sets none at its top level, or builds it in a way
+    the source does not spell out; a star import then binds every public
+    name, as it does for a module without one. An empty `__all__` binds
+    nothing.
+    """
+    # None once the source no longer spells what `__all__` holds.
+    names: list[str] | None = []
+    defined = False
+    for statement in root.named_children:
+        try:
+            part = _python_dunder_all_change(statement)
+        except _LateDunderAll:
+            return None
+        except _UnreadableDunderAll:
+            defined, names = True, None
+            continue
+        if part is None:
+            continue
+        defined = True
+        # A plain assignment replaces what earlier statements listed; only
+        # `+=`, `.append` and `.extend` add to it (Greptile, PR #2989).
+        if statement.named_children[0].type == cs.TS_PY_ASSIGNMENT:
+            names = list(part)
+        elif names is not None:
+            names += part
+    return frozenset(names) if defined and names is not None else None
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -1083,8 +1406,11 @@ class ImportProcessor:
         "csharp_global_static_imports",
         "java_static_imports",
         "commonjs_direct_exports",
+        "esm_default_exports",
         "conditional_imports",
         "python_import_rebinds",
+        "python_module_all",
+        "python_binding_order",
         "php_function_imports",
         "php_module_namespaces",
         "js_ts_bare_imports",
@@ -1142,6 +1468,9 @@ class ImportProcessor:
         "rust_block_item_qns",
         "dart_prefix_shadows",
         "dart_import_aliases",
+        "dart_bare_imports",
+        "dart_exports",
+        "dart_part_of",
         "dart_exposed_libraries",
         "rust_block_scope_imports",
         "rust_self_module_imports",
@@ -1209,6 +1538,10 @@ class ImportProcessor:
         # exported function's qn, so a whole-module require alias called
         # directly (`const f = require('./m'); f(x)`) resolves to it.
         self.commonjs_direct_exports: dict[str, str] = {}
+        # JS/TS modules with an `export default`: module qn -> the definition
+        # it names, so a default import (mapped to `<module>.default`) called
+        # directly resolves to it (issue #2724).
+        self.esm_default_exports: dict[str, str] = {}
         # Names bound by a CONDITIONAL Python import (nested under if/try --
         # click's `if WIN: from ._winconsole import X`): the dead-code fan-out
         # treats a same-named local def as the mutually-exclusive fallback
@@ -1222,6 +1555,16 @@ class ImportProcessor:
         # module that is external on every path from one a branch binds to
         # first-party code (issue #2360).
         self.python_import_rebinds: dict[str, dict[str, set[str]]] = {}
+        # A Python module's literal `__all__`, which is every name a
+        # `from module import *` binds when the module defines one (issue
+        # #2928). A module without one, or with one built at run time, is
+        # absent: its star binds every public name.
+        self.python_module_all: dict[str, frozenset[str]] = {}
+        # A Python module's import-map keys in the order they were LAST
+        # bound, kept only where the map's own order differs: the map keeps
+        # a re-bound key where it was first bound, and records plain imports
+        # before from-imports, while Python keeps a name's last binding.
+        self.python_binding_order: dict[str, tuple[str, ...]] = {}
         # Lazy: replayed walk of every eligible repo file, built on the first C++
         # include so non-C++ projects never pay for it.
         self._cpp_module_qn_map: dict[str, str] | None = None
@@ -1398,6 +1741,25 @@ class ImportProcessor:
         # edge (those come from import_mapping's values) while the name the
         # source writes resolves to the aliased library (Greptile, #2033).
         self.dart_import_aliases: dict[str, dict[str, list[str]]] = {}
+        # {module qn: [the `import` / `part` directives that bring a library's
+        # names in WITHOUT a prefix, with their `show` / `hide` clauses]}.
+        # The file-derived import_mapping key is written for a prefixed
+        # import and an `export` too, so only this tells `import 'a.dart';
+        # import 'a.dart' as p;` (bare `A` visible) from the prefixed import
+        # alone, and either from `export 'a.dart';`, which brings in nothing
+        # (#3286).
+        self.dart_bare_imports: dict[str, list[DartDirective]] = {}
+        # {library module qn: its `export` directives}. dart_exposed_libraries
+        # holds their targets beside its parts'; this keeps the `show` /
+        # `hide` clauses deciding which names each one hands on (Greptile,
+        # PR #3292).
+        self.dart_exports: dict[str, list[DartDirective]] = {}
+        # {part file module qn: the library whose `part '...'` directive
+        # names it}. A part brings in nothing: it is a piece of that library
+        # and writes names through the library's imports (#3286). The
+        # library's directive is read, not the part's `part of`, which may
+        # name the library by its `library shop;` name rather than a file.
+        self.dart_part_of: dict[str, str] = {}
         # {library module qn: [module qns it hands to ITS importers]}: the
         # targets of its `export` and `part` directives. import_mapping holds
         # those beside plain imports, which expose nothing, so an extension
@@ -1693,6 +2055,16 @@ class ImportProcessor:
         # PR #2040).
         self.dart_prefix_shadows.pop(module_qn, None)
         self.dart_import_aliases.pop(module_qn, None)
+        self.dart_bare_imports.pop(module_qn, None)
+        self.dart_exports.pop(module_qn, None)
+        # Keyed by the part but written by its LIBRARY's parse: the library's
+        # re-parse drops the links it wrote, and the part's keeps them, as
+        # the library still names it.
+        self.dart_part_of = {
+            part: library
+            for part, library in self.dart_part_of.items()
+            if library != module_qn
+        }
         self.dart_exposed_libraries.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
@@ -1807,6 +2179,7 @@ class ImportProcessor:
         # A re-parsed module that no longer directly exports one function
         # must not leave the stale whole-module alias mapping behind.
         self.commonjs_direct_exports.pop(module_qn, None)
+        self.esm_default_exports.pop(module_qn, None)
         # Reset per-module PHP use-function state too, so a re-index that drops a
         # `use function` import does not leave a stale exemption behind.
         self.php_function_imports.pop(module_qn, None)
@@ -1818,6 +2191,12 @@ class ImportProcessor:
         # A re-parse that drops a fallback import must not leave the binding
         # it removed standing beside the one that remains.
         self.python_import_rebinds.pop(module_qn, None)
+        self.python_module_all.pop(module_qn, None)
+        self.python_binding_order.pop(module_qn, None)
+        if language == cs.SupportedLanguage.PYTHON and (
+            (exported := _python_dunder_all(root_node)) is not None
+        ):
+            self.python_module_all[module_qn] = exported
         # A re-parse re-derives these from the current source, so the previous
         # run's specifiers must not survive: an import the edit removed, or one
         # whose target now exists, would otherwise keep nominating this file
@@ -3073,6 +3452,19 @@ class ImportProcessor:
                         new_names
                     )
             self._record_python_rebinds(module_qn, before)
+        self._record_python_binding_order(module_qn)
+
+    def _record_python_binding_order(self, module_qn: str) -> None:
+        # Each key's import site is the statement that bound it last.
+        mapping = self.import_mapping[module_qn]
+        sites = self._import_sites.get(module_qn, {})
+        order = tuple(sorted(mapping, key=lambda key: _site_start(sites.get(key))))
+        if order != tuple(mapping):
+            self.python_binding_order[module_qn] = order
+
+    @property
+    def python_star_rules(self) -> PythonStarRules:
+        return PythonStarRules(self.python_module_all, self.python_binding_order)
 
     def _record_python_rebinds(self, module_qn: str, before: dict[str, str]) -> None:
         mapping = self.import_mapping[module_qn]
@@ -3899,6 +4291,16 @@ class ImportProcessor:
             else None
         )
         return deps.get(key) if isinstance(deps, dict) else None
+
+    def rust_crate_is_external(self, crate: str, module_qn: str) -> bool:
+        """Whether a use head provably names a crate outside the repo: a
+        toolchain crate, or a dependency the importer's manifest fetches from
+        outside the repo that no crate of the repo answers to."""
+        return crate in cs.RS_STDLIB_CRATES or (
+            not self.rust_head_is_repo_crate(crate)
+            and not self.rust_head_is_member_dep(crate, module_qn)
+            and self.rust_head_is_external_dep(crate, module_qn)
+        )
 
     def rust_head_is_repo_crate(self, head: str) -> bool:
         """Whether this use head names a lib crate the repo itself holds.
@@ -6716,6 +7118,8 @@ class ImportProcessor:
                         module_qn, prefix, full_name, import_node, uri
                     )
                     prefixes.add(prefix)
+                else:
+                    self._record_dart_unprefixed(module_qn, import_node, full_name)
         # A local or parameter of the same name SHADOWS the prefix inside its
         # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
         # local_var_types, so the type map cannot answer this. The binding is
@@ -6725,6 +7129,25 @@ class ImportProcessor:
             self.dart_prefix_shadows[module_qn] = dart_binding_spans(
                 root_node, frozenset(prefixes)
             )
+
+    def _record_dart_unprefixed(
+        self, module_qn: str, directive: Node, full_name: str
+    ) -> None:
+        # `part of 'shop.dart';` brings nothing in: the file is a piece of
+        # that library and writes names in its scope (#3286). The link comes
+        # from the library's `part 'shop_model.dart';`, which a `part of
+        # shop;` naming no file has too. An `export` hands its target to
+        # importers only; a plain `import` or a `part` brings the target's
+        # names in bare.
+        if directive.type == cs.TS_DART_PART_OF_DIRECTIVE:
+            return
+        if directive.type == cs.TS_DART_PART_DIRECTIVE:
+            self.dart_part_of[full_name] = module_qn
+        recorded = DartDirective(full_name, dart_combinators(directive))
+        if dart_is_export(directive):
+            self.dart_exports.setdefault(module_qn, []).append(recorded)
+        else:
+            self.dart_bare_imports.setdefault(module_qn, []).append(recorded)
 
     def dart_import_target(self, uri: str, module_qn: str) -> str:
         # What `uri` resolves to under the package map as it is on disk now;
