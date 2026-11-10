@@ -1397,6 +1397,14 @@ void const_param(const int n) {}
 namespace { namespace detail { int hidden_twin(); } }
 namespace detail { int named_twin(); }
 int detail::named_twin() { return 1; }
+
+namespace NI { inline namespace v1 { namespace api { void inline_api(); } } }
+void NI::api::inline_api() {}
+
+namespace NJ { inline namespace v1 { inline namespace v2 {
+namespace api { void nested_inline_api(); }
+} } }
+void NJ::api::nested_inline_api() {}
 """
 
 
@@ -1431,6 +1439,8 @@ def linkage_check(tmp_path: Path) -> dict[tuple[str, int], bool]:
         ("twin", 46, True),
         ("const_param", 49, False),
         ("named_twin", 53, True),
+        ("inline_api", 56, True),
+        ("nested_inline_api", 61, True),
     ],
     ids=[
         "friend-after-a-static-declaration",
@@ -1447,6 +1457,8 @@ def linkage_check(tmp_path: Path) -> dict[tuple[str, int], bool]:
         "static-declaration-of-another-function-in-an-unnamed-namespace",
         "static-declaration-spelling-a-parameter-without-const",
         "namespace-named-like-one-inside-an-unnamed-namespace",
+        "namespace-inside-an-inline-namespace",
+        "namespace-inside-nested-inline-namespaces",
     ],
 )
 def test_one_linkage_check_for_every_function(

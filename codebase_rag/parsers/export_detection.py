@@ -1470,13 +1470,14 @@ class _CppScopes(NamedTuple):
     # What a file declares outside function bodies, by full path; an unnamed
     # namespace is the part `CPP_UNNAMED_NAMESPACE`, so whatever has it in
     # its path is file-private. `namespaces` holds namespace aliases too, and
-    # `classes` type aliases. `unnamed` maps a namespace to the unnamed one
-    # in it, whose names are found from it too, `aliases` maps a namespace
-    # alias or a using-declaration to the name it stands for, and `usings` a
-    # namespace to those its using-directives bring in (PR #2952).
+    # `classes` type aliases. `transparent` maps a namespace to the unnamed
+    # and inline ones in it, whose names are found from it too, `aliases`
+    # maps a namespace alias or a using-declaration to the name it stands
+    # for, and `usings` a namespace to those its using-directives bring in
+    # (PR #2952).
     namespaces: frozenset[_CppPath]
     classes: frozenset[_CppPath]
-    unnamed: Mapping[_CppPath, _CppPath]
+    transparent: Mapping[_CppPath, tuple[_CppPath, ...]]
     aliases: Mapping[_CppPath, _CppWritten]
     usings: Mapping[_CppPath, tuple[_CppWritten, ...]]
 
@@ -1516,12 +1517,12 @@ def _cpp_declares(scopes: _CppScopes, path: _CppPath) -> bool:
 
 
 def _cpp_member(scopes: _CppScopes, path: _CppPath, part: str) -> _CppPath:
-    # `part` looked up inside `path`: declared there, or in an unnamed
-    # namespace in it.
+    # `part` looked up inside `path`: declared there, or in an unnamed or
+    # inline namespace in it, at any depth (Greptile, PR #2952).
     return next(
         (
             candidate
-            for inner in _cpp_with_unnamed(scopes, path)
+            for inner in _cpp_transparent(scopes, path)
             if _cpp_declares(scopes, candidate := inner + (part,))
         ),
         path + (part,),
@@ -1543,28 +1544,29 @@ def _cpp_lookup_bases(
     scopes: _CppScopes, written: _CppWritten, *, usings: bool
 ) -> Iterator[_CppPath]:
     # Where a name's first part is looked for, innermost first: each
-    # namespace around where it is written, with the unnamed one in it, each
-    # followed by the namespaces its using-directives bring in, whose own
-    # using-directives are not followed.
+    # namespace around where it is written, with the unnamed and inline ones
+    # in it, each followed by the namespaces its using-directives bring in,
+    # whose own using-directives are not followed.
     around = () if written.anchored else written.scope
     for depth in range(len(around), -1, -1):
         scope = around[:depth]
-        yield from _cpp_with_unnamed(scopes, scope)
+        yield from _cpp_transparent(scopes, scope)
         if not usings:
             continue
         for directive in scopes.usings.get(scope, ()):
             target = _cpp_resolve(scopes, directive, usings=False)
             if target is not None:
-                yield from _cpp_with_unnamed(scopes, target)
+                yield from _cpp_transparent(scopes, target)
 
 
-def _cpp_with_unnamed(scopes: _CppScopes, scope: _CppPath) -> Iterator[_CppPath]:
-    # `scope`, then the unnamed namespace in it and the one in that: what
-    # they declare is found from `scope` too.
-    current: _CppPath | None = scope
-    while current is not None:
+def _cpp_transparent(scopes: _CppScopes, scope: _CppPath) -> Iterator[_CppPath]:
+    # `scope`, then the unnamed and inline namespaces in it and in those:
+    # what they declare is found from `scope` too.
+    pending = [scope]
+    while pending:
+        current = pending.pop(0)
         yield current
-        current = scopes.unnamed.get(current)
+        pending.extend(scopes.transparent.get(current, ()))
 
 
 class _CppScopeRecorder:
@@ -1573,7 +1575,7 @@ class _CppScopeRecorder:
     def __init__(self) -> None:
         self.namespaces: set[_CppPath] = set()
         self.classes: set[_CppPath] = set()
-        self.unnamed: dict[_CppPath, _CppPath] = {}
+        self.transparent: dict[_CppPath, list[_CppPath]] = {}
         self.aliases: dict[_CppPath, _CppWritten] = {}
         self.usings: dict[_CppPath, list[_CppWritten]] = {}
 
@@ -1582,7 +1584,7 @@ class _CppScopeRecorder:
         # returns where its children declare.
         named = node.child_by_field_name(cs.FIELD_NAME)
         if node.type == cs.TS_NAMESPACE_DEFINITION:
-            return self._namespace(named, path)
+            return self._namespace(node, named, path)
         if node.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES and named is not None:
             path += _cpp_written_path(named)
             self.classes.add(path)
@@ -1594,17 +1596,23 @@ class _CppScopeRecorder:
             self._type_alias(node, path)
         return path
 
-    def _namespace(self, named: Node | None, path: _CppPath) -> _CppPath:
+    def _namespace(self, node: Node, named: Node | None, path: _CppPath) -> _CppPath:
         # `namespace a::b {}` declares `a` too. An unnamed namespace is one
-        # per namespace around it, whose names are found from there.
-        if named is None:
-            self.unnamed[path] = path + (cs.CPP_UNNAMED_NAMESPACE,)
-            path += (cs.CPP_UNNAMED_NAMESPACE,)
+        # per namespace around it; its names, and an inline namespace's, are
+        # found from there too.
+        parts = (
+            _cpp_written(named, path).parts
+            if named is not None
+            else (cs.CPP_UNNAMED_NAMESPACE,)
+        )
+        outer = path
+        for part in parts:
+            outer, path = path, path + (part,)
             self.namespaces.add(path)
-            return path
-        for part in _cpp_written(named, path).parts:
-            path += (part,)
-            self.namespaces.add(path)
+        if named is None or any(
+            child.type == cs.CPP_KEYWORD_INLINE for child in node.children
+        ):
+            self.transparent.setdefault(outer, []).append(path)
         return path
 
     def _namespace_alias(self, node: Node, named: Node | None, path: _CppPath) -> None:
@@ -1639,7 +1647,7 @@ class _CppScopeRecorder:
         return _CppScopes(
             frozenset(self.namespaces),
             frozenset(self.classes),
-            dict(self.unnamed),
+            {scope: tuple(inner) for scope, inner in self.transparent.items()},
             dict(self.aliases),
             {scope: tuple(found) for scope, found in self.usings.items()},
         )

@@ -561,6 +561,9 @@ TS_CPP_USING_DECLARATION = "using_declaration"
 CPP_KEYWORD_NAMESPACE = "namespace"
 # `namespace a::b` and `namespace A = ::N`: a namespace name with parts.
 TS_CPP_NESTED_NAMESPACE_SPECIFIER = "nested_namespace_specifier"
+# `inline namespace v1 {}`: its members are found as members of the
+# namespace around it too.
+CPP_KEYWORD_INLINE = "inline"
 # The path part an unnamed namespace adds: each namespace has one, and what
 # has it in its path is file-private (PR #2952).
 CPP_UNNAMED_NAMESPACE = ""
