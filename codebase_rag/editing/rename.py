@@ -50,12 +50,12 @@ from ..parsers.js_ts.overloads import overload_signatures
 from ..parsers.py.overloads import overload_stub_names
 from ..types_defs import PropertyParams, ResultRow
 from ..utils import qn_markers
-from ..utils.source_encoding import decode_source
 from ..utils.path_utils import (
     base_module_qn,
     declaration_implementations,
     python_stub_implementations,
 )
+from ..utils.source_encoding import decode_source
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
 from .occurrences import (
@@ -1941,6 +1941,9 @@ class Renamer:
             text = decode_source(
                 (self.repo_root / path).read_bytes(), self.repo_root / path
             )
+            # read_text translated \r\n to \n before #3334; the staged
+            # byte offsets address that normalized text, so keep it.
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
         except OSError:
             return False
         # Every recorded entry must read the old name AND still sit inside an

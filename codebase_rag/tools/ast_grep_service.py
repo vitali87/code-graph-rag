@@ -280,7 +280,7 @@ class AstGrepService:
                     continue
                 tmp_path = abs_path.with_name(f".{abs_path.name}.tmp")
                 try:
-                    with open(tmp_path, "w", encoding=codec) as f:
+                    with open(tmp_path, "w", encoding=codec, newline="") as f:
                         f.write(new_source)
                     tmp_path.replace(abs_path)
                 finally:
