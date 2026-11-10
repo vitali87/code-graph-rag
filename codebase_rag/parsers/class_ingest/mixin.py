@@ -178,6 +178,12 @@ class RustImplScope(NamedTuple):
     impl_target: str
 
 
+class RustWrittenPath(NamedTuple):
+    # An impl block's self type as written, and the module it is read in.
+    path: str
+    module_qn: str
+
+
 def _rust_impl_owner_module(class_node: Node, module_qn: str) -> str:
     # An impl block inside `mod inner` targets a type whose node lives
     # under the module path (proj...inner.Widget). Resolve the impl target
@@ -2134,7 +2140,7 @@ class ClassIngestMixin:
 
     def restore_rust_impl_self_paths(
         self, root_node: Node, module_qn: str, lang_queries: LanguageQueries
-    ) -> None:
+    ) -> list[RustWrittenPath]:
         """Record each impl block's written self type for an unparsed file.
 
         What `_ingest_rust_impl_methods` records while it parses. A call
@@ -2143,13 +2149,14 @@ class ClassIngestMixin:
         reads an unchanged block's methods back from the graph with no path:
         the bare name stood in, named nothing in the block's module for
         `impl crate::model::Foo`, and the edge a clean index emits was lost
-        (PR #2993 review).
+        (PR #2993 review). Returns each path as written where it is read.
         """
         if not (query := lang_queries[cs.QUERY_CLASSES]):
-            return
+            return []
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
         captures = sorted_captures(QueryCursor(query), root_node)
         record = self.import_processor.record_rust_impl_self_path
+        written: list[RustWrittenPath] = []
         for class_node in captures.get(cs.CAPTURE_CLASS, []):
             if not (
                 (impl_target := rs_utils.extract_impl_target(class_node))
@@ -2163,6 +2170,10 @@ class ClassIngestMixin:
                 class_node, class_qn, lang_queries, lang_config
             ):
                 record(module_qn, method_qn, written_path)
+            written.append(
+                RustWrittenPath(path=written_path, module_qn=owner_module_qn)
+            )
+        return written
 
     def _read_back_impl_method_qns(
         self,

@@ -156,16 +156,32 @@ def test_a_bare_call_to_a_shared_type_name_still_binds_nothing(
 INCREMENTAL_CARGO = '[package]\nname = "demo"\nversion = "0.1.0"\n'
 INCREMENTAL_CALLER = "src/caller.rs"
 INCREMENTAL_CALLER_QN = f"{incremental.PROJECT}.src.caller.go"
+INCREMENTAL_CALL = "    crate::model::Foo::run();\n"
+INCREMENTAL_RUN = "    pub fn run() {}\n"
 
 
-def _incremental_files(ext: str, other: str, caller_body: str) -> dict[str, str]:
+def _incremental_files(
+    ext: str,
+    caller_body: str = INCREMENTAL_CALL,
+    other: str = f"impl Foo {{\n{INCREMENTAL_RUN}}}\n",
+    facade: str = "pub use crate::model::Foo;\n",
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    # `facade` re-exports the model's type and `relay` re-exports the
+    # facade's, so a block's `use` can reach `Foo` one or two hops away.
     return {
         "Cargo.toml": INCREMENTAL_CARGO,
-        "src/lib.rs": "pub mod caller;\npub mod ext;\npub mod model;\npub mod other;\n",
+        "src/lib.rs": (
+            "pub mod caller;\npub mod ext;\npub mod facade;\n"
+            "pub mod model;\npub mod other;\npub mod relay;\n"
+        ),
         "src/model.rs": "pub struct Foo;\n",
         "src/other.rs": "pub struct Foo;\n" + other,
+        "src/facade.rs": facade,
+        "src/relay.rs": "pub use crate::facade::Foo;\n",
         "src/ext.rs": ext,
         INCREMENTAL_CALLER: f"pub fn go() {{\n{caller_body}}}\n",
+        **(extra or {}),
     }
 
 
@@ -173,18 +189,12 @@ def _incremental_files(ext: str, other: str, caller_body: str) -> dict[str, str]
     ("files", "expected"),
     [
         (
-            _incremental_files(
-                "impl crate::model::Foo {\n    pub fn run() {}\n}\n",
-                "impl Foo {\n    pub fn run() {}\n}\n",
-                "    crate::model::Foo::run();\n",
-            ),
+            _incremental_files(f"impl crate::model::Foo {{\n{INCREMENTAL_RUN}}}\n"),
             "src.ext.Foo.run",
         ),
         (
             _incremental_files(
-                "use crate::model::Foo;\n\nimpl Foo {\n    pub fn run() {}\n}\n",
-                "impl Foo {\n    pub fn run() {}\n}\n",
-                "    crate::model::Foo::run();\n",
+                f"use crate::model::Foo;\n\nimpl Foo {{\n{INCREMENTAL_RUN}}}\n"
             ),
             "src.ext.Foo.run",
         ),
@@ -193,19 +203,69 @@ def _incremental_files(ext: str, other: str, caller_body: str) -> dict[str, str]
         # second block took as `run@7` is the other type's.
         (
             _incremental_files(
-                "impl crate::model::Foo {\n    pub fn run() {}\n}\n\n"
-                "impl crate::other::Foo {\n    pub fn stop() {}\n"
-                "    pub fn run() {}\n}\n",
-                "",
-                "    crate::model::Foo::stop();\n    crate::other::Foo::run();\n",
+                f"impl crate::model::Foo {{\n{INCREMENTAL_RUN}}}\n\n"
+                f"impl crate::other::Foo {{\n    pub fn stop() {{}}\n{INCREMENTAL_RUN}}}\n",
+                caller_body="    crate::model::Foo::stop();\n    crate::other::Foo::run();\n",
+                other="",
             ),
             "src.ext.Foo.run@7",
+        ),
+        # The block's type comes through re-exports in modules nothing the
+        # caller imports reaches: their maps are read back too.
+        (
+            _incremental_files(
+                f"use crate::facade::Foo;\n\nimpl Foo {{\n{INCREMENTAL_RUN}}}\n"
+            ),
+            "src.ext.Foo.run",
+        ),
+        (
+            _incremental_files(
+                f"use crate::relay::Foo;\n\nimpl Foo {{\n{INCREMENTAL_RUN}}}\n",
+                facade="pub use crate::model::*;\n",
+            ),
+            "src.ext.Foo.run",
+        ),
+        (
+            _incremental_files(f"impl crate::facade::Foo {{\n{INCREMENTAL_RUN}}}\n"),
+            "src.ext.Foo.run",
+        ),
+        (
+            _incremental_files(
+                "mod inner {\n    use crate::facade::Foo;\n\n"
+                "    impl Foo {\n        pub fn run() {}\n    }\n}\n"
+            ),
+            "src.ext.inner.Foo.run",
+        ),
+        (
+            _incremental_files(
+                "pub mod nested;\n",
+                extra={
+                    "src/ext/nested.rs": (
+                        "use super::super::facade::Foo;\n\n"
+                        f"impl Foo {{\n{INCREMENTAL_RUN}}}\n"
+                    )
+                },
+            ),
+            "src.ext.nested.Foo.run",
+        ),
+        (
+            _incremental_files(
+                f"pub mod inner;\n\nimpl inner::Foo {{\n{INCREMENTAL_RUN}}}\n",
+                extra={"src/ext/inner.rs": "pub use crate::model::Foo;\n"},
+            ),
+            "src.ext.Foo.run",
         ),
     ],
     ids=[
         "block-written-with-the-path",
         "bare-block-under-a-use",
         "two-blocks-one-module",
+        "bare-block-under-a-re-export",
+        "bare-block-under-a-chain-ending-in-a-glob-re-export",
+        "block-written-through-a-re-export",
+        "inline-mod-block-under-a-re-export",
+        "nested-module-block-under-a-super-re-export",
+        "block-written-through-a-child-module-re-export",
     ],
 )
 def test_reparsing_only_the_caller_keeps_the_path_qualified_edge(
