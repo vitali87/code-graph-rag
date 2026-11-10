@@ -770,11 +770,14 @@ class _Module:
         stays in that block, so it never counts against the name around it
         (Greptile, PR #3284). A function's parameters and `var`s count in
         its body too, which `binding_scope` gives the name whenever a
-        declaration in the body binds it."""
+        declaration in the body binds it. A function expression's own name
+        counts nowhere: any declaration of it inside shadows it."""
+        strict = self.strict_at(scope)
         if scope == self._root:
             names = _module_names(scope)
+        elif scope.type in _FUNCTIONS:
+            names = _function_scope_names(scope, strict)
         else:
-            strict = self.strict_at(scope)
             names = _declared_names(scope, strict)
             function = scope.parent
             if (
@@ -782,7 +785,7 @@ class _Module:
                 and function.type in _FUNCTIONS
                 and function.child_by_field_name(cs.FIELD_BODY) == scope
             ):
-                names = chain(names, _declared_names(function, strict))
+                names = chain(names, _function_scope_names(function, strict))
         return sum(1 for bound in names if bound == name)
 
     def _is_strict(self, scope: Node) -> bool:
@@ -1153,6 +1156,12 @@ def _module_names(root: Node) -> Iterator[str]:
 def _function_names(function: Node, strict: bool = False) -> Iterator[str]:
     if function.type in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION):
         yield from _pattern_names(function.child_by_field_name(cs.FIELD_NAME))
+    yield from _function_scope_names(function, strict)
+
+
+def _function_scope_names(function: Node, strict: bool = False) -> Iterator[str]:
+    # What a function binds besides a function expression's own name, which
+    # a declaration in the body shadows rather than rebinds.
     yield from _pattern_names(function.child_by_field_name(cs.FIELD_PARAMETER))
     yield from _pattern_names(function.child_by_field_name(cs.FIELD_PARAMETERS))
     body = function.child_by_field_name(cs.FIELD_BODY)

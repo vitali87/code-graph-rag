@@ -707,6 +707,42 @@ def _write_loader_module(repo: Path, name: str, source: str) -> None:
             'require("./setup");\nexport {};\n',
             "src.setup",
         ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const boot = function require() {{\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n}};\nboot();\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const boot = function* require() {{\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n}};\nboot().next();\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            "const boot = async function createRequire() {\n"
+            '  var { createRequire } = await import("node:module");\n'
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n};\nboot();\nexport {};\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}function require() {{\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n}}\nrequire();\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const Boot = class require {{\n  run() {{\n"
+            "    const require = createRequire(import.meta.url);\n"
+            '    require("./setup");\n  }}\n}};\nnew Boot().run();\n',
+            "src.setup",
+        ),
     ],
     ids=[
         "as-cast",
@@ -735,6 +771,11 @@ def _write_loader_module(repo: Path, name: str, source: str) -> None:
         "commonjs-dirname",
         "a-strict-block-s-own-function",
         "a-strict-module-block-s-own-function",
+        "inside-a-function-expression-of-its-name",
+        "inside-a-generator-expression-of-its-name",
+        "inside-a-function-expression-named-like-the-factory",
+        "inside-a-function-declaration-of-its-name",
+        "inside-a-class-expression-of-its-name",
     ],
 )
 def test_a_create_require_loader_spelled_any_way_node_reads_still_imports(
@@ -746,7 +787,9 @@ def test_a_create_require_loader_spelled_any_way_node_reads_still_imports(
     # A directory path has no trailing slash, which `createRequire` reads as
     # a file, so `createRequire(__dirname)` resolves from the parent. Strict
     # code keeps a block's function to the block, so it leaves the factory
-    # around it settled.
+    # around it settled. A function declaration's name binds around it, and
+    # a function or class expression's own name is shadowed by what its body
+    # declares, so neither counts against the loader inside.
     _write_loader_module(temp_repo, name, source)
     create_and_run_updater(temp_repo, mock_ingestor)
 
@@ -890,6 +933,18 @@ def test_a_create_require_loader_spelled_any_way_node_reads_still_imports(
             "function boot() {\n  const require = createRequire(__filename);\n"
             '  require("./setup");\n}\nboot();\n',
         ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}function boot(require) {{\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n}}\nboot();\n',
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const boot = function require(require) {{\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n}};\nboot();\n',
+        ),
     ],
     ids=[
         "a-local-converter",
@@ -911,6 +966,8 @@ def test_a_create_require_loader_spelled_any_way_node_reads_still_imports(
         "a-factory-beside-a-function-of-its-name",
         "a-sloppy-block-function-hoisted-over-the-factory",
         "a-sloppy-module-block-function-over-the-factory",
+        "a-loader-beside-a-parameter-of-its-name",
+        "a-loader-beside-a-parameter-of-a-function-expression-s-name",
     ],
 )
 def test_a_create_require_loader_whose_file_cannot_be_told_imports_nothing(
