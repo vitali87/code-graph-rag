@@ -4345,18 +4345,22 @@ class CallResolver:
         return hits
 
     def _rust_glob_sees(self, qn: str, imported_qn: str, module_qn: str | None) -> bool:
-        # Plain `pub` reaches every module. Any other visibility reaches at
-        # least the function's own module and those below it, which is all
-        # the graph keeps of a `pub(crate)` or `pub(super)`. The globbed
-        # module must see the function to hold or re-export it, and the
-        # caller's module to import it.
-        if not self.function_registry.is_rust_restricted(qn):
+        # Plain `pub` reaches every module; any other visibility reaches the
+        # subtree of the module it names, counted from the function's own
+        # module (`crate`: the whole crate, `super`: the parent's). The
+        # globbed module must see the function to hold or re-export it, and
+        # the caller's module to import it.
+        if (path := self.function_registry.rust_visibility(qn)) is None:
             return True
-        owner = qn.rpartition(cs.SEPARATOR_DOT)[0]
+        root = self.import_processor.rust_visibility_root(
+            path, qn.rpartition(cs.SEPARATOR_DOT)[0]
+        )
+        if root is None:
+            return True
         return (
             module_qn is not None
-            and self._rust_module_sees(module_qn, owner)
-            and self._rust_module_sees(imported_qn, owner)
+            and self._rust_module_sees(module_qn, root)
+            and self._rust_module_sees(imported_qn, root)
         )
 
     def _rust_glob_reexport(

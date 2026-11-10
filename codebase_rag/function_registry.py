@@ -57,7 +57,7 @@ class FunctionRegistryTrie:
         "_object_members",
         "_abstracts",
         "_module_private",
-        "_rust_restricted",
+        "_rust_visibility",
         "_body_scoped_names",
         "_callable_params",
         "_reserved",
@@ -106,10 +106,11 @@ class FunctionRegistryTrie:
         # passes on only exported names, so a private one in a star source is
         # not a candidate for the barrel's member (follow_reexports).
         self._module_private: set[QualifiedName] = set()
-        # Rust functions not declared plain `pub`. A glob imports only what
-        # is visible where it is written, and plain `pub` is the one
-        # visibility the graph knows reaches every module (PR #3242 review).
-        self._rust_restricted: set[QualifiedName] = set()
+        # Rust functions not declared plain `pub`, each with the path its
+        # visibility is restricted to (`self`, `crate`, `super`, an `in`
+        # path). A glob imports only what is visible where it is written
+        # (PR #3242 review).
+        self._rust_visibility: dict[QualifiedName, str] = {}
         self._body_scoped_names: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
         self._reserved: dict[QualifiedName, tuple[int, int]] = {}
@@ -164,11 +165,11 @@ class FunctionRegistryTrie:
     def is_module_private(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._module_private
 
-    def mark_rust_restricted(self, qualified_name: QualifiedName) -> None:
-        self._rust_restricted.add(qualified_name)
+    def mark_rust_visibility(self, qualified_name: QualifiedName, path: str) -> None:
+        self._rust_visibility[qualified_name] = path
 
-    def is_rust_restricted(self, qualified_name: QualifiedName) -> bool:
-        return qualified_name in self._rust_restricted
+    def rust_visibility(self, qualified_name: QualifiedName) -> str | None:
+        return self._rust_visibility.get(qualified_name)
 
     def mark_body_scoped_name(self, qualified_name: QualifiedName) -> None:
         self._body_scoped_names.add(qualified_name)
@@ -505,7 +506,7 @@ class FunctionRegistryTrie:
         self._object_members.discard(qualified_name)
         self._abstracts.discard(qualified_name)
         self._module_private.discard(qualified_name)
-        self._rust_restricted.discard(qualified_name)
+        self._rust_visibility.pop(qualified_name, None)
         self._body_scoped_names.discard(qualified_name)
         self._callable_params.pop(qualified_name, None)
 

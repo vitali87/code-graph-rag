@@ -123,7 +123,7 @@ from .parsers.rs import utils as rs_utils
 from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import (
     mark_js_ts_module_private,
-    mark_rust_restricted,
+    mark_rust_visibility,
     sorted_captures,
 )
 from .path_filters import matches_test_path
@@ -4539,15 +4539,19 @@ class GraphUpdater:
         # A private declaration in an unchanged star source must stay private,
         # or it counts as re-exported and makes the exported one a barrel
         # names ambiguous.
-        language = get_language_for_extension(Path(path).suffix)
-        # A row written before the flag existed reads as exported: the
-        # star lookup then counts it, as it did before.
-        is_exported = row.get(cs.KEY_IS_EXPORTED) is not False
-        mark_js_ts_module_private(self.function_registry, qn, is_exported, language)
-        # An unchanged Rust function's visibility, or a re-parsed caller's
-        # glob call binds it exactly where a clean index does not.
-        if node_type == NodeType.FUNCTION:
-            mark_rust_restricted(self.function_registry, qn, is_exported, language)
+        mark_js_ts_module_private(
+            self.function_registry,
+            qn,
+            # A row written before the flag existed reads as exported: the
+            # star lookup then counts it, as it did before.
+            row.get(cs.KEY_IS_EXPORTED) is not False,
+            get_language_for_extension(Path(path).suffix),
+        )
+        # An unchanged Rust function's declared visibility, or a re-parsed
+        # caller's glob call binds it exactly where a clean index does not.
+        mark_rust_visibility(
+            self.function_registry, qn, row.get(cs.KEY_RUST_VISIBILITY)
+        )
         # The C# declared-form index (issue #1629) is filled only by
         # parsing; an unchanged type must stay reachable by `N.Widget`
         # from a re-parsed base list or receiver (bot review).

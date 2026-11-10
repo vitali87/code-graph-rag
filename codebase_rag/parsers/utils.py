@@ -21,6 +21,8 @@ from ..types_defs import (
     NodeType,
     OverloadSignature,
     PropertyDict,
+    PropertyValue,
+    ResultValue,
     SimpleNameLookup,
     TreeSitterNodeProtocol,
 )
@@ -224,17 +226,16 @@ def mark_js_ts_module_private(
         function_registry.mark_module_private(qualified_name)
 
 
-def mark_rust_restricted(
+def mark_rust_visibility(
     function_registry: FunctionRegistryTrieProtocol,
     qualified_name: str,
-    is_exported: bool,
-    language: cs.SupportedLanguage | None,
+    visibility: PropertyValue | ResultValue,
 ) -> None:
-    # A Rust glob imports only what is visible where it is written. The flag
-    # the node carries says whether a function is plain `pub`; the resolver
-    # asks it before calling a glob-imported function's binding certain.
-    if language == cs.SupportedLanguage.RUST and not is_exported:
-        function_registry.mark_rust_restricted(qualified_name)
+    # A Rust glob imports only what is visible where it is written. The
+    # node's `rust_visibility` is the declared restriction; the resolver
+    # reads it before calling a glob-imported function's binding certain.
+    if isinstance(visibility, str):
+        function_registry.mark_rust_visibility(qualified_name, visibility)
 
 
 def function_span_key(module_qn: str, node: Node) -> FunctionSpanKey:

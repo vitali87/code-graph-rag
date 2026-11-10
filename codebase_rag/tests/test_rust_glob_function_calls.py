@@ -170,11 +170,14 @@ _RUST_PRIVATE = {
     ),
     # `drop` is private to `hidden`: a glob outside it does not import it,
     # and `drop(v)` there calls the prelude's. `hidden::below` sees it.
-    "src/hidden.rs": "pub mod below;\nfn drop<T>(_value: T) {}\npub fn keep() {}\n",
+    "src/hidden.rs": (
+        "pub mod below;\nfn drop<T>(_value: T) {}\npub fn keep() {}\n"
+        "pub(crate) fn shared() {}\n"
+    ),
     "src/hidden/below.rs": "use super::*;\npub fn go(v: u32) { keep(); drop(v) }\n",
     "src/user.rs": (
         "use crate::hidden::*;\nuse super::*;\n"
-        "pub fn go(v: u32) -> u32 { keep(); drop(v); secret() }\n"
+        "pub fn go(v: u32) -> u32 { keep(); shared(); drop(v); secret() }\n"
     ),
     # `inner::child` sees `inner`'s private `drop`, but `shapes` does not,
     # so its `pub use self::inner::*;` does not pass `drop` on.
@@ -198,6 +201,7 @@ def test_a_private_function_outside_the_globbing_module_is_not_exact(
 ) -> None:
     callees = _callees(rust_private, "src.user.go")
     assert callees.get("src.hidden.keep") == "exact", rust_private
+    assert callees.get("src.hidden.shared") == "exact", rust_private
     assert callees.get("src.hidden.drop") != "exact", rust_private
 
 
@@ -263,3 +267,71 @@ def test_an_unchanged_private_function_stays_not_exact_after_a_sync(
     synced = _store_calls(store, "proj.src.user.go")
     assert synced == _store_calls(clean, "proj.src.user.go"), synced
     assert synced.get("proj.src.hidden.drop") != "exact", synced
+
+
+_RUST_SCOPED = {
+    "Cargo.toml": '[package]\nname = "rsscope"\nversion = "0.1.0"\nedition = "2021"\n',
+    "src/lib.rs": (
+        "pub mod a;\npub mod amb;\npub mod b;\npub mod far;\npub mod nest;\n"
+        "pub mod sib;\n"
+    ),
+    "src/a.rs": "pub(crate) fn helper() -> u32 { 1 }\npub(crate) fn drop<T>(_value: T) {}\n",
+    "src/b.rs": "pub fn helper() -> u32 { 2 }\n",
+    "src/sib.rs": "use crate::a::*;\npub fn go() -> u32 { drop(0u32); helper() }\n",
+    # Both `helper`s are visible here, so rustc rejects the call as ambiguous.
+    "src/amb.rs": "use crate::a::*;\nuse crate::b::*;\npub fn go() -> u32 { helper() }\n",
+    "src/nest.rs": "pub mod inner;\npub mod peer;\n",
+    "src/nest/inner.rs": (
+        "pub(super) fn drop<T>(_value: T) {}\npub(in crate::nest) fn deep() {}\n"
+    ),
+    "src/nest/peer.rs": "use super::inner::*;\npub fn go(v: u32) { drop(v); deep() }\n",
+    "src/far.rs": "use crate::nest::inner::*;\npub fn go(v: u32) { drop(v) }\n",
+    # The binary is a crate of its own: the library's `pub(crate)` items are
+    # not visible to it, and `drop` is the prelude's.
+    "src/main.rs": "use rsscope::a::*;\nfn main() { drop(0u32) }\n",
+}
+
+
+@pytest.fixture(scope="module")
+def rust_scoped(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
+    return _calls(
+        tmp_path_factory.mktemp("rs3242scope") / "rsscope", _RUST_SCOPED, "rust"
+    )
+
+
+@pytest.mark.parametrize(
+    ("caller", "callees"),
+    [
+        ("src.sib.go", {"src.a.drop": "exact", "src.a.helper": "exact"}),
+        (
+            "src.nest.peer.go",
+            {"src.nest.inner.drop": "exact", "src.nest.inner.deep": "exact"},
+        ),
+    ],
+    ids=["pub-crate-sibling", "pub-super-and-in-path"],
+)
+def test_a_restricted_function_visible_to_the_glob_binds_exactly(
+    rust_scoped: _Calls, caller: str, callees: dict[str, str]
+) -> None:
+    assert _callees(rust_scoped, caller) == callees, rust_scoped
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("src.far.go", "src.nest.inner.drop"),
+        ("src.main.main", "src.a.drop"),
+    ],
+    ids=["pub-super-outside-its-parent", "pub-crate-from-the-binary"],
+)
+def test_a_restricted_function_the_glob_cannot_see_is_not_exact(
+    rust_scoped: _Calls, caller: str, callee: str
+) -> None:
+    assert _callees(rust_scoped, caller).get(callee) != "exact", rust_scoped
+
+
+def test_a_pub_crate_and_a_pub_provider_are_ambiguous(rust_scoped: _Calls) -> None:
+    # `a::helper` is `pub(crate)`, which `amb` sees as well as `b::helper`.
+    callees = _callees(rust_scoped, "src.amb.go")
+    assert callees, rust_scoped
+    assert "exact" not in callees.values(), rust_scoped
