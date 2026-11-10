@@ -417,19 +417,30 @@ class LocalBindings:
         if node.type != cs.TS_IDENTIFIER:
             return False
         scope = self._module.binding_scope(node)
-        name = safe_decode_text(node)
-        if scope is None or not name or (name, _key(scope)) in self._reassigned():
+        if scope is None or not self._is_settled(node, scope):
             return False
-        if (name, _key(scope)) in imported:
+        if (safe_decode_text(node), _key(scope)) in imported:
             return True
-        return through(_cast_free(_declared_value(scope, name)), hops + 1)
+        return through(self._settled_value(node, scope), hops + 1)
 
     def _settled_value(self, identifier: Node, scope: Node) -> Node | None:
-        # The initializer of a binding nothing reassigns; None otherwise.
-        name = safe_decode_text(identifier)
-        if not name or (name, _key(scope)) in self._reassigned():
+        # The initializer of the one `const` binding the name in `scope`;
+        # None for any other binding, whose value can change.
+        if not self._is_settled(identifier, scope):
             return None
-        return _cast_free(_declared_value(scope, name))
+        return _cast_free(_sole_const_value(scope, safe_decode_text(identifier)))
+
+    def _is_settled(self, identifier: Node, scope: Node) -> bool:
+        # One declaration binds the name in `scope` and nothing writes it: a
+        # second `var entry` rebinds the name as surely as `entry = x` does
+        # (Greptile, PR #3284).
+        name = safe_decode_text(identifier)
+        return (
+            bool(name)
+            and (name, _key(scope)) not in self._reassigned()
+            and sum(1 for bound in _scope_names(scope, self._root) if bound == name)
+            == 1
+        )
 
     def _reassigned(self) -> frozenset[_Binding]:
         # Each binding something writes after its declaration, keyed by the
@@ -595,23 +606,7 @@ class _Module:
     def _top_level_names(self) -> frozenset[str]:
         # The names the module's own statements declare or import.
         if self._top_names is None:
-            names: set[str] = set()
-            for statement in self._root.named_children:
-                node = statement
-                if node.type == cs.TS_EXPORT_STATEMENT:
-                    node = node.child_by_field_name(cs.FIELD_DECLARATION) or node
-                if node.type == cs.TS_IMPORT_STATEMENT:
-                    names.update(_imported_names(node))
-                elif node.type in (
-                    cs.TS_LEXICAL_DECLARATION,
-                    cs.TS_VARIABLE_DECLARATION,
-                ):
-                    names.update(_declarator_names(node))
-                elif node.type in _NAMED_DECLARATIONS:
-                    names.update(
-                        _pattern_names(node.child_by_field_name(cs.FIELD_NAME))
-                    )
-            self._top_names = frozenset(names)
+            self._top_names = frozenset(_module_names(self._root))
         return self._top_names
 
     def resolve(self, value: Node) -> CommonjsBinding | None:
@@ -1110,6 +1105,21 @@ def _declared_names(scope: Node, strict: bool = False) -> Iterator[str]:
     yield from _function_names(scope, strict)
 
 
+def _module_names(root: Node) -> Iterator[str]:
+    # The names the module's own statements declare or import, once per
+    # declaration.
+    for statement in root.named_children:
+        node = statement
+        if node.type == cs.TS_EXPORT_STATEMENT:
+            node = node.child_by_field_name(cs.FIELD_DECLARATION) or node
+        if node.type == cs.TS_IMPORT_STATEMENT:
+            yield from _imported_names(node)
+        elif node.type in (cs.TS_LEXICAL_DECLARATION, cs.TS_VARIABLE_DECLARATION):
+            yield from _declarator_names(node)
+        elif node.type in _NAMED_DECLARATIONS:
+            yield from _pattern_names(node.child_by_field_name(cs.FIELD_NAME))
+
+
 def _function_names(function: Node, strict: bool = False) -> Iterator[str]:
     if function.type in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION):
         yield from _pattern_names(function.child_by_field_name(cs.FIELD_NAME))
@@ -1136,21 +1146,44 @@ def _function_names(function: Node, strict: bool = False) -> Iterator[str]:
             pending.extend((child, False) for child in node.named_children)
 
 
-def _declared_value(scope: Node, name: str) -> Node | None:
-    # The value a `var` / `let` / `const` that `scope` itself binds gives
-    # `name`. A declarator of a nested block binds a name of its own, so its
-    # value never stands for the scope's (Greptile, PR #3284).
-    for declaration in _scope_declarations(scope):
-        for declarator in declaration.named_children:
-            target = declarator.child_by_field_name(cs.FIELD_NAME)
-            if (
-                declarator.type == cs.TS_VARIABLE_DECLARATOR
-                and target is not None
-                and target.type == cs.TS_IDENTIFIER
-                and safe_decode_text(target) == name
-            ):
-                return declarator.child_by_field_name(cs.FIELD_VALUE)
-    return None
+def _sole_const_value(scope: Node, name: str | None) -> Node | None:
+    # The value the one `const` declaration `scope` itself binds `name` with
+    # gives it; None when a `var` or `let` binds it, or more than one
+    # declarator does. A declarator of a nested block binds a name of its
+    # own, so its value never stands for the scope's (Greptile, PR #3284).
+    declarators = [
+        declarator
+        for declaration in _scope_declarations(scope)
+        for declarator in declaration.named_children
+        if declarator.type == cs.TS_VARIABLE_DECLARATOR
+        and _declarator_binds(declarator, name)
+    ]
+    if len(declarators) != 1 or not _is_const(declarators[0].parent):
+        return None
+    return declarators[0].child_by_field_name(cs.FIELD_VALUE)
+
+
+def _declarator_binds(declarator: Node, name: str | None) -> bool:
+    target = declarator.child_by_field_name(cs.FIELD_NAME)
+    return (
+        target is not None
+        and target.type == cs.TS_IDENTIFIER
+        and safe_decode_text(target) == name
+    )
+
+
+def _is_const(declaration: Node | None) -> bool:
+    kind = (
+        declaration.child_by_field_name(cs.FIELD_KIND)
+        if declaration is not None and declaration.type == cs.TS_LEXICAL_DECLARATION
+        else None
+    )
+    return kind is not None and kind.type == cs.JS_CONST_KEYWORD
+
+
+def _scope_names(scope: Node, root: Node) -> Iterator[str]:
+    # Every name `scope` binds, once per declaration that binds it.
+    return _module_names(root) if scope == root else _declared_names(scope)
 
 
 _DECLARATIONS = frozenset({cs.TS_LEXICAL_DECLARATION, cs.TS_VARIABLE_DECLARATION})

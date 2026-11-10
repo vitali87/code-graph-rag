@@ -791,6 +791,61 @@ def test_a_create_require_loader_spelled_any_way_node_reads_still_imports(
             "load = () => () => {};\n"
             'const require = load;\nrequire("./setup");\n',
         ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}var entry = "../plugins/entry.js";\n'
+            'var entry = "./entry.js";\n'
+            "const require = createRequire(new URL(entry, import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}let entry = "../plugins/entry.js";\n'
+            "const require = createRequire(new URL(entry, import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}var entry = "../plugins/entry.js";\n'
+            "function entry() {}\n"
+            "const require = createRequire(new URL(entry, import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}let entry = "./entry.js";\n'
+            '[entry] = ["../plugins/entry.js"];\n'
+            "const require = createRequire(new URL(entry, import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}let entry = "./entry.js";\n'
+            'for (entry of ["../plugins/entry.js"]) {}\n'
+            "const require = createRequire(new URL(entry, import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}var require = createRequire("
+            'new URL("../plugins/entry.js", import.meta.url));\n'
+            "var require = createRequire(import.meta.url);\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import {{ fileURLToPath }} from "node:url";\n'
+            "var __filename = fileURLToPath("
+            'new URL("../plugins/entry.js", import.meta.url));\n'
+            "var __filename = fileURLToPath(import.meta.url);\n"
+            'const require = createRequire(__filename);\nrequire("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}var make = createRequire;\n"
+            "var make = () => () => {};\n"
+            'const require = make(import.meta.url);\nrequire("./setup");\n',
+        ),
     ],
     ids=[
         "a-local-converter",
@@ -801,6 +856,14 @@ def test_a_create_require_loader_spelled_any_way_node_reads_still_imports(
         "a-template-path",
         "a-loader-rewritten-through-a-cast",
         "a-reassigned-loader-alias",
+        "a-path-declared-twice",
+        "a-let-path",
+        "a-path-beside-a-function-of-its-name",
+        "a-path-rewritten-by-destructuring",
+        "a-path-rewritten-by-a-loop",
+        "a-loader-declared-twice",
+        "a-filename-declared-twice",
+        "a-factory-alias-declared-twice",
     ],
 )
 def test_a_create_require_loader_whose_file_cannot_be_told_imports_nothing(
@@ -809,7 +872,9 @@ def test_a_create_require_loader_whose_file_cannot_be_told_imports_nothing(
     # Negative: a converter that is not Node's, a value something rewrites,
     # a computed path, and `new URL` against a path (which throws) leave
     # the loader's directory unknown, so it records no edge (Greptile, PR
-    # #3284).
+    # #3284). Only a name one `const` binds and nothing writes holds a
+    # value the graph can trust: a second `var entry` rebinds it, and so
+    # can any `let` or `var`.
     _write_loader_module(temp_repo, name, source)
     create_and_run_updater(temp_repo, mock_ingestor)
 
