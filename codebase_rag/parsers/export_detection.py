@@ -751,23 +751,23 @@ def _c_exported(node: Node) -> bool:
     )
 
 
+class _FunctionKey(NamedTuple):
+    # What tells one function from another: its plain name and, in C++, its
+    # namespace path and parameter types. C has one namespace and no
+    # overloads, so both stay empty there.
+    name: str
+    namespace: tuple[str, ...] = ()
+    parameters: tuple[str, ...] = ()
+
+
 def _declared_static_before(definition: Node, *, cpp: bool = False) -> bool:
     # A C++ declaration names the same function only in the same namespace
     # (reopened blocks included) and with the same parameter types: `static
     # void process(int)` leaves `process(double)` external (bot review on PR
-    # #2952). C has one namespace and no overloads.
-    name = _cpp_declared_name(definition)
-    if name is None:
+    # #2952).
+    key = _defined_function_key(definition, cpp=cpp)
+    if key is None:
         return False
-    namespace = _cpp_namespace_path(definition) if cpp else ()
-    if cpp:
-        # `void N::helper() {}` defines `helper` of namespace `N` (Greptile,
-        # PR #2952); the empty qualifier of `::helper` is the global one.
-        *qualifier, name = (
-            part.strip() for part in name.split(cs.SEPARATOR_DOUBLE_COLON)
-        )
-        namespace += tuple(part for part in qualifier if part)
-    parameters = _cpp_parameter_types(definition) if cpp else ()
     root = definition
     while root.parent is not None:
         root = root.parent
@@ -780,20 +780,38 @@ def _declared_static_before(definition: Node, *, cpp: bool = False) -> bool:
             cpp and node.type == cs.TS_NAMESPACE_DEFINITION
         ):
             pending.extend(reversed(node.children))
-        elif (
-            node.type == cs.TS_CPP_DECLARATION
-            and _cpp_static(node)
-            and _cpp_declared_name(node) == name
-            and (
-                not cpp
-                or (
-                    _cpp_namespace_path(node) == namespace
-                    and _cpp_parameter_types(node) == parameters
-                )
-            )
-        ):
+        elif _static_declaration_of(node, key, cpp=cpp):
             return True
     return False
+
+
+def _defined_function_key(definition: Node, *, cpp: bool) -> _FunctionKey | None:
+    name = _cpp_declared_name(definition)
+    if name is None:
+        return None
+    if not cpp:
+        return _FunctionKey(name)
+    # `void N::helper() {}` defines `helper` of namespace `N` (Greptile,
+    # PR #2952); the empty qualifier of `::helper` is the global one.
+    *qualifier, name = (part.strip() for part in name.split(cs.SEPARATOR_DOUBLE_COLON))
+    namespace = _cpp_namespace_path(definition) + tuple(
+        part for part in qualifier if part
+    )
+    return _FunctionKey(name, namespace, _cpp_parameter_types(definition))
+
+
+def _static_declaration_of(node: Node, key: _FunctionKey, *, cpp: bool) -> bool:
+    # Whether `node` is a `static` declaration of the function `key` names.
+    if (
+        node.type != cs.TS_CPP_DECLARATION
+        or not _cpp_static(node)
+        or _cpp_declared_name(node) != key.name
+    ):
+        return False
+    return not cpp or (
+        _cpp_namespace_path(node) == key.namespace
+        and _cpp_parameter_types(node) == key.parameters
+    )
 
 
 def _cpp_namespace_path(node: Node) -> tuple[str, ...]:
