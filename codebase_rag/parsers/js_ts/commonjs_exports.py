@@ -37,6 +37,7 @@ from __future__ import annotations
 import posixpath
 from collections import deque
 from collections.abc import Callable, Iterator
+from functools import partial
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -60,6 +61,7 @@ _OBJECT_FREEZE = _object_call(cs.JS_OBJECT_FREEZE_METHOD)
 _OBJECT_DEFINE_PROPERTY = _object_call(cs.JS_OBJECT_DEFINE_PROPERTY_METHOD)
 # Wrappers that pass their operand's value through unchanged.
 _WRAPPERS = cs.TS_CAST_WRAPPER_TYPES | {cs.TS_PARENTHESIZED_EXPRESSION}
+_CAST_WRAPPERS = _WRAPPERS | {cs.TS_TYPE_ASSERTION}
 _FUNCTIONS = frozenset(
     {
         cs.TS_FUNCTION_DECLARATION,
@@ -185,10 +187,27 @@ def commonjs_export_bindings(root: Node) -> dict[str, CommonjsBinding]:
 type _Binding = tuple[str, tuple[int, int, str]]
 
 
-class _NodeModuleBindings(NamedTuple):
-    """The bindings a module imports Node's `createRequire` and `module` as."""
+class _Builtin(NamedTuple):
+    """One export of a Node built-in module, and the specifiers that load it."""
 
-    factories: frozenset[_Binding]
+    specifiers: frozenset[str]
+    export: str
+
+
+_CREATE_REQUIRE = _Builtin(cs.JS_NODE_MODULE_SPECIFIERS, cs.JS_CREATE_REQUIRE)
+# Node's `url` converters keep the location they are given, so a loader made
+# for `fileURLToPath(import.meta.url)` resolves from the module's own file.
+_LOCATION_CONVERTERS = tuple(
+    _Builtin(cs.JS_NODE_URL_SPECIFIERS, export)
+    for export in cs.JS_URL_LOCATION_CONVERTERS
+)
+
+
+class _BuiltinBindings(NamedTuple):
+    """The bindings a module imports a built-in's export, and the built-in
+    itself, as."""
+
+    exports: frozenset[_Binding]
     modules: frozenset[_Binding]
 
 
@@ -201,12 +220,12 @@ class LocalBindings:
     """Whether a `require` call's callee is Node's loader, decided from the
     scopes of one module, read once."""
 
-    __slots__ = ("_module", "_root", "_node_module", "_rewritten")
+    __slots__ = ("_module", "_root", "_builtins", "_rewritten")
 
     def __init__(self, root: Node) -> None:
         self._module = _Module(root, strict_blocks=True)
         self._root = root
-        self._node_module: _NodeModuleBindings | None = None
+        self._builtins: dict[_Builtin, _BuiltinBindings] = {}
         self._rewritten: frozenset[_Binding] | None = None
 
     def loader_base(self, identifier: Node) -> str | None:
@@ -215,51 +234,128 @@ class LocalBindings:
 
         The global `require`, which nothing in the module binds, resolves
         from the module's directory. A binding nothing reassigns whose value
-        a `createRequire` from Node's `module` makes resolves from the file
-        it was given, when the module spells that file out. Anything else (a
-        parameter, a local helper, another object's `createRequire`, a
-        replaced alias, a loader for a computed path) loads nothing that can
-        be told, so it is None and records no import (Greptile and
-        CodeRabbit, PR #3284)."""
-        scope = self._module.binding_scope(identifier)
+        a `createRequire` from Node's `module` makes, directly or through
+        such aliases, resolves from the file it was given, when the module
+        spells that file out. Anything else (a parameter, a local helper,
+        another object's `createRequire`, a replaced alias, a loader for a
+        computed path) loads nothing that can be told, so it is None and
+        records no import (Greptile and CodeRabbit, PR #3284)."""
+        if self._module.binding_scope(identifier) is None:
+            return cs.PATH_CURRENT_DIR
+        return self._loader_base(identifier, 0)
+
+    def _loader_base(self, node: Node | None, hops: int) -> str | None:
+        node = _cast_free(node)
+        if node is None or hops > _FACTORY_ALIAS_HOPS:
+            return None
+        if node.type != cs.TS_CALL_EXPRESSION:
+            return self._through_binding(node, hops, self._loader_base)
+        if not self._is_export(
+            node.child_by_field_name(cs.FIELD_FUNCTION), 0, _CREATE_REQUIRE
+        ):
+            return None
+        # `createRequire` reads its first argument and ignores the rest.
+        args = _call_arguments(node)
+        return self._file_base(args[0], 0) if args else None
+
+    def _file_base(self, node: Node | None, hops: int) -> str | None:
+        # The directory, relative to the module's own, a `createRequire`
+        # given `node` resolves from (Greptile, PR #3284): the module's own
+        # for its file (`import.meta.url`, `import.meta.filename`,
+        # `__filename`, `fileURLToPath(import.meta.url)`), the directory a
+        # relative `new URL("../plugins/entry.js", import.meta.url)` names,
+        # and either through a binding nothing reassigns. Casts and
+        # parentheses around any of them change nothing. Any other argument
+        # is a path the module computes, which the graph cannot follow.
+        node = _cast_free(node)
+        if node is None or hops > _FACTORY_ALIAS_HOPS:
+            return None
+        if (own := self._own_location_base(node)) is not None:
+            return own
+        if node.type == cs.TS_NEW_EXPRESSION:
+            return self._url_base(node, hops)
+        if node.type == cs.TS_CALL_EXPRESSION:
+            return self._converted_base(node, hops)
+        return self._through_binding(node, hops, self._file_base)
+
+    def _own_location_base(self, node: Node) -> str | None:
+        # The module's own file resolves from its directory. Its directory
+        # (`import.meta.dirname`, `__dirname`) has no trailing slash, and
+        # `createRequire` reads a path without one as a file, so it resolves
+        # from the parent, as Node does.
+        if _is_import_meta(node, cs.JS_IMPORT_META_FILE_PROPERTIES) or self._is_global(
+            node, cs.JS_FILENAME_GLOBAL
+        ):
+            return cs.PATH_CURRENT_DIR
+        if _is_import_meta(
+            node, cs.JS_IMPORT_META_DIRECTORY_PROPERTIES
+        ) or self._is_global(node, cs.JS_DIRNAME_GLOBAL):
+            return cs.PATH_PARENT_DIR
+        return None
+
+    def _url_base(self, url: Node, hops: int) -> str | None:
+        # `new URL(import.meta.url)`, or `new URL(<relative path>,
+        # import.meta.url)`: the directory the URL names.
+        if not self._is_global(
+            _cast_free(url.child_by_field_name(cs.FIELD_CONSTRUCTOR)),
+            cs.JS_URL_CONSTRUCTOR,
+        ):
+            return None
+        args = _call_arguments(url)
+        if len(args) == 1:
+            return cs.PATH_CURRENT_DIR if self._is_module_url(args[0], hops) else None
+        if not args or not self._is_module_url(args[1], hops):
+            return None
+        return _relative_url_directory(self._settled_string(args[0], hops))
+
+    def _converted_base(self, call: Node, hops: int) -> str | None:
+        # `fileURLToPath(x)` / `pathToFileURL(x)` from Node's `url` name the
+        # location `x` does.
+        callee = call.child_by_field_name(cs.FIELD_FUNCTION)
+        args = _call_arguments(call)
+        if not args or not any(
+            self._is_export(callee, 0, converter) for converter in _LOCATION_CONVERTERS
+        ):
+            return None
+        return self._file_base(args[0], hops + 1)
+
+    def _is_module_url(self, node: Node | None, hops: int) -> bool:
+        # `import.meta.url`, or a binding nothing reassigns that holds it.
+        node = _cast_free(node)
+        if node is None or hops > _FACTORY_ALIAS_HOPS:
+            return False
+        if _is_import_meta(node, cs.JS_IMPORT_META_URL_PROPERTIES):
+            return True
+        if node.type != cs.TS_IDENTIFIER:
+            return False
+        scope = self._module.binding_scope(node)
+        return scope is not None and self._is_module_url(
+            self._settled_value(node, scope), hops + 1
+        )
+
+    def _settled_string(self, node: Node | None, hops: int) -> str | None:
+        # A string literal, or a binding nothing reassigns that holds one.
+        node = _cast_free(node)
+        if node is None or hops > _FACTORY_ALIAS_HOPS:
+            return None
+        if node.type == cs.TS_STRING:
+            return _plain_string(node)
+        return self._through_binding(node, hops, self._settled_string)
+
+    def _through_binding(
+        self,
+        node: Node,
+        hops: int,
+        read: Callable[[Node | None, int], str | None],
+    ) -> str | None:
+        # What `read` makes of the value of the binding `node` names, when
+        # the module binds it and nothing reassigns it.
+        if node.type != cs.TS_IDENTIFIER:
+            return None
+        scope = self._module.binding_scope(node)
         if scope is None:
-            return cs.PATH_CURRENT_DIR
-        value = self._settled_value(identifier, scope)
-        if (
-            value is None
-            or value.type != cs.TS_CALL_EXPRESSION
-            or not self._is_factory(value.child_by_field_name(cs.FIELD_FUNCTION), 0)
-        ):
             return None
-        return self._created_base(value)
-
-    def _created_base(self, factory_call: Node) -> str | None:
-        # `createRequire(import.meta.url)` loads from the module's own file;
-        # `createRequire(new URL("../plugins/entry.js", import.meta.url))`
-        # from `plugins/`, so its `require("./setup")` is `plugins/setup`
-        # (Greptile, PR #3284). Any other argument is a path the module
-        # computes, which the graph cannot follow.
-        args = _call_arguments(factory_call)
-        if len(args) != 1:
-            return None
-        if self._names_own_file(args[0]):
-            return cs.PATH_CURRENT_DIR
-        url = args[0]
-        if url.type != cs.TS_NEW_EXPRESSION or not self._is_global(
-            url.child_by_field_name(cs.FIELD_CONSTRUCTOR), cs.JS_URL_CONSTRUCTOR
-        ):
-            return None
-        url_args = _call_arguments(url)
-        if len(url_args) != cs.JS_URL_ARGUMENT_COUNT or not _is_import_meta(
-            url_args[1], cs.JS_IMPORT_META_URL_PROPERTIES
-        ):
-            return None
-        return _relative_url_directory(_plain_string(url_args[0]))
-
-    def _names_own_file(self, node: Node) -> bool:
-        return _is_import_meta(
-            node, cs.JS_IMPORT_META_FILE_PROPERTIES
-        ) or self._is_global(node, cs.JS_FILENAME_GLOBAL)
+        return read(self._settled_value(node, scope), hops + 1)
 
     def _is_global(self, node: Node | None, name: str) -> bool:
         # `name` itself, which no scope of the module binds or overwrites.
@@ -271,33 +367,42 @@ class LocalBindings:
             and (name, _key(self._root)) not in self._reassigned()
         )
 
-    def _is_factory(self, node: Node | None, hops: int) -> bool:
-        # Node's `createRequire`: imported or destructured from `module`,
-        # read off `module`, or a never-reassigned alias of either.
-        node = _unwrapped(node)
+    def _is_export(self, node: Node | None, hops: int, builtin: _Builtin) -> bool:
+        # `builtin`'s export (`createRequire`, `fileURLToPath`): imported or
+        # destructured from its module, read off the module, or a
+        # never-reassigned alias of either.
+        node = _cast_free(node)
         if node is None or hops > _FACTORY_ALIAS_HOPS:
             return False
         if node.type == cs.TS_MEMBER_EXPRESSION:
             prop = node.child_by_field_name(cs.FIELD_PROPERTY)
             return (
                 prop is not None
-                and safe_decode_text(prop) == cs.JS_CREATE_REQUIRE
-                and self._is_node_module(
-                    node.child_by_field_name(cs.FIELD_OBJECT), hops + 1
+                and safe_decode_text(prop) == builtin.export
+                and self._is_builtin(
+                    node.child_by_field_name(cs.FIELD_OBJECT), hops + 1, builtin
                 )
             )
-        return self._resolves(node, hops, self._bindings().factories, self._is_factory)
+        return self._resolves(
+            node,
+            hops,
+            self._bindings(builtin).exports,
+            partial(self._is_export, builtin=builtin),
+        )
 
-    def _is_node_module(self, node: Node | None, hops: int) -> bool:
-        # Node's `module` itself: `import * as m` / `import m` from it, a
+    def _is_builtin(self, node: Node | None, hops: int, builtin: _Builtin) -> bool:
+        # The built-in module itself: `import * as m` / `import m` from it, a
         # `require("node:module")`, or a never-reassigned alias of either.
-        node = _unwrapped(node)
+        node = _cast_free(node)
         if node is None or hops > _FACTORY_ALIAS_HOPS:
             return False
-        if _loads_node_module(node):
+        if _loads_builtin(node, builtin.specifiers):
             return True
         return self._resolves(
-            node, hops, self._bindings().modules, self._is_node_module
+            node,
+            hops,
+            self._bindings(builtin).modules,
+            partial(self._is_builtin, builtin=builtin),
         )
 
     def _resolves(
@@ -317,14 +422,14 @@ class LocalBindings:
             return False
         if (name, _key(scope)) in imported:
             return True
-        return through(_unwrapped(_declared_value(scope, name)), hops + 1)
+        return through(_cast_free(_declared_value(scope, name)), hops + 1)
 
     def _settled_value(self, identifier: Node, scope: Node) -> Node | None:
         # The initializer of a binding nothing reassigns; None otherwise.
         name = safe_decode_text(identifier)
         if not name or (name, _key(scope)) in self._reassigned():
             return None
-        return _unwrapped(_declared_value(scope, name))
+        return _cast_free(_declared_value(scope, name))
 
     def _reassigned(self) -> frozenset[_Binding]:
         # Each binding something writes after its declaration, keyed by the
@@ -349,13 +454,12 @@ class LocalBindings:
         scope = None if module_level else self._module.binding_scope(target)
         return _key(scope) if scope is not None else root_key
 
-    def _bindings(self) -> _NodeModuleBindings:
-        if self._node_module is None:
-            factories, modules = _node_module_locals(self._root)
-            self._node_module = _NodeModuleBindings(
-                self._keyed(factories), self._keyed(modules)
-            )
-        return self._node_module
+    def _bindings(self, builtin: _Builtin) -> _BuiltinBindings:
+        if (found := self._builtins.get(builtin)) is None:
+            exports, modules = _builtin_locals(self._root, builtin)
+            found = _BuiltinBindings(self._keyed(exports), self._keyed(modules))
+            self._builtins[builtin] = found
+        return found
 
     def _keyed(self, locals_: list[Node]) -> frozenset[_Binding]:
         return frozenset(
@@ -1099,46 +1203,46 @@ def _block_declarations(scope: Node) -> Iterator[Node]:
             yield statement
 
 
-def _node_module_locals(root: Node) -> tuple[list[Node], list[Node]]:
-    # (createRequire locals, module-object locals) the module binds from
-    # Node's `module`: `import { createRequire [as X] }`, `import * as m` /
-    # `import m` from it, and `{ createRequire[: X] }` destructured from a
-    # `require` / `import()` of it.
-    factories: list[Node] = []
+def _builtin_locals(root: Node, builtin: _Builtin) -> tuple[list[Node], list[Node]]:
+    # (export locals, module-object locals) the module binds from `builtin`'s
+    # module: `import { createRequire [as X] }`, `import * as m` / `import m`
+    # from it, and `{ createRequire[: X] }` destructured from a `require` /
+    # `import()` of it.
+    exports: list[Node] = []
     modules: list[Node] = []
     for node in _subtree(root):
         if (
             node.type == cs.TS_IMPORT_STATEMENT
             and _string_content(node.child_by_field_name(cs.FIELD_SOURCE))
-            in cs.JS_NODE_MODULE_SPECIFIERS
+            in builtin.specifiers
         ):
-            _read_node_module_import(node, factories, modules)
-        elif node.type == cs.TS_VARIABLE_DECLARATOR and _loads_node_module(
-            node.child_by_field_name(cs.FIELD_VALUE)
+            _read_builtin_import(node, builtin.export, exports, modules)
+        elif node.type == cs.TS_VARIABLE_DECLARATOR and _loads_builtin(
+            node.child_by_field_name(cs.FIELD_VALUE), builtin.specifiers
         ):
             target = node.child_by_field_name(cs.FIELD_NAME)
             if target is not None and target.type == cs.TS_OBJECT_PATTERN:
-                factories.extend(_destructured(target, cs.JS_CREATE_REQUIRE))
-    return factories, modules
+                exports.extend(_destructured(target, builtin.export))
+    return exports, modules
 
 
-def _read_node_module_import(
-    statement: Node, factories: list[Node], modules: list[Node]
+def _read_builtin_import(
+    statement: Node, export: str, exports: list[Node], modules: list[Node]
 ) -> None:
     for part in _subtree(statement):
         if part.type == cs.TS_IMPORT_SPECIFIER:
-            if (local := _create_require_specifier(part)) is not None:
-                factories.append(local)
+            if (local := _export_specifier(part, export)) is not None:
+                exports.append(local)
         elif (local := _import_local(part)) is not None:
             modules.append(local)
 
 
-def _create_require_specifier(specifier: Node) -> Node | None:
+def _export_specifier(specifier: Node, export: str) -> Node | None:
     # The local `{ createRequire [as X] }` binds, as an identifier.
     name = specifier.child_by_field_name(cs.FIELD_NAME)
     local = specifier.child_by_field_name(cs.FIELD_ALIAS) or name
     if (
-        _specifier_name(name) == cs.JS_CREATE_REQUIRE
+        _specifier_name(name) == export
         and local is not None
         and local.type == cs.TS_IDENTIFIER
     ):
@@ -1163,11 +1267,12 @@ def _destructured(pattern: Node, key: str) -> Iterator[Node]:
                 yield value
 
 
-def _loads_node_module(value: Node | None) -> bool:
-    # `require("node:module")` or `[await] import("module")`.
-    value = _unwrapped(value)
+def _loads_builtin(value: Node | None, specifiers: frozenset[str]) -> bool:
+    # `require("node:module")` or `[await] import("module")`, for one of
+    # `specifiers`.
+    value = _cast_free(value)
     if value is not None and value.type == cs.TS_AWAIT_EXPRESSION:
-        value = _unwrapped(value.named_child(0))
+        value = _cast_free(value.named_child(0))
     if value is None or value.type != cs.TS_CALL_EXPRESSION:
         return False
     callee = value.child_by_field_name(cs.FIELD_FUNCTION)
@@ -1175,11 +1280,8 @@ def _loads_node_module(value: Node | None) -> bool:
         callee.text != _REQUIRE and callee.type != cs.TS_JS_DYNAMIC_IMPORT
     ):
         return False
-    arguments = _arguments(value)
-    return (
-        bool(arguments)
-        and _string_content(arguments[0]) in cs.JS_NODE_MODULE_SPECIFIERS
-    )
+    arguments = _call_arguments(value)
+    return bool(arguments) and _string_content(arguments[0]) in specifiers
 
 
 def _is_es_module(root: Node) -> bool:
@@ -1421,7 +1523,8 @@ def _reassignment_targets(node: Node, root: Node) -> Iterator[tuple[Node, bool]]
 
 
 def _written_targets(target: Node | None) -> Iterator[Node]:
-    target = _unwrapped(target)
+    # `(<any>require) = fake` writes `require` as surely as `require = fake`.
+    target = _cast_free(target)
     if target is None:
         return
     if target.type == cs.TS_IDENTIFIER:
@@ -1475,7 +1578,7 @@ def _is_import_meta(node: Node, properties: frozenset[str]) -> bool:
     # other meta property.
     if node.type != cs.TS_MEMBER_EXPRESSION:
         return False
-    meta = node.child_by_field_name(cs.FIELD_OBJECT)
+    meta = _cast_free(node.child_by_field_name(cs.FIELD_OBJECT))
     prop = node.child_by_field_name(cs.FIELD_PROPERTY)
     return (
         meta is not None
@@ -1488,10 +1591,12 @@ def _is_import_meta(node: Node, properties: frozenset[str]) -> bool:
 
 
 def _plain_string(node: Node) -> str | None:
-    # A string literal's text when it is one fragment: an escape would make
-    # the text the source spells differ from the value.
-    if node.type != cs.TS_STRING or len(node.named_children) != 1:
+    # A string literal's text when it has no escape, which would make the
+    # text the source spells differ from the value; `""` is empty.
+    if node.type != cs.TS_STRING or len(node.named_children) > 1:
         return None
+    if not node.named_children:
+        return ""
     fragment = node.named_children[0]
     return (
         safe_decode_text(fragment) if fragment.type == cs.TS_STRING_FRAGMENT else None
@@ -1502,10 +1607,10 @@ def _relative_url_directory(url: str | None) -> str | None:
     # The directory a relative file URL names, relative to the module's own
     # and spelled the way a relative specifier is (`.`, `./sub`, `../plugins`):
     # the URL itself when it ends in `/` or is `.` or `..`, else its parent,
-    # as `createRequire` reads it. None for an absolute URL, one with a
-    # scheme, query, fragment or escape, and an empty one.
+    # as `createRequire` reads it; `""` is the module's own file. None for
+    # an absolute URL and one with a scheme, query, fragment or escape.
     if (
-        not url
+        url is None
         or url.startswith(cs.SEPARATOR_SLASH)
         or not cs.JS_URL_NON_PATH_CHARACTERS.isdisjoint(url)
     ):
@@ -1593,6 +1698,18 @@ def _unwrapped(node: Node | None) -> Node | None:
     while node is not None and node.type in _WRAPPERS and node.named_children:
         node = node.named_children[0]
     return node
+
+
+def _cast_free(node: Node | None) -> Node | None:
+    # The value under parentheses and TypeScript casts, comments skipped:
+    # `(x)`, `x as T`, `x satisfies T`, `x!`, and `<T>x`, whose value is its
+    # last named child (Greptile, PR #3284).
+    while node is not None:
+        values = [child for child in node.named_children if child.type != cs.TS_COMMENT]
+        if not values or node.type not in _CAST_WRAPPERS:
+            return node
+        node = values[-1] if node.type == cs.TS_TYPE_ASSERTION else values[0]
+    return None
 
 
 def _outermost(node: Node) -> tuple[Node, Node | None]:

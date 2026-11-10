@@ -515,6 +515,327 @@ def test_a_create_require_loader_for_a_file_the_module_does_not_name_imports_not
     ), sorted(imports)
 
 
+_CREATE_REQUIRE = 'import { createRequire } from "node:module";\n'
+
+
+def _write_loader_module(repo: Path, name: str, source: str) -> None:
+    # `src/<name>` holds `source`; a `setup.js` sits beside it, in
+    # `plugins/` and at the root.
+    _write_plugin_layout(repo, "")
+    (repo / "src/main.mjs").unlink()
+    (repo / "src" / name).write_text(source, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("name", "source", "target"),
+    [
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}const require = createRequire(import.meta.url as string);\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}const require = createRequire((import.meta.url));\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}const require = createRequire(import.meta.url!);\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}const require = createRequire(<string>import.meta.url);\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}"
+            "const require = createRequire(import.meta.url satisfies string);\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const require = createRequire((import.meta).url);\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}"
+            "const require = createRequire((/* this file */ import.meta.url));\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}"
+            "const require = <NodeRequire>createRequire(import.meta.url);\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}"
+            'const require = createRequire(import.meta.url, "ignored");\n'
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const load = createRequire(import.meta.url);\n"
+            'const require = load;\nrequire("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import {{ fileURLToPath }} from "node:url";\n'
+            "const __filename = fileURLToPath(import.meta.url);\n"
+            'const require = createRequire(__filename);\nrequire("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import {{ fileURLToPath as toPath }} from "url";\n'
+            "const require = createRequire(toPath(import.meta.url));\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import url from "node:url";\n'
+            "const require = createRequire(url.fileURLToPath(import.meta.url));\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import * as url from "url";\n'
+            "const here = url.fileURLToPath(import.meta.url);\n"
+            'const require = createRequire(here);\nrequire("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}const {{ pathToFileURL }} = await import("node:url");\n'
+            "const require = createRequire(pathToFileURL(import.meta.filename));\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import {{ fileURLToPath }} from "node:url";\n'
+            "const require = createRequire(\n"
+            '  fileURLToPath(new URL("../plugins/", import.meta.url)),\n);\n'
+            'require("./setup");\n',
+            "plugins.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const require = createRequire(new URL(import.meta.url));\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}const entry = "../plugins/entry.js";\n'
+            "const require = createRequire(new URL(entry, import.meta.url));\n"
+            'require("./setup");\n',
+            "plugins.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const here = import.meta.url;\n"
+            "const require = createRequire("
+            'new URL("../plugins/entry.js", here));\nrequire("./setup");\n',
+            "plugins.setup",
+        ),
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}const require = createRequire(\n"
+            '  new URL("../plugins/entry.js" as string, import.meta.url as string),\n'
+            ');\nrequire("./setup");\n',
+            "plugins.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}"
+            "const require = createRequire("
+            'new URL("../plugins/entry.js", import.meta.url, "ignored"));\n'
+            'require("./setup");\n',
+            "plugins.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}const require = createRequire(new URL("", import.meta.url));\n'
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const require = createRequire(import.meta.dirname);\n"
+            'require("./setup");\n',
+            "setup",
+        ),
+        (
+            "main.js",
+            'const { createRequire } = require("node:module");\n'
+            "function load() {\n  const require = createRequire(__dirname);\n"
+            '  require("./setup");\n}\nload();\n',
+            "setup",
+        ),
+    ],
+    ids=[
+        "as-cast",
+        "parentheses",
+        "non-null",
+        "angle-bracket-cast",
+        "satisfies",
+        "parenthesized-import-meta",
+        "comment-in-parentheses",
+        "cast-loader",
+        "an-ignored-second-argument",
+        "loader-alias",
+        "esm-filename",
+        "renamed-converter",
+        "converter-read-off-the-default-import",
+        "converter-read-off-the-namespace",
+        "path-to-file-url",
+        "converted-url",
+        "url-of-the-module",
+        "named-path",
+        "named-base",
+        "cast-url-arguments",
+        "an-ignored-third-url-argument",
+        "empty-url",
+        "import-meta-dirname",
+        "commonjs-dirname",
+    ],
+)
+def test_a_create_require_loader_spelled_any_way_node_reads_still_imports(
+    temp_repo: Path, mock_ingestor: MagicMock, name: str, source: str, target: str
+) -> None:
+    # Casts, parentheses, aliases, Node's `url` converters and named values
+    # change nothing about the file a loader is made for, so each still
+    # records its import, from that file's directory (Greptile, PR #3284).
+    # A directory path has no trailing slash, which `createRequire` reads as
+    # a file, so `createRequire(__dirname)` resolves from the parent.
+    _write_loader_module(temp_repo, name, source)
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    imports = _imports(temp_repo, mock_ingestor)
+    assert ("src.main", target) in imports, sorted(imports)
+    others = {"src.setup", "plugins.setup", "setup"} - {target}
+    assert not {("src.main", other) for other in others} & imports.keys(), sorted(
+        imports
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}function fileURLToPath(url) {{\n"
+            "  return process.argv[2];\n}\n"
+            "const require = createRequire(fileURLToPath(import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import {{ fileURLToPath }} from "./paths.js";\n'
+            "const require = createRequire(fileURLToPath(import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import {{ fileURLToPath }} from "node:url";\n'
+            "let __filename = fileURLToPath(import.meta.url);\n"
+            "__filename = process.argv[2];\n"
+            'const require = createRequire(__filename);\nrequire("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const require = createRequire("
+            'new URL("../plugins/entry.js", import.meta.filename));\n'
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}let entry = "../plugins/entry.js";\n'
+            "entry = process.argv[2];\n"
+            "const require = createRequire(new URL(entry, import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const name = process.argv[2];\n"
+            "const require = createRequire("
+            "new URL(`../plugins/${name}.js`, import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}let require = createRequire(import.meta.url);\n"
+            '(<any>require) = () => {};\nrequire("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}let load = createRequire(import.meta.url);\n"
+            "load = () => () => {};\n"
+            'const require = load;\nrequire("./setup");\n',
+        ),
+    ],
+    ids=[
+        "a-local-converter",
+        "a-converter-from-another-module",
+        "a-reassigned-filename",
+        "a-path-as-the-url-base",
+        "a-reassigned-path",
+        "a-template-path",
+        "a-loader-rewritten-through-a-cast",
+        "a-reassigned-loader-alias",
+    ],
+)
+def test_a_create_require_loader_whose_file_cannot_be_told_imports_nothing(
+    temp_repo: Path, mock_ingestor: MagicMock, name: str, source: str
+) -> None:
+    # Negative: a converter that is not Node's, a value something rewrites,
+    # a computed path, and `new URL` against a path (which throws) leave
+    # the loader's directory unknown, so it records no edge (Greptile, PR
+    # #3284).
+    _write_loader_module(temp_repo, name, source)
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    imports = _imports(temp_repo, mock_ingestor)
+    targets = {"src.setup", "plugins.setup", "setup"}
+    assert not {("src.main", t) for t in targets} & imports.keys(), sorted(imports)
+
+
+def test_a_package_through_a_loader_for_another_directory_is_still_the_package(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A bare specifier names the same package from any directory, so a
+    # loader's base leaves it as it is.
+    _write_loader_module(
+        temp_repo,
+        "main.mjs",
+        f"{_CREATE_REQUIRE}const require = createRequire("
+        'new URL("../plugins/entry.js", import.meta.url));\n'
+        'require("left-pad");\n',
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    imports = _imports(temp_repo, mock_ingestor)
+    assert ("src.main", "left-pad") in imports, sorted(imports)
+
+
 def test_only_the_first_argument_names_the_module(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

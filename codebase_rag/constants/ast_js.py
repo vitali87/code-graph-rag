@@ -90,9 +90,12 @@ CAPTURE_JS_CALL_STATEMENT = "statement"
 TS_JS_IMPORT_META_KEYWORD = "import"
 JS_IMPORT_META_URL_PROPERTIES = frozenset({"url"})
 JS_IMPORT_META_FILE_PROPERTIES = JS_IMPORT_META_URL_PROPERTIES | {"filename"}
+JS_IMPORT_META_DIRECTORY_PROPERTIES = frozenset({"dirname"})
 JS_FILENAME_GLOBAL = "__filename"
+JS_DIRNAME_GLOBAL = "__dirname"
 JS_URL_CONSTRUCTOR = "URL"
-JS_URL_ARGUMENT_COUNT = 2
+JS_NODE_URL_SPECIFIERS = frozenset({"url", "node:url"})
+JS_URL_LOCATION_CONVERTERS = ("fileURLToPath", "pathToFileURL")
 # A `new URL()` input that is not a plain relative path: a scheme, a query, a
 # fragment, a percent escape, or a backslash the URL parser reads as `/`.
 JS_URL_NON_PATH_CHARACTERS = frozenset(":?#%\\")
