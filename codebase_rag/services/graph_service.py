@@ -1246,7 +1246,7 @@ class MemgraphIngestor:
             query = CYPHER_EXPORT_NODES_PAGE
         max_rows = self.fetch_all(CYPHER_MAX_NODE_ID)
         max_id = max_rows[0]["max_id"] if max_rows else None
-        if max_id is None:
+        if not isinstance(max_id, int):
             return
         yield from _iter_id_paged(
             self.fetch_all, query, params, max_id, page_size=EXPORT_PAGE_SIZE
@@ -1264,7 +1264,7 @@ class MemgraphIngestor:
             query = CYPHER_EXPORT_RELATIONSHIPS_PAGE
         max_rows = self.fetch_all(CYPHER_MAX_RELATIONSHIP_ID)
         max_id = max_rows[0]["max_id"] if max_rows else None
-        if max_id is None:
+        if not isinstance(max_id, int):
             return
         yield from _iter_id_paged(
             self.fetch_all, query, params, max_id, page_size=EXPORT_PAGE_SIZE

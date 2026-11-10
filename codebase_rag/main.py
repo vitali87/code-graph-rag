@@ -15,14 +15,13 @@ import threading
 import uuid
 from collections import deque
 from collections.abc import Callable, Coroutine, Iterable, Sequence
-from typing import IO
 from contextlib import contextmanager
 from dataclasses import replace
 from decimal import Decimal
 from functools import lru_cache
 from html import escape as html_escape
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING
 
 from loguru import logger
 from prompt_toolkit import PromptSession
@@ -101,7 +100,7 @@ from .types_defs import (
     CancelledResult,
     ConfirmationToolNames,
     CreateFileArgs,
-    GraphData,
+    GraphMetadata,
     QueryJsonOutput,
     RawToolArgs,
     ReplaceCodeArgs,

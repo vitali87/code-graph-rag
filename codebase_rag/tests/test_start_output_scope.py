@@ -9,8 +9,8 @@ counted the export's time as the sync's: a no-op sync of a 6-file repo read
 from __future__ import annotations
 
 from collections.abc import Callable, Generator, Iterator
-from typing import Any
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -63,11 +63,15 @@ def clock() -> Generator[FakeClock, None, None]:
 def ingestor(clock: FakeClock) -> MagicMock:
     store = MagicMock()
 
-    def iter_nodes(project_names: tuple[str, ...] | list[str] = ()) -> Iterator[dict[str, Any]]:
+    def iter_nodes(
+        project_names: tuple[str, ...] | list[str] = (),
+    ) -> Iterator[dict[str, Any]]:
         clock.advance(EXPORT_SECONDS / 2)
         yield from GRAPH["nodes"]
 
-    def iter_rels(project_names: tuple[str, ...] | list[str] = ()) -> Iterator[dict[str, Any]]:
+    def iter_rels(
+        project_names: tuple[str, ...] | list[str] = (),
+    ) -> Iterator[dict[str, Any]]:
         clock.advance(EXPORT_SECONDS / 2)
         yield from GRAPH["relationships"]
 
