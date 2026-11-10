@@ -1405,6 +1405,12 @@ namespace NJ { inline namespace v1 { inline namespace v2 {
 namespace api { void nested_inline_api(); }
 } } }
 void NJ::api::nested_inline_api() {}
+
+namespace IS { inline namespace v1 { static void inline_static(); } }
+void IS::inline_static() {}
+
+namespace IP { inline namespace v1 { void inline_public(); } }
+void IP::inline_public() {}
 """
 
 
@@ -1441,6 +1447,8 @@ def linkage_check(tmp_path: Path) -> dict[tuple[str, int], bool]:
         ("named_twin", 53, True),
         ("inline_api", 56, True),
         ("nested_inline_api", 61, True),
+        ("inline_static", 64, False),
+        ("inline_public", 67, True),
     ],
     ids=[
         "friend-after-a-static-declaration",
@@ -1459,6 +1467,8 @@ def linkage_check(tmp_path: Path) -> dict[tuple[str, int], bool]:
         "namespace-named-like-one-inside-an-unnamed-namespace",
         "namespace-inside-an-inline-namespace",
         "namespace-inside-nested-inline-namespaces",
+        "static-declaration-in-an-inline-namespace",
+        "extern-declaration-in-an-inline-namespace",
     ],
 )
 def test_one_linkage_check_for_every_function(

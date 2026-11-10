@@ -758,11 +758,11 @@ def _c_exported(node: Node) -> bool:
 
 
 class _FunctionKey(NamedTuple):
-    # What tells one function from another: its plain name and, in C++, its
-    # namespace path and parameter types. C has one namespace and no
-    # overloads, so both stay empty there.
+    # What tells one function from another: its plain name and, in C++, the
+    # namespaces it may be declared in and its parameter types. C has one
+    # namespace and no overloads, so both stay empty there.
     name: str
-    namespace: tuple[str, ...] = ()
+    namespaces: frozenset[tuple[str, ...]] = frozenset()
     parameters: str = ""
 
 
@@ -795,7 +795,7 @@ def _static_declaration_of(node: Node, key: _FunctionKey, *, cpp: bool) -> bool:
     ):
         return False
     return not cpp or (
-        _cpp_lookup_scope(node) == key.namespace
+        _cpp_lookup_scope(node) in key.namespaces
         and _cpp_signature(node) == key.parameters
     )
 
@@ -893,8 +893,16 @@ def _cpp_external_function(definition: Node, scope: Node) -> bool:
     home = _cpp_function_home(definition, scope)
     if home is None or _cpp_internal(home) or _cpp_static(definition):
         return False
+    # A qualified name is looked up as its qualifier is: `void IN::f() {}`
+    # defines the `f` an inline namespace of `IN` declares (PR #2952).
+    declarator = _cpp_declarator_name(definition)
+    namespaces = (
+        frozenset(_cpp_transparent(_cpp_file_scopes(definition), home))
+        if declarator is not None and declarator.type == cs.TS_CPP_QUALIFIED_IDENTIFIER
+        else frozenset({home})
+    )
     name = (_cpp_declared_name(definition) or "").split(cs.SEPARATOR_DOUBLE_COLON)
-    key = _FunctionKey(name[-1].strip(), home, _cpp_signature(definition))
+    key = _FunctionKey(name[-1].strip(), namespaces, _cpp_signature(definition))
     return not _declared_static_before(definition, key, cpp=True)
 
 
