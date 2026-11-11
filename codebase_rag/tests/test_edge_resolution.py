@@ -161,7 +161,14 @@ def test_python_property_write_does_not_call_getter(
 
 
 @pytest.mark.parametrize(
-    "assignment", ["self.prop.field = value", "self.prop[0] = value"]
+    "assignment",
+    [
+        "self.prop.field = value",
+        "self.prop[0] = value",
+        "value[self.prop] = value",
+        "value[: self.prop] = value",
+        "value[0], value[self.prop] = value",
+    ],
 )
 def test_python_property_receiver_is_read_for_nested_assignment_targets(
     temp_repo: Path, mock_ingestor: MagicMock, assignment: str

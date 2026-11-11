@@ -712,6 +712,14 @@ def _dart_is_bare_read(node: Node) -> bool:
     return True
 
 
+_PY_DESTRUCTURING_TARGET_TYPES = frozenset(
+    {
+        cs.TS_PY_PATTERN_LIST,
+        cs.TS_PY_TUPLE_PATTERN,
+        cs.TS_PY_LIST_PATTERN,
+        cs.TS_PY_LIST_SPLAT_PATTERN,
+    }
+)
 # Python nested-scope boundaries and sequence-literal node types used when
 # scanning a scope for dispatch tables of function references.
 _PY_SCOPE_BOUNDARY_TYPES = frozenset(
@@ -12170,30 +12178,16 @@ class CallProcessor:
 
     @staticmethod
     def _python_attribute_is_write_target(node: Node) -> bool:
-        current = node.parent
-        while current is not None:
-            if current.type == cs.TS_PY_ASSIGNMENT:
-                left = current.child_by_field_name(cs.TS_FIELD_LEFT)
-                if left is None or not (
-                    left.start_byte <= node.start_byte
-                    and node.end_byte <= left.end_byte
-                ):
-                    return False
-                return True
-            if current.type in (cs.TS_PY_ATTRIBUTE, cs.TS_PY_SUBSCRIPT):
-                receiver = current.child_by_field_name(
-                    cs.TS_FIELD_OBJECT
-                ) or current.child_by_field_name(cs.FIELD_VALUE)
-                if receiver is not None and (
-                    receiver.start_byte <= node.start_byte
-                    and node.end_byte <= receiver.end_byte
-                ):
-                    # A property used as the receiver of another assignment
-                    # target is read to obtain the object being mutated.
-                    return False
-            if current.type in _PY_SCOPE_BOUNDARY_TYPES:
+        # Only the attribute that IS the target, or one element of a
+        # destructuring target, is written. Anything else under the left side
+        # (a receiver, a subscript index or slice bound) is evaluated as a read.
+        current = node
+        while (parent := current.parent) is not None:
+            if parent.type == cs.TS_PY_ASSIGNMENT:
+                return parent.child_by_field_name(cs.TS_FIELD_LEFT) == current
+            if parent.type not in _PY_DESTRUCTURING_TARGET_TYPES:
                 return False
-            current = current.parent
+            current = parent
         return False
 
     @_site_scoped
