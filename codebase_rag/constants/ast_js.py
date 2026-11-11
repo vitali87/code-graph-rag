@@ -68,6 +68,38 @@ TS_TYPE_ONLY_TOKEN = "type"
 TS_TYPE_ONLY_EXPORT_DECLARATIONS = frozenset(
     {TS_INTERFACE_DECLARATION, TS_TYPE_ALIAS_DECLARATION}
 )
+# The callee node of a dynamic `import("./x")`.
+TS_JS_DYNAMIC_IMPORT = "import"
+# Every statement that is a call, awaited or not, at any depth: where a
+# `require("./db");` or `import("./cache");` whose value is dropped sits
+# (issue #3267).
+JS_CALL_STATEMENT_QUERY = (
+    "(expression_statement [(call_expression) (await_expression) "
+    "(unary_expression)]) @statement"
+)
+# `void import("./cache")` discards the promise as a bare call does.
+JS_VOID_OPERATOR = "void"
+# `createRequire(import.meta.url)` (node:module) makes a CommonJS loader.
+JS_CREATE_REQUIRE = "createRequire"
+JS_NODE_MODULE_SPECIFIERS = frozenset({"module", "node:module"})
+CAPTURE_JS_CALL_STATEMENT = "statement"
+# What a `createRequire` loader resolves from: the module's own file when it
+# is given `import.meta.url`, `import.meta.filename` or CommonJS's
+# `__filename`, or the file a `new URL("../plugins/entry.js",
+# import.meta.url)` names. `import.meta`'s first token tells it from the
+# other meta property, `new.target`.
+TS_JS_IMPORT_META_KEYWORD = "import"
+JS_IMPORT_META_URL_PROPERTIES = frozenset({"url"})
+JS_IMPORT_META_FILE_PROPERTIES = JS_IMPORT_META_URL_PROPERTIES | {"filename"}
+JS_IMPORT_META_DIRECTORY_PROPERTIES = frozenset({"dirname"})
+JS_FILENAME_GLOBAL = "__filename"
+JS_DIRNAME_GLOBAL = "__dirname"
+JS_URL_CONSTRUCTOR = "URL"
+JS_NODE_URL_SPECIFIERS = frozenset({"url", "node:url"})
+JS_URL_LOCATION_CONVERTERS = ("fileURLToPath", "pathToFileURL")
+# A `new URL()` input that is not a plain relative path: a scheme, a query, a
+# fragment, a percent escape, or a backslash the URL parser reads as `/`.
+JS_URL_NON_PATH_CHARACTERS = frozenset(":?#%\\")
 # JSX element nodes that carry a component name (javascript and tsx grammars
 # share these); the closing element repeats the name and must not double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"
