@@ -1653,6 +1653,9 @@ class _StatefulIngestor:
                         cs.KEY_IS_EXPORTED: bool(props[cs.KEY_IS_EXPORTED])
                         if cs.KEY_IS_EXPORTED in props
                         else None,
+                        cs.KEY_RUST_VISIBILITY: _text(
+                            props.get(cs.KEY_RUST_VISIBILITY)
+                        ),
                         cs.KEY_EMBEDS: _texts(props.get(cs.KEY_EMBEDS)),
                         cs.KEY_FIELD_TYPES: _texts(props.get(cs.KEY_FIELD_TYPES)),
                     }
