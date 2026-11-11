@@ -205,6 +205,25 @@ def test_inherited_python_property_read_is_exact(
     assert by_callee["name"] == {cs.EdgeResolution.EXACT}
 
 
+def test_python_property_read_in_a_lambda_default_is_exact(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A default is evaluated in the method, before the lambda binds its own
+    # `self`, so it still reads the method's receiver.
+    (temp_repo / "models.py").write_text(
+        "class Local:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "local"\n\n'
+        "    def read(self):\n"
+        "        return lambda self=self.name: self\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    by_callee = _resolutions(mock_ingestor, ".models.Local.read")
+    assert by_callee["name"] == {cs.EdgeResolution.EXACT}
+
+
 def test_python_property_read_preserves_heuristic_resolution(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

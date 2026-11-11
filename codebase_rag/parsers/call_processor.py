@@ -12183,14 +12183,18 @@ class CallProcessor:
     @staticmethod
     def _python_lambda_rebinds(node: Node, caller_node: Node, name: str) -> bool:
         # `lambda self: self.name` inside a method reads its own parameter,
-        # not the method's receiver.
+        # not the method's receiver. Only the body is in the lambda's scope:
+        # a default (`lambda self=self.name: ...`) is evaluated outside it.
+        inner = node
         current = node.parent
         while current is not None and current != caller_node:
             if (
                 current.type == cs.TS_PY_LAMBDA
+                and current.child_by_field_name(cs.FIELD_BODY) == inner
                 and name in PythonTypeInferenceEngine._parameter_names(current)
             ):
                 return True
+            inner = current
             current = current.parent
         return False
 
