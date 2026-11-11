@@ -561,6 +561,56 @@ def test_a_directory_import_reaches_its_own_languages_index(
     assert calls == {f"pkg/index.js:{index_qn}.helper"}
 
 
+def test_an_export_named_as_another_languages_file_is_reached_through_the_index(
+    tmp_path: Path,
+) -> None:
+    # `pkg/helper.py` holds `proj.pkg.helper`, the name `pkg/index.js`
+    # exports: the directory import still lands on the index (#3601 review).
+    root = tmp_path / "proj"
+    _write(
+        root,
+        {"pkg/index.js": JS_UTIL, "pkg/helper.py": PY_UTIL, "main.js": JS_PKG_APP},
+    )
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    assert ("main.js:proj.main", "pkg/index.js:proj.pkg.index") in _edges(
+        store, cs.RelationshipType.IMPORTS
+    )
+    assert ("main.js:proj.main.go", "pkg/index.js:proj.pkg.index.helper") in _edges(
+        store, cs.RelationshipType.CALLS
+    )
+
+
+def test_an_export_named_as_a_directory_with_an_index_stays_with_its_exporter(
+    tmp_path: Path,
+) -> None:
+    # `util/helper/` has an index in each language, yet `helper` is what
+    # `util.js` exports: the reachable module above wins (#3601 review).
+    root = tmp_path / "proj"
+    _write(
+        root,
+        {
+            "util.js": JS_UTIL,
+            "util/helper/index.js": "module.exports = function other() {};\n",
+            "util/helper/index.py": PY_UTIL,
+            "main.js": JS_APP,
+        },
+    )
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    assert ("main.js:proj.main", "util.js:proj.util") in _edges(
+        store, cs.RelationshipType.IMPORTS
+    )
+    calls = {
+        dst
+        for src, dst in _edges(store, cs.RelationshipType.CALLS)
+        if src == "main.js:proj.main.go"
+    }
+    assert calls == {"util.js:proj.util.helper"}
+
+
 def test_another_languages_index_stem_is_no_entry_point(tmp_path: Path) -> None:
     # Node enters a directory through `index.js` only: `pkg/init.js` (Lua's
     # stem) beside `pkg.py` leaves `require('./pkg')` reaching nothing.

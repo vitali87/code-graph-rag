@@ -3108,27 +3108,36 @@ class ImportProcessor:
         """`name` re-rooted on its stem's module of the importer's family.
 
         The longest prefix that names a module the importer can reach decides,
-        and keeps the name as written: a name under a real submodule
-        (`proj.util.sub.f`) therefore stays put. A stem whose module is missing
-        or in another family is swapped for the family's own sibling, or for
-        its own directory index (`pkg/index.js` beside `pkg.py`). A name that
-        only modules of other families hold reaches nothing (issue #2756).
+                and keeps the name as written: a name under a real submodule
+                (`proj.util.sub.f`) therefore stays put. A stem whose module is missing
+                or in another family is swapped for the family's own sibling, or for
+                its own directory index (`pkg/index.js` beside `pkg.py`). A name that
+                only modules of other families hold reaches nothing (issue #2756).
         """
         parts = name.split(cs.SEPARATOR_DOT)
         blocked = False
+        through_index: str | None = None
         for end in range(len(parts), 1, -1):
             prefix = cs.SEPARATOR_DOT.join(parts[:end])
             holder = module_paths.get(prefix)
             if holder is not None and self._reachable_module(holder, family):
                 return name
-            own = siblings.get(prefix, {}).get(family) or self._own_language_index(
-                prefix, family, module_paths, siblings, beside_module=holder is not None
-            )
-            if own is not None:
-                return f"{own}{name[len(prefix) :]}"
+            rest = name[len(prefix) :]
+            if own := siblings.get(prefix, {}).get(family):
+                return f"{own}{rest}"
             # Not final: `util/helper.py` beside a `util.js` that exports
             # `helper` holds the full name, and the shorter prefix reaches.
             blocked = blocked or holder is not None
+            # Held back for the same reason: the name of a directory with an
+            # index may be the member a reachable module above it exports.
+            if through_index is None and (
+                index := self._own_language_index(
+                    prefix, family, module_paths, siblings, bare=blocked
+                )
+            ):
+                through_index = f"{index}{rest}"
+        if through_index is not None:
+            return through_index
         return cs.IMPORT_TARGET_UNREACHABLE if blocked else name
 
     def _own_language_index(
@@ -3138,20 +3147,18 @@ class ImportProcessor:
         module_paths: Mapping[str, Path | str],
         siblings: StemSiblingModules,
         *,
-        beside_module: bool,
+        bare: bool,
     ) -> str | None:
         """The index module of the importer's family in `directory_qn`.
 
         An index whose stem is shared across families carries its extension
-        (`pkg/index.js` beside `pkg/index.py`) and no alias names it. A bare
-        one is only asked for where a module of another family took the
-        directory's name; everywhere else the alias map already leads to it.
+        (`pkg/index.js` beside `pkg/index.py`) and no alias names it. A `bare`
+        one is only asked for where a module of another family holds the name
+        as written; everywhere else the alias map already leads to it.
         """
         for stem in sorted(cs.MODULE_INDEX_FILE_STEMS):
             index = f"{directory_qn}{cs.SEPARATOR_DOT}{stem}"
-            own = siblings.get(index, {}).get(family) or (
-                index if beside_module else None
-            )
+            own = siblings.get(index, {}).get(family) or (index if bare else None)
             path = module_paths.get(own) if own else None
             if (
                 path
