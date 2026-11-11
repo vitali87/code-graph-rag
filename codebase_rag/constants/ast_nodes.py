@@ -72,6 +72,14 @@ JS_TS_IMPORT_NODES = (
 JS_TS_LANGUAGES = frozenset(
     {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
 )
+# Languages where a bare call name never names a method: one is reached only
+# through a receiver (`this.`, `self.`, a value), which these spell in the
+# call name. PHP and C/C++ drop the receiver from a member call's name, so
+# the call processor flags their receiverless calls instead (issue #2575).
+BARE_CALL_NO_METHOD_LANGUAGES = JS_TS_LANGUAGES | {
+    SupportedLanguage.GO,
+    SupportedLanguage.RUST,
+}
 # Sets of languages whose sources reach each other directly: the JS family
 # compiles to one runtime, C++ calls C, and Scala calls Java on the JVM. A
 # call may cross between them, and their same-stem files (a C source and its
