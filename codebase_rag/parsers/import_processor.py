@@ -3149,11 +3149,18 @@ class ImportProcessor:
         """
         for stem in sorted(cs.MODULE_INDEX_FILE_STEMS):
             index = f"{directory_qn}{cs.SEPARATOR_DOT}{stem}"
-            if own := siblings.get(index, {}).get(family):
+            own = siblings.get(index, {}).get(family) or (
+                index if beside_module else None
+            )
+            path = module_paths.get(own) if own else None
+            if (
+                path
+                and self._reachable_module(path, family)
+                # `pkg/init.js` is no entry point of `pkg`: each language
+                # has its own index stem.
+                and cs.DIRECTORY_MODULE_STEM_BY_EXT.get(Path(path).suffix, stem) == stem
+            ):
                 return own
-            path = module_paths.get(index)
-            if beside_module and path and self._reachable_module(path, family):
-                return index
         return None
 
     @staticmethod

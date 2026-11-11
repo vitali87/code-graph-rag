@@ -561,6 +561,20 @@ def test_a_directory_import_reaches_its_own_languages_index(
     assert calls == {f"pkg/index.js:{index_qn}.helper"}
 
 
+def test_another_languages_index_stem_is_no_entry_point(tmp_path: Path) -> None:
+    # Node enters a directory through `index.js` only: `pkg/init.js` (Lua's
+    # stem) beside `pkg.py` leaves `require('./pkg')` reaching nothing.
+    root = tmp_path / "proj"
+    _write(root, {"pkg.py": PY_UTIL, "pkg/init.js": JS_UTIL, "main.js": JS_PKG_APP})
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    for rel in (cs.RelationshipType.IMPORTS, cs.RelationshipType.CALLS):
+        assert not [
+            edge for edge in _edges(store, rel) if edge[0].startswith("main.js:")
+        ], rel
+
+
 def test_a_name_another_languages_submodule_holds_stays_with_its_exporter(
     tmp_path: Path,
 ) -> None:
