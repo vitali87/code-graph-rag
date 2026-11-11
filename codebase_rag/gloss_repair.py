@@ -34,9 +34,9 @@ exists; if no project prefixes it, the note is LOST.
 
 from __future__ import annotations
 
-from collections import defaultdict
-from collections.abc import Callable
-from typing import NamedTuple
+from collections import Counter, defaultdict
+from collections.abc import Callable, Sequence
+from typing import NamedTuple, Protocol
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -48,7 +48,7 @@ from .gloss_anchor import (
     text_anchor,
 )
 from .graph_query import QueryFn
-from .types_defs import PropertyDict, ResultRow
+from .types_defs import PropertyDict, ResultRow, ResultValue
 
 WriteFn = Callable[[str, PropertyDict | None], None]
 
@@ -108,7 +108,20 @@ def _unanchored(row: ResultRow) -> _Unanchored:
     )
 
 
-def _projects_of(fetch_all: QueryFn, notes: list[_Unanchored]) -> dict[str, str | None]:
+class _Recorded(Protocol):
+    """What `_projects_of` reads off a note: its key, subject and project."""
+
+    @property
+    def qualified_name(self) -> str: ...
+    @property
+    def target_qn(self) -> str: ...
+    @property
+    def project(self) -> str | None: ...
+
+
+def _projects_of(
+    fetch_all: QueryFn, notes: Sequence[_Recorded]
+) -> dict[str, str | None]:
     """Each note's project, by note key.
 
     The recorded `project` wins. A note without one (written before the
@@ -139,6 +152,30 @@ def _projects_of(fetch_all: QueryFn, notes: list[_Unanchored]) -> dict[str, str 
             None,
         )
     return projects
+
+
+def _owned_by[N: _Recorded](
+    fetch_all: QueryFn, notes: list[N], project_name: str | None
+) -> tuple[list[N], dict[str, str | None]]:
+    """The notes `project_name` owns, and each kept note's project.
+
+    The owner is the one `_projects_of` assigns: the recorded project, or for
+    a legacy note the longest registered project prefixing its target. None
+    keeps every note.
+    """
+    if project_name is not None:
+        prefix = f"{project_name}{cs.SEPARATOR_DOT}"
+        notes = [
+            note
+            for note in notes
+            if note.project == project_name
+            or (note.project is None and note.target_qn.startswith(prefix))
+        ]
+    projects = _projects_of(fetch_all, notes)
+    if project_name is not None:
+        # A legacy note under this prefix may belong to a longer project.
+        notes = [n for n in notes if projects.get(n.qualified_name) == project_name]
+    return notes, projects
 
 
 def _candidates_by_hash(
@@ -206,6 +243,18 @@ class _QuoteIndex:
         if project not in self._by_project:
             self._by_project[project] = self._build_quote_index(project)
         return self._by_project[project].get(quote, [])
+
+    def anchor_of(self, project: str, qualified_name: str) -> TextAnchor | None:
+        """The current anchor of the one definition under a name, if any."""
+        if project not in self._by_project:
+            self._by_project[project] = self._build_quote_index(project)
+        found = [
+            row.anchor
+            for rows in self._by_project[project].values()
+            for row in rows
+            if row.qualified_name == qualified_name
+        ]
+        return found[0] if len(found) == 1 else None
 
     def _build_quote_index(self, project: str) -> dict[str, list[_QuoteCandidate]]:
         rows = self._fetch_all(
@@ -298,6 +347,7 @@ def repair_unanchored(
     fetch_all: QueryFn,
     execute_write: WriteFn,
     read_source: SourceReader | None = None,
+    project_name: str | None = None,
 ) -> RepairReport:
     """Place every unattached note by content hash, then by text quote, or
     mark why it cannot be.
@@ -322,12 +372,18 @@ def repair_unanchored(
     so the same graph yields the same writes. Raises nothing of its own; a
     store error propagates to the caller, which logs it and lets the next
     run retry (`GraphUpdater._reanchor_glosses`).
+
+    `project_name` scopes the pass to one project's notes: a sync changed
+    that project's definitions only, so another project's note can change
+    state only on that project's own sync. Unscoped, every sync of every
+    project paid two whole-graph lookups per project holding an unattached
+    note, deleted projects included (issue #3236).
     """
     notes = sorted(
         (_unanchored(row) for row in fetch_all(cq.CYPHER_UNANCHORED_GLOSSES, None)),
         key=lambda n: n.qualified_name,
     )
-    projects = _projects_of(fetch_all, notes)
+    notes, projects = _owned_by(fetch_all, notes, project_name)
     candidates = _candidates_by_hash(fetch_all, notes, projects)
     quotes = _QuoteIndex(fetch_all, read_source) if read_source is not None else None
     report = RepairReport(moved=[], ambiguous=[], lost=[])
@@ -437,3 +493,343 @@ def _moved_to(fetch_all: QueryFn, key: str, candidate: str) -> bool:
     """
     rows = fetch_all(cq.CYPHER_GLOSS_READ, {cs.KEY_QN: key})
     return bool(rows) and rows[0].get(cs.KEY_TARGET_QN) == candidate
+
+
+# --- mentions (issue #3230) ---------------------------------------------------
+
+
+class MentionReport(NamedTuple):
+    """What one mention pass did, by note key, each list sorted."""
+
+    # Notes with a mention followed to a new name.
+    moved: list[str]
+    # Notes with a mention that could not be placed.
+    lost: list[str]
+
+
+class _Mention(NamedTuple):
+    qualified_name: str
+    # The anchors recorded for it; None where none was (a note from before
+    # mentions recorded them, a definition without a hash, a file the writer
+    # could not read). An anchor in an older format simply matches nothing,
+    # and a mention whose name still holds code then has its anchors renewed.
+    anchor_hash: str | None
+    quote: str | None
+    lost: bool
+
+
+class _MentionNote(NamedTuple):
+    qualified_name: str
+    target_qn: str
+    project: str | None
+    mentions: list[_Mention]
+    # As stored, to tell whether the pass changed anything.
+    stored: tuple[list[str], list[str], list[str], list[str]]
+    attached: frozenset[str]
+    # The nonce of the write the pass read ("" before nonces): the repair is
+    # applied only while the note still carries it.
+    write_id: str
+
+
+def _strings(value: ResultValue | None) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item is not None]
+
+
+def _lost_flags(qns: list[str], lost: list[str]) -> list[bool]:
+    # A name holds at most one live entry, written before its lost ones, and
+    # `mentions_lost` repeats a name once per lost entry: so a name's lost
+    # entries are its last that-many. A note from before a name could hold
+    # both has unique names and reads as it always did.
+    lost_left = Counter(lost)
+    remaining = Counter(qns)
+    flags = []
+    for qn in qns:
+        remaining[qn] -= 1
+        flags.append(remaining[qn] < lost_left[qn])
+    return flags
+
+
+def _mention_note(row: ResultRow) -> _MentionNote:
+    qns = _strings(row.get(cs.KEY_MENTION_QNS))
+    hashes = _strings(row.get(cs.KEY_MENTION_HASHES))
+    quotes = _strings(row.get(cs.KEY_MENTION_QUOTES))
+    lost = _strings(row.get(cs.KEY_MENTIONS_LOST))
+    # Anchors are positional: a list that does not line up with the names
+    # (a note from before they were recorded) is read as no anchors at all.
+    if len(hashes) != len(qns):
+        hashes = [""] * len(qns)
+    if len(quotes) != len(qns):
+        quotes = [""] * len(qns)
+    project = row.get(cs.KEY_PROJECT)
+    write_id = row.get(cs.KEY_WRITE_ID)
+    return _MentionNote(
+        qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME, "")),
+        target_qn=str(row.get(cs.KEY_TARGET_QN, "")),
+        project=project if isinstance(project, str) and project else None,
+        mentions=[
+            _Mention(
+                qualified_name=qn,
+                anchor_hash=h or None,
+                quote=q or None,
+                lost=is_lost,
+            )
+            for qn, h, q, is_lost in zip(
+                qns, hashes, quotes, _lost_flags(qns, lost), strict=True
+            )
+        ],
+        stored=(qns, hashes, quotes, sorted(lost)),
+        attached=frozenset(_strings(row.get(cs.KEY_ATTACHED))),
+        write_id=write_id if isinstance(write_id, str) else "",
+    )
+
+
+class _Placed(NamedTuple):
+    """A mention after the pass: where it is, and how to bind it."""
+
+    qualified_name: str
+    anchor_hash: str
+    quote: str
+    lost: bool
+    # The hash the write re-validates a followed binding by; "" binds by name.
+    expect_hash: str = ""
+    moved: bool = False
+    # For a mention renewed on its name: the lost record it becomes when
+    # another mention's code is found under that name instead.
+    fallback: _Placed | None = None
+
+
+class _MentionPlacer:
+    """Places one note's mentions: by name while the name holds the recorded
+    code, else by hash, then by quote, else marked lost."""
+
+    def __init__(
+        self,
+        fetch_all: QueryFn,
+        current: dict[str, list[str | None]],
+        quotes: _QuoteIndex | None,
+    ) -> None:
+        self._fetch_all = fetch_all
+        self._current = current
+        self._quotes = quotes
+        self._by_hash: dict[tuple[str, str], list[str]] = {}
+
+    def place(self, mention: _Mention, project: str | None) -> _Placed:
+        hashes = self._current.get(mention.qualified_name, [])
+        if hashes and mention.anchor_hash in hashes:
+            # The name still holds the recorded code (or, for a definition
+            # with no hash, there was none to record): bound by name.
+            return _Placed(
+                mention.qualified_name,
+                mention.anchor_hash or "",
+                mention.quote or "",
+                lost=False,
+            )
+        found = self._elsewhere(mention, project) if project is not None else []
+        if len(found) == 1:
+            qn, anchor_hash = found[0]
+            return _Placed(
+                qn,
+                anchor_hash,
+                mention.quote or "",
+                lost=False,
+                expect_hash=anchor_hash,
+                moved=qn != mention.qualified_name,
+            )
+        if (
+            hashes
+            and not mention.lost
+            and (not found or any(qn == mention.qualified_name for qn, _ in found))
+        ):
+            # The name holds other code and the recorded code went nowhere
+            # else: the definition was edited in place, or the note is from
+            # before mentions recorded anchors. Its anchors are renewed so a
+            # later move is followed from here. Code found in several places
+            # other than the name did go somewhere, so the name keeps nothing.
+            return self._renewed(mention, project, hashes)
+        return _Placed(
+            mention.qualified_name,
+            mention.anchor_hash or "",
+            mention.quote or "",
+            lost=True,
+        )
+
+    def _renewed(
+        self, mention: _Mention, project: str | None, hashes: list[str | None]
+    ) -> _Placed:
+        anchor_hash = hashes[0] if len(hashes) == 1 else None
+        anchor = (
+            self._quotes.anchor_of(project, mention.qualified_name)
+            if self._quotes is not None and project is not None
+            else None
+        )
+        return _Placed(
+            mention.qualified_name,
+            anchor_hash or mention.anchor_hash or "",
+            anchor.quote if anchor is not None else mention.quote or "",
+            lost=False,
+            fallback=_Placed(
+                mention.qualified_name,
+                mention.anchor_hash or "",
+                mention.quote or "",
+                lost=True,
+            ),
+        )
+
+    def _elsewhere(self, mention: _Mention, project: str) -> list[tuple[str, str]]:
+        """Where the recorded code is now, one entry per physical node."""
+        if mention.anchor_hash is not None:
+            rows = self._with_hash(project, mention.anchor_hash)
+            if rows:
+                return [(qn, mention.anchor_hash) for qn in rows]
+        if mention.quote is None or self._quotes is None:
+            return []
+        # A candidate the write cannot re-validate (no hash) is no home.
+        return [
+            (row.qualified_name, row.anchor_hash)
+            for row in self._quotes.candidates(project, mention.quote)
+            if row.anchor_hash is not None
+        ]
+
+    def _with_hash(self, project: str, anchor_hash: str) -> list[str]:
+        key = (project, anchor_hash)
+        if key not in self._by_hash:
+            rows = self._fetch_all(
+                cq.CYPHER_DEFINITIONS_BY_ANCHOR_HASH,
+                {
+                    cs.KEY_HASHES: [anchor_hash],
+                    cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}",
+                },
+            )
+            self._by_hash[key] = [
+                qn
+                for row in rows
+                if isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
+            ]
+        return self._by_hash[key]
+
+
+def repair_mentions(
+    fetch_all: QueryFn,
+    execute_write: WriteFn,
+    read_source: SourceReader | None = None,
+    project_name: str | None = None,
+) -> MentionReport:
+    """Place every attached note's mentions, then rebuild their edges.
+
+    A mention stays on its name while that name holds the code recorded when
+    the note was written. When
+    the name is gone, or holds other code, the recorded code is looked for
+    in the note's project, by content hash and then by text quote, as the
+    subject is: exactly one home is followed, renaming the mention. Failing
+    that, a name that is still there, with the recorded code in no other
+    place, was edited in place and keeps the mention, with its anchors
+    renewed; otherwise the mention goes to `mentions_lost`, with no edge,
+    until its code has one home again, even if another mention takes its
+    name meanwhile. A
+    name reused by unrelated code therefore never takes a mention by name
+    alone: not while the recorded code is elsewhere, and not once the
+    mention is lost.
+
+    A note is written only when its mentions or edges differ from what the
+    pass read, so an unchanged graph costs one read. Deterministic: notes
+    and mentions are visited in key order.
+
+    `project_name` scopes the pass to one project's notes, by the owner rule
+    `repair_unanchored` uses: a sync changed that project's definitions
+    only, so another project's mentions move only on its own sync (issue
+    #3236).
+    """
+    notes = sorted(
+        (
+            _mention_note(row)
+            for row in fetch_all(cq.CYPHER_GLOSS_MENTION_ANCHORS, None)
+        ),
+        key=lambda n: n.qualified_name,
+    )
+    notes, projects = _owned_by(fetch_all, notes, project_name)
+    report = MentionReport(moved=[], lost=[])
+    if not notes:
+        return report
+    names = sorted({m.qualified_name for note in notes for m in note.mentions})
+    current: dict[str, list[str | None]] = defaultdict(list)
+    for row in fetch_all(cq.CYPHER_DEFINITIONS_BY_QNS, {cs.KEY_QNS: names}):
+        qn = row.get(cs.KEY_QUALIFIED_NAME)
+        anchor_hash = row.get(cs.KEY_ANCHOR_HASH)
+        if isinstance(qn, str):
+            current[qn].append(anchor_hash if isinstance(anchor_hash, str) else None)
+    quotes = _QuoteIndex(fetch_all, read_source) if read_source is not None else None
+    placer = _MentionPlacer(fetch_all, current, quotes)
+    for note in notes:
+        project = projects.get(note.qualified_name)
+        placed = _settled([placer.place(m, project) for m in note.mentions])
+        _write_mentions(execute_write, note, project, placed)
+        if any(p.moved for p in placed):
+            report.moved.append(note.qualified_name)
+        if any(p.lost for p in placed):
+            report.lost.append(note.qualified_name)
+    return report
+
+
+def _settled(placements: list[_Placed]) -> list[_Placed]:
+    """One live entry per name, every lost entry kept, live before lost.
+
+    Two mentions can land on one name: `a` deleted, then `b` renamed to `a`.
+    The one followed there by its code is live, and a mention renewed there
+    by name alone was replaced, not edited, so it goes back to its recorded
+    anchors, lost. A lost entry keeps its own anchors beside the live one
+    under the same name, so its code is followed if it comes back (bot review
+    on PR #3329). Two live entries under one name share one edge; first come
+    wins.
+    """
+    found = {p.qualified_name for p in placements if not p.lost and p.fallback is None}
+    kept: list[_Placed] = []
+    live: set[str] = set()
+    for placed in placements:
+        if placed.fallback is not None and placed.qualified_name in found:
+            placed = placed.fallback
+        if not placed.lost:
+            if placed.qualified_name in live:
+                continue
+            live.add(placed.qualified_name)
+        kept.append(placed)
+    return sorted(kept, key=lambda p: (p.qualified_name, p.lost))
+
+
+def _write_mentions(
+    execute_write: WriteFn,
+    note: _MentionNote,
+    project: str | None,
+    ordered: list[_Placed],
+) -> None:
+    bound = [p for p in ordered if not p.lost]
+    lists = (
+        [p.qualified_name for p in ordered],
+        [p.anchor_hash for p in ordered],
+        [p.quote for p in ordered],
+        [p.qualified_name for p in ordered if p.lost],
+    )
+    if lists == note.stored and note.attached == {p.qualified_name for p in bound}:
+        return
+    # A note no project claims keeps its names unscoped, as before.
+    prefix = f"{project}{cs.SEPARATOR_DOT}" if project is not None else ""
+    execute_write(
+        cq.CYPHER_GLOSS_SET_MENTIONS,
+        {
+            cs.KEY_QN: note.qualified_name,
+            cs.KEY_WRITE_ID: note.write_id,
+            cs.KEY_MENTION_QNS: lists[0],
+            cs.KEY_MENTION_HASHES: lists[1],
+            cs.KEY_MENTION_QUOTES: lists[2],
+            cs.KEY_MENTIONS_LOST: lists[3] or None,
+            cs.KEY_ATTACH_QNS: [p.qualified_name for p in bound if not p.expect_hash],
+            cs.KEY_ATTACH_KEYS: [
+                f"{p.qualified_name}{cs.GLOSS_MENTION_KEY_SEPARATOR}{p.expect_hash}"
+                for p in bound
+                if p.expect_hash
+            ],
+            cs.KEY_KEY_SEPARATOR: cs.GLOSS_MENTION_KEY_SEPARATOR,
+            cs.KEY_PROJECT_PREFIX: prefix,
+        },
+    )

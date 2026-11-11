@@ -26,7 +26,9 @@ def _bump_step() -> Step:
     return next(s for s in steps if s["name"] == "Bump version")
 
 
-def _bump(current: str, bump_type: str = "patch") -> subprocess.CompletedProcess[str]:
+def _bump(
+    current: str, bump_type: str = "patch", merged: str | None = None
+) -> subprocess.CompletedProcess[str]:
     bash = shutil.which("bash")
     if bash is None:
         pytest.skip("the Ubuntu workflow requires bash")
@@ -37,6 +39,9 @@ def _bump(current: str, bump_type: str = "patch") -> subprocess.CompletedProcess
         "CURRENT": current,
         "BUMP_TYPE": bump_type,
     }
+    env.pop("MERGED", None)
+    if merged is not None:
+        env["MERGED"] = merged
     return subprocess.run(
         [bash, "-e", "-c", script],
         capture_output=True,
@@ -47,8 +52,10 @@ def _bump(current: str, bump_type: str = "patch") -> subprocess.CompletedProcess
     )
 
 
-def _new_version(current: str, bump_type: str = "patch") -> str:
-    result = _bump(current, bump_type)
+def _new_version(
+    current: str, bump_type: str = "patch", merged: str | None = None
+) -> str:
+    result = _bump(current, bump_type, merged)
     assert result.returncode == 0, result.stderr + result.stdout
     return result.stdout.split(" to ")[1].split(" ")[0]
 
@@ -92,12 +99,67 @@ def test_a_breaking_bump_is_minor_below_one_and_major_after(
     assert _new_version(current, "breaking") == expected
 
 
+# Merges that land while an earlier bump or its CI is running share one bump
+# run; each of them still moves the patch number, so three merges bumped
+# together go from 0.4.9 to 0.4.12 rather than to 0.4.10.
+@pytest.mark.parametrize(
+    ("current", "merged", "expected"),
+    [
+        ("0.4.9", "1", "0.4.10"),
+        ("0.4.9", "3", "0.4.12"),
+        ("0.4.9", "60", "0.4.69"),
+        ("0.0.999", "2", "0.0.1001"),
+        # A dispatched run on the bump commit carries no merge of its own.
+        ("0.4.9", "0", "0.4.10"),
+        ("0.4.9", "", "0.4.10"),
+        ("0.4.9", "007", "0.4.16"),
+    ],
+)
+def test_a_patch_bump_moves_once_per_merge(
+    current: str, merged: str, expected: str
+) -> None:
+    assert _new_version(current, "patch", merged) == expected
+
+
+@pytest.mark.parametrize(
+    ("bump_type", "expected"),
+    [("breaking", "0.5.0"), ("minor", "0.5.0"), ("major", "1.0.0"), ("none", "0.4.9")],
+)
+def test_only_a_patch_bump_follows_the_merge_count(
+    bump_type: str, expected: str
+) -> None:
+    assert _new_version("0.4.9", bump_type, "3") == expected
+
+
+@pytest.mark.parametrize(
+    "template",
+    ["1$(touch {marker})", "`touch {marker}`", "x[$(touch {marker})]", "-1", "3\n4"],
+)
+def test_a_malformed_merge_count_runs_no_command(tmp_path: Path, template: str) -> None:
+    marker = tmp_path / "pwned"
+    result = _bump("0.4.9", "patch", template.format(marker=marker))
+    assert result.returncode != 0
+    assert "refusing malformed merge count" in result.stdout
+    assert not marker.exists()
+
+
+def test_a_version_set_by_hand_is_kept_as_it_stands() -> None:
+    assert _new_version("0.3.0", "none") == "0.3.0"
+
+
+def test_a_malformed_version_set_by_hand_is_refused() -> None:
+    result = _bump("0.3.0a", "none")
+    assert result.returncode != 0
+    assert "refusing malformed version" in result.stdout
+
+
 def test_step_script_interpolates_no_expressions() -> None:
     step = _bump_step()
     assert "${{" not in step["run"]
     assert step["env"] == {
         "CURRENT": "${{ steps.get_version.outputs.current }}",
         "BUMP_TYPE": "${{ steps.bump_type.outputs.type }}",
+        "MERGED": "${{ steps.decide.outputs.merged }}",
     }
 
 

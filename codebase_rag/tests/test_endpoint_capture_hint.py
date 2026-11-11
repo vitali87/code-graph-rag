@@ -31,6 +31,7 @@ _DEFAULT = sorted(rel.value for rel in resolve_capture([]).enabled_rels)
 _WITH_IO = sorted(
     rel.value for rel in resolve_capture([cs.CaptureGroup.IO.value]).enabled_rels
 )
+_EXPOSED = {cs.KEY_ENDPOINT: "GET /orders/{id}", cs.KEY_HANDLER: f"{P}.api.get_order"}
 _ROW = {
     "endpoint": "GET /orders/{id}",
     "kind": "ENDPOINT",
@@ -66,6 +67,14 @@ class _Graph:
             return [{_CAPTURED_KEY: self.captured, cs.KEY_ROOT_PATH: ROOT}]
         if query == cq.CYPHER_GRAPH_ENDPOINTS:
             return list(self.rows)
+        if query == cq.CYPHER_GRAPH_EXPOSED_ENDPOINTS:
+            # `endpoint_callers` resolves its target against these first: the
+            # endpoint `_ask` names exists wherever its EXPOSES was captured.
+            exposes = (
+                self.captured is None
+                or cs.RelationshipType.EXPOSES.value in self.captured
+            )
+            return [dict(_EXPOSED)] if exposes else []
         if query == cq.CYPHER_GRAPH_ENDPOINT_CALLERS:
             return list(self.callers)
         return []

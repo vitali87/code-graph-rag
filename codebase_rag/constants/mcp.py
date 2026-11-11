@@ -25,8 +25,10 @@ class MCPToolName(StrEnum):
     ENDPOINTS = "endpoints"
     ENDPOINT_CALLERS = "endpoint_callers"
     REMOTE_DEPENDENCIES = "remote_dependencies"
-    # Graph-driven edit operations (issue #1532).
+    # Graph-driven edit operations (issues #1532, #1533).
     RENAME = "rename"
+    CHANGE_SIGNATURE = "change_signature"
+    MOVE = "move"
     CONTEXT = "context"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
@@ -47,6 +49,78 @@ class MCPToolName(StrEnum):
     # never into source files, and read back per symbol.
     ANNOTATE = "annotate"
     GLOSSES = "glosses"
+
+
+# The tools that only read: the graph, the project's files, or an agent
+# answer whose writes `ask_agent` always denies. Named this way round so a new
+# tool counts as writing, and `--read-only` withholds it, until someone adds
+# it here; `test_every_tool_is_classified` keeps these sets in step (#3458).
+MCP_READ_ONLY_TOOLS = frozenset(
+    {
+        MCPToolName.LIST_PROJECTS,
+        MCPToolName.RESOLVE,
+        MCPToolName.DEFINITION,
+        MCPToolName.CALLERS,
+        MCPToolName.CALLEES,
+        MCPToolName.IMPLEMENTORS,
+        MCPToolName.OVERRIDES,
+        MCPToolName.IMPORTERS,
+        MCPToolName.TESTS_REACHING,
+        MCPToolName.ENDPOINTS,
+        MCPToolName.ENDPOINT_CALLERS,
+        MCPToolName.REMOTE_DEPENDENCIES,
+        MCPToolName.CONTEXT,
+        MCPToolName.QUERY_CODE_GRAPH,
+        MCPToolName.GET_CODE_SNIPPET,
+        MCPToolName.READ_FILE,
+        MCPToolName.LIST_DIRECTORY,
+        MCPToolName.SEMANTIC_SEARCH,
+        MCPToolName.STRUCTURAL_SEARCH,
+        MCPToolName.FIND_DUPLICATE_CODE,
+        MCPToolName.GET_FUNCTION_SOURCE,
+        MCPToolName.ASK_AGENT,
+        MCPToolName.FLOW_VERDICT,
+        MCPToolName.EXPLAIN_TRACEBACK,
+        MCPToolName.RANK_ROOT_CAUSES,
+        MCPToolName.GLOSSES,
+    }
+)
+# Writers that overwrite or remove what was there: source files, a project's
+# graph, the whole database. The other writers add a note or sync the graph
+# with the files.
+MCP_DESTRUCTIVE_TOOLS = frozenset(
+    {
+        MCPToolName.DELETE_PROJECT,
+        MCPToolName.WIPE_DATABASE,
+        MCPToolName.INDEX_REPOSITORY,
+        MCPToolName.RENAME,
+        MCPToolName.CHANGE_SIGNATURE,
+        MCPToolName.MOVE,
+        MCPToolName.SURGICAL_REPLACE_CODE,
+        MCPToolName.WRITE_FILE,
+        MCPToolName.STRUCTURAL_REPLACE,
+    }
+)
+# Writers that change nothing more when called again with the same arguments.
+MCP_IDEMPOTENT_TOOLS = frozenset(
+    {
+        MCPToolName.DELETE_PROJECT,
+        MCPToolName.WIPE_DATABASE,
+        MCPToolName.INDEX_REPOSITORY,
+        MCPToolName.UPDATE_REPOSITORY,
+        MCPToolName.REINGEST,
+        MCPToolName.WRITE_FILE,
+    }
+)
+MCP_READ_ONLY_REFUSED = (
+    "{name} writes, and this server runs read-only (--read-only or "
+    "MCP_READ_ONLY=true), so it was not run."
+)
+
+
+# The HTTP transport serves plain HTTP; a Host header leaves port 80 out.
+HTTP_SCHEME = "http"
+HTTP_DEFAULT_PORT = 80
 
 
 class MCPTransport(StrEnum):
@@ -123,6 +197,10 @@ class MCPParamName(StrEnum):
     THROUGH_REEXPORTS = "through_reexports"
     NEW_NAME = "new_name"
     ALLOW_HEURISTIC = "allow_heuristic"
+    NEW_PARAMS = "new_params"
+    MAPPING = "mapping"
+    TARGET_MODULE = "target_module"
+    KEEP_ALIAS = "keep_alias"
     BUDGET_TOKENS = "budget_tokens"
 
 
@@ -134,6 +212,27 @@ MCP_JSON_INDENT = 2
 MCP_LOG_LEVEL_INFO = "INFO"
 MCP_LOG_FORMAT = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>"
 MCP_PAGINATION_HEADER = "# Lines {start}-{end} of {total}\n"
+# `read_file`'s window, refused in its own terms rather than as whatever
+# `islice()` says of a negative index, or as "Lines 1001-1000 of 7"
+# (issue #3244). The schema bounds them too; a direct call is checked here.
+MCP_READ_OFFSET_MINIMUM = 0
+MCP_READ_LIMIT_MINIMUM = 1
+MCP_READ_OFFSET_NEGATIVE = "offset {offset} is negative"
+MCP_READ_LIMIT_NOT_POSITIVE = "limit {limit} is not positive"
+MCP_READ_PAST_END = "offset {offset} is past the end of {path} ({total} lines)"
+# A likely credential store is not served: the client's model would read
+# it, and repository text can ask for it as easily as for source (#3457).
+MCP_READ_SENSITIVE_REFUSED = (
+    "{path} looks like a credential file, so it is not served over MCP. "
+    "Export CGR_ALLOW_SENSITIVE_READS=true in the server's environment to serve it."
+)
+MCP_WRITE_SENSITIVE_REFUSED = (
+    "{path} looks like a credential file, so it is not changed over MCP. "
+    "Export CGR_ALLOW_SENSITIVE_WRITES=true in the server's environment to allow it."
+)
+# A `path:line` target whose line no source file can reach; sent on, it
+# overflows the 64-bit Bolt integer in the driver.
+MCP_RESOLVE_LINE_OUT_OF_RANGE = "Line {line} of {path} is out of range."
 
 # MCP response messages
 MCP_INDEX_SUCCESS = "Successfully indexed repository at {path}. Knowledge graph has been updated (previous data cleared)."
@@ -142,6 +241,7 @@ MCP_INDEX_ERROR = "Error indexing repository: {error}"
 MCP_WRITE_SUCCESS = "Successfully wrote file: {path}"
 MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
 MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"
+MCP_INPUT_VALIDATION_ERROR = "Input validation error: {error}"
 MCP_UPDATE_SUCCESS = "Successfully updated repository at {path} (no database wipe)."
 MCP_UPDATE_ERROR = "Error updating repository: {error}"
 MCP_REINGEST_ERROR = "Error re-ingesting files: {error}"
@@ -212,6 +312,10 @@ MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
     "Semantic search is not available. Install with: uv sync --extra semantic"
 )
 MCP_ASK_AGENT_ERROR = "Error running ask_agent: {error}"
+MCP_ASK_AGENT_APPROVAL_DENIED = (
+    "ask_agent cannot edit files or run non-read-only commands; answer "
+    "without them. The client can make the change with the MCP edit tools."
+)
 # Refused rather than answered with zero rows: an empty result for a
 # misspelled project name is indistinguishable from a genuine empty result.
 MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
@@ -231,10 +335,21 @@ MCP_ROOT_NOT_INDEXED = (
     "No project is indexed for this server's root {path}; run "
     "index_repository or update_repository first, or pass `project`."
 )
+# flow_verdict, explain_traceback and rank_root_causes take no `project`, so
+# their refusal cannot advise passing one (issue #3193).
+MCP_FIXED_ROOT_NOT_INDEXED = (
+    "No project is indexed for this server's root {path}; run "
+    "index_repository or update_repository first."
+)
 # An empty answer for a name the graph does not hold read as "nothing calls
 # it" / "no test reaches it" (issue #2461).
 MCP_UNKNOWN_TARGET = "{qualified_name!r} is not in the graph."
 MCP_UNKNOWN_TARGET_HINT = " `resolve` lists the qualified names a name matches."
+MCP_UNKNOWN_ENDPOINT = (
+    "{target!r} names no endpoint project {project!r} exposes: neither a "
+    "handler nor an endpoint identity."
+)
+MCP_UNKNOWN_ENDPOINT_HINT = " `endpoints` lists the project's identities and handlers."
 # `flow_verdict` with a source or sink it cannot walk from (issue #2939).
 MCP_FLOW_SOURCE = "source"
 MCP_FLOW_SINK = "sink"

@@ -2,10 +2,12 @@
 
 from .ast_nodes import (
     TS_CALL_EXPRESSION,
+    TS_CLASS_DECLARATION,
     TS_IDENTIFIER,
     TS_INTERFACE_DECLARATION,
     TS_MEMBER_EXPRESSION,
     TS_NEW_EXPRESSION,
+    TS_STRING,
     TS_TYPE_ALIAS_DECLARATION,
 )
 
@@ -66,6 +68,38 @@ TS_TYPE_ONLY_TOKEN = "type"
 TS_TYPE_ONLY_EXPORT_DECLARATIONS = frozenset(
     {TS_INTERFACE_DECLARATION, TS_TYPE_ALIAS_DECLARATION}
 )
+# The callee node of a dynamic `import("./x")`.
+TS_JS_DYNAMIC_IMPORT = "import"
+# Every statement that is a call, awaited or not, at any depth: where a
+# `require("./db");` or `import("./cache");` whose value is dropped sits
+# (issue #3267).
+JS_CALL_STATEMENT_QUERY = (
+    "(expression_statement [(call_expression) (await_expression) "
+    "(unary_expression)]) @statement"
+)
+# `void import("./cache")` discards the promise as a bare call does.
+JS_VOID_OPERATOR = "void"
+# `createRequire(import.meta.url)` (node:module) makes a CommonJS loader.
+JS_CREATE_REQUIRE = "createRequire"
+JS_NODE_MODULE_SPECIFIERS = frozenset({"module", "node:module"})
+CAPTURE_JS_CALL_STATEMENT = "statement"
+# What a `createRequire` loader resolves from: the module's own file when it
+# is given `import.meta.url`, `import.meta.filename` or CommonJS's
+# `__filename`, or the file a `new URL("../plugins/entry.js",
+# import.meta.url)` names. `import.meta`'s first token tells it from the
+# other meta property, `new.target`.
+TS_JS_IMPORT_META_KEYWORD = "import"
+JS_IMPORT_META_URL_PROPERTIES = frozenset({"url"})
+JS_IMPORT_META_FILE_PROPERTIES = JS_IMPORT_META_URL_PROPERTIES | {"filename"}
+JS_IMPORT_META_DIRECTORY_PROPERTIES = frozenset({"dirname"})
+JS_FILENAME_GLOBAL = "__filename"
+JS_DIRNAME_GLOBAL = "__dirname"
+JS_URL_CONSTRUCTOR = "URL"
+JS_NODE_URL_SPECIFIERS = frozenset({"url", "node:url"})
+JS_URL_LOCATION_CONVERTERS = ("fileURLToPath", "pathToFileURL")
+# A `new URL()` input that is not a plain relative path: a scheme, a query, a
+# fragment, a percent escape, or a backslash the URL parser reads as `/`.
+JS_URL_NON_PATH_CHARACTERS = frozenset(":?#%\\")
 # JSX element nodes that carry a component name (javascript and tsx grammars
 # share these); the closing element repeats the name and must not double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"
@@ -91,6 +125,9 @@ TS_NON_NULL_EXPRESSION = "non_null_expression"
 TS_CAST_WRAPPER_TYPES = frozenset(
     {TS_AS_EXPRESSION, TS_SATISFIES_EXPRESSION, TS_NON_NULL_EXPRESSION}
 )
+# The angle-bracket cast `<T>x`: transparent too, but its value is its LAST
+# named child (the first is the type).
+TS_TYPE_ASSERTION = "type_assertion"
 
 # JS/TS ingest node types
 TS_PAIR = "pair"
@@ -109,6 +146,7 @@ TS_FUNCTION_EXPRESSION = "function_expression"
 # (`get thing() {...}`); its presence marks the method as a property whose
 # reads are member accesses, not invocations.
 TS_GET_ACCESSOR_KEYWORD = "get"
+TS_SET_ACCESSOR_KEYWORD = "set"
 TS_ARROW_FUNCTION = "arrow_function"
 TS_REQUIRED_PARAMETER = "required_parameter"
 TS_OPTIONAL_PARAMETER = "optional_parameter"
@@ -371,6 +409,17 @@ TS_AMBIENT_DECLARATION = "ambient_declaration"
 TS_PREDEFINED_TYPE = "predefined_type"
 TS_TUPLE_TYPE = "tuple_type"
 TS_PARENTHESIZED_TYPE = "parenthesized_type"
+# `readonly T[]` (issue #3276).
+TS_READONLY_TYPE = "readonly_type"
+# The generic containers whose `xs[i]` is an element: indexable, unlike a
+# `Set` or an `Iterable` (issue #3276).
+TS_INDEXABLE_GENERIC_NAMES = frozenset({"Array", "ReadonlyArray"})
+# An `xs["length"]` index names the array's own property, not an element
+# (issue #3276).
+TS_PROPERTY_NAME_INDEX_TYPES = frozenset({TS_STRING, TS_TEMPLATE_STRING})
+# How deep a type alias may refer to another before the chain is abandoned:
+# `type A = B; type B = A` names nothing (issue #3276).
+TS_ALIAS_MAX_DEPTH = 8
 TS_FIELD_TYPE_ARGUMENTS = "type_arguments"
 TS_TYPE_DECLARATION_NODES = frozenset(
     {
@@ -437,6 +486,16 @@ TS_FIELD_INDEX = "index"
 TS_FUNCTION_DECLARATION = "function_declaration"
 TS_GENERATOR_FUNCTION_DECLARATION = "generator_function_declaration"
 TS_GENERATOR_FUNCTION = "generator_function"
+
+# The callable-parameter scan (`parsers/utils.py`, and the tree bridge's port
+# of it for the interface fingerprint): the scopes that capture an enclosing
+# function's parameters, and the ones it never enters.
+JS_TS_CALLABLE_CLOSURE_TYPES = frozenset(
+    {TS_ARROW_FUNCTION, TS_FUNCTION_EXPRESSION, TS_FUNCTION_DECLARATION}
+)
+JS_TS_CALLABLE_OPAQUE_TYPES = frozenset({TS_CLASS_DECLARATION})
+# A TypeScript parameter, whose name sits in its `pattern` field.
+JS_TS_TYPED_PARAMETER_TYPES = frozenset({TS_REQUIRED_PARAMETER, TS_OPTIONAL_PARAMETER})
 
 # Tree-sitter field names for module system
 FIELD_FUNCTION = "function"
@@ -522,3 +581,24 @@ CAPTURE_MODULE_OBJ = "module_obj"
 CAPTURE_EXPORTS_PROP = "exports_prop"
 CAPTURE_EXPORT_NAME = "export_name"
 CAPTURE_EXPORT_FUNCTION = "export_function"
+
+# Value nodes a call argument can be without running code, and the methods
+# through which a function is called with an explicit receiver, for
+# change_signature (issue #1908).
+TS_JS_NUMBER = "number"
+TS_JS_NULL = "null"
+TS_JS_UNDEFINED = "undefined"
+TS_JS_ACCESSOR_KEYWORDS = frozenset({"get", "set"})
+JS_RECEIVER_METHODS = frozenset({"call", "apply"})
+# `\u0061` and `\u{61}` both spell the identifier `a`, and a parameter name
+# written with escapes is refused; a direct `eval` reads locals named in a
+# string. For change_signature (issue #1908).
+JS_IDENTIFIER_ESCAPE = r"\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})"
+JS_ESCAPE_MARK = "\\"
+JS_EVAL_NAME = "eval"
+# The argument passed for a default a call skips: undefined even where the
+# caller has bound the name `undefined` to something else.
+JS_SKIPPED_ARGUMENT = "void 0"
+# A function body opening with either of these, exactly as written, runs in
+# strict mode, and JavaScript then refuses a default among its parameters.
+JS_USE_STRICT_DIRECTIVES = frozenset({"'use strict'", '"use strict"'})

@@ -55,8 +55,12 @@ def _accesses(
         target_qn = call.args[2][2]
         if rel not in _ACCESS_RELS or not target_qn.startswith(marker):
             continue
-        caller = call.args[0][2].rsplit(".", 1)[-1]
-        out.setdefault(caller, set()).add((rel, target_qn.removeprefix(marker)))
+        caller_qn = str(call.args[0][2])
+        # A rootful URL's resource is scoped to the project requesting it
+        # (issue #3190); what is folded here is the URL itself.
+        scope = f"{caller_qn.split('.', 1)[0]}::"
+        identity = target_qn.removeprefix(marker).removeprefix(scope)
+        out.setdefault(caller_qn.rsplit(".", 1)[-1], set()).add((rel, identity))
     return out
 
 

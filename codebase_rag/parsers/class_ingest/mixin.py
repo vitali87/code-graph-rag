@@ -21,6 +21,7 @@ from ...types_defs import (
     DeferredCppInherit,
     DeferredInherit,
     FunctionLocation,
+    FunctionLocations,
     FunctionSpanKey,
     NodeType,
     PendingTypeFact,
@@ -175,6 +176,23 @@ class RustImplScope(NamedTuple):
     module_qn: str
     owner_module_qn: str
     impl_target: str
+
+
+class RustWrittenPath(NamedTuple):
+    # An impl block's self type as written, and the module it is read in.
+    path: str
+    module_qn: str
+
+
+def _rust_impl_owner_module(class_node: Node, module_qn: str) -> str:
+    # An impl block inside `mod inner` targets a type whose node lives
+    # under the module path (proj...inner.Widget). Resolve the impl target
+    # against its enclosing module so the method binds to the real type
+    # node instead of a phantom under the file module.
+    mod_parts = rs_utils.build_module_path(class_node)
+    if not mod_parts:
+        return module_qn
+    return f"{module_qn}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(mod_parts)}"
 
 
 def _impl_body_method_nodes(
@@ -387,7 +405,7 @@ class ClassIngestMixin:
     rust_impl_owner_module: dict[str, str]
     rehydrated_definition_paths: dict[str, str]
     go_interfaces: dict[str, go_ifaces.GoInterfaceDecl]
-    function_locations: dict[FunctionSpanKey, FunctionLocation]
+    function_locations: FunctionLocations
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
     _deferred_parent_links: list[DeferredParentLink]
@@ -2028,16 +2046,7 @@ class ClassIngestMixin:
         if not (impl_target := rs_utils.extract_impl_target(class_node)):
             return
 
-        # An impl block inside `mod inner` targets a type whose node lives
-        # under the module path (proj...inner.Widget). Resolve the impl target
-        # against its enclosing module so the method binds to the real type
-        # node instead of a phantom under the file module.
-        mod_parts = rs_utils.build_module_path(class_node)
-        owner_module_qn = (
-            f"{module_qn}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(mod_parts)}"
-            if mod_parts
-            else module_qn
-        )
+        owner_module_qn = _rust_impl_owner_module(class_node, module_qn)
         class_qn = f"{owner_module_qn}.{impl_target}"
         written_path = rs_utils.extract_impl_target_path(class_node)
         if written_path:
@@ -2128,6 +2137,85 @@ class ClassIngestMixin:
             or trait_unrepresentable
         ):
             self.rust_inherent_impl_methods.update(impl_method_qns)
+
+    def restore_rust_impl_self_paths(
+        self, root_node: Node, module_qn: str, lang_queries: LanguageQueries
+    ) -> list[RustWrittenPath]:
+        """Record each impl block's written self type for an unparsed file.
+
+        What `_ingest_rust_impl_methods` records while it parses. A call
+        written with its type's path binds a block away from that type only
+        when the block's own path names it (#2982), and an incremental run
+        reads an unchanged block's methods back from the graph with no path:
+        the bare name stood in, named nothing in the block's module for
+        `impl crate::model::Foo`, and the edge a clean index emits was lost
+        (PR #2993 review). Returns each path as written where it is read.
+        """
+        if not (query := lang_queries[cs.QUERY_CLASSES]):
+            return []
+        lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
+        captures = sorted_captures(QueryCursor(query), root_node)
+        record = self.import_processor.record_rust_impl_self_path
+        written: list[RustWrittenPath] = []
+        for class_node in captures.get(cs.CAPTURE_CLASS, []):
+            if not (
+                (impl_target := rs_utils.extract_impl_target(class_node))
+                and (written_path := rs_utils.extract_impl_target_path(class_node))
+            ):
+                continue
+            owner_module_qn = _rust_impl_owner_module(class_node, module_qn)
+            class_qn = f"{owner_module_qn}{cs.SEPARATOR_DOT}{impl_target}"
+            record(module_qn, class_qn, written_path)
+            for method_qn in self._read_back_impl_method_qns(
+                class_node, class_qn, lang_queries, lang_config
+            ):
+                record(module_qn, method_qn, written_path)
+            written.append(
+                RustWrittenPath(path=written_path, module_qn=owner_module_qn)
+            )
+        return written
+
+    def _read_back_impl_method_qns(
+        self,
+        class_node: Node,
+        class_qn: str,
+        lang_queries: LanguageQueries,
+        lang_config: LanguageSpec,
+    ) -> list[str]:
+        body_node = class_node.child_by_field_name(cs.FIELD_BODY)
+        if body_node is None:
+            return []
+        method_qns: list[str] = []
+        for method_node in (
+            _impl_body_method_nodes(body_node, lang_queries, None, None) or []
+        ):
+            name_node = method_node.child_by_field_name(cs.FIELD_NAME)
+            if (
+                not _skip_method(method_node, class_node, body_node, lang_config)
+                and name_node is not None
+                and (name := safe_decode_text(name_node))
+                and (
+                    method_qn := self._read_back_method_qn(
+                        f"{class_qn}{cs.SEPARATOR_DOT}{name}", method_node
+                    )
+                )
+            ):
+                method_qns.append(method_qn)
+        return method_qns
+
+    def _read_back_method_qn(self, natural_qn: str, method_node: Node) -> str | None:
+        # The natural qn, or the `@line` variant the method took beside a
+        # same-named method of another block on the type: the variant is what
+        # tells the two blocks apart.
+        line, col = method_node.start_point[0] + 1, method_node.start_point[1]
+        by_position = {
+            qn_markers.marker_position(qn): qn
+            for qn in self.function_registry.variants(natural_qn)
+        }
+        found = by_position.get((line, col)) or by_position.get((line, -1))
+        if found is None and natural_qn in self.function_registry:
+            return natural_qn
+        return found
 
     def _defer_rust_impl_trait(
         self,
@@ -2611,7 +2699,16 @@ class ClassIngestMixin:
         # A bodied inline module is physically located in this file; give
         # it the real path so it joins containment on (file, line).
         file_path = self.module_qn_to_file_path.get(module_qn)
-        if file_path is not None:
+        owner = self.module_qn_to_file_path.get(inline_module_qn)
+        if owner is not None and owner != file_path:
+            # A cfg twin of another file's module (`mod b { .. }` here,
+            # `mod b;` and b.rs under the other cfg) shares that file's qn,
+            # and the node is the file's, as for a bodyless declaration.
+            # Given this file's path, b.rs's own re-parse delete missed it
+            # and the graph seed handed its qn to this file, filing a
+            # re-parsed b.rs under `<qn>.rs`. Only the identity is merged.
+            module_props = {cs.KEY_QUALIFIED_NAME: inline_module_qn}
+        elif file_path is not None:
             module_props[cs.KEY_PATH] = cached_relative_path(
                 file_path, self.repo_path
             ).as_posix()

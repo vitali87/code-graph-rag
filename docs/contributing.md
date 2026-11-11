@@ -80,26 +80,38 @@ All pull requests are validated by CI, which runs in parallel:
 3. **Unit Tests**: Parallel execution with `pytest-xdist` and coverage reporting
 4. **Integration Tests**: Full stack testing with Memgraph
 5. **PR Title Validation**: Conventional Commits format check
+6. **Greptile 5/5 Gate**: fails when Greptile scores the PR's latest commit below 5/5; passes with a warning when Greptile doesn't score it
 
 ### Which number a merge bumps
 
-Every bump raises the patch number unless a pull request merged since the
-version last changed carries the `breaking change` label. Then the minor number
-goes up while the version is below 1.0, and the major number from 1.0 on. A
-breaking change counts once: a later bump does not count it again, even when
-the release that carried it was deferred, and a version set by hand already
+Every merge raises the patch number by one unless a pull request merged since
+the version last changed carries the `breaking change` label. Then the minor
+number goes up while the version is below 1.0, and the major number from 1.0
+on. Merges that land close together share one bump, which moves the patch
+number once for each of them: three merges bumped together take the version
+from 0.4.9 to 0.4.12, and only v0.4.12 is tagged, since no commit ever carried
+0.4.10 or 0.4.11. A breaking change counts once: a later bump does not count
+it again, even when the release that carried it was deferred, and a version
+set by hand already
 accounts for every pull request merged up to it. Nothing rolls over: the
 patch number keeps counting past 999, because a carry into the minor number
 would announce a breaking change that never happened. To pick a type by hand,
 run the workflow with its `bump_type` input or change the version in the pull
-request itself.
+request itself. A version set in the pull request is not bumped again: its
+merge gets the bump commit and tag a bumped version gets, and a release when
+one is due, so a breaking change or security fix in it ships with it.
 
 ### Release cadence and why tags outrun releases
 
 `version-bump.yml` tags every version bump, but only some of those tags publish.
 A bump is not one per merge: runs are serialised, and only the run for the
 newest commit on `main` bumps, so merges that land close together share one
-bump and one tag. Which tags publish comes down to the CREDENTIAL used to push
+bump and one tag. The number still moves once per merge, so you can merge
+again while a bump or CI on `main` is still running without losing count.
+Each older run would still need a runner just to stand down, one after
+another, so `version-bump-supersede.yml` cancels every bump run that has not
+started yet for a commit the newest merge contains, and the newest run goes
+next. Which tags publish comes down to the CREDENTIAL used to push
 the tag, which is easy to miss when reading the workflows:
 
 ```yaml
@@ -118,15 +130,36 @@ events pushed with `GITHUB_TOKEN`. Interim tags therefore land on the remote and
 publish nothing, while release tags go out over the SSH deploy key and do trigger
 the publish.
 
-A release happens every 50 versions, or immediately when the `decide` step
+A release happens every 50 versions, which is every 50 merges however they
+were batched into bumps: the count is how far the patch number has moved since
+the latest release, plus the merges of the bump being made. A bump that takes
+the count past 50 releases all of its merges, so a release can hold a few more
+than 50 when merges land faster than bumps. A version set by hand counts the
+merges that brought it, not the numbers it skips: setting 0.0.1 to 0.0.50 in a
+pull request counts as one merge, or more when other merges share its bump.
+Version numbers alone cannot show that, so the bump records the count on its
+tag (`merge-count: <n> since <tag>`) and every later run reads it. A bump whose
+tag never reached GitHub is handled the same way: the next tag records the
+merges of both. A release also happens immediately when the `decide` step
 sees a security fix (a GHSA id in the commit message, an explicit `[security]`
-marker, or an associated PR labelled `security`). A release also needs green CI
+marker, or an associated PR labelled `security`) or a PR labelled
+`breaking change`, so the version that announces a breaking change is one
+users can install. To ship any other merge at once, label its PR `release now`
+before merging: it releases without the security notice or a breaking bump.
+It counts only when whoever applied it last is a repository admin or
+maintainer; applied by anyone else, a bot or a workflow token included, it is
+ignored and the run's summary says so. Do not borrow the `security` label for this, since every release it triggers
+opens with a "contains a security fix" notice. The label is read when the
+merge's bump runs; added after that, it comes too late, since the merge is
+already behind the bump's tag. A release also needs green CI
 on the merge commit it is cut from, within 45 minutes of the bump being pushed.
 When CI fails or does not finish in time, the bump is still tagged, as an
 interim tag annotated `release-deferred:`, and the release moves to the next
 bump (the run's summary reads "Release: deferred"). The next run never starts
 its scan at such a tag, so it reads the deferred commits again and a security
-fix among them still releases without waiting for the 50-version cadence.
+fix, breaking change or `release now` PR among them still releases without
+waiting for the 50-merge cadence. The breaking change still bumps the number
+only once.
 
 If you are ever debugging "the tag exists but PyPI did not update", check WHICH
 kind of tag it is first. For an interim tag this is the intended behaviour and
@@ -136,7 +169,7 @@ the workflow run rather than assuming the cadence explains it.
 
 ### Automated Code Review
 
-This project uses automated code review bots (**Greptile** and **Gemini Code Assist**). Before requesting a human review, address all bot comments by either implementing suggestions or replying with a clear justification for why a suggestion doesn't apply.
+This project uses automated code review bots (**Greptile** and **Gemini Code Assist**). Before requesting a human review, address all bot comments by either implementing suggestions or replying with a clear justification for why a suggestion doesn't apply. Greptile reviews every push, and when it scores the latest commit below 5/5 the **Greptile 5/5 Gate** check blocks the merge. If Greptile doesn't score it (out of credits, paused), the check passes with a warning. To ask for a fresh review without pushing, comment `@greptile review`, then re-run the check once the **Greptile Review** check has started.
 
 A green check list does not by itself mean a PR was verified: a review bot's *skip* notice is a comment with a non-empty body, and a PR based on a branch other than the default is covered by no ruleset, so nothing is required of it. Run `uv run python scripts/check_pr_gated.py <pr-number>` before merging; it reports every reason a PR is not verifiably gated rather than only the first.
 

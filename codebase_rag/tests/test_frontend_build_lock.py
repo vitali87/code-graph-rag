@@ -37,7 +37,11 @@ def _spawn_holder(lock: Path) -> subprocess.Popen:
         encoding=cs.ENCODING_UTF8,
     )
     assert proc.stdout is not None
-    assert proc.stdout.readline().strip() == "locked"
+    reported = proc.stdout.readline().strip()
+    # A holder that reports nothing died before taking the lock; its exit
+    # status (negative: the signal that killed it) tells that apart from a
+    # lock that was busy.
+    assert reported == "locked", (reported, proc.wait(timeout=30))
     return proc
 
 

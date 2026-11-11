@@ -23,6 +23,7 @@ from codebase_rag.constants import (
     GRAPH_BACKEND_SETTING,
     MEMGRAPH_CONNECTION_SETTINGS,
     SETTING_QDRANT_DB_PATH,
+    VectorStoreBackend,
 )
 from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, DIALECT_SQLITE, get_dialect
 from codebase_rag.mgclient_compat import _absent_driver
@@ -30,7 +31,7 @@ from codebase_rag.schemas import HealthCheckResult
 from codebase_rag.services import graph_service
 from codebase_rag.services.graph_service import GraphUnavailableError, MemgraphIngestor
 from codebase_rag.stack import manager as manager_module
-from codebase_rag.stack.constants import SERVICE_QDRANT
+from codebase_rag.stack.constants import SERVICE_MEMGRAPH, SERVICE_QDRANT
 from codebase_rag.stack.manager import StackError, StackManager
 from codebase_rag.tools import health_checker
 from codebase_rag.tools.health_checker import HealthChecker
@@ -64,6 +65,51 @@ def test_the_stack_starts_when_it_holds_the_vectors(embedded) -> None:
     manager.return_value.ensure_running.assert_called_once()
     # Only the Qdrant: its Memgraph would need a driver this install lacks.
     manager.assert_called_once_with(services=(SERVICE_QDRANT,))
+
+
+def test_the_default_vector_store_needs_no_stack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A compose file left in CGR_HOME by a Memgraph-era `cgr start` does not
+    send the default install's vectors to Docker: they go to a file."""
+    monkeypatch.delenv("CGR_VECTOR_STORE_BACKEND", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(manager_module, "settings", AppConfig(CGR_HOME=tmp_path))
+    manager = StackManager(home=tmp_path, services=(SERVICE_QDRANT,))
+    manager.compose_file.write_text("services: {}\n")
+    assert manager.serves_vectors() is False
+
+
+@pytest.mark.parametrize("via", ["flag", "setting"])
+def test_no_stack_is_started_for_the_embedded_graph_without_embeddings(
+    embedded, monkeypatch: pytest.MonkeyPatch, via: str
+) -> None:
+    """A stack set up here holds the vectors, but `--no-embeddings` (or
+    CGR_SKIP_EMBEDDINGS) writes none, so Docker is not even asked."""
+    monkeypatch.setattr(settings, "SKIP_EMBEDDINGS", via == "setting")
+    with patch.object(cli, "StackManager") as manager:
+        manager.return_value.serves_vectors.return_value = True
+        _maybe_start_stack(skip_embeddings=via == "flag")
+    manager.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("skip_embeddings", "backend"),
+    [(True, VectorStoreBackend.QDRANT), (False, VectorStoreBackend.SQLITE)],
+    ids=["no-embeddings", "sqlite-vectors"],
+)
+def test_memgraph_without_qdrant_vectors_starts_only_memgraph(
+    monkeypatch: pytest.MonkeyPatch,
+    skip_embeddings: bool,
+    backend: VectorStoreBackend,
+) -> None:
+    monkeypatch.setattr(settings, "GRAPH_BACKEND", DIALECT_MEMGRAPH)
+    monkeypatch.setattr(settings, "VECTOR_STORE_BACKEND", backend)
+    with patch.object(cli, "StackManager") as manager:
+        manager.return_value.status.return_value.state = None
+        _maybe_start_stack(skip_embeddings=skip_embeddings)
+    manager.assert_called_once_with(services=(SERVICE_MEMGRAPH,))
+    manager.return_value.ensure_running.assert_called_once()
 
 
 @pytest.mark.parametrize(

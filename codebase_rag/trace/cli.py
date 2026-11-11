@@ -294,6 +294,8 @@ def _convert_profile(
     """
     import json
 
+    from .. import constants as cs
+
     if language is not None:
         return _convert_for_language(
             profile_file, repo_path, resolved_output, workload, language
@@ -310,6 +312,15 @@ def _convert_profile(
             workload=workload,
         )
 
+    if profile_file.name.endswith(cs.TRACE_XDEBUG_SUFFIXES):
+        # Checked before the gzip sniff below: a zlib-enabled Xdebug writes
+        # gzip-compressed .xt.gz traces, which are not pprof profiles.
+        from .xdebug import convert_xdebug_trace
+
+        return convert_xdebug_trace(
+            profile_file, output=resolved_output, workload=workload
+        )
+
     with profile_file.open("rb") as fh:
         magic = fh.read(2)
 
@@ -322,13 +333,6 @@ def _convert_profile(
             repo_root=_require_repo(repo_path),
             output=resolved_output,
             workload=workload,
-        )
-
-    if profile_file.suffix == ".xt":
-        from .xdebug import convert_xdebug_trace
-
-        return convert_xdebug_trace(
-            profile_file, output=resolved_output, workload=workload
         )
 
     raw = json.loads(profile_file.read_text(encoding="utf-8"))

@@ -225,7 +225,9 @@ class TestFileReaderFeedsTheRecord:
         record = ReadContentRecord()
         tool = create_file_reader_tool(FileReader(str(tmp_path)), record)
 
-        await tool.function(file_path="settings.py")
+        await tool.function(
+            MagicMock(tool_call_approved=False), file_path="settings.py"
+        )
 
         assert record.taints(f"lookup {SECRET} meaning")
 
@@ -234,7 +236,7 @@ class TestFileReaderFeedsTheRecord:
         record = ReadContentRecord()
         tool = create_file_reader_tool(FileReader(str(tmp_path)), record)
 
-        await tool.function(file_path="missing.py")
+        await tool.function(MagicMock(tool_call_approved=False), file_path="missing.py")
 
         assert not record.taints(f"lookup {SECRET} meaning")
 

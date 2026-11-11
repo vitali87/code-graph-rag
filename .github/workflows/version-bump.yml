@@ -21,13 +21,19 @@ permissions: read-all
 env:
   RELEASE_EVERY: 50
   DEFERRED_RELEASE_MARKER: release-deferred
+  MERGE_COUNT_MARKER: merge-count
 
 jobs:
   bump-version:
     name: Auto Version Bump
+    # Skip only the bump commit this job pushes, known by its subject and its
+    # author. A merge whose pull request is titled "chore: bump version to X"
+    # carries the phrase too, and is just the merge that sets a version by
+    # hand, which this job has to tag.
     if: >-
       github.ref == 'refs/heads/main' &&
-      !contains(github.event.head_commit.message, 'chore: bump version')
+      !(startsWith(github.event.head_commit.message, 'chore: bump version to ') &&
+      github.event.head_commit.author.email == 'github-actions[bot]@users.noreply.github.com')
     # One bump at a time. Without this, two merges close together each start
     # a run from their own commit, and the second push to main is rejected.
     # Declared on the job, not the workflow: a run whose job is skipped (the
@@ -36,8 +42,10 @@ jobs:
     # the pending one: admission order is not guaranteed, so a delayed older
     # run could otherwise displace the newest one and then stand down at the
     # tip check, leaving nothing to bump. Older runs still stand down; the
-    # newest bumps once for all, as "Decide" scans every commit since the
-    # last release tag.
+    # newest bumps for all, one patch number per merge, as "Decide" scans
+    # every commit since the last release tag. version-bump-supersede.yml
+    # cancels the waiting ones, and only those whose commit a newer merge
+    # contains, so it never removes the run that has to bump.
     concurrency:
       group: version-bump-main
       cancel-in-progress: false
@@ -47,12 +55,18 @@ jobs:
     permissions:
       contents: write
       actions: read
+      # Who applied a "release now" label is read from the pull request's
+      # events.
+      pull-requests: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
           ssh-key: ${{ secrets.VERSION_BUMP_SSH_KEY }}
+          # "Commit version bump" and "Create git tag" push with this deploy
+          # key, so it has to stay configured after the checkout.
+          persist-credentials: true
 
       - name: Check if version was manually changed
         id: check_manual
@@ -78,11 +92,28 @@ jobs:
           fi
           OLD_VERSION=$(git show HEAD^:pyproject.toml | grep -E '^version\s*=' | sed 's/version = "\(.*\)"/\1/')
           NEW_VERSION=$(grep -E '^version\s*=' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
-          if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "Version was manually changed from $OLD_VERSION to $NEW_VERSION, skipping auto-bump"
+          if [ "$OLD_VERSION" = "$NEW_VERSION" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "hand_set=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A version set in the merge itself is not bumped again, but it is
+          # tagged, and released when due, like a bumped one: skipping the run
+          # left it untagged, and a breaking change or security fix in that
+          # merge unreleased until some later merge. Only a version whose tag
+          # already exists stands down, as there is nothing left to tag.
+          TAG_STATUS=0
+          git ls-remote --exit-code --tags origin "refs/tags/v${NEW_VERSION}" > /dev/null || TAG_STATUS=$?
+          if [ "$TAG_STATUS" -eq 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::the version was set by hand to ${NEW_VERSION}, which v${NEW_VERSION} already tags; nothing to tag"
+          elif [ "$TAG_STATUS" -eq 2 ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "hand_set=true" >> "$GITHUB_OUTPUT"
+            echo "Version was set by hand from $OLD_VERSION to $NEW_VERSION; tagging it without a bump"
           else
-            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "::error::could not look up tag v${NEW_VERSION} (git ls-remote exit ${TAG_STATUS}); refusing to decide whether to bump"
+            exit 1
           fi
 
       - name: Get current version
@@ -98,6 +129,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CURRENT: ${{ steps.get_version.outputs.current }}
+          DISPATCH_BUMP_TYPE: ${{ github.event.inputs.bump_type }}
         run: |
           LATEST=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || echo "")
           # A security patch must ship immediately rather than waiting for the
@@ -140,6 +172,10 @@ jobs:
           # A tag that cannot be read fails the run: skipping it could leave a
           # security fix unreleased.
           DEFERRED=" "
+          # The same annotations carry the merge count of a tag whose version
+          # its number cannot be trusted to show ("Create git tag"), which the
+          # cadence below counts instead of that tag's distance.
+          COUNTED=""
           for TAG in $(printf '%s\n' "$TAGS" \
               | awk -F'refs/tags/' 'NF > 1 { n = index($2, "^{}"); if (n) print substr($2, 1, n - 1) }' \
               | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' || true); do
@@ -156,7 +192,31 @@ jobs:
             case "$TAG_MESSAGE" in
               "${DEFERRED_RELEASE_MARKER}:"*) DEFERRED="${DEFERRED}${TAG} " ;;
             esac
+            COUNT=$(printf '%s\n' "$TAG_MESSAGE" | awk -v marker="${MERGE_COUNT_MARKER}: " '
+                index($0, marker) == 1 {
+                  k = split(substr($0, length(marker) + 1), f, " ")
+                  if (k == 3 && f[1] ~ /^[1-9][0-9]*$/ && f[2] == "since" &&
+                      f[3] ~ /^v[0-9]+\.[0-9]+\.[0-9]+$/) { print f[1] "@" f[3]; exit }
+                }')
+            # A count replaces the tag's distance, so a tag cut off main would
+            # move the total, where a plain stray tag below the version main
+            # holds cannot. Such tags are rare, so each costs one call.
+            if [ -n "$COUNT" ]; then
+              if ! ON_MAIN=$(gh api \
+                  "repos/${GITHUB_REPOSITORY}/compare/${TAG}...${GITHUB_SHA}?per_page=1" \
+                  --jq .status); then
+                echo "::error::could not compare ${TAG} with ${GITHUB_SHA}; refusing to decide the release"
+                exit 1
+              fi
+              case "$ON_MAIN" in
+                ahead|identical) COUNTED="${COUNTED} ${TAG}=${COUNT}" ;;
+              esac
+            fi
           done
+          # Every commit a tag points at (annotated tags peeled): the newest
+          # one in the walk below is where the merges a new tag stands for
+          # begin. Read from the listing above, with no further call.
+          TAGGED=" $(printf '%s\n' "$TAGS" | awk -F'\t' '$1 ~ /^[0-9a-f]+$/ {print $1}' | paste -sd ' ' -) "
           if [ "$TAG_STATUS" -eq 0 ] && [[ "$DEFERRED" != *" v${CURRENT} "* ]]; then
             BASE_TAG="v${CURRENT}"
           else
@@ -236,26 +296,59 @@ jobs:
           # range starts behind deferred tags on purpose, for security fixes,
           # so the breaking scan stops at the newest bump commit instead,
           # which every bump leaves on main's first-parent line whether its
-          # release went out or not. A version set by hand leaves no tag
-          # (TAG_STATUS 2) and no bump commit: the commit that set it is the
-          # one whose parent held another version, and the number chosen
-          # there already accounts for it and for everything before it.
+          # release went out or not. A version set by hand has no tag
+          # (TAG_STATUS 2) on the run for the merge that set it, nor later if
+          # that run never tagged it, and no bump commit after it yet: the
+          # commit that set it is the one whose parent held another version,
+          # and the number chosen there already accounts for it and for
+          # everything before it.
+          # Its release is another matter: nothing in this range has been
+          # released, so a breaking change anywhere in it is still owed one,
+          # even behind the newest bump, whose release may have been deferred.
+          # The same walk counts the merges since the version last changed,
+          # which is how far the patch number moves: merges that landed while
+          # an earlier bump or its CI was running share this run's bump, and
+          # each of them is still one version (and one step of RELEASE_EVERY).
+          # BATCH counts on past both of that count's boundaries, to the
+          # newest tagged commit: every merge the tag this run cuts stands
+          # for, for when main's version has no tag of its own (below).
           BREAKING=false
+          UNRELEASED_BREAKING=false
+          BREAKING_PRS=""
+          RELEASE_NOW=false
           COUNTING=true
+          MERGED=0
+          SINCE_TAG=true
+          BATCH=0
+          STOP_SHA=""
+          # The pull requests in $PULLS labelled "breaking change", which the
+          # release names when they added no notes (issue #3431).
+          breaking_prs() {
+            printf '%s\n' "$PULLS" | awk '
+                $0 == "#pull-request" { number = 1; pr = ""; next }
+                number { number = 0; if ($0 ~ /^#[1-9][0-9]*$/) pr = substr($0, 2); next }
+                $0 == "breaking change" && pr != "" { print pr }'
+          }
           for SHA in $COMMITS; do
+            # A security release ships whatever else the range holds, so once
+            # its bump is settled the rest of the range is read only for the
+            # pull requests the release names, and for where the count of
+            # merges ends.
+            SETTLED=false
             if [ "$SECURITY" = "true" ] &&
                 { [ "$BREAKING" = "true" ] || [ "$COUNTING" = "false" ]; }; then
-              break
+              SETTLED=true
             fi
             # One lookup per commit: "#pull-request" marks each pull request
-            # the commit belongs to, followed by that pull request's labels.
+            # the commit belongs to, followed by its "#<number>" and labels.
             if ! PULLS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" \
-                --jq '.[] | "#pull-request", .labels[].name'); then
+                --jq '.[] | "#pull-request", "#\(.number)", .labels[].name'); then
               echo "::error::could not read the pull request labels of ${SHA}; refusing to decide the release"
               exit 1
             fi
             PARENT=""
-            if [ "$COUNTING" = "true" ]; then
+            BUMP_COMMIT=false
+            if [ "$COUNTING" = "true" ] || [ "$SINCE_TAG" = "true" ]; then
               if [ -n "$RANGE" ]; then
                 SUBJECT=$(printf '%s\n' "$RANGE" \
                   | jq -r --arg sha "$SHA" 'select(.sha == $sha) | .message' | head -n 1)
@@ -270,6 +363,7 @@ jobs:
               case "$SUBJECT" in
                 "chore: bump version to "*)
                   if ! printf '%s\n' "$PULLS" | grep -qxF '#pull-request'; then
+                    BUMP_COMMIT=true
                     COUNTING=false
                   fi
                   ;;
@@ -288,45 +382,208 @@ jobs:
                 COUNTING=false
               fi
             fi
+            if [ "$COUNTING" = "true" ]; then
+              MERGED=$((MERGED + 1))
+            fi
+            # A tagged commit ends BATCH; a bump commit whose tag never landed
+            # does not, and is no merge itself.
+            if [ "$SINCE_TAG" = "true" ]; then
+              case "$TAGGED" in
+                *" ${SHA} "*) SINCE_TAG=false; STOP_SHA="$SHA" ;;
+              esac
+            fi
+            if [ "$SINCE_TAG" = "true" ] && [ "$BUMP_COMMIT" = "false" ]; then
+              BATCH=$((BATCH + 1))
+            fi
+            if [ "$SETTLED" = "true" ]; then
+              BREAKING_PRS="${BREAKING_PRS} $(breaking_prs)"
+              continue
+            fi
             if printf '%s\n' "$PULLS" | grep -qx security; then
               SECURITY=true
             fi
-            if [ "$COUNTING" = "true" ] &&
-                printf '%s\n' "$PULLS" | grep -qxF 'breaking change'; then
-              BREAKING=true
+            # A label, not a checkbox in the description: any author, a fork's
+            # included, can edit the description of their own pull request.
+            # Triage access is not enough either, and neither is a bot or a
+            # workflow token that can write pull requests: only a label whose
+            # last application was by an admin or maintainer counts.
+            if [ "$RELEASE_NOW" = "false" ] &&
+                printf '%s\n' "$PULLS" | grep -qxF 'release now'; then
+              for PR in $(printf '%s\n' "$PULLS" | awk '
+                  $0 == "#pull-request" { number = 1; pr = ""; next }
+                  number { number = 0; if ($0 ~ /^#[1-9][0-9]*$/) pr = substr($0, 2); next }
+                  $0 == "release now" && pr != "" { print pr }'); do
+                if ! LABELERS=$(gh api --paginate \
+                    "repos/${GITHUB_REPOSITORY}/issues/${PR}/events?per_page=100" \
+                    --jq '.[] | select(.event == "labeled" and .label.name == "release now")
+                      | "\(.actor.type) \(.actor.login)"'); then
+                  echo "::error::could not read who labelled #${PR} release now; refusing to decide the release"
+                  exit 1
+                fi
+                LABELER=$(printf '%s\n' "$LABELERS" | tail -n 1)
+                LOGIN="${LABELER#User }"
+                ROLE=""
+                if [ "$LOGIN" != "$LABELER" ] && [[ "$LOGIN" =~ ^[A-Za-z0-9-]+$ ]]; then
+                  if ! ROLE=$(gh api \
+                      "repos/${GITHUB_REPOSITORY}/collaborators/${LOGIN}/permission" \
+                      --jq .role_name); then
+                    echo "::error::could not read the role of ${LOGIN}, who labelled #${PR} release now; refusing to decide the release (removing the label lets it go ahead without one)"
+                    exit 1
+                  fi
+                fi
+                case "$ROLE" in
+                  admin|maintain)
+                    RELEASE_NOW=true
+                    break
+                    ;;
+                esac
+                echo "::warning::#${PR} was labelled release now by '${LABELER:-no recorded event}', not a maintainer; the label is ignored"
+                echo "- **Release now:** #${PR} ignored, labelled by '${LABELER:-no recorded event}', not a maintainer" >> "$GITHUB_STEP_SUMMARY"
+              done
+            fi
+            if printf '%s\n' "$PULLS" | grep -qxF 'breaking change'; then
+              UNRELEASED_BREAKING=true
+              if [ "$COUNTING" = "true" ]; then
+                BREAKING=true
+              fi
+              BREAKING_PRS="${BREAKING_PRS} $(breaking_prs)"
             fi
           done
-          RELEASE=false
-          if [ "$SECURITY" = "true" ]; then
-            RELEASE=true
-          elif [ -n "$LATEST" ]; then
-            TAGS_SINCE=$(git ls-remote --tags origin "refs/tags/v*" \
-              | awk -F'refs/tags/' '{print $2}' \
-              | grep -v '\^{}' \
-              | sort -V \
-              | awk -v latest="$LATEST" 'seen {count++} $0 == latest {seen=1} END {print count + 0}')
-            if [ $((TAGS_SINCE + 1)) -ge "$RELEASE_EVERY" ]; then
-              RELEASE=true
+          BREAKING_PRS=$(printf '%s\n' $BREAKING_PRS | sort -un | paste -sd ' ' -)
+          # A breaking change ships at once, like a security fix, rather than
+          # waiting for RELEASE_EVERY: the version that announces it should be
+          # one users can install, not an interim tag. A pull request labelled
+          # "release now" ships at once too, without the security notice: a
+          # fix users should not wait for need not be a vulnerability, and
+          # borrowing the security label would announce one that is not there.
+          # RELEASE_EVERY counts merges, not tags: a tag can stand for many
+          # merges, and counting tags let a release hold several times more
+          # than RELEASE_EVERY. Each bump moves the patch number once per
+          # merge, so the distance it has moved since the latest release is
+          # the count, read from the tags with no further call. A step into a
+          # new minor or major line counts once, as a tag did. Tags above the
+          # version main holds are not main's, so the count stops there: a
+          # stray higher tag elsewhere would otherwise read as dozens of
+          # merges, and within one line the distance cannot be moved by a
+          # stray tag below it. A tag that records its merge count is counted
+          # by that instead (see below). The bump this run is about to make
+          # counts too, with at least one
+          # step: a dispatched run adds a version without a merge of its own.
+          # A dispatched minor or major bump counts one step, as its tag will
+          # on every later run, so the release does not depend on which run
+          # crossed RELEASE_EVERY. A batch that takes the count past
+          # RELEASE_EVERY ships whole.
+          STEP=$(( MERGED > 0 ? MERGED : 1 ))
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] &&
+              [ "$DISPATCH_BUMP_TYPE" != patch ]; then
+            STEP=1
+          fi
+          # When main's version has no tag of its own, its number cannot tell
+          # how many merges it took: a version set by hand can skip numbers no
+          # merge made, and a bump whose tag never landed leaves its merges to
+          # the next one. This bump then counts every merge since the newest
+          # tag, and its tag records that count for every later run (issue
+          # #3573), a dispatched minor or major bump's included, so the count
+          # reads the same before and after the tag exists. Tags from before
+          # that change count their distance. The count starts at the tag
+          # the walk stopped at, or at the scan's base when it ran out first,
+          # and the tag records that too: the total is then the total at that
+          # tag plus the count, so a stray tag between them adds nothing.
+          MERGE_COUNT=""
+          COUNT_FROM=""
+          IN_BUMP="$MERGED"
+          if [ "$TAG_STATUS" -eq 2 ]; then
+            STEP=$(( BATCH > 0 ? BATCH : 1 ))
+            IN_BUMP="$BATCH"
+            if [ -n "$STOP_SHA" ]; then
+              COUNT_FROM=$(printf '%s\n' "$TAGS" | awk -F'\t' -v sha="$STOP_SHA" '
+                  $1 == sha {
+                    t = substr($2, length("refs/tags/") + 1)
+                    n = index(t, "^{}")
+                    if (n) t = substr(t, 1, n - 1)
+                    print t
+                  }' | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n 1 || true)
+            else
+              COUNT_FROM="$BASE_TAG"
+            fi
+            if [ -n "$COUNT_FROM" ]; then
+              MERGE_COUNT="$STEP"
             fi
           fi
+          SINCE=0
+          if [ -n "$LATEST" ]; then
+            SINCE=$(printf '%s\n' "$TAGS" | awk -F'refs/tags/' 'NF > 1 {print $2}' \
+              | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -uV \
+              | awk -v latest="$LATEST" -v current="$CURRENT" -v counted="$COUNTED" \
+                  -v upto="$COUNT_FROM" '
+                  BEGIN {
+                    split(current, c, ".")
+                    n = split(counted, pairs, " ")
+                    for (i = 1; i <= n; i++) {
+                      split(pairs[i], kv, "=")
+                      split(kv[2], nb, "@")
+                      fixed[kv[1]] = nb[1] + 0
+                      from[kv[1]] = nb[2]
+                    }
+                  }
+                  { split(substr($0, 2), v, ".") }
+                  v[1] + 0 > c[1] + 0 ||
+                      (v[1] + 0 == c[1] + 0 && (v[2] + 0 > c[2] + 0 ||
+                      (v[2] + 0 == c[2] + 0 && v[3] + 0 > c[3] + 0))) { exit }
+                  seen {
+                    if (($0 in fixed) && (from[$0] in at))
+                      count = at[from[$0]] + fixed[$0]
+                    else if (v[1] + 0 == major && v[2] + 0 == minor && v[3] + 0 > patch)
+                      count += v[3] - patch
+                    else
+                      count++
+                  }
+                  $0 == latest { seen = 1 }
+                  seen { at[$0] = count; major = v[1] + 0; minor = v[2] + 0; patch = v[3] + 0 }
+                  END { if (upto in at) print at[upto] + 0; else print count + 0 }')
+          fi
+          # A release deferred for unproven CI stays due on every later bump
+          # until one is published, whatever the count now reads: a step the
+          # count reads differently once tagged must not cancel it.
+          RELEASE=false
+          if [ "$SECURITY" = "true" ] || [ "$UNRELEASED_BREAKING" = "true" ] ||
+              [ "$RELEASE_NOW" = "true" ] || [ "$DEFERRED" != " " ]; then
+            RELEASE=true
+          elif [ -n "$LATEST" ] && [ $((SINCE + STEP)) -ge "$RELEASE_EVERY" ]; then
+            RELEASE=true
+          fi
+          CADENCE="- **Cadence:** ${IN_BUMP} merge(s) in this bump"
+          if [ -n "$LATEST" ]; then
+            CADENCE="${CADENCE}, $((SINCE + STEP)) of ${RELEASE_EVERY} since ${LATEST}"
+          fi
+          echo "$CADENCE" >> "$GITHUB_STEP_SUMMARY"
           {
             echo "release=$RELEASE"
+            echo "merged=$MERGED"
+            echo "merge_count=$MERGE_COUNT"
+            echo "merge_count_from=$COUNT_FROM"
             echo "latest=$LATEST"
             echo "security=$SECURITY"
             echo "breaking=$BREAKING"
+            echo "breaking_prs=$BREAKING_PRS"
             echo "ghsa=$GHSA"
           } >> "$GITHUB_OUTPUT"
 
       # Only a breaking change moves past the patch number on its own. A
-      # dispatched bump type is an explicit choice and overrides the labels.
+      # dispatched bump type is an explicit choice and overrides the labels,
+      # and a version set by hand in the merge overrides both: it is tagged
+      # as it stands.
       - name: Determine bump type
         if: steps.check_manual.outputs.skip == 'false'
         id: bump_type
         env:
           DISPATCH_BUMP_TYPE: ${{ github.event.inputs.bump_type }}
           BREAKING: ${{ steps.decide.outputs.breaking }}
+          HAND_SET: ${{ steps.check_manual.outputs.hand_set }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$HAND_SET" = "true" ]; then
+            echo "type=none" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             echo "type=$DISPATCH_BUMP_TYPE" >> "$GITHUB_OUTPUT"
           elif [ "$BREAKING" = "true" ]; then
             echo "type=breaking" >> "$GITHUB_OUTPUT"
@@ -343,12 +600,24 @@ jobs:
         env:
           CURRENT: ${{ steps.get_version.outputs.current }}
           BUMP_TYPE: ${{ steps.bump_type.outputs.type }}
+          MERGED: ${{ steps.decide.outputs.merged }}
         run: |
           # Validated BEFORE any arithmetic: bash evaluates `$(( ))` operands
           # as expressions, so a crafted component could run commands there.
           if [[ ! "$CURRENT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::refusing malformed version '$CURRENT' from pyproject.toml"
             exit 1
+          fi
+          # A patch bump moves once per merge it carries, so merges that
+          # shared one run each still get a number. At least one: a
+          # dispatched run on the bump commit carries no merge.
+          if [[ ! "${MERGED:-1}" =~ ^[0-9]+$ ]]; then
+            echo "::error::refusing malformed merge count '$MERGED'"
+            exit 1
+          fi
+          STEP=$((10#${MERGED:-1}))
+          if (( STEP < 1 )); then
+            STEP=1
           fi
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
           MAJOR=$((10#$MAJOR)); MINOR=$((10#$MINOR)); PATCH=$((10#$PATCH))
@@ -361,7 +630,7 @@ jobs:
               MINOR=$((MINOR + 1)); PATCH=0
               ;;
             patch)
-              PATCH=$((PATCH + 1))
+              PATCH=$((PATCH + STEP))
               ;;
             breaking)
               # Below 1.0 the minor number is the one that signals a
@@ -371,6 +640,8 @@ jobs:
               else
                 MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
               fi
+              ;;
+            none)
               ;;
             *)
               echo "::error::unknown bump type '$BUMP_TYPE'"
@@ -430,6 +701,18 @@ jobs:
               --jq '"\(.summary) (\(.severity) severity, CVSS \(.cvss.score // "n/a")), advisory [\(.ghsa_id)](https://github.com/'"${GITHUB_REPOSITORY}"'/security/advisories/\(.ghsa_id))\(if .cve_id then " / " + .cve_id else "" end)."' \
               2>/dev/null) || DETAIL=""
           fi
+          # A GHSA id can also name an advisory against a dependency (a lock
+          # bump that clears an OSV-Scanner finding). Those live in the global
+          # advisory database, not in this repository, where the link 404s.
+          # An id found in neither is most likely this repository's own draft,
+          # so the pointer below still links here. The global record may carry
+          # only cvss_severities, with 0.0 for a version it was not scored
+          # under, so the first nonzero score wins.
+          if [ -z "$DETAIL" ] && [ -n "$GHSA" ]; then
+            DETAIL=$(gh api "advisories/${GHSA}" \
+              --jq '"\(.summary) (\(.severity) severity, CVSS \([.cvss.score, .cvss_severities.cvss_v3.score, .cvss_severities.cvss_v4.score] | map(select(. != null and . > 0)) | first // "n/a")), dependency advisory [\(.ghsa_id)](https://github.com/advisories/\(.ghsa_id))\(if .cve_id then " / " + .cve_id else "" end)."' \
+              2>/dev/null) || DETAIL=""
+          fi
           {
             echo "## 🔒 Security"
             echo
@@ -444,6 +727,42 @@ jobs:
             echo "**Upgrading is strongly recommended.**"
             echo
           } > /tmp/security.md
+
+      - name: Prepend breaking-change notice
+        if: steps.decide.outputs.release == 'true'
+        env:
+          LATEST_TAG: ${{ steps.decide.outputs.latest }}
+          BREAKING_PRS: ${{ steps.decide.outputs.breaking_prs }}
+        run: |
+          # A breaking release must say what breaks and how to migrate; v0.3.2
+          # shipped without it (issue #3431). The notes are the fragments added
+          # under changes/breaking/ since the last release. Comparing two trees
+          # needs only the release's commit, not the history between, so one
+          # shallow fetch serves the shallow checkout. A failed lookup fails
+          # the run, as in "Decide", rather than publishing without the notes.
+          set -o pipefail
+          if [ -n "$LATEST_TAG" ]; then
+            if [[ ! "$LATEST_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::refusing malformed release tag '${LATEST_TAG}'"
+              exit 1
+            fi
+            git fetch --quiet --depth=1 --no-tags origin \
+              "refs/tags/${LATEST_TAG}:refs/tags/${LATEST_TAG}"
+            ADDED=$(git diff --name-only --no-renames --diff-filter=A \
+              "refs/tags/${LATEST_TAG}" "$GITHUB_SHA" -- changes/breaking/)
+          else
+            # "Decide" passes an empty tag when its lookup fails too. Read as a
+            # first release, that would publish every note ever written.
+            TAGS=$(git ls-remote --tags origin 'refs/tags/v*')
+            if [ -n "$TAGS" ]; then
+              echo "::error::no latest release, but release tags exist"
+              exit 1
+            fi
+            ADDED=$(git ls-files -- changes/breaking/)
+          fi
+          printf '%s\n' "$ADDED" \
+            | python3 scripts/breaking_notes.py render --labelled "$BREAKING_PRS" \
+            > /tmp/breaking.md
 
       - name: Generate highlights
         if: steps.decide.outputs.release == 'true'
@@ -545,7 +864,7 @@ jobs:
 
       - name: Install uv
         if: steps.decide.outputs.release == 'true'
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -694,7 +1013,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml server.json uv.lock NEWS.md README.md
-          git commit -m "chore: bump version to ${NEW_VERSION}"
+          # A version set by hand can leave nothing to commit, but the commit
+          # still marks where that version was settled: a later run's breaking
+          # scan stops at it, so the change is not counted a second time.
+          git commit --allow-empty -m "chore: bump version to ${NEW_VERSION}"
           if git push; then
             echo "pushed=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -722,8 +1044,9 @@ jobs:
         # same wait, and no tag lands for as long as CI on main runs behind
         # (v0.1.88). "Create git tag" reads this step's outcome instead and
         # pushes a tag annotated as a deferred release over GITHUB_TOKEN, which
-        # triggers no publish, so the release moves to the next bump whose CI
-        # is proven.
+        # triggers no publish. deferred-release.yml publishes it once CI on
+        # main passes at it; until then it stays due, and the next bump whose
+        # CI is proven releases it.
         continue-on-error: true
         timeout-minutes: 50
         env:
@@ -802,6 +1125,8 @@ jobs:
           NEW_VERSION: ${{ steps.bump_version.outputs.new }}
           RELEASE: ${{ steps.decide.outputs.release }}
           CI_GATE: ${{ steps.ci_gate.outcome }}
+          MERGE_COUNT: ${{ steps.decide.outputs.merge_count }}
+          MERGE_COUNT_FROM: ${{ steps.decide.outputs.merge_count_from }}
         run: |
           if [ "$RELEASE" = "true" ] && [ "$CI_GATE" != "success" ]; then
             # Annotated with DEFERRED_RELEASE_MARKER so the next run's
@@ -811,6 +1136,23 @@ jobs:
             git tag -a "v${NEW_VERSION}" -m "${DEFERRED_RELEASE_MARKER}: CI is not proven for ${GITHUB_SHA}"
             echo "::warning::CI is not proven for ${GITHUB_SHA}; v${NEW_VERSION} is tagged without a release, which moves to the next bump"
             echo "- **Release:** deferred, CI is not proven for ${GITHUB_SHA}; v${NEW_VERSION} is tagged without publishing" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$RELEASE" != "true" ] && [ -n "$MERGE_COUNT" ]; then
+            # This bump's version had no tag of its own, so its number may not
+            # tell how many merges it took (a version set by hand, or a bump
+            # whose tag never landed). The annotation tells later runs, so
+            # RELEASE_EVERY counts those instead of the distance. A release's
+            # tag needs none: the next count starts after it. Nor does a
+            # deferred one, which keeps its release due whatever the count
+            # reads. The tag the count starts at goes with it, so later runs
+            # add it to the total at that tag, not to whatever tag sorts just
+            # before this one.
+            if [[ "$MERGE_COUNT" =~ ^[1-9][0-9]*$ &&
+                  "$MERGE_COUNT_FROM" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              git tag -a "v${NEW_VERSION}" -m "${MERGE_COUNT_MARKER}: ${MERGE_COUNT} since ${MERGE_COUNT_FROM}"
+            else
+              echo "::warning::refusing malformed merge count '${MERGE_COUNT}' since '${MERGE_COUNT_FROM}'; v${NEW_VERSION} is tagged without it, so its version distance counts toward RELEASE_EVERY"
+              git tag "v${NEW_VERSION}"
+            fi
           else
             git tag "v${NEW_VERSION}"
           fi
@@ -820,18 +1162,38 @@ jobs:
             git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "v${NEW_VERSION}"
           fi
 
+      # A release whose CI is not proven goes up as a draft, which publishes
+      # nothing; deferred-release.yml publishes it once CI on main passes.
       - name: Create release
-        if: steps.decide.outputs.release == 'true' && steps.commit.outputs.pushed == 'true' && steps.ci_gate.outcome == 'success'
+        if: steps.decide.outputs.release == 'true' && steps.commit.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.bump_version.outputs.new }}
+          CI_GATE: ${{ steps.ci_gate.outcome }}
         run: |
           TAG="v${NEW_VERSION}"
+          DRAFT=true
+          if [ "$CI_GATE" = success ]; then
+            DRAFT=false
+          fi
           : > /tmp/body.md
           # The 🔒 Security disclaimer must lead the release body, above the
-          # AI highlights and the generated changelog (issue #1149).
+          # AI highlights and the generated changelog (issue #1149). The
+          # breaking-change notes follow it (issue #3431).
           [ -s /tmp/security.md ] && cat /tmp/security.md >> /tmp/body.md
+          [ -s /tmp/breaking.md ] && cat /tmp/breaking.md >> /tmp/body.md
           [ -s /tmp/highlights.md ] && cat /tmp/highlights.md >> /tmp/body.md
           cat /tmp/notes.md >> /tmp/body.md
-          gh release create "$TAG" --title "$TAG" --notes-file /tmp/body.md --verify-tag \
+          gh release create "$TAG" --title "$TAG" --notes-file /tmp/body.md --verify-tag --draft="$DRAFT" \
             || gh release edit "$TAG" --notes-file /tmp/body.md
+          # This release's notes cover every commit since the latest release,
+          # so the drafts this job left for earlier deferred bumps are
+          # superseded; deferred-release.yml publishes only the newest.
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq '.[] | select(.draft and .author.login == "github-actions[bot]") | "\(.id) \(.tag_name)"' \
+            | while read -r ID OLD; do
+                if [ "$OLD" != "$TAG" ] && [[ "$ID" =~ ^[1-9][0-9]*$ ]]; then
+                  gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${ID}" > /dev/null \
+                    || echo "::warning::could not delete the superseded draft of ${OLD}"
+                fi
+              done

@@ -90,9 +90,29 @@ Attach it to any JVM workload, most usefully a test run:
 
 ```bash
 java -javaagent:build/cgr-jvm-agent.jar="include=com.example;repo=/path/to/your-repo" ...
-# Maven:  MAVEN_OPTS='-javaagent:...' mvn test
+# Maven: Surefire runs the tests in a forked JVM, so pass the agent through argLine
+mvn test -DargLine='-javaagent:build/cgr-jvm-agent.jar=include=com.example;repo=/path/to/your-repo'
 # Gradle: add the same -javaagent flag to test { jvmArgs ... }
 ```
+
+The agent is built for JDK 24, so the JVM it attaches to must be
+JDK 24 or newer too; an older one refuses to load it and the run fails before
+any test. For a test run that is the forked test JVM, which uses the JDK
+running Maven or Gradle unless a toolchain picks another.
+
+`MAVEN_OPTS` sets only the JVM that runs Maven itself, not the one Surefire
+forks for the tests (`forkCount=1` by default), so an agent passed there
+traces no test method; it reaches the tests only with `-DargLine` (or with
+`-DforkCount=0`, which runs them inside Maven's JVM). Keep the quotes around
+the `argLine` value: the `;` between the agent options would otherwise end
+the shell command. To set it once, put it in the Surefire configuration of
+`pom.xml`, as `<argLine>-javaagent:...</argLine>`. An `<argLine>` already
+there overrides `-DargLine`, so add the agent to it after the flags it holds,
+as in `<argLine>-Xmx512m -javaagent:...</argLine>`. When a plugin sets the
+`argLine` property instead (JaCoCo does, for its own agent), keep its value
+with `<argLine>@{argLine} -javaagent:...</argLine>`. `@{argLine}` reads only
+that property, not the flags the element held before, and without the
+property the test JVM does not start.
 
 
 ![make jvm-agent, then jlox run under the agent and cgr trace ingest, revealing the visitor dispatch from Expr.Call.accept to Interpreter.visitCallExpr](../assets/demos/dynamic-tracing-jvm.gif)
@@ -225,6 +245,11 @@ php -d xdebug.mode=trace -d xdebug.start_with_request=yes \
 cgr trace convert run.xt --workload phpunit
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
+
+An Xdebug (3.1 or later) built with zlib compresses traces by default
+(`xdebug.use_compression=1`) and writes `run.xt.gz` instead; pass that file to
+`cgr trace convert` as is. A compressed trace is inflated in memory under a
+256 MiB cap; to convert a larger one, `gunzip` it and pass the `.xt` file.
 
 
 ![PHPUnit under Xdebug tracing, then cgr trace convert and ingest, adding the callable-stage call from FingersCrossedProcessor.process to Pipeline.__invoke](../assets/demos/dynamic-tracing-php.gif)

@@ -9,6 +9,7 @@ KEY_LABELS = "labels"
 KEY_LABEL = "label"
 KEY_PROPERTIES = "properties"
 KEY_PURGED = "purged"
+KEY_EXPECTED_ROOT = "expected_root"
 KEY_FROM_ID = "from_id"
 KEY_TO_ID = "to_id"
 KEY_TYPE = "type"
@@ -47,6 +48,11 @@ KEY_IMPLEMENTERS_UNKNOWN = "implementers_unknown"
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
 KEY_IS_MACRO = "is_macro"
+# The path a Rust function's visibility is restricted to, as declared:
+# `self` for a private one, `crate`, `super` or the `in` path of a
+# `pub(...)`; absent for a plain `pub` one (PR #3242 review). A
+# `macro_rules!` macro reads `self`: no glob of its module imports it.
+KEY_RUST_VISIBILITY = "rust_visibility"
 KEY_IS_BODY_SCOPED_NAME = "is_body_scoped_name"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
@@ -123,6 +129,7 @@ class RenameTargetKind(StrEnum):
 KEY_UNMAPPED = "unmapped"
 KEY_VERDICT = "verdict"
 KEY_STRUCTURAL_DELTA = "structural_delta"
+KEY_CYCLE = "cycle"
 KEY_DISPATCH_LITERAL = "dispatch_literal"
 
 
@@ -209,6 +216,10 @@ KEY_UNRESOLVED_SPECIFIERS = "unresolved_specifiers"
 # so the modules that waited for it are re-parsed (issue #1568). Written
 # unconditionally on every parse so a resolved name clears.
 KEY_UNRESOLVED_REFERENCES = "unresolved_references"
+# The dotted namespace a PHP file declares (`App.Util`), on its Module: a
+# `use function App\\Util\\slug` matches it, and only a parse of the file
+# gives it, so an incremental run reads it back from here (issue #3277).
+KEY_PHP_NAMESPACE = "php_namespace"
 KEY_ABSOLUTE_PATH = "absolute_path"
 # Whether flow analysis covered a Module: its language is in the source/sink
 # registry AND the FLOWS_TO capture group was enabled at indexing. Read by
@@ -263,11 +274,16 @@ KEY_LONGER_PROJECT_PREFIXES = "longer_project_prefixes"
 KEY_VERSION_SPEC = "version_spec"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
+# The residual-node count `cgr prune` reads back after a purge (#2479).
+KEY_RESIDUAL_NODES = "residual"
 # Registered projects whose names extend this one (`svc.v2` under `svc`).
 KEY_NESTED_PROJECTS = "nested_projects"
 # The incomplete-run marker's phase (#1705 review): whether the run it records
 # had reached its first graph write when the marker was last updated.
 KEY_WRITING = "writing"
+# Whether a marker `CYPHER_PROJECT_IS_INCOMPLETE` returns records a run that
+# has not finished.
+KEY_RUN_INCOMPLETE = "run_incomplete"
 # Identifies ONE run's incomplete-run marker. Two registries can index the
 # same project concurrently (the ingestor lock is per instance), and a marker
 # keyed only by project let the second run's clear delete the first run's
@@ -276,7 +292,9 @@ KEY_RUN_ID = "run_id"
 # Who wrote the CLI sync's incomplete-run marker (PR #2532 review): the host
 # (machine and pid namespace) and pid of its process, and a token unique to
 # that one sync, so `delete-project` clears it only once that sync provably
-# stopped, and only if no newer sync has re-marked it since.
+# stopped, and only if no newer sync has re-marked it since. The MCP
+# server's and `cgr check`'s markers name the host and pid too, so a full
+# rebuild retires one only once its process exited (review of PR #3496).
 KEY_OWNER_HOST = "owner_host"
 KEY_OWNER_PID = "owner_pid"
 KEY_OWNER_TOKEN = "owner_token"
@@ -837,12 +855,25 @@ KEY_ANCHOR = "anchor"
 # omitted key, so a fixed link would otherwise stay listed as broken.
 KEY_BROKEN_LINKS = "broken_links"
 KEY_DECORATORS = "decorators"
+# The largest line a `path:line` target is looked up at: past it no source
+# file has the line, and the value would overflow a Bolt integer.
+GRAPH_MAX_SOURCE_LINE = 2**31 - 1
 # Return and parameter annotations as written (issue #1527). `return_type` is
 # absent when the definition has none; `param_types` is parallel to the
 # declared parameters ("" for an unannotated one) and absent, not empty, for
 # languages the extractor does not read (the positional_params rule).
 KEY_RETURN_TYPE = "return_type"
 KEY_PARAM_TYPES = "param_types"
+# The type names a Go definition's result binds, as the call pass reads them:
+# the FIRST result's (`b, err := NewBox()` types `b`) and the single result's
+# that a chained call dispatches on (`MakeBox().Size()`). Stored so a re-parsed
+# caller in an incremental run still reads them from unchanged files, which
+# would otherwise have to be parsed again to give them (issue #3272).
+KEY_FIRST_RETURN_TYPE = "first_return_type"
+KEY_CHAIN_RETURN_TYPE = "chain_return_type"
+# A Go file's `package` clause, on its Module: same-package visibility reads
+# it for both ends, and an unchanged file is not parsed to give it (#3272).
+KEY_GO_PACKAGE = "go_package"
 # A `main` the language's launcher starts, judged by the parser because the
 # graph cannot say it otherwise (issue #2527). For Java, the method the JVM
 # launch protocol would pick from its class body (JLS 12.1.4, JEP 512);
@@ -991,6 +1022,13 @@ MILVUS_IDS_EXPR = "{field} in {ids}"
 # Milvus answers a delete with the deleted keys or with this count.
 MILVUS_DELETE_COUNT_KEY = "delete_count"
 
+# The ownership relations a Module's subtree hangs off, walked by the
+# re-parse delete and by the lookup of files that attach members to it.
+MODULE_SUBTREE_REL_PATTERN = (
+    "DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
+    "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT"
+    "|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY"
+)
 CYPHER_DELETE_MODULE = (
     # Scoped to the project: two projects in the shared graph can hold the
     # same relative path, and a path-only match would take the sibling's
@@ -1030,9 +1068,7 @@ CYPHER_DELETE_MODULE = (
     # re-parse stripped its edge and left the node: an orphan per re-parse
     # after a sync that drops the `findings` capture group, or per finding
     # the edited source no longer matches (issue #2536).
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
-    "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT"
-    "|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY*0..]->(c) "
+    f"OPTIONAL MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -1211,6 +1247,16 @@ CYPHER_PROJECT_CONSTANT_TYPES = (
     "RETURN c.qualified_name AS qualified_name, c.type_name AS type_name, "
     "c.path AS path"
 )
+# The type edges each definition already has, for an incremental run's
+# requeued annotations: a name one of them reaches stays as resolved (#3007).
+# By relationship, so a parameter's target never settles the return type.
+CYPHER_PROJECT_TYPE_EDGE_TARGETS = (
+    "MATCH (f)-[r:RETURNS|ACCEPTS]->(t) WHERE (f:Function OR f:Method) "
+    "AND f.qualified_name STARTS WITH $project_prefix "
+    "RETURN f.qualified_name AS qualified_name, type(r) AS rel_type, "
+    "t.qualified_name AS target_qn"
+)
+
 CYPHER_ALL_DEFINITION_QNS = (
     "MATCH (n) WHERE (n:Function OR n:Method OR n:Class OR n:Interface "
     "OR n:Enum OR n:Type OR n:Union) "
@@ -1224,10 +1270,12 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.non_method_members AS non_method_members, "
     "n.modifiers AS modifiers, n.decorators AS decorators, "
     "n.return_type AS return_type, n.param_types AS param_types, "
+    "n.first_return_type AS first_return_type, "
+    "n.chain_return_type AS chain_return_type, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "
     "n.signature AS signature, n.declared_in_class AS declared_in_class, "
     "n.generic_arity AS generic_arity, "
-    "n.is_exported AS is_exported, "
+    "n.is_exported AS is_exported, n.rust_visibility AS rust_visibility, "
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
     "n.extension_receiver_arity AS extension_receiver_arity, "
@@ -1240,7 +1288,8 @@ CYPHER_ALL_DEFINITION_QNS = (
 CYPHER_ALL_MODULE_QNS = (
     "MATCH (n) WHERE (n:Module OR n:ModuleInterface) "
     "AND n.qualified_name STARTS WITH $project_prefix "
-    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label"
+    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
+    "n.go_package AS go_package, n.php_namespace AS php_namespace"
 )
 
 # Inbound reference edges (from unchanged files) into symbols defined in one
@@ -1303,6 +1352,19 @@ CYPHER_INBOUND_EDGES = (
 # like INHERITS: an implementor in the same package holds no import edge into
 # its interface's file, and without this it was neither re-parsed nor
 # restored when that file was re-indexed (issue #1565).
+# Files that attach members to these modules' subtrees: a Go method keyed
+# under its receiver type's module whatever file declares it, a C++
+# out-of-line definition hung on its header's class. The re-parse delete
+# walks the subtree and takes them, and only their own file recreates them,
+# so they must re-parse in the same run (issue #3271).
+CYPHER_FOREIGN_MEMBER_PATHS = (
+    "MATCH (m:Module) WHERE m.path IN $paths "
+    "AND (m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix) "
+    f"MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*1..]->(c) "
+    "WHERE c.path IS NOT NULL AND NOT c.path IN $paths "
+    "RETURN DISTINCT c.path AS path"
+)
 CYPHER_AFFECTED_CALLER_PATHS = (
     "MATCH (caller)-[:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS]->(target) "
     "WHERE target.path IN $paths AND caller.path IS NOT NULL "
@@ -1405,6 +1467,22 @@ CYPHER_UNRESOLVED_IMPORTER_PATHS = (
     "OR target.qualified_name STARTS WITH (name + '.')) "
     "RETURN DISTINCT importer.path AS caller_path"
 )
+# Every IMPORTS edge written for a `package:` URI, with where it went (issue
+# #3278 review). A Dart pubspec's `name:` decides whether `package:<name>/...`
+# is a module of the project or an external package, so adding, deleting or
+# renaming one moves those imports while the importers stay unchanged on
+# disk, and no edge leads from them to the pubspec for the dependents lookup
+# to follow. The caller resolves each URI again and keeps the moved ones.
+CYPHER_PACKAGE_URI_IMPORTS = (
+    "MATCH (importer)-[r:IMPORTS]->(target) "
+    "WHERE importer.path IS NOT NULL "
+    "AND importer.qualified_name STARTS WITH $project_prefix "
+    "AND r.imported_name STARTS WITH $uri_prefix "
+    "RETURN DISTINCT importer.path AS caller_path, "
+    "importer.qualified_name AS from_qn, r.imported_name AS imported_name, "
+    "target.qualified_name AS to_qn"
+)
+CYPHER_PARAM_URI_PREFIX = "uri_prefix"
 # Modules carrying at least one unresolved relative specifier, with the
 # specifiers themselves. The specifier is relative to the IMPORTING module's
 # directory, so the match against a created file is resolved in Python rather
@@ -1457,6 +1535,84 @@ CYPHER_ALL_INHERITS = (
     "RETURN child.qualified_name AS child_qn, base.qualified_name AS base_qn, "
     "r.base_index AS base_index "
     "ORDER BY child_qn, base_index"
+)
+# Dispatch dependents for an incremental sync (issue #3338): a new subclass
+# override or Protocol conformer changes which CALLS edges unchanged callers
+# must hold, without any edge pointing at the new file and without leaving
+# an unresolved reference, so the affected-caller lookup never finds those
+# callers. These queries read the OLD graph, before the changed files'
+# subtrees are deleted: the hierarchy and method sets the new source is
+# judged against, and the CALLS edges whose targets the dispatch set
+# gained or lost. All six are emulated in evals/cgr_graph.py; a structural
+# edit here without a matching case there fails closed in the unit suite.
+# Every class and interface node the project owns. Base resolution
+# trusts only a project-prefixed base guess that names a class here or
+# in this run's scan: an import-resolved guess for an external base has
+# no node, and comparing it with the persisted bases invents a change
+# for a comment-only edit (issue #3338).
+CYPHER_DISPATCH_CLASS_QNS = (
+    "MATCH (n) "
+    "WHERE n.qualified_name STARTS WITH $project_prefix "
+    "AND ANY(label IN labels(n) WHERE label IN ['Class', 'Interface']) "
+    "RETURN n.qualified_name AS qualified_name"
+)
+# The classes a Protocol declares, with the methods each declares: a
+# Protocol is a class whose direct base is named Protocol, the same test
+# CallResolver._protocol_classes applies to the rehydrated hierarchy.
+CYPHER_DISPATCH_PROTOCOL_METHODS = (
+    "MATCH (p:Class)-[:INHERITS]->(proto) "
+    "WHERE proto.qualified_name IS NOT NULL "
+    "AND (proto.qualified_name ENDS WITH '.Protocol' "
+    "OR proto.qualified_name = 'Protocol') "
+    "AND p.qualified_name STARTS WITH $project_prefix "
+    "MATCH (p)-[:DEFINES_METHOD]->(m:Method) "
+    "RETURN p.qualified_name AS class_qn, m.qualified_name AS method_qn"
+)
+# Every method of the given names a project class defines. The caller
+# filters by leaf name in Python; the query keeps only the rows whose
+# qualified name ends at that leaf, plus the `@line` duplicate variants,
+# which a CALLS edge can also target.
+CYPHER_DISPATCH_CLASS_METHODS = (
+    "MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method) "
+    "WHERE c.qualified_name STARTS WITH $project_prefix "
+    "AND ANY(name IN $names WHERE m.qualified_name ENDS WITH ('.' + name) "
+    "OR m.qualified_name CONTAINS ('.' + name + '@')) "
+    "RETURN c.qualified_name AS class_qn, m.qualified_name AS method_qn"
+)
+# Every method the named classes define, plus the `@line` duplicate
+# variants, which a CALLS edge can also target. Read only for the
+# hierarchy components of classes that changed bases: a descendant
+# override's name is not among the changed or Protocol method names
+# the filtered query above can ask for, and without it the detached
+# override's callers are never queued (issue #3338).
+CYPHER_DISPATCH_METHODS_FOR_CLASSES = (
+    "MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method) "
+    "WHERE c.qualified_name IN $qns "
+    "RETURN c.qualified_name AS class_qn, m.qualified_name AS method_qn"
+)
+# Files holding a CALLS edge into one of the dispatch targets, plus the
+# `@line` variants of those targets. Files already in the re-parse set
+# ($paths) are excluded: they re-parse anyway. The target prefixes are
+# `ClassQn.method` strings; a target whose qualified name merely shares a
+# prefix (`Foo.getaway` for prefix `Foo.get`) never matches, because the
+# remainder after the prefix must be empty or a duplicate marker.
+CYPHER_DISPATCH_CALLER_PATHS = (
+    "MATCH (caller)-[:CALLS]->(target) "
+    "WHERE caller.path IS NOT NULL AND NOT caller.path IN $paths "
+    "AND caller.qualified_name STARTS WITH $project_prefix "
+    "AND target.qualified_name STARTS WITH $project_prefix "
+    "AND ANY(prefix IN $target_prefixes WHERE target.qualified_name = prefix "
+    "OR target.qualified_name STARTS WITH (prefix + '@')) "
+    "RETURN DISTINCT caller.path AS caller_path"
+)
+# The files defining the base classes a new subclass extends: the
+# base-defining file re-parses with the subclass, so a self-dispatch call
+# it holds is re-derived against the new hierarchy even when no CALLS edge
+# of its own names a dispatch target (issue #3338).
+CYPHER_DISPATCH_BASE_PATHS = (
+    "MATCH (base:Class) "
+    "WHERE base.qualified_name IN $qns AND base.path IS NOT NULL "
+    "RETURN DISTINCT base.path AS caller_path"
 )
 # Implementer -> interface/trait pairs for incremental runs (issue #2403):
 # parsing records them only for the files it reads, and the sole-implementer
@@ -1555,6 +1711,8 @@ CYPHER_ALL_METHOD_LOCATIONS = (
 KEY_CHILD_QN = "child_qn"
 KEY_BASE_QN = "base_qn"
 KEY_BASE_INDEX = "base_index"
+KEY_CLASS_QN = "class_qn"
+KEY_METHOD_QN = "method_qn"
 # Result columns of the location-rehydration and module-count queries. Named
 # so the readers and the eval double cannot drift apart on the spelling, which
 # is the failure these queries were already prone to (issue #1716).
@@ -1564,6 +1722,7 @@ KEY_COUNT = "count"
 
 CYPHER_PARAM_PATHS = "paths"
 CYPHER_PARAM_MODULE_NAMES = "module_names"
+CYPHER_PARAM_TARGET_PREFIXES = "target_prefixes"
 KEY_CALLER_PATH = "caller_path"
 KEY_CALLER_LABEL = "caller_label"
 KEY_CALLER_QN = "caller_qn"
@@ -1606,6 +1765,25 @@ KEY_TARGET_HASH = "target_hash"
 KEY_ANCHOR_STATE = "anchor_state"
 KEY_MENTIONS = "mentions"
 KEY_MENTION_QNS = "mention_qns"
+# Each mention's anchors, recorded at write time beside `mention_qns` and in
+# its order, so a renamed or moved mention is followed the way the subject is
+# (issue #3230). An empty string stands for "none": the wire carries string
+# lists, not lists with nulls. `mentions_lost` names the mentions the repair
+# could not place; they stay in `mention_qns` with no edge. One name can hold a
+# live entry and lost ones (`a` deleted, then `b` renamed to `a`): each keeps
+# its own slot and anchors, the live one first, and `mentions_lost` repeats
+# the name once per lost entry. Before that, names were unique and read the
+# same way.
+KEY_MENTION_HASHES = "mention_hashes"
+KEY_MENTION_QUOTES = "mention_quotes"
+KEY_MENTIONS_LOST = "mentions_lost"
+KEY_ATTACHED = "attached"
+KEY_ATTACH_QNS = "attach_qns"
+KEY_ATTACH_KEYS = "attach_keys"
+KEY_KEY_SEPARATOR = "key_separator"
+# Joins a followed mention's new name to the hash it was followed by, in one
+# string the write compares as a whole; a qualified name never holds it.
+GLOSS_MENTION_KEY_SEPARATOR = "\x1f"
 KEY_ANCHOR_HASH = "anchor_hash"
 # Written by the repair tiers (issue #1808, stage four). `moved_from` is the
 # name a MOVED gloss was written against, kept so the move stays visible;

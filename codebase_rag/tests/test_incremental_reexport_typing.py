@@ -754,6 +754,34 @@ class TestRustTwinsAcrossFiles:
         assert calls.get("proj.src.shapes.Gamma.go") == _EXACT
         assert "proj.src.shapes.Beta.go" not in calls
 
+    def test_the_inline_twin_leaves_the_file_module_its_own_location(
+        self, tmp_path: Path
+    ) -> None:
+        # mod.rs's `mod b { .. }` shares b.rs's qn. Written with mod.rs's
+        # path, the node went with a mod.rs re-parse delete and the seed gave
+        # its qn to mod.rs, filing a re-parsed b.rs under `proj.src.a.b.rs`.
+        root = tmp_path / "proj"
+        _materialise(root, RS_TWINS_IN_TWO_FILES)
+        store = _StatefulIngestor()
+        _updater(store, root, "rust").run()
+        module = store.nodes[(cs.NodeLabel.MODULE.value, "proj.src.a.b")]
+        assert module[cs.KEY_PATH] == "src/a/b.rs"
+        assert module[cs.KEY_NAME] == "b.rs"
+        assert cs.KEY_START_LINE not in module
+        assert cs.KEY_DECORATORS not in module
+
+    @pytest.mark.parametrize("edited", ["src/a/b.rs", "src/a/mod.rs"])
+    def test_editing_either_twin_matches_a_clean_index(
+        self, tmp_path: Path, edited: str
+    ) -> None:
+        synced = _sync_after_edit(
+            tmp_path, RS_TWINS_IN_TWO_FILES, edited, _UNRELATED_RS_FN, "rust"
+        )
+        assert _snapshot(synced.store, synced.root) == _snapshot(
+            synced.clean, synced.root
+        )
+        assert (cs.NodeLabel.MODULE.value, "proj.src.a.b.rs") not in synced.store.nodes
+
     @pytest.mark.parametrize("reverse", [False, True], ids=["in-order", "reversed"])
     def test_the_file_walked_last_wins_over_a_higher_marker(
         self, tmp_path: Path, reverse: bool

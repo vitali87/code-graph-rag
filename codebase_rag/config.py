@@ -9,7 +9,7 @@ import subprocess
 from collections.abc import Collection, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, TypedDict, Unpack
+from typing import Any, NamedTuple, TypedDict, Unpack
 
 from dotenv.main import DotEnv
 from loguru import logger
@@ -20,7 +20,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
 from . import exceptions as ex
-from . import logs
+from . import instructions_trust, logs
 from .graph_dialects import DIALECT_SQLITE, available_dialects
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
@@ -48,8 +48,12 @@ def merge_dotenv(path: Path) -> dict[str, str]:
     # value, and a reference to it in the file reads that value too.
     values = DotEnv(path, encoding=cs.ENCODING_UTF8, override=False).dict()
     refused: dict[str, str] = {}
+    # The file may not set a waiver in any spelling: settings match names
+    # without regard to case, so `cgr_allow_sensitive_reads=true` beside an
+    # exported `CGR_ALLOW_SENSITIVE_READS=false` won (see load_settings).
+    environment_only = {name.upper() for name in cs.ENVIRONMENT_ONLY_SETTINGS}
     for name, value in values.items():
-        if value is None or name in os.environ:
+        if value is None or name in os.environ or name.upper() in environment_only:
             continue
         try:
             os.environ[name] = value
@@ -452,8 +456,11 @@ class AppConfig(BaseSettings):
     QDRANT_UPSERT_RETRIES: int = Field(default=3, gt=0)
     QDRANT_RETRY_BASE_DELAY: float = Field(default=0.5, gt=0)
     QDRANT_BATCH_SIZE: int = Field(default=50, gt=0)
+    # The `sqlite` store is the default for the reason the embedded graph is:
+    # a file under CGR_HOME needs no server and no Docker. Qdrant and Milvus
+    # stay one setting away.
     VECTOR_STORE_BACKEND: cs.VectorStoreBackend = Field(
-        cs.VectorStoreBackend.QDRANT, validation_alias="CGR_VECTOR_STORE_BACKEND"
+        cs.VectorStoreBackend.SQLITE, validation_alias="CGR_VECTOR_STORE_BACKEND"
     )
     MILVUS_URI: str = "./.milvus_code_embeddings.db"
     MILVUS_TOKEN: str | None = None
@@ -468,6 +475,18 @@ class AppConfig(BaseSettings):
     SQLITE_VECTOR_PATH: Path | None = None
     SQLITE_VECTOR_DIM: int = 768
     SQLITE_VECTOR_TOP_K: int = 5
+
+    @property
+    def qdrant_set_without_backend(self) -> bool:
+        """Whether Qdrant is configured but the vector store was left to default.
+
+        Qdrant was the default vector store before the `sqlite` one replaced
+        it, so this is how an install upgraded in place looks: its embeddings
+        live in Qdrant while cgr now opens an empty file.
+        """
+        return cs.SETTING_VECTOR_STORE_BACKEND not in self.model_fields_set and any(
+            name in self.model_fields_set for name in cs.QDRANT_CONNECTION_SETTINGS
+        )
 
     @property
     def vector_db_file(self) -> Path:
@@ -598,10 +617,35 @@ class AppConfig(BaseSettings):
 
     CGR_CAPTURE: str = Field("", validation_alias="CGR_CAPTURE")
 
+    # MCP read_file refuses a likely credential file (.env, keys,
+    # .git/config): the client's model would read it (issue #3457). The CLI
+    # agent asks instead, so this only matters to the MCP server.
+    ALLOW_SENSITIVE_READS: bool = Field(
+        False, validation_alias="CGR_ALLOW_SENSITIVE_READS"
+    )
+
+    # MCP write_file and surgical_replace_code refuse the same files: an
+    # overwrite destroys the secret, and an edit's refusals ("target not
+    # found", the lines of each match) let the client guess one character
+    # at a time. The CLI agent asks before every write instead.
+    ALLOW_SENSITIVE_WRITES: bool = Field(
+        False, validation_alias="CGR_ALLOW_SENSITIVE_WRITES"
+    )
+
+    # A repository's .cgr.md loads only once the user approved its content
+    # (issue #3456). True trusts every repository's file without asking:
+    # for CI on repositories you control, never for code you did not write.
+    TRUST_PROJECT_INSTRUCTIONS: bool = Field(
+        False, validation_alias="CGR_TRUST_PROJECT_INSTRUCTIONS"
+    )
+
     # Loopback by default: the StreamableHTTP endpoint has no built-in
     # auth, so exposing it beyond the host must be an explicit operator
     # choice via MCP_HTTP_HOST (issue #808).
     MCP_HTTP_HOST: str = "127.0.0.1"
+    # Serve only the tools that read (`cgr mcp-server --read-only`), for a
+    # client that needs queries and nothing else (issue #3458).
+    MCP_READ_ONLY: bool = False
     MCP_HTTP_PORT: int = 8080
     MCP_HTTP_ENDPOINT_PATH: str = "/mcp"
     # Bearer token for the HTTP MCP endpoint; unset means loopback-only
@@ -744,11 +788,29 @@ def load_settings(
     itself, so such a variable is refused here too, with that message alone.
     """
     held_back = unset or {}
+    # A waiver of a safeguard against the repository's own content counts only
+    # when the user exported it: `.env` in the working directory is usually the
+    # analysed repository's file, and could approve its own .cgr.md (Codex
+    # review on PR #3471). Held at its default, silently, like an unset one.
+    # An empty one counts as unset: settings skip an empty variable
+    # (env_ignore_empty) and read `.env` in its place, so it let the
+    # repository's file decide.
+    exported = {name.upper() for name in inherited_env if os.environ.get(name)}
+    waivers = {
+        name for name in cs.ENVIRONMENT_ONLY_SETTINGS if name.upper() not in exported
+    }
     try:
-        return AppConfig(**_defaults_for(held_back)), tuple(held_back.values())
+        return (
+            AppConfig(**_defaults_for({*held_back, *waivers})),
+            tuple(held_back.values()),
+        )
     except ValidationError as error:
         refusals = error.errors(include_url=False)
-    refused = {*held_back, *(str(refusal["loc"][0]) for refusal in refusals)}
+    refused = {
+        *held_back,
+        *waivers,
+        *(str(refusal["loc"][0]) for refusal in refusals),
+    }
     messages = tuple(_describe_refusal(r, inherited_env) for r in refusals)
     return AppConfig(**_defaults_for(refused)), (*held_back.values(), *messages)
 
@@ -926,19 +988,85 @@ def _read_cgr_instructions_file(path: Path) -> str | None:
     except OSError as e:
         logger.warning(logs.CGR_INSTRUCTIONS_READ_FAILED.format(path=path, error=e))
         return None
-    if not body:
+    return body or None
+
+
+class RepoInstructions(NamedTuple):
+    path: Path
+    body: str
+    digest: str
+    # What the user approved for this path before, if anything: None is a
+    # file never seen, a different digest is one changed since.
+    approved: str | None
+
+    @property
+    def trusted(self) -> bool:
+        return settings.TRUST_PROJECT_INSTRUCTIONS or self.approved == self.digest
+
+
+def set_by_dotenv(
+    name: str, inherited_env: Collection[str], dotenv_names: Collection[str]
+) -> bool:
+    """Whether `name` comes from the working directory's `.env` rather than
+    from the environment the user started cgr with."""
+    exported = {variable.upper() for variable in inherited_env}
+    in_file = {variable.upper() for variable in dotenv_names}
+    return name.upper() in in_file and name.upper() not in exported
+
+
+# The names the working directory's `.env` sets, merged or not:
+# pydantic-settings reads the file itself.
+_DOTENV_NAMES = frozenset(DotEnv(Path.cwd() / ".env", encoding=cs.ENCODING_UTF8).dict())
+_DEFAULT_CGR_HOME = Path.home() / cs.CGR_HOME_DIRNAME
+_CGR_HOME_FROM_DOTENV = set_by_dotenv(cs.ENV_CGR_HOME, _INHERITED_ENV, _DOTENV_NAMES)
+
+
+def _trust_store() -> Path:
+    # Approvals live where the repository cannot point them: a CGR_HOME set by
+    # the working directory's `.env` could hold a store that approves that
+    # repository's own .cgr.md (Greptile review on PR #3471).
+    home = _DEFAULT_CGR_HOME if _CGR_HOME_FROM_DOTENV else settings.CGR_HOME
+    return home.expanduser() / cs.TRUSTED_INSTRUCTIONS_FILENAME
+
+
+def repo_instructions(repo_path: Path) -> RepoInstructions | None:
+    """The repository's own .cgr.md with its approval state, if it has one."""
+    path = repo_path / CGR_INSTRUCTIONS_FILENAME
+    if (body := _read_cgr_instructions_file(path)) is None:
         return None
-    logger.info(logs.CGR_INSTRUCTIONS_LOADED.format(path=path, chars=len(body)))
-    return body
+    return RepoInstructions(
+        path,
+        body,
+        instructions_trust.instructions_digest(body),
+        instructions_trust.approved_digest(_trust_store(), path),
+    )
+
+
+def approve_repo_instructions(instructions: RepoInstructions) -> None:
+    instructions_trust.approve(_trust_store(), instructions.path, instructions.digest)
 
 
 def load_cgr_instructions(repo_path: Path | None) -> str | None:
-    global_body = _read_cgr_instructions_file(GLOBAL_CGR_INSTRUCTIONS_PATH)
-    repo_body = (
-        _read_cgr_instructions_file(repo_path / CGR_INSTRUCTIONS_FILENAME)
-        if repo_path is not None
-        else None
-    )
-    if global_body and repo_body:
-        return f"{global_body}\n\n---\n\n{repo_body}"
-    return global_body or repo_body
+    """The instructions for the agent's system prompt: the user's own
+    ~/.cgr.md, then the repository's .cgr.md when the user approved its
+    current content. Anyone who can commit to the repository writes that
+    file, so an unapproved or changed one is skipped (issue #3456)."""
+    bodies: list[str] = []
+    if global_body := _read_cgr_instructions_file(GLOBAL_CGR_INSTRUCTIONS_PATH):
+        logger.info(
+            logs.CGR_INSTRUCTIONS_LOADED.format(
+                path=GLOBAL_CGR_INSTRUCTIONS_PATH, chars=len(global_body)
+            )
+        )
+        bodies.append(global_body)
+    if repo_path is not None and (repo := repo_instructions(repo_path)):
+        if repo.trusted:
+            logger.info(
+                logs.CGR_INSTRUCTIONS_LOADED.format(
+                    path=repo.path, chars=len(repo.body)
+                )
+            )
+            bodies.append(repo.body)
+        else:
+            logger.warning(logs.CGR_INSTRUCTIONS_UNAPPROVED.format(path=repo.path))
+    return cs.CGR_INSTRUCTIONS_SEPARATOR.join(bodies) or None

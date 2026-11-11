@@ -92,6 +92,7 @@ nav:
     - C/C++ Semantic Mode: guide/cpp-semantic-mode.md
     - MCP Server: guide/mcp-server.md
     - Multi-Project Graphs: guide/multi-project.md
+    - Porting Between Languages: guide/porting.md
   - Python SDK:
     - Overview: sdk/overview.md
     - Graph Loader: sdk/graph-loader.md
@@ -110,7 +111,9 @@ nav:
     - Span-Preserving Patchers: architecture/patchers.md
     - Edit Transactions: architecture/edit-transactions.md
     - Rename Operation: architecture/rename.md
+    - Change Signature Operation: architecture/change-signature.md
     - Postcondition Contract: architecture/postcondition-contract.md
+    - Move: architecture/move.md
     - Context Slice: architecture/context-slice.md
   - Advanced:
     - Adding Languages: advanced/adding-languages.md
