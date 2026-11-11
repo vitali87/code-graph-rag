@@ -507,6 +507,10 @@ message GraphCodeIndex {
     bool is_object_member = 13;
     // A top-level Dart `main`, which `dart run` starts (#2527).
     bool is_program_main = 14;
+    // The path a Rust fn's visibility is restricted to (`self`, `crate`,
+    // `super`, an `in` path); empty for a plain `pub` one, `self` for a
+    // `macro_rules!` macro (PR #3242).
+    string rust_visibility = 15;
     // Graph properties the index used to drop (#3206). Numbered from 20 so
     // fields other changes add below do not collide.
     string path = 20;

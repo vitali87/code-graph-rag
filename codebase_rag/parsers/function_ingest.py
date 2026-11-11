@@ -64,6 +64,7 @@ from .utils import (
     ingest_method,
     is_method_node,
     mark_js_ts_module_private,
+    mark_rust_visibility,
     python_positional_parameter_names,
     record_cpp_definition_span,
     safe_decode_text,
@@ -1524,6 +1525,11 @@ class FunctionIngestMixin:
             resolution.is_exported,
             language,
         )
+        mark_rust_visibility(
+            self.function_registry,
+            resolution.qualified_name,
+            func_props.get(cs.KEY_RUST_VISIBILITY),
+        )
         # Keyed by the UNIQUE qn, since a collision rename above (issue #1017)
         # is the key Pass-3 will look this up by.
         rs_utils.record_effective_module(
@@ -1698,6 +1704,10 @@ class FunctionIngestMixin:
         props.update(type_facts_props(extract_type_facts(func_node, language)))
         if language == cs.SupportedLanguage.DART and dart_is_top_level_main(func_node):
             props[cs.KEY_IS_PROGRAM_MAIN] = True
+        if language == cs.SupportedLanguage.GO:
+            props.update(go_utils.return_type_props(func_node))
+        if language == cs.SupportedLanguage.RUST:
+            props.update(rs_utils.function_visibility_props(func_node))
         props.update(fingerprint_props(func_node))
         props.update(anchor_hash_props(func_node, decorators))
         props.update(decorated_start_props(func_node))
