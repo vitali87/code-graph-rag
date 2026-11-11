@@ -418,6 +418,8 @@ TS_EXPORT_STATEMENT = "export_statement"
 TS_NAMED_IMPORTS = "named_imports"
 TS_IMPORT_SPECIFIER = "import_specifier"
 TS_NAMESPACE_IMPORT = "namespace_import"
+# `export * as ns from "./x"`: a barrel re-exporting a module as one name.
+TS_NAMESPACE_EXPORT = "namespace_export"
 TS_IDENTIFIER = "identifier"
 # `import.meta` (and `new.target`): a module's own URL in ESM.
 TS_META_PROPERTY = "meta_property"
