@@ -3104,15 +3104,20 @@ class ImportProcessor:
         family: LanguageFamily,
         module_paths: Mapping[str, Path | str],
         siblings: StemSiblingModules,
+        *,
+        names_module: bool = False,
     ) -> str:
         """`name` re-rooted on its stem's module of the importer's family.
 
         The longest prefix that names a module the importer can reach decides,
-                and keeps the name as written: a name under a real submodule
-                (`proj.util.sub.f`) therefore stays put. A stem whose module is missing
-                or in another family is swapped for the family's own sibling, or for
-                its own directory index (`pkg/index.js` beside `pkg.py`). A name that
-                only modules of other families hold reaches nothing (issue #2756).
+        and keeps the name as written: a name under a real submodule
+        (`proj.util.sub.f`) therefore stays put. A stem whose module is missing
+        or in another family is swapped for the family's own sibling, or for
+        its own directory index (`pkg/index.js` beside `pkg.py`). A name that
+        only modules of other families hold reaches nothing (issue #2756).
+
+        `names_module` says the name is an import's source, never a member of
+        one: `./util/helper` is then the directory, whatever `util.js` exports.
         """
         parts = name.split(cs.SEPARATOR_DOT)
         blocked = False
@@ -3121,6 +3126,17 @@ class ImportProcessor:
             prefix = cs.SEPARATOR_DOT.join(parts[:end])
             holder = module_paths.get(prefix)
             if holder is not None and self._reachable_module(holder, family):
+                # A directory with an index, met on the way here, is the
+                # target unless the name is what this module defines: `helper`
+                # of `util.js` beside `util/helper/index.js`.
+                if through_index is not None and (
+                    names_module
+                    or (
+                        self.function_registry is not None
+                        and name not in self.function_registry
+                    )
+                ):
+                    return through_index
                 return name
             rest = name[len(prefix) :]
             if own := siblings.get(prefix, {}).get(family):
@@ -3128,8 +3144,8 @@ class ImportProcessor:
             # Not final: `util/helper.py` beside a `util.js` that exports
             # `helper` holds the full name, and the shorter prefix reaches.
             blocked = blocked or holder is not None
-            # Held back for the same reason: the name of a directory with an
-            # index may be the member a reachable module above it exports.
+            # Held back for the same reason: the shorter prefix may be a
+            # module that defines this very name.
             if through_index is None and (
                 index := self._own_language_index(
                     prefix, family, module_paths, siblings, bare=blocked
@@ -3213,7 +3229,11 @@ class ImportProcessor:
         family = language_family(language)
         for local_name, full_name in mapping.items():
             target = self._own_language_target(
-                full_name, family, module_paths, siblings
+                full_name,
+                family,
+                module_paths,
+                siblings,
+                names_module=self.binds_js_whole_module(importer, local_name),
             )
             if target != full_name:
                 mapping[local_name] = target
@@ -3566,7 +3586,7 @@ class ImportProcessor:
             return self._reachable_module(known_module_paths.get(qn, ""), family)
 
         module_path = self._own_language_target(
-            module_path, family, known_module_paths, siblings or {}
+            module_path, family, known_module_paths, siblings or {}, names_module=True
         )
         if module_path in known_module_paths:
             return module_path if reachable(module_path) else None

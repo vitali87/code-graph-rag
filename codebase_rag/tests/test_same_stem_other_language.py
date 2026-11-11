@@ -611,6 +611,51 @@ def test_an_export_named_as_a_directory_with_an_index_stays_with_its_exporter(
     assert calls == {"util.js:proj.util.helper"}
 
 
+@pytest.mark.parametrize(
+    "importer",
+    [
+        pytest.param(
+            "const { other } = require('./util/helper');\n"
+            "function go() {\n  return other();\n}\n",
+            id="named",
+        ),
+        pytest.param(
+            "const m = require('./util/helper');\n"
+            "function go() {\n  return m.other();\n}\n",
+            id="whole-module",
+        ),
+    ],
+)
+def test_a_directory_import_is_not_taken_for_an_export_of_the_module_above(
+    tmp_path: Path, importer: str
+) -> None:
+    # The same tree, importing the directory itself: `util.js` exporting a
+    # `helper` must not cost `./util/helper` its index (#3601 review).
+    root = tmp_path / "proj"
+    _write(
+        root,
+        {
+            "util.js": JS_UTIL,
+            "util/helper/index.js": (
+                "function other() {\n  return 5;\n}\nmodule.exports = { other };\n"
+            ),
+            "util/helper/index.py": PY_UTIL,
+            "main.js": importer,
+        },
+    )
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    index_qn = _module_qns(store)["util/helper/index.js"]
+    assert ("main.js:proj.main", f"util/helper/index.js:{index_qn}") in _edges(
+        store, cs.RelationshipType.IMPORTS
+    )
+    assert (
+        "main.js:proj.main.go",
+        f"util/helper/index.js:{index_qn}.other",
+    ) in _edges(store, cs.RelationshipType.CALLS)
+
+
 def test_another_languages_index_stem_is_no_entry_point(tmp_path: Path) -> None:
     # Node enters a directory through `index.js` only: `pkg/init.js` (Lua's
     # stem) beside `pkg.py` leaves `require('./pkg')` reaching nothing.
