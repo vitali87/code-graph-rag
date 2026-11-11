@@ -46,7 +46,7 @@ from pydantic_ai.messages import (
 from rich.console import Group
 from rich.live import Live
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.prompt import Confirm, Prompt
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
@@ -57,8 +57,10 @@ from . import logs as ls
 from .cli_runtime import app_context, connect_memgraph, dim, style
 from .config import (
     ModelConfig,
+    approve_repo_instructions,
     load_ignore_patterns,
     provider_env_api_key,
+    repo_instructions,
     settings,
 )
 from .context_pruning import describe_prune, prune_old_tool_results
@@ -71,8 +73,10 @@ from .services.llm import (
     CypherGenerator,
     create_rag_orchestrator,
     create_research_agent,
+    run_to_text_answer,
 )
 from .taint import ReadContentRecord
+from .tools import tool_descriptions as td
 from .tools.ast_grep_service import AstGrepService
 from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from .tools.codebase_query import create_query_tool
@@ -102,6 +106,7 @@ from .types_defs import (
     GraphData,
     QueryJsonOutput,
     RawToolArgs,
+    ReadFileArgs,
     ReplaceCodeArgs,
     ShellCommandArgs,
     StructuralReplaceArgs,
@@ -263,6 +268,8 @@ def _to_tool_args(
             )
         case tool_names.shell_command:
             return ShellCommandArgs(command=raw_args.command)
+        case td.AgenticToolName.READ_FILE:
+            return ReadFileArgs(file_path=raw_args.file_path)
         case tool_names.structural_replace:
             return StructuralReplaceArgs(
                 pattern=raw_args.pattern,
@@ -299,6 +306,17 @@ def _display_tool_call_diff(
             app_context.console.print(f"\n{cs.UI_SHELL_COMMAND_HEADER}")
             app_context.console.print(
                 style(f"$ {command}", cs.Color.YELLOW, cs.StyleModifier.NONE)
+            )
+
+        case td.AgenticToolName.READ_FILE:
+            app_context.console.print(f"\n{cs.UI_SENSITIVE_READ_HEADER}")
+            # Literal text, never markup: the model chose this path, and markup
+            # in it could hide part of what the operator approves.
+            app_context.console.print(
+                Text(
+                    _visible(str(tool_args.get(cs.ARG_FILE_PATH, ""))),
+                    style=cs.Color.YELLOW,
+                )
             )
 
         case tool_names.structural_replace:
@@ -2159,12 +2177,67 @@ def main_single_query(
         rag_agent, _, _ = _initialize_services_and_agent(
             repo_path, ingestor, active_projects=active_projects
         )
-        response = asyncio.run(rag_agent.run(question, message_history=[]))
+        # The same rule as the chat loop's prompt, with no one to prompt:
+        # --no-confirm (or YOLO) approves, anything else is denied.
+        approve = not app_context.session.confirm_edits or app_context.session.is_yolo()
+        answer = asyncio.run(
+            run_to_text_answer(
+                rag_agent,
+                question,
+                approve=approve,
+                denial=cs.ASK_AGENT_APPROVAL_DENIED,
+            )
+        )
         if output_format == cs.QueryFormat.JSON:
-            payload = QueryJsonOutput(query=question, response=str(response.output))
+            payload = QueryJsonOutput(query=question, response=answer)
             print(json.dumps(payload, ensure_ascii=False))  # noqa: T201
         else:
-            print(response.output)  # noqa: T201
+            print(answer)  # noqa: T201
+
+
+def _visible(text: str) -> str:
+    return "".join(
+        ch
+        if ch in cs.UI_VISIBLE_WHITESPACE or ch.isprintable()
+        else cs.UI_ESCAPED_CHAR.format(code=ord(ch))
+        for ch in text
+    )
+
+
+def _confirm_repo_instructions(repo_path: Path) -> None:
+    """Ask before the repository's .cgr.md reaches the system prompt.
+
+    Whoever can commit to the repository wrote it, and GHSA-2rr7-8xrw-gmhr
+    used it to plant a git backdoor. The approval is pinned to the content,
+    so a changed file is shown again; declining keeps the session going
+    without it (issue #3456).
+    """
+    if not app_context.session.load_cgr_instructions:
+        return
+    if (repo := repo_instructions(repo_path)) is None or repo.trusted:
+        return
+    title = cs.UI_INSTRUCTIONS_CHANGED if repo.approved else cs.UI_INSTRUCTIONS_NEW
+    app_context.console.print(
+        Panel(
+            Text(_visible(repo.body)),
+            # The repository's folder and the file: the configuration table
+            # above already names the full path.
+            title=Text(title.format(path=Path(repo.path.parent.name, repo.path.name))),
+            border_style=cs.Color.YELLOW,
+        )
+    )
+    try:
+        approved = Confirm.ask(
+            style(cs.UI_INSTRUCTIONS_PROMPT, cs.Color.CYAN),
+            default=False,
+            console=app_context.console,
+        )
+    except EOFError:
+        approved = False
+    if approved:
+        approve_repo_instructions(repo)
+    else:
+        app_context.console.print(style(cs.UI_INSTRUCTIONS_SKIPPED, cs.Color.YELLOW))
 
 
 async def main_async(
@@ -2182,6 +2255,8 @@ async def main_async(
     if show_config_table:
         table = _create_configuration_table(repo_path)
         app_context.console.print(table)
+
+    _confirm_repo_instructions(project_root)
 
     async with connect_memgraph(batch_size) as ingestor:
         app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))
@@ -2245,6 +2320,8 @@ async def main_optimize_async(
     app_context.console.print(table)
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
+
+    _confirm_repo_instructions(project_root)
 
     async with connect_memgraph(effective_batch_size) as ingestor:
         app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))

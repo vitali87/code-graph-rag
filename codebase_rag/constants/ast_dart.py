@@ -209,6 +209,10 @@ TS_DART_TYPE_IDENTIFIER = "type_identifier"
 # `import '...' as name;` alias
 TS_DART_IMPORT_SPECIFICATION = "import_specification"
 DART_IMPORT_ALIAS_KEYWORD = "as"
+# `show A, B` / `hide C` after a directive's URI: the keyword is the
+# combinator's first child, the names it lists are its identifiers.
+TS_DART_COMBINATOR = "combinator"
+TS_DART_SHOW = "show"
 
 # URI scheme prefixes distinguishing external (dart:/package:) from
 # first-party (relative path) imports.
@@ -216,6 +220,13 @@ DART_SCHEME_DART = "dart:"
 DART_SCHEME_PACKAGE = "package:"
 DART_QUOTE_CHARS = "'\""
 DART_EXT = ".dart"
+# A `package:<name>/<path>` import names `<path>` under the `lib/` beside the
+# pubspec whose top-level `name:` is `<name>` (issue #3278). The name is a
+# Dart identifier, optionally quoted, optionally followed by a comment.
+DART_PACKAGE_LIB_DIR = "lib"
+DART_PUBSPEC_NAME_PATTERN = (
+    r"^name:[ \t]*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?[ \t]*(?:#.*)?$"
+)
 
 # Node types whose captured signature needs the sibling-body span fix.
 DART_SIGNATURE_TYPES = frozenset(

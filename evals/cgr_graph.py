@@ -167,11 +167,16 @@ _GO_TYPE_LABELS = _CSHARP_TYPE_LABELS | {
 # `CYPHER_QUERY_PROJECT_NODE_IDS` reads the internal ids a retired project's
 # vectors are keyed by (issue #2412). The double has no internal ids and no
 # vector store, so "no vectors to delete" is its true answer.
+#
+# `CYPHER_GLOSS_MENTION_ANCHORS` opens the mention pass that follows the
+# repair (issue #3230). With no Gloss nodes there is no note that mentions
+# anything, so the lookups it would lead to are never issued.
 _NOT_MODELLED: frozenset[str] = frozenset(
     {
         cs.CYPHER_QUERY_EMBEDDINGS,
         cs.CYPHER_QUERY_PROJECT_NODE_IDS,
         cq.CYPHER_UNANCHORED_GLOSSES,
+        cq.CYPHER_GLOSS_MENTION_ANCHORS,
     }
 )
 _MODULE_QN_LABELS = frozenset(
@@ -421,6 +426,7 @@ class _StatefulIngestor:
         cs.KEY_AST_FINGERPRINT_NODES,
         cs.KEY_AST_BRANCH_FINGERPRINTS,
         cs.KEY_DECORATORS,
+        cs.KEY_MODIFIERS,
         cs.KEY_IS_EXPORTED,
         cs.KEY_RUST_CFG_TEST_MODS,
         cs.KEY_RUST_UNGATED_MODS,
@@ -651,7 +657,8 @@ class _StatefulIngestor:
                 or _shadowed_by_longer_owner(source_qn, longer_project_prefixes)
             ):
                 continue
-            for _fl, fv, rel, tl, tv, _site in self._out.get(node_id, ()):
+            for edge in self._out.get(node_id, ()):
+                _fl, fv, rel, tl, tv, _site = edge
                 if (
                     rel == cs.RelationshipType.IMPORTS.value
                     and tl == module
@@ -663,6 +670,9 @@ class _StatefulIngestor:
                             cs.KEY_FROM_QN: _result(fv),
                             cs.KEY_FROM_PATH: _result(props.get(cs.KEY_PATH)),
                             cs.KEY_TO_QN: _result(tv),
+                            cs.KEY_IMPORTED_NAME: _result(
+                                self.props_for(edge).get(cs.KEY_IMPORTED_NAME)
+                            ),
                         }
                     )
         return rows
@@ -700,6 +710,49 @@ class _StatefulIngestor:
                         cs.KEY_TO_QN: _result(tv),
                         cs.KEY_TO_PATH: _result(self._delta_path_of(tl, tv)),
                         cs.KEY_IMPORTED_NAME: _result(imported_name),
+                        cs.KEY_ALIAS: _result(edge_props.get(cs.KEY_ALIAS)),
+                        cs.KEY_LINE: _result(edge_props.get(cs.KEY_LINE)),
+                        cs.KEY_COL: _result(edge_props.get(cs.KEY_COL)),
+                    }
+                )
+        return rows
+
+    def _delta_module_importers(
+        self, prefix: str, paths: set[str], longer_project_prefixes: set[str]
+    ) -> list[ResultRow]:
+        # One row per IMPORTS edge between project modules whose target sits
+        # at one of `paths`, whatever name it binds (issue #3266).
+        module = cs.NodeLabel.MODULE.value
+        rows: list[ResultRow] = []
+        for node_id, props in self.nodes.items():
+            label, uid = node_id
+            source_qn = _str(uid)
+            if (
+                label != module
+                or not source_qn.startswith(prefix)
+                or _shadowed_by_longer_owner(source_qn, longer_project_prefixes)
+            ):
+                continue
+            for edge in self._out.get(node_id, ()):
+                _fl, fv, rel, tl, tv, _site = edge
+                if (
+                    rel != cs.RelationshipType.IMPORTS.value
+                    or tl != module
+                    or not _str(tv).startswith(prefix)
+                    or _shadowed_by_longer_owner(_str(tv), longer_project_prefixes)
+                    or self._delta_path_of(tl, tv) not in paths
+                ):
+                    continue
+                edge_props = self.edge_props.get(edge, {})
+                rows.append(
+                    {
+                        cs.KEY_FROM_QN: _result(fv),
+                        cs.KEY_FROM_PATH: _result(props.get(cs.KEY_PATH)),
+                        cs.KEY_TO_QN: _result(tv),
+                        cs.KEY_TO_PATH: _result(self._delta_path_of(tl, tv)),
+                        cs.KEY_IMPORTED_NAME: _result(
+                            edge_props.get(cs.KEY_IMPORTED_NAME)
+                        ),
                         cs.KEY_ALIAS: _result(edge_props.get(cs.KEY_ALIAS)),
                         cs.KEY_LINE: _result(edge_props.get(cs.KEY_LINE)),
                         cs.KEY_COL: _result(edge_props.get(cs.KEY_COL)),
@@ -1110,6 +1163,16 @@ class _StatefulIngestor:
                         rows.append(
                             self._graph_edge_row(edge, self._GRAPH_IMPORT_KEYS, source)
                         )
+        elif query == cq.CYPHER_GRAPH_IMPORTS_OF:
+            for source in targets:
+                for edge in self._out.get(source, ()):
+                    if edge[2] != cs.RelationshipType.IMPORTS.value:
+                        continue
+                    row = self._graph_edge_row(
+                        edge, self._GRAPH_IMPORT_KEYS, (edge[3], edge[4])
+                    )
+                    row[cs.KEY_TO_QN] = _result(edge[4])
+                    rows.append(row)
         return rows
 
     # --- context slice reads (issue #1536) -----------------------------------
@@ -1245,6 +1308,22 @@ class _StatefulIngestor:
             return self._delta_module_imports(prefix, longer_project_prefixes)
         if query == cq.CYPHER_DELTA_NAMED_IMPORTS:
             return self._delta_named_imports(prefix, paths, longer_project_prefixes)
+        if query == cq.CYPHER_DELTA_MODULES:
+            return [
+                {
+                    cs.KEY_QUALIFIED_NAME: _result(props.get(cs.KEY_QUALIFIED_NAME)),
+                    cs.KEY_PATH: _result(props.get(cs.KEY_PATH)),
+                }
+                for (label, _uid), props in self.nodes.items()
+                if label == module
+                and props.get(cs.KEY_PATH) in paths
+                and _str(props.get(cs.KEY_QUALIFIED_NAME)).startswith(prefix)
+                and not _shadowed_by_longer_owner(
+                    _str(props.get(cs.KEY_QUALIFIED_NAME)), longer_project_prefixes
+                )
+            ]
+        if query == cq.CYPHER_DELTA_MODULE_IMPORTERS:
+            return self._delta_module_importers(prefix, paths, longer_project_prefixes)
         if query == cq.CYPHER_DEAD_CODE_RELS:
             return [
                 {
@@ -1299,6 +1378,8 @@ class _StatefulIngestor:
                 | cq.CYPHER_DELTA_SITES
                 | cq.CYPHER_DELTA_MODULE_IMPORTS
                 | cq.CYPHER_DELTA_NAMED_IMPORTS
+                | cq.CYPHER_DELTA_MODULES
+                | cq.CYPHER_DELTA_MODULE_IMPORTERS
                 | cq.CYPHER_DELTA_CALLERS_OF
                 | cq.CYPHER_DELTA_REMOTE_CALLERS_OF
                 | cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF
@@ -1311,6 +1392,16 @@ class _StatefulIngestor:
                 return self._delta_rows(query, params or {})
             case cq.CYPHER_PROJECT_ROOT_PATH:
                 return self._project_root_rows(params or {})
+            case cq.CYPHER_GRAPH_NODE_EXISTS:
+                # Any node in any project: the unknown-target refusal asks
+                # whether the name is in the graph at all (issue #3244).
+                wanted = _str((params or {}).get(cs.KEY_QN))
+                rows: list[ResultRow] = [
+                    {cs.KEY_QUALIFIED_NAME: wanted}
+                    for props in self.nodes.values()
+                    if props.get(cs.KEY_QUALIFIED_NAME) == wanted
+                ]
+                return rows[:1]
             case cq.CYPHER_CLAIM_PROJECT_ROOT:
                 return self._claim_project_root(params or {})
             case cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE:
@@ -1323,6 +1414,7 @@ class _StatefulIngestor:
                 | cq.CYPHER_GRAPH_IMPLEMENTORS
                 | cq.CYPHER_GRAPH_OVERRIDES
                 | cq.CYPHER_GRAPH_IMPORTERS
+                | cq.CYPHER_GRAPH_IMPORTS_OF
                 | cq.CYPHER_GRAPH_RESOLVE_NAME
                 | cq.CYPHER_GRAPH_RESOLVE_LOCATION
                 | cq.CYPHER_GRAPH_CALLEES
@@ -1414,13 +1506,8 @@ class _StatefulIngestor:
                         key=lambda n: (n[0], _str(n[1])),
                     )
                 ]
-            case cq.CYPHER_CHECK_GRAPH_IO_LINKS:
-                io = {
-                    cs.RelationshipType.FLOWS_TO.value,
-                    cs.RelationshipType.RESOLVES_TO.value,
-                }
-                found = next((edge[2] for edge in self.edges if edge[2] in io), None)
-                return [] if found is None else [{cs.KEY_REL: found}]
+            case cq.CYPHER_CHECK_PROJECT_IO_LINKS:
+                return self._check_project_io_links(params or {})
             case cq.CYPHER_CHECK_SHARED_NODES:
                 return [
                     {
@@ -1477,6 +1564,13 @@ class _StatefulIngestor:
                         continue
                     callers.add(caller_path)
                 return [{cs.KEY_CALLER_PATH: path} for path in sorted(callers)]
+            case cs.CYPHER_FOREIGN_MEMBER_PATHS:
+                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
+                return self._foreign_member_rows(
+                    set(raw_paths) if isinstance(raw_paths, list) else set(),
+                    _text(params.get(cs.KEY_PROJECT_NAME)) if params else None,
+                    _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None,
+                )
             case cs.CYPHER_ALL_DEFINITION_QNS:
                 prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 defs: list[ResultRow] = []
@@ -1526,6 +1620,12 @@ class _StatefulIngestor:
                             raw_param_types := props.get(cs.KEY_PARAM_TYPES), list
                         )
                         else None,
+                        cs.KEY_FIRST_RETURN_TYPE: _text(
+                            props.get(cs.KEY_FIRST_RETURN_TYPE)
+                        ),
+                        cs.KEY_CHAIN_RETURN_TYPE: _text(
+                            props.get(cs.KEY_CHAIN_RETURN_TYPE)
+                        ),
                         cs.KEY_NAMESPACE: _text(props[cs.KEY_NAMESPACE])
                         if cs.KEY_NAMESPACE in props
                         else None,
@@ -1553,10 +1653,33 @@ class _StatefulIngestor:
                         cs.KEY_IS_EXPORTED: bool(props[cs.KEY_IS_EXPORTED])
                         if cs.KEY_IS_EXPORTED in props
                         else None,
+                        cs.KEY_RUST_VISIBILITY: _text(
+                            props.get(cs.KEY_RUST_VISIBILITY)
+                        ),
                         cs.KEY_EMBEDS: _texts(props.get(cs.KEY_EMBEDS)),
                     }
                     defs.append(row)
                 return defs
+            case cs.CYPHER_PROJECT_TYPE_EDGE_TARGETS:
+                # The type edges an incremental run leaves resolved on its
+                # requeued annotations (issue #3007).
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                callables = {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value}
+                type_rels = {
+                    cs.RelationshipType.RETURNS.value,
+                    cs.RelationshipType.ACCEPTS.value,
+                }
+                return [
+                    {
+                        cs.KEY_QUALIFIED_NAME: _text(fv),
+                        cs.KEY_REL_TYPE: rel,
+                        cs.KEY_TARGET_QN: _text(tv),
+                    }
+                    for (fl, fv, rel, _tl, tv) in sorted(self.edges, key=str)
+                    if fl in callables
+                    and rel in type_rels
+                    and _str(fv).startswith(prefix)
+                ]
             case cs.CYPHER_PROJECT_PARAMETER_TYPES:
                 prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 return [
@@ -1641,6 +1764,135 @@ class _StatefulIngestor:
                     )
                 inherits.sort(key=lambda item: (item[0], item[1]))
                 return [row for _child, _index, row in inherits]
+            case cs.CYPHER_DISPATCH_CLASS_QNS:
+                # Mirrors CYPHER_DISPATCH_CLASS_QNS (issue #3338): every
+                # class and interface node the project owns.
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                class_qns = {
+                    _str(props.get(cs.KEY_QUALIFIED_NAME))
+                    for (label, _uid), props in self.nodes.items()
+                    if label in (cs.NodeLabel.CLASS.value, cs.NodeLabel.INTERFACE.value)
+                    and _str(props.get(cs.KEY_QUALIFIED_NAME)).startswith(prefix)
+                }
+                return [{cs.KEY_QUALIFIED_NAME: _text(qn)} for qn in sorted(class_qns)]
+            case cs.CYPHER_DISPATCH_PROTOCOL_METHODS:
+                # Mirrors CYPHER_DISPATCH_PROTOCOL_METHODS (issue #3338):
+                # the methods each Protocol-typed class declares.
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                protocol_classes: set[str] = set()
+                for edge in self.keyed_edges:
+                    _fl, from_val, rel_type, _tl, to_val, _site = edge
+                    if rel_type != _INHERITS_REL:
+                        continue
+                    proto_qn = _str(to_val)
+                    if proto_qn.endswith(".Protocol") or proto_qn == "Protocol":
+                        protocol_classes.add(_str(from_val))
+                return [
+                    {
+                        cs.KEY_CLASS_QN: _text(from_val),
+                        cs.KEY_METHOD_QN: _text(to_val),
+                    }
+                    for from_label, from_val, rel_type, _tl, to_val, _site in self.keyed_edges
+                    if rel_type == cs.RelationshipType.DEFINES_METHOD.value
+                    and from_label == cs.NodeLabel.CLASS.value
+                    and _str(from_val) in protocol_classes
+                    and _str(from_val).startswith(prefix)
+                ]
+            case cs.CYPHER_DISPATCH_CLASS_METHODS:
+                # Mirrors CYPHER_DISPATCH_CLASS_METHODS (issue #3338):
+                # the methods of the given names each project class defines.
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                raw_names = (params or {}).get(cs.CYPHER_PARAM_NAMES)
+                names = (
+                    [str(name) for name in raw_names]
+                    if isinstance(raw_names, list)
+                    else []
+                )
+                return [
+                    {
+                        cs.KEY_CLASS_QN: _text(from_val),
+                        cs.KEY_METHOD_QN: _text(to_val),
+                    }
+                    for from_label, from_val, rel_type, _tl, to_val, _site in self.keyed_edges
+                    if rel_type == cs.RelationshipType.DEFINES_METHOD.value
+                    and from_label == cs.NodeLabel.CLASS.value
+                    and _str(from_val).startswith(prefix)
+                    and any(
+                        _str(to_val).endswith(f".{name}") or f".{name}@" in _str(to_val)
+                        for name in names
+                    )
+                ]
+            case cs.CYPHER_DISPATCH_METHODS_FOR_CLASSES:
+                # Mirrors CYPHER_DISPATCH_METHODS_FOR_CLASSES (issue
+                # #3338): every method the named classes define.
+                raw_qns = (params or {}).get(cs.KEY_QNS)
+                wanted = (
+                    {str(qn) for qn in raw_qns} if isinstance(raw_qns, list) else set()
+                )
+                return [
+                    {
+                        cs.KEY_CLASS_QN: _text(from_val),
+                        cs.KEY_METHOD_QN: _text(to_val),
+                    }
+                    for from_label, from_val, rel_type, _tl, to_val, _site in self.keyed_edges
+                    if rel_type == cs.RelationshipType.DEFINES_METHOD.value
+                    and from_label == cs.NodeLabel.CLASS.value
+                    and _str(from_val) in wanted
+                ]
+            case cs.CYPHER_DISPATCH_CALLER_PATHS:
+                # Mirrors CYPHER_DISPATCH_CALLER_PATHS (issue #3338):
+                # files holding a CALLS edge into a dispatch target.
+                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
+                excluded: set[str] = (
+                    set(raw_paths) if isinstance(raw_paths, list) else set()
+                )
+                prefix = str(params.get(cs.KEY_PROJECT_PREFIX, "")) if params else ""
+                raw_prefixes = (
+                    params.get(cs.CYPHER_PARAM_TARGET_PREFIXES) if params else None
+                )
+                target_prefixes: set[str] = (
+                    set(raw_prefixes) if isinstance(raw_prefixes, list) else set()
+                )
+                callers: set[str] = set()
+                for edge in self.keyed_edges:
+                    from_label, from_val, rel_type, _to_label, to_val, _site = edge
+                    if rel_type != cs.RelationshipType.CALLS.value:
+                        continue
+                    caller = self.nodes.get((from_label, from_val))
+                    if caller is None:
+                        continue
+                    caller_path = caller.get(cs.KEY_PATH)
+                    target_qn = _str(to_val)
+                    if (
+                        not isinstance(caller_path, str)
+                        or caller_path in excluded
+                        or not _str(from_val).startswith(prefix)
+                        or not target_qn.startswith(prefix)
+                        or not any(
+                            target_qn == target_prefix
+                            or target_qn.startswith(f"{target_prefix}@")
+                            for target_prefix in target_prefixes
+                        )
+                    ):
+                        continue
+                    callers.add(caller_path)
+                return [{cs.KEY_CALLER_PATH: path} for path in sorted(callers)]
+            case cs.CYPHER_DISPATCH_BASE_PATHS:
+                # Mirrors CYPHER_DISPATCH_BASE_PATHS (issue #3338): the
+                # files defining the named base classes.
+                raw_qns = (params or {}).get(cs.KEY_QNS)
+                wanted = (
+                    {str(qn) for qn in raw_qns} if isinstance(raw_qns, list) else set()
+                )
+                found: set[str] = set()
+                for (label, _uid), props in self.nodes.items():
+                    if label != cs.NodeLabel.CLASS.value:
+                        continue
+                    qn = _str(props.get(cs.KEY_QUALIFIED_NAME))
+                    path = _text(props.get(cs.KEY_PATH))
+                    if qn in wanted and path is not None:
+                        found.add(path)
+                return [{cs.KEY_CALLER_PATH: path} for path in sorted(found)]
             case cs.CYPHER_ALL_MODULE_QNS:
                 prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 module_rows: list[ResultRow] = []
@@ -1652,6 +1904,8 @@ class _StatefulIngestor:
                     module_row: ResultRow = {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
                         cs.KEY_LABEL: label,
+                        cs.KEY_GO_PACKAGE: _text(props.get(cs.KEY_GO_PACKAGE)),
+                        cs.KEY_PHP_NAMESPACE: _text(props.get(cs.KEY_PHP_NAMESPACE)),
                     }
                     module_rows.append(module_row)
                 return module_rows
@@ -1821,6 +2075,8 @@ class _StatefulIngestor:
                 return [{cs.KEY_CALLER_PATH: p} for p in sorted(waiting)]
             case cs.CYPHER_LINKING_DOCUMENT_PATHS:
                 return self._linking_document_rows(params or {})
+            case cs.CYPHER_PACKAGE_URI_IMPORTS:
+                return self._package_uri_import_rows(params or {})
             case (
                 cs.CYPHER_INTERFACE_FINGERPRINTS
                 | cs.CYPHER_INTERFACE_BOUNDARY_EDGES
@@ -2140,6 +2396,41 @@ class _StatefulIngestor:
                 value = uid
             fields[prefix + key] = _result(value)
         return fields
+
+    def _check_project_io_links(self, params: PropertyDict) -> list[ResultRow]:
+        # A FLOWS_TO / RESOLVES_TO edge on a Resource one of the project's
+        # own (non-Resource) nodes touches, its root module included and a
+        # registered project nested under its prefix left out.
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        name = _str(params.get(cs.KEY_PROJECT_NAME))
+        nested = {
+            _str(uid)
+            for label, uid in self.nodes
+            if label == _PROJECT_LABEL and _str(uid).startswith(prefix)
+        }
+        resource = cs.NodeLabel.RESOURCE.value
+        touched: set[_NodeId] = set()
+        for fl, fv, _rel, tl, tv in self.edges:
+            for (rl, rv), (ol, ov) in (((fl, fv), (tl, tv)), ((tl, tv), (fl, fv))):
+                if rl != resource or ol == resource:
+                    continue
+                qn = self.nodes.get((ol, ov), {}).get(cs.KEY_QUALIFIED_NAME)
+                if (
+                    isinstance(qn, str)
+                    and (qn == name or qn.startswith(prefix))
+                    and not _shadowed_by_longer_owner(qn, nested)
+                ):
+                    touched.add((rl, rv))
+        io = {cs.RelationshipType.FLOWS_TO.value, cs.RelationshipType.RESOLVES_TO.value}
+        found = next(
+            (
+                rel
+                for fl, fv, rel, tl, tv in sorted(self.edges, key=str)
+                if rel in io and ((fl, fv) in touched or (tl, tv) in touched)
+            ),
+            None,
+        )
+        return [] if found is None else [{cs.KEY_REL: found}]
 
     def _check_scope_edges(self, params: PropertyDict) -> list[ResultRow]:
         rows: list[ResultRow] = []
@@ -2476,6 +2767,35 @@ class _StatefulIngestor:
             for source_path, label, path in sorted(found)
         ]
 
+    def _package_uri_import_rows(self, params: PropertyDict) -> list[ResultRow]:
+        # CYPHER_PACKAGE_URI_IMPORTS (issue #3278 review): the IMPORTS edges
+        # written for a URI under the given scheme, with where each went.
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        uri_prefix = _str(params.get(cs.CYPHER_PARAM_URI_PREFIX))
+        found: set[tuple[str, str, str, str]] = set()
+        if not prefix or not uri_prefix:
+            return []
+        for edge in self.keyed_edges:
+            from_label, from_val, rel_type, _to_label, to_val, _site = edge
+            if rel_type != cs.RelationshipType.IMPORTS.value:
+                continue
+            importer = self.nodes.get((from_label, from_val))
+            uri = _str(self.edge_props.get(edge, {}).get(cs.KEY_IMPORTED_NAME))
+            if importer is None or not uri.startswith(uri_prefix):
+                continue
+            path = _str(importer.get(cs.KEY_PATH))
+            if path and _str(from_val).startswith(prefix):
+                found.add((path, _str(from_val), uri, _str(to_val)))
+        return [
+            {
+                cs.KEY_CALLER_PATH: path,
+                cs.KEY_FROM_QN: from_qn,
+                cs.KEY_IMPORTED_NAME: uri,
+                cs.KEY_TO_QN: to_qn,
+            }
+            for path, from_qn, uri, to_qn in sorted(found)
+        ]
+
     def _broken_link_rows(self, params: PropertyDict) -> list[ResultRow]:
         # CYPHER_BROKEN_LINK_DOCUMENTS (issue #2458): emulated rather than left
         # to fall through, since an unanswered query returns [] here, which
@@ -2605,6 +2925,30 @@ class _StatefulIngestor:
             for (node_label, uid), props in self.nodes.items()
             if node_label == label and props.get(key) == path
         }
+
+    def _foreign_member_rows(
+        self,
+        paths: set[str],
+        project_name: str | None,
+        project_prefix: str | None,
+    ) -> list[ResultRow]:
+        # Mirrors CYPHER_FOREIGN_MEMBER_PATHS: the subtree the re-parse delete
+        # walks from each of the project's modules at `paths`, read for nodes
+        # another file declares (issue #3271).
+        found: set[str] = set()
+        for path in paths:
+            for module in self._nodes_at_path(_MODULE_LABEL, path):
+                qn = _text(self.nodes[module].get(cs.KEY_QUALIFIED_NAME))
+                if qn is None or not (
+                    qn == project_name
+                    or (project_prefix is not None and qn.startswith(project_prefix))
+                ):
+                    continue
+                for child in self._reachable(module, _MODULE_SUBTREE_RELS):
+                    child_path = _text(self.nodes.get(child, {}).get(cs.KEY_PATH))
+                    if child_path is not None and child_path not in paths:
+                        found.add(child_path)
+        return [{cs.KEY_PATH: path} for path in sorted(found)]
 
     def _delete_module_subtree(
         self,

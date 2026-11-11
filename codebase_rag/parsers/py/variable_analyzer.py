@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -7,17 +8,21 @@ from loguru import logger
 from tree_sitter import QueryCursor
 
 from ... import constants as cs
+from ... import exceptions as ex
 from ... import logs as lg
 from ...types_defs import (
+    AliasRules,
     ASTNode,
     FunctionRegistryTrieProtocol,
     LanguageQueries,
+    NativeAlias,
     NodeType,
 )
+from .. import native_trees
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
 from .forward_refs import unquote_forward_refs
-from .utils import resolve_class_name
+from .utils import resolve_class_name, resolve_dotted_class
 
 # Deepest operand chain `_value_leaves` will walk. Each term of `a or b or c`
 # or `x + y + z` is one level. Measured over every assignment in this repo the
@@ -45,6 +50,180 @@ class _Alias(NamedTuple):
     reflected: list[ASTNode]
 
 
+# Scopes whose assignments bind their own locals, not the enclosing body's.
+_ALIAS_BOUNDARIES = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION})
+
+
+def local_aliases(caller_node: ASTNode) -> dict[str, _Alias]:
+    """What each local of the caller was assigned (`resolver =
+    self._resolver`, `resolved = target or Path("x")`), so its type
+    propagates from what it can evaluate to. The Rust tree bridge walks the
+    body when it can; `python_local_aliases` is its twin and the reference."""
+    if (bridge := native_trees.alias_bridge()) is not None:
+        try:
+            return aliases_from_native(caller_node, bridge.local_aliases(caller_node))
+        except native_trees.NotBorrowed:
+            pass
+    return python_local_aliases(caller_node)
+
+
+def aliases_from_native(
+    caller_node: ASTNode, native: list[NativeAlias]
+) -> dict[str, _Alias]:
+    """The bridge's aliases, each leaf (a descendant index under the caller)
+    turned back into the node the twin returns."""
+    cursor = caller_node.walk()
+
+    def leaves(indices: list[int]) -> list[ASTNode]:
+        nodes: list[ASTNode] = []
+        for index in indices:
+            cursor.goto_descendant(index)
+            if (node := cursor.node) is None:
+                raise native_trees.NotBorrowed(ex.NO_DESCENDANT.format(index=index))
+            nodes.append(node)
+        return nodes
+
+    return {
+        local: _Alias(leaves(candidates), dunder, leaves(reflected))
+        for local, candidates, dunder, reflected in native
+    }
+
+
+def python_local_aliases(caller_node: ASTNode) -> dict[str, _Alias]:
+    """`local_aliases` walked in Python. Nested scopes are skipped; a local
+    keeps the first alias this walk meets, which pops the last child first."""
+    aliases: dict[str, _Alias] = {}
+    stack: list[ASTNode] = list(caller_node.children)
+    while stack:
+        node = stack.pop()
+        if node.type in _ALIAS_BOUNDARIES:
+            continue
+        if node.type == cs.TS_PY_ASSIGNMENT:
+            left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+            right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+            if (
+                left is not None
+                and left.type == cs.TS_PY_IDENTIFIER
+                and right is not None
+                and (local := safe_decode_text(left))
+                and local not in aliases
+                and (alias := assignment_alias(right)) is not None
+            ):
+                aliases[local] = alias
+        stack.extend(node.children)
+    return aliases
+
+
+def assignment_alias(right: ASTNode) -> _Alias | None:
+    """Reduce an assignment's rhs to an `_Alias`, or None if it types nothing.
+
+    A bare call (`x = Engine()`) is left to `_traverse_single_pass`, which
+    already types it. An operator whose dunder is not in the table makes
+    no claim: its result type is unknown, and untyped is the safe answer.
+    """
+    if right.type == cs.TS_PY_CALL:
+        return None
+    dunder: str | None = None
+    reflected: list[ASTNode] = []
+    if right.type == cs.TS_PY_BINARY_OPERATOR:
+        operator = right.child_by_field_name(cs.FIELD_OPERATOR)
+        token = safe_decode_text(operator) if operator is not None else None
+        dunder = cs.PY_BINARY_OPERATOR_DUNDERS.get(token or "")
+        if dunder is None:
+            return None
+        left = right.child_by_field_name(cs.TS_FIELD_LEFT)
+        right_operand = right.child_by_field_name(cs.TS_FIELD_RIGHT)
+        candidates = _value_leaves(left, 1) if left is not None else []
+        if right_operand is not None:
+            reflected = _value_leaves(right_operand, 1)
+    else:
+        candidates = _value_leaves(right, 0)
+    if not candidates and not reflected:
+        return None
+    return _Alias(candidates, dunder, reflected)
+
+
+def _value_leaves(node: ASTNode, depth: int) -> list[ASTNode]:
+    """The leaf expressions an rhs can evaluate to, in preference order.
+
+    Without this a variable assigned from any expression got NO type, and a
+    later `var.method()` fell back to matching the bare method name against
+    every class that defines it (issue #1868): `resolved = target or
+    Path("x")` followed by `resolved.resolve()` emitted a CALLS edge to every
+    `resolve` method in the project.
+
+    `depth` bounds the descent: a RecursionError here would not surface --
+    this runs inside the broad `except Exception` in `type_inference.py`,
+    which would discard the whole function's type map and revert every
+    receiver in it to bare-name matching, reintroducing #1868 from an
+    unrelated statement elsewhere in the same function.
+    """
+    if depth > _MAX_ALIAS_DEPTH:
+        return []
+    if node.type in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE, cs.TS_PY_CALL):
+        return [node]
+    if node.type == cs.TS_PY_BOOLEAN_OPERATOR:
+        picks = _boolean_value_operands(node)
+    elif node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
+        # `a if cond else b`: the VALUE operands are the first and last
+        # named children; the middle one is the condition, whose type is
+        # irrelevant. None of the three carries a field name.
+        kids = node.named_children
+        picks = [kids[0], kids[-1]] if kids else []
+    elif node.type == cs.TS_PY_BINARY_OPERATOR:
+        # Nested under another expression (`(a / b) or c`): the left
+        # operand is the value's origin and the operator is not tracked
+        # this deep -- an approximation that is right for path idioms.
+        left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+        picks = [left] if left is not None else []
+    elif node.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
+        picks = list(node.named_children[:1])
+    else:
+        return []
+    return [leaf for pick in picks for leaf in _value_leaves(pick, depth + 1)]
+
+
+def _boolean_value_operands(node: ASTNode) -> list[ASTNode]:
+    """The operands `a or b` / `a and b` can evaluate to.
+
+    `or` yields whichever operand is truthy first, so both are candidates,
+    left preferred. `and` yields the RIGHT operand whenever the left is
+    truthy, and a falsy left otherwise -- never something a method is then
+    called on -- so only the right operand is a receiver candidate. Taking
+    the left would type `flag and Engine()` as bool and drop the call.
+    """
+    operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+    is_and = operator is not None and safe_decode_text(operator) == cs.PY_OP_AND
+    fields = [cs.TS_FIELD_RIGHT] if is_and else [cs.TS_FIELD_LEFT, cs.TS_FIELD_RIGHT]
+    return [
+        operand
+        for field in fields
+        if (operand := node.child_by_field_name(field)) is not None
+    ]
+
+
+def alias_rules() -> AliasRules:
+    """The constants the alias walk reads, as the tree bridge's `aliases`
+    rules, so the two walks cannot drift apart on them."""
+    return AliasRules(
+        boundaries=sorted(_ALIAS_BOUNDARIES),
+        assignment=cs.TS_PY_ASSIGNMENT,
+        identifier=cs.TS_PY_IDENTIFIER,
+        attribute=cs.TS_PY_ATTRIBUTE,
+        call=cs.TS_PY_CALL,
+        binary_operator=cs.TS_PY_BINARY_OPERATOR,
+        boolean_operator=cs.TS_PY_BOOLEAN_OPERATOR,
+        conditional_expression=cs.TS_PY_CONDITIONAL_EXPRESSION,
+        parenthesized_expression=cs.TS_PY_PARENTHESIZED_EXPRESSION,
+        left_field=cs.TS_FIELD_LEFT,
+        right_field=cs.TS_FIELD_RIGHT,
+        operator_field=cs.FIELD_OPERATOR,
+        and_operator=cs.PY_OP_AND,
+        dunders=dict(cs.PY_BINARY_OPERATOR_DUNDERS),
+        max_depth=_MAX_ALIAS_DEPTH,
+    )
+
+
 if TYPE_CHECKING:
     # A plain class, not a Protocol: a protocol's stub methods count as
     # abstract, and this base sits ahead of the mixins that implement them in
@@ -53,6 +232,8 @@ if TYPE_CHECKING:
         def _infer_type_from_expression(
             self, node: ASTNode, module_qn: str, scope: ASTNode | None = None
         ) -> str | None: ...
+
+        def _type_of_annotated_name(self, text: str, module_qn: str) -> str | None: ...
 
         def _find_class_node(self, class_qn: str) -> ASTNode | None: ...
 
@@ -354,13 +535,48 @@ class PythonVariableAnalyzerMixin(_VarBase):
         right_node = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
         if not (
             left_node
-            and right_node
             and left_node.type == cs.TS_PY_ATTRIBUTE
             and (left_text := left_node.text)
             and (attr_name := left_text.decode(cs.ENCODING_UTF8)).startswith(
                 cs.PY_SELF_PREFIX
             )
         ):
+            return
+        annotation_node = assignment.child_by_field_name(cs.TS_FIELD_TYPE)
+        if annotation_node is not None:
+            annotation = safe_decode_text(annotation_node)
+            if annotation:
+                annotation = unquote_forward_refs(annotation)
+                # The shared normalizer accepts optional pipe unions, but not
+                # their typing.Union spelling.
+                if union := re.fullmatch(
+                    r"(?:typing\.)?Union\[([^,\[\]]+),\s*None\]", annotation
+                ):
+                    annotation = f"{union.group(1)} | None"
+            assigned_type = (
+                self._type_of_annotated_name(annotation, module_qn)
+                if annotation
+                else None
+            )
+            if (
+                assigned_type
+                and cs.SEPARATOR_DOT in assigned_type
+                and not self._get_project_class_qn(assigned_type, module_qn)
+            ):
+                # `models.Store` / `m.Store` names the class through the
+                # module's imports; the registry only knows `proj.models.Store`.
+                assigned_type = resolve_dotted_class(
+                    assigned_type,
+                    module_qn,
+                    self.import_processor,
+                    self.function_registry,
+                )
+            if assigned_type and self._get_project_class_qn(assigned_type, module_qn):
+                local_var_types[attr_name] = assigned_type
+            else:
+                local_var_types.pop(attr_name, None)
+            return
+        if right_node is None:
             return
         # Read without its body's type map (a whole module's self-assignments,
         # or `__init__`'s for another method), so the assignment goes along:
@@ -844,119 +1060,10 @@ class PythonVariableAnalyzerMixin(_VarBase):
         return order
 
     def _get_assignment_alias(self, right: ASTNode) -> _Alias | None:
-        """Reduce an assignment's rhs to an `_Alias`, or None if it types nothing.
-
-        A bare call (`x = Engine()`) is left to `_traverse_single_pass`, which
-        already types it. An operator whose dunder is not in the table makes
-        no claim: its result type is unknown, and untyped is the safe answer.
-        """
-        if right.type == cs.TS_PY_CALL:
-            return None
-        dunder: str | None = None
-        reflected: list[ASTNode] = []
-        if right.type == cs.TS_PY_BINARY_OPERATOR:
-            operator = right.child_by_field_name(cs.FIELD_OPERATOR)
-            token = safe_decode_text(operator) if operator is not None else None
-            dunder = cs.PY_BINARY_OPERATOR_DUNDERS.get(token or "")
-            if dunder is None:
-                return None
-            left = right.child_by_field_name(cs.TS_FIELD_LEFT)
-            right_operand = right.child_by_field_name(cs.TS_FIELD_RIGHT)
-            candidates = self._get_value_leaves(left, 1) if left is not None else []
-            if right_operand is not None:
-                reflected = self._get_value_leaves(right_operand, 1)
-        else:
-            candidates = self._get_value_leaves(right, 0)
-        if not candidates and not reflected:
-            return None
-        return _Alias(candidates, dunder, reflected)
-
-    def _get_value_leaves(self, node: ASTNode, depth: int) -> list[ASTNode]:
-        """The leaf expressions an rhs can evaluate to, in preference order.
-
-        Without this a variable assigned from any expression got NO type, and a
-        later `var.method()` fell back to matching the bare method name against
-        every class that defines it (issue #1868): `resolved = target or
-        Path("x")` followed by `resolved.resolve()` emitted a CALLS edge to every
-        `resolve` method in the project.
-
-        `depth` bounds the descent: a RecursionError here would not surface --
-        this runs inside the broad `except Exception` in `type_inference.py`,
-        which would discard the whole function's type map and revert every
-        receiver in it to bare-name matching, reintroducing #1868 from an
-        unrelated statement elsewhere in the same function.
-        """
-        if depth > _MAX_ALIAS_DEPTH:
-            return []
-        if node.type in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE, cs.TS_PY_CALL):
-            return [node]
-        if node.type == cs.TS_PY_BOOLEAN_OPERATOR:
-            picks = self._get_boolean_value_operands(node)
-        elif node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
-            # `a if cond else b`: the VALUE operands are the first and last
-            # named children; the middle one is the condition, whose type is
-            # irrelevant. None of the three carries a field name.
-            kids = node.named_children
-            picks = [kids[0], kids[-1]] if kids else []
-        elif node.type == cs.TS_PY_BINARY_OPERATOR:
-            # Nested under another expression (`(a / b) or c`): the left
-            # operand is the value's origin and the operator is not tracked
-            # this deep -- an approximation that is right for path idioms.
-            left = node.child_by_field_name(cs.TS_FIELD_LEFT)
-            picks = [left] if left is not None else []
-        elif node.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
-            picks = list(node.named_children[:1])
-        else:
-            return []
-        return [
-            leaf for pick in picks for leaf in self._get_value_leaves(pick, depth + 1)
-        ]
-
-    def _get_boolean_value_operands(self, node: ASTNode) -> list[ASTNode]:
-        """The operands `a or b` / `a and b` can evaluate to.
-
-        `or` yields whichever operand is truthy first, so both are candidates,
-        left preferred. `and` yields the RIGHT operand whenever the left is
-        truthy, and a falsy left otherwise -- never something a method is then
-        called on -- so only the right operand is a receiver candidate. Taking
-        the left would type `flag and Engine()` as bool and drop the call.
-        """
-        operator = node.child_by_field_name(cs.FIELD_OPERATOR)
-        is_and = operator is not None and safe_decode_text(operator) == cs.PY_OP_AND
-        fields = (
-            [cs.TS_FIELD_RIGHT] if is_and else [cs.TS_FIELD_LEFT, cs.TS_FIELD_RIGHT]
-        )
-        return [
-            operand
-            for field in fields
-            if (operand := node.child_by_field_name(field)) is not None
-        ]
+        return assignment_alias(right)
 
     def _collect_local_aliases(self, caller_node: ASTNode) -> dict[str, _Alias]:
-        # Record what each local variable was assigned (resolver = self._resolver,
-        # resolved = target or Path("x")), so its type propagates from what it
-        # can evaluate to. Skip nested scopes.
-        aliases: dict[str, _Alias] = {}
-        boundary = (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
-        stack: list[ASTNode] = list(caller_node.children)
-        while stack:
-            node = stack.pop()
-            if node.type in boundary:
-                continue
-            if node.type == cs.TS_PY_ASSIGNMENT:
-                left = node.child_by_field_name(cs.TS_FIELD_LEFT)
-                right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-                if (
-                    left is not None
-                    and left.type == cs.TS_PY_IDENTIFIER
-                    and right is not None
-                    and (local := safe_decode_text(left))
-                    and local not in aliases
-                    and (alias := self._get_assignment_alias(right)) is not None
-                ):
-                    aliases[local] = alias
-            stack.extend(node.children)
-        return aliases
+        return local_aliases(caller_node)
 
     def _class_qn_of_type(self, type_name: str, module_qn: str) -> str | None:
         if cs.SEPARATOR_DOT in type_name:

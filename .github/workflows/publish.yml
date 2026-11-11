@@ -15,17 +15,16 @@ on:
 permissions: read-all
 
 jobs:
-  # code-graph-rag requires cgr-graph-rs (rust/cgr_graph_rs), so a crate
-  # version PyPI lacks, or holds only some wheels of, is built, tested and
-  # uploaded first.
-  rust-version:
-    name: Is this cgr-graph-rs on PyPI?
+  # Nothing below ships a commit main's CI has not passed. A release created
+  # by hand, a tag pushed by hand and a dispatch all start here, not only the
+  # tag version-bump.yml pushes after its own gate.
+  ci-gate:
+    name: Require green CI at the release commit
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
-    outputs:
-      publish: ${{ steps.check.outputs.publish }}
+      actions: read
     steps:
       - name: Validate dispatched tag
         if: github.event_name == 'workflow_dispatch'
@@ -35,6 +34,31 @@ jobs:
           printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
             || { echo "tag must match vMAJOR.MINOR.PATCH, got: $TAG"; exit 1; }
 
+      # This workflow's own commit, so the gate is the one this file runs with.
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require green CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REF: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.sha }}
+        run: python3 scripts/require_green_ci.py "$RELEASE_REF"
+
+  # code-graph-rag requires cgr-graph-rs (rust/cgr_graph_rs), so a crate
+  # version PyPI lacks, or holds only some wheels of, is built, tested and
+  # uploaded first.
+  rust-version:
+    name: Is this cgr-graph-rs on PyPI?
+    needs: ci-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,17 +80,17 @@ jobs:
 
   rust-wheels:
     name: Build cgr-graph-rs
-    needs: rust-version
+    needs: [ci-gate, rust-version]
     if: needs.rust-version.outputs.publish == 'true'
     permissions:
       contents: read
-    uses: ./.github/workflows/rust-wheels.yml
+    uses: $/.github/workflows/rust-wheels.yml
     with:
       ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
   publish-rust:
     name: Publish cgr-graph-rs to PyPI
-    needs: rust-wheels
+    needs: [ci-gate, rust-wheels]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: pypi
@@ -82,17 +106,18 @@ jobs:
           path: dist
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           skip-existing: true
 
   publish:
     name: Publish to PyPI
-    needs: [rust-version, publish-rust]
+    needs: [ci-gate, rust-version, publish-rust]
     # Only once the crate this release requires is on PyPI: already there,
     # or uploaded just now.
     if: >-
       !cancelled()
+      && needs.ci-gate.result == 'success'
       && needs.rust-version.result == 'success'
       && (needs.rust-version.outputs.publish == 'false' || needs.publish-rust.result == 'success')
     runs-on: ubuntu-latest
@@ -109,21 +134,16 @@ jobs:
           ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
           persist-credentials: false
 
-      - name: Key the uv cache on dependencies, not the project version
-        shell: bash
-        run: |
-          awk 'skip && /^version = / { skip = 0; next }
-               { skip = /^name = "code-graph-rag"\r?$/; print }' \
-            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
-
+      # What this job builds goes to PyPI, so it restores no cache another
+      # run could have written. setup-uv's default would still cache a
+      # dispatch.
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          enable-cache: true
-          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
+          enable-cache: false
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -142,6 +162,91 @@ jobs:
         run: uv build
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           skip-existing: true
+
+  # server.json goes to the MCP Registry only once PyPI serves the release it
+  # names: the registry checks that PyPI has that version, with the mcp-name
+  # token in its README, and a version it has listed cannot be listed again.
+  publish-mcp-registry:
+    name: Publish to the MCP Registry
+    needs: [ci-gate, publish]
+    if: >-
+      !cancelled()
+      && needs.ci-gate.result == 'success'
+      && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # A release and its tag push each start this workflow; the second run
+    # waits here, then finds the version listed and stops.
+    concurrency:
+      group: mcp-registry-${{ inputs.tag || github.ref_name }}
+      cancel-in-progress: false
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.5
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          persist-credentials: false
+
+      # PyPI's JSON API can lag an upload by a minute or so.
+      - name: Require this release on PyPI
+        run: |
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            STATUS=0
+            python3 scripts/check_mcp_registry_release.py pypi "$RELEASE_TAG" || STATUS=$?
+            case "$STATUS" in
+              0) exit 0 ;;
+              2) sleep 30 ;;
+              *) exit 1 ;;
+            esac
+          done
+          exit 1
+
+      - name: Is this version in the registry?
+        id: registry
+        run: |
+          STATUS=0
+          python3 scripts/check_mcp_registry_release.py registry "$RELEASE_TAG" || STATUS=$?
+          case "$STATUS" in
+            0) echo "publish=false" >> "$GITHUB_OUTPUT" ;;
+            2) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::could not tell whether the MCP Registry lists this version"; exit 1 ;;
+          esac
+
+      - name: Install cosign
+        if: steps.registry.outputs.publish == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # Pinned and signature-checked: the binary runs with this job's OIDC
+      # token, which can publish any server under io.github.vitali87.
+      - name: Download and verify mcp-publisher
+        if: steps.registry.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          archive="mcp-publisher_linux_amd64.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --silent --show-error --output "$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive" "$archive.sigstore.json"
+
+      - name: Authenticate to the MCP Registry
+        if: steps.registry.outputs.publish == 'true'
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server.json
+        if: steps.registry.outputs.publish == 'true'
+        run: ./mcp-publisher publish

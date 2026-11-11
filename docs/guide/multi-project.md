@@ -137,7 +137,10 @@ Three deterministic MCP tools read these edges, all project-scoped like the
 other graph tools: `endpoints` lists what a project exposes with how many
 call sites in the whole graph reach each one; `endpoint_callers` lists the
 call sites in any project that reach one endpoint, by handler name or by
-identity (`GET /users/{id}`); `remote_dependencies` lists every network
+identity (`GET /users/{id}`, in any parameter syntax: `:id` and `<id>` name
+the same route; a concrete `GET /users/42` names the routes serving it), and
+refuses a target that names no endpoint, suggesting the close ones;
+`remote_dependencies` lists every network
 access a project makes with the handler it resolves to, keeping the
 unresolved ones. These edges exist only where the `io` group was
 captured, and each sync records its capture on the Project node: on a
@@ -150,9 +153,13 @@ graph synced before the record existed answers as before).
 handler (FastAPI, Flask) by its decorator alone: such a handler whose
 endpoint no indexed call site reaches is reported. A handler
 registered by a call (Go `HandleFunc`, Express `app.get(path, handler)`)
-stays live through that registration, whatever the switch. On a graph
-holding one project the report reads as "no callers indexed", which the
-command says; index the calling services first.
+stays live through that registration, whatever the switch. Endpoints are
+recorded only by the `io` capture group, so the switch needs the project
+indexed with `--capture io`: on a project that has route handlers but no
+recorded endpoint, the command refuses and says so rather than report
+nothing unreachable. On a graph holding one project the report reads as
+"no callers indexed", which the command says; index the calling services
+first.
 
 Two analyses follow the link across the boundary. `flow_verdict` continues
 a `FLOWS_TO` walk from a client's network resource into the handler it
@@ -175,4 +182,43 @@ cgr delete-project --project user-service__a1b2c3d4
 
 ![cgr delete-project removing user-service from the graph and its vectors, while order-service's fetch_user still resolves](../assets/demos/multi-project-delete.gif)
 
-Deleting a project also removes its embeddings from the vector store.
+Deleting a project also removes its embeddings from the vector store and
+its notes (glosses written with the MCP `annotate` tool), the same as the
+MCP `delete_project` tool, so indexing the checkout again starts with no
+notes. Definitions an interrupted sync left with no link to their module
+go too, found by the project's name. So does the marker of a sync that
+was interrupted on this machine and whose process has since exited, which
+would otherwise keep the deleted project in `cgr status` as interrupted.
+
+A checkout that was moved, renamed or deleted leaves its project behind with a
+`root_path` that no longer exists; `cgr status` marks those `(missing)`. Sweep
+them in one pass:
+
+```bash
+# List the projects whose root is gone, removing nothing
+cgr prune --dry-run
+
+# Remove them, asking first
+cgr prune
+```
+
+A project is pruned only when its root is provably absent -- an unreadable
+directory (a permissions error, an unavailable mount) is treated as live --
+the checkout `cgr` itself runs from is never pruned, every purge is
+verified against a fresh read of the graph before it is reported, and the
+purge itself is conditional on the project still naming the root that was
+checked, so a concurrent sync repointing the project is skipped, not
+destroyed. A pruned project loses what `delete-project` takes: its graph,
+its embeddings and its notes.
+
+Prune also leaves a project alone while a sync of the same name may be
+writing it, from any checkout or machine: every sync marks the project in
+the graph before its first write, and prune checks for that mark before
+and during the purge. A mark left by a sync whose process has exited on
+this machine is cleared first. One from a sync on another machine stays,
+and the project is skipped until that sync has finished.
+
+Prune judges `root_path`s on the machine it runs on: a shared graph whose
+projects were indexed inside containers or on other hosts reads those roots
+as missing from here. Prune only a graph whose checkouts live on the machine
+asking.

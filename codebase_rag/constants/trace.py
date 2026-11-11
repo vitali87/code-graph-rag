@@ -72,6 +72,13 @@ TRACE_DOTNET_NESTED_MARKER = "+"
 
 # Xdebug computerized-trace markers (trace_format=1, file format 4).
 TRACE_ERR_BAD_PPROF = "{path} is not a pprof CPU profile."
+# A run shorter than one sampling period writes a well-formed profile with no
+# samples; calling it malformed sent users after a format problem (#2887).
+TRACE_ERR_PPROF_NO_SAMPLES = (
+    "{path} is a valid pprof profile but has no samples: the workload ended "
+    "before the profiler's first sample, one sampling period in (10 ms at Go's "
+    "default 100 Hz). Profile a longer run, or raise the sampling rate."
+)
 # A gzipped pprof is inflated in bounded chunks: a few MB of compressed zeros
 # would otherwise expand to gigabytes in memory (#2263). The cap matches the
 # `cgr trace pull` download cap, which counts compressed bytes only.
@@ -105,6 +112,17 @@ TRACE_MSG_ADDRS_UNRESOLVED = (
 TRACE_ERR_BAD_XDEBUG = (
     "{path} is not an Xdebug computerized trace (expected 'File format: 4')."
 )
+TRACE_ERR_BAD_XDEBUG_GZIP = (
+    "{path} is gzip-compressed but truncated or corrupt, so it cannot be read "
+    "as an Xdebug trace."
+)
+TRACE_ERR_XDEBUG_TOO_LARGE = (
+    "{path} decompresses to more than {limit} bytes; refusing to inflate it in "
+    "memory. If the trace is genuine, gunzip it and convert the .xt file."
+)
+# Xdebug >= 3.1 built with zlib compresses traces by default
+# (xdebug.use_compression=1) and appends .gz to the .xt name.
+TRACE_XDEBUG_SUFFIXES = (".xt", ".xt.gz")
 TRACE_XDEBUG_FORMAT_LINE = "File format: 4"
 TRACE_XDEBUG_MAIN = "{main}"
 TRACE_XDEBUG_GLUE_FUNCTIONS = frozenset(
@@ -192,6 +210,18 @@ TRACEBACK_NOTE_NOTHING_RESOLVED = (
     "If the traceback comes from another machine, a container or a CI runner, "
     "pass {param} to map its checkout root onto the repository, "
     'e.g. {{"/app": "."}}.'
+)
+
+# An ExceptionGroup's report covers the group and, under `members`, each
+# sub-exception it printed (issue #3235).
+TRACEBACK_NOTE_EXCEPTION_GROUP = (
+    "{type} with {listed} sub-exception{plural}: frames is the stack that "
+    "raised the group, and each sub-exception is analysed on its own under "
+    "members."
+)
+TRACEBACK_NOTE_MEMBERS_OMITTED = (
+    " The traceback itself left out {omitted} more, past its "
+    "max_group_width or max_group_depth."
 )
 
 TRACE_ERR_BAD_HEADER = "Trace file {path} does not start with a valid cgr trace header."

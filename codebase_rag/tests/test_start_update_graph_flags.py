@@ -223,3 +223,15 @@ def test_output_without_update_graph_keeps_its_own_error(
     assert code == 1, output
     assert cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE in output
     start.sync.assert_not_called()
+
+
+@pytest.mark.parametrize("flag", [True, False], ids=["no-embeddings", "default"])
+def test_no_embeddings_reaches_the_stack_start(
+    start: _Start, tmp_path: Path, flag: bool
+) -> None:
+    # The stack's Qdrant is started only for a sync that writes embeddings.
+    extra = ["--no-embeddings"] if flag else []
+    code, output = _invoke(tmp_path, "--update-graph", *extra)
+
+    assert code == 0, output
+    start.stack.assert_called_once_with(skip_embeddings=flag)

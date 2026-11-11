@@ -88,6 +88,16 @@ A pull request that changes something a user can see must show it working, in th
 - **How to attach it:** embed it inline as a GitHub attachment, never committed. Reference the file in the body and let `gh` upload it: `gh pr create --attach ./after.png` or `gh pr edit <n> --attach ./after.png` (GitHub CLI 2.99 or later). A body line such as `![after](./after.png)` is rewritten to the uploaded `github.com/user-attachments` URL; without one the image is appended. By hand, drag or paste the file into the description.
 - **When nothing is visible:** an internal refactor, a test-only or CI-only change says so in one line instead, for example `No user-visible change: refactors the call resolver's cache key.`
 
+### Breaking changes
+
+A change that breaks existing setups (a new default, a removed option, a renamed setting) is announced in its release under "⚠️ Breaking changes". The text comes from the pull request:
+
+- Mark the title with `!`, for example `feat(vectors)!: default to the sqlite vector store`.
+- A maintainer adds the `breaking change` label. The label bumps the minor version and releases at once.
+- Add the release notes as `changes/breaking/<PR number>.md`: what changed, how to keep the old behaviour, what happens to existing installs, and a link to the docs. Write them for users reading the release, in Markdown with no heading.
+
+The **Breaking Change Notes** check fails until the title, the label and the file agree.
+
 ### Continuous Integration
 
 All pull requests are automatically validated by our CI workflow, which runs in parallel for faster feedback:
@@ -110,6 +120,8 @@ All pull requests are automatically validated by our CI workflow, which runs in 
    - Code coverage reporting to Codecov
 
 5. **PR Title Validation** - Conventional Commits format check
+
+6. **Greptile 5/5 Gate** - Greptile reviews every push, and the check fails when it scores the PR's latest commit below 5/5. If Greptile doesn't score that commit (out of credits, paused), the check passes with a warning
 
 All checks run in parallel and must pass before a PR can be merged. A summary job verifies all checks succeeded.
 
@@ -149,7 +161,7 @@ This project uses automated code review bots (**Greptile** and **Gemini Code Ass
 2. **Accept or push back**: For each bot suggestion, either:
    - **Accept**: Implement the suggestion and resolve the comment
    - **Push back**: Reply inline with a clear justification for why the suggestion doesn't apply
-3. **Iterate as needed**: Continue addressing new bot comments through multiple review rounds until all are resolved
+3. **Iterate as needed**: Continue addressing new bot comments through multiple review rounds until all are resolved. When Greptile scores the PR's latest commit, the score must be 5/5, or the **Greptile 5/5 Gate** check fails and blocks the merge. It reviews each push on its own; to ask it again without pushing (after answering a finding it got wrong), comment `@greptile review`, then re-run the check once the **Greptile Review** check has started
 4. **Then request human review**: Only after all bot comments are cleared, assign the PR to core maintainers for human review
 
 This process ensures that human reviewers focus on high-level design and logic rather than style and common issues that bots can catch.
@@ -239,6 +251,25 @@ either way.
 When fuzzing finds a crash: add a regression test under `codebase_rag/tests/`
 that fails without the fix, commit the reproducer into the harness' corpus
 directory, and only then fix the bug.
+
+The Rust extension has cargo-fuzz targets of its own, in
+`rust/cgr_graph_rs/fuzz/fuzz_targets/`, and both workflows run them in a
+separate `rust` job with the same budgets. Each target's header says what it
+drives and checks:
+
+| Target | What it drives |
+| --- | --- |
+| `cypher_parse` | the Cypher lexer and parser on any query text |
+| `json_string` | `json_text::push_string`, against Python's `json.dumps` |
+| `graph_algorithms` | the graph procedures and `run` on a graph and arguments the input chooses |
+| `sqlite_graph` | the bulk writer, the variable-length walk and `Graph::load`, against a model of the graph |
+| `xml_elements` | the XML project-file reader (`formats::xml`) on any bytes |
+
+To run one locally, with a nightly toolchain and `cargo install cargo-fuzz`:
+
+```bash
+cd rust/cgr_graph_rs && cargo +nightly fuzz run cypher_parse -- -max_total_time=60
+```
 
 ## Coding Standards
 

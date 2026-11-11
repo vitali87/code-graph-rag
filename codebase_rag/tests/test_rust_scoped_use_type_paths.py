@@ -336,6 +336,30 @@ def test_qualified_declared_type_is_not_rebound_by_a_scoped_use(
     assert (caller, "rs_use_qualified.src.b.Builder.build") not in edges, edges
 
 
+def test_qualified_constructor_local_is_not_rebound_by_a_scoped_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A local built by a module-qualified struct literal keeps that path, as
+    # a declared type does: `crate::a::Builder { .. }` names one type, not
+    # whatever `Builder` the body's `use` binds (#2622 with #3168).
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_ctor",
+        _two_builders_lib(
+            "pub fn constructed() -> u32 {\n"
+            "    use crate::b::Builder;\n"
+            "    let y = crate::a::Builder { n: 1 };\n"
+            "    let _z = Builder::new();\n"
+            "    y.build()\n"
+            "}\n"
+        ),
+    )
+    caller = "rs_use_ctor.src.lib.constructed"
+    assert edges.get((caller, "rs_use_ctor.src.a.Builder.build")) == {"exact"}, edges
+    assert (caller, "rs_use_ctor.src.b.Builder.build") not in edges, edges
+
+
 # --- what must keep resolving as before ---------------------------------------
 
 

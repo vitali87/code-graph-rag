@@ -11,8 +11,69 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
-- **GitHub Sponsors**: Added support for GitHub Sponsors via the command line.
+- **Type Handling**: Improved handling of type context managers, walrus operators, and match binding targets in both Python and TypeScript.
+- **Rename Refinement**: Prevented Go renames from unexporting names used by other packages.
+- **Profile Naming**: Corrected the naming of pprof profiles to avoid "malformed" errors when no samples are present.
+- **Output Budget**: Increased the Anthropic output budget to improve the default thinking experience.
+- **Module Resolution**: Resolved issues with module resolution in various scenarios, including ES module default imports and bare name bindings.
+- **Dead Code Elimination**: Removed dead code roots associated with IPython rich-display methods.
+- **Incremental Refresh**: Improved incremental refresh to ensure callers are updated when dispatch targets change.
 <!-- latest-release-end -->
+- **Continuous Integration Improvements**: Enhanced release cadence tracking and ensured accurate green status for deferred releases.
+- **Code Quality & Clarity**: Resolved several code style and correctness issues including foreach loop variable typing and Python method receiver handling.
+- **Build Process Refinement**: Reduced the default install package count and improved makefile functionality for host/port watching.
+- **Feature Control**: Prevented the use of `--no-endpoint-roots` when endpoint data is absent.
+- **Rust Upgrade**: Updated Rust to version 1.99.1-slim-trixie.
+- **Signature Functionality**: Added support for reading and writing JavaScript headers for change signatures, including the ability to change the signature of JavaScript functions or methods.
+- **macOS Compatibility**: The build now leaves macOS-14 support.
+- **Quiet Mode Enhancement**: The `--quiet` flag for the CLI now suppresses the scanning line for dead code and duplicates, providing a cleaner output.
+- **Context Budget Fix**: The system now correctly handles cases where a target doesn't fit within the allocated budget, preventing unexpected behaviour.
+- **Code Quality**: Changes have been made to report decorator and modifier changes that affect method calls and to ensure submodule grammars are loaded correctly.
+- **CGR Prune Feature**: A new `cgr prune` functionality has been added to remove projects where the root no longer exists.
+- **MiniMax Models Added**: Current MiniMax text models have been included.
+- **CLI and MCP Enhancements**: The `change_signature` operation is now accessible via the CLI and MCP, with improved handling for partial graphs and classification as a destructive writer.
+- **Fuzzing Improvements**: The Graph-RS project now includes additional fuzz targets for more comprehensive testing.
+- **Model Updates**: Current MiniMax text models have been added.
+- **MiniMax Models**: Current MiniMax text models have been added.
+- **Dependencies Updated**: Several dependencies have been updated to the latest versions, including neo4j, qdrant-client, and transformers, bringing in bug fixes and new features.
+- **CLI Improvements**: The `change_signature` operation is now accessible through the CLI and MCP, with updated documentation.
+- **Graph-RS Fuzzing**: Expanded fuzz testing for the graph-rs component with new targets for procedures, bulk writing, and input decoding.
+- **CLI and MCP Improvements**: The CLI and MCP now support the `change_signature` operation and include enhanced security features like repository approval and credential file handling.
+- **Fuzzing Targets Added**: New fuzzing targets have been added for both the graph-rs and the overall system, increasing robustness.
+- **Configuration Handling**: `.env` files are now ignored except for the example file, improving security and preventing accidental commits of sensitive information.
+- **Security Focus**: Several changes focus on improving the security of the system, including stricter controls around credential files and repository loading.
+- **Signature Feature**: The `change_signature` operation is now exposed through the CLI and MCP, with updated documentation.
+- **Security Improvements**: Enhanced security measures include repository approval checks and warnings before reading credential files.
+- **Fuzzing Targets**: New fuzzing targets have been added for both the graph-rs and Rust indexer, improving code robustness.
+- **Configuration Management**: The OSS Scanner image's Python base is being held at version 3.12 for stability.
+- **Security Enhancements**: Incorporates an OSS Scanner build image and threat model.
+- **Data Export**: Ensures all node properties within the graph are exported.
+- **SQL Fixes**: Addresses several SQL-related issues including grammar errors and dead-code roots.
+- **Rust Fixes**: Improves indexing of methods and handling of types in Rust code.
+- **Build Fixes**: Repairs build issues related to eMudhra root certificates and distrusted components.
+- **SBOM**: CycloneDX SBOM and Docker image attestation published with each release.
+- **Vector Store**: Default to the SQLite vector store.
+- **Docker**: No longer starts Docker without embeddings.
+- **Feature**: Added support for a new feature.
+- **Functionality**: Implemented a new function.
+- **Fix**: Addressed a minor bug.
+- **Security**: Linked dependency advisories in the security notice to the global database.
+- **Build**: Enabled building the gotypes helper on Go 1.27.2 with x/mod v0.42.0.
+- **Dependency Locking**: Locked `opentelemetry-api` to version 1.45.1 for stability.
+- **GHSA Security Fix**: Addressed GHSA-xcq7-p3pf-p88h vulnerability.
+- **Python**: Added support for inferring instance attributes from annotations.
+- **General**: Various fixes for import resolution, naming conflicts, and project syncing.
+- **CodeQL**: Improved handling of interface implementers and Python annotations.
+- **Checks**: Enhanced error reporting for unbound Python calls, rejected callee keywords, and unfilled required parameters.
+- **Tracing**: Added support for reading gzip-compressed Xdebug traces.
+- **Rust**: Improved handling of macro calls and workspace listings.
+- **MCP**: Enhanced responses for out-of-range input and unknown symbols.
+- **CodeQL Scanning**: Switch to advanced CodeQL setup for more comprehensive analysis of pull requests from forks.
+- **Python Annotations**: Infer Python instance attributes from annotations for improved type handling.
+- **Xdebug Trace Support**: Now reads gzip-compressed Xdebug traces for enhanced debugging.
+- **Rust Macro Edge**: Ensures turbofish calls within macros receive their CALLS edge.
+- **Improved Syncing**: Re-parse files attaching members to re-indexed modules and keep declared namespaces of unchanged PHP files.
+- **GitHub Sponsors**: Added support for GitHub Sponsors via the command line.
 - **Signature**: Implemented header reading and argument binding for rewrite functionality.
 - **Migration**: Prevented unintended purging of shared Folder/File nodes.
 - **Engine Operations**: Restored `delete-project` and stats execution on the embedded engine.

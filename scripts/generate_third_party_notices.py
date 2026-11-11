@@ -249,6 +249,10 @@ NATIVE_COMPONENTS: tuple[NativeComponent, ...] = (
     # 0BSD from XZ Utils 5.6; earlier releases put liblzma in the public
     # domain, which asks for nothing, so the stricter text covers both.
     NativeComponent("liblzma (XZ Utils)", "0BSD", (r"^liblzma[.-]",), "liblzma.txt"),
+    # Ubuntu 26.04 builds OpenSSL against libzstd, so the Linux binary carries
+    # it beside `libcrypto.so.3`. Zstandard is BSD-3-Clause or GPL-2.0-only;
+    # the binary takes it under the BSD terms.
+    NativeComponent("Zstandard", "BSD-3-Clause", (r"^libzstd[.-]",), "zstd.txt"),
     NativeComponent(
         "ncurses",
         "X11-distribute-modifications-variant",

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
+import pytest
 from click.testing import CliRunner
 
 from codebase_rag import constants as cs
@@ -252,6 +253,47 @@ def test_convert_command_fails_cleanly_on_unreadable_xt(tmp_path, monkeypatch):
 
     assert result.exit_code == 1
     assert "denied" in result.output
+
+
+_XDEBUG_TRACE = (
+    "Version: 3.5.3\nFile format: 4\nTRACE START [2026-08-14 02:07:42]\n"
+    "1\t0\t0\t0.001\t480000\t{main}\t1\t\t/app/main.php\t0\t0\n"
+    "2\t1\t0\t0.001\t480000\trun\t1\t\t/app/main.php\t9\t0\n"
+    "2\t1\t1\t0.002\t480000\n"
+    "1\t0\t1\t0.002\t480000\n"
+    "TRACE END   [2026-08-14 02:07:42]\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "compress"),
+    [
+        ("run.xt", False),
+        ("run.xt.gz", True),
+        # Xdebug's default trace_output_name is trace.%c (a crc32).
+        ("trace.1234567.xt.gz", True),
+    ],
+)
+def test_convert_command_converts_xdebug_traces(tmp_path, name, compress):
+    # A zlib-enabled Xdebug writes .xt.gz; its gzip magic must not send it to
+    # the pprof converter, which would demand --repo-path.
+    import gzip as gziplib
+
+    trace_path = tmp_path / name
+    data = _XDEBUG_TRACE.encode(cs.ENCODING_UTF8)
+    trace_path.write_bytes(gziplib.compress(data) if compress else data)
+    output = tmp_path / "trace.jsonl"
+
+    result = CliRunner().invoke(
+        cli, ["convert", str(trace_path), "--output", str(output)]
+    )
+
+    assert result.exit_code == 0, result.output
+    header, records = read_trace_file(output)
+    assert header.tracer == cs.TRACE_TOOL_NAME_XDEBUG
+    assert [(r.caller.qualname, r.callee.qualname) for r in records] == [
+        ("{main}", "run")
+    ]
 
 
 def test_convert_command_sniffs_pprof_and_requires_repo_path(tmp_path):

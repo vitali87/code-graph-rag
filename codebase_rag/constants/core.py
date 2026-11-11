@@ -10,6 +10,15 @@ PY_PACKAGE_INIT_FILES: tuple[str, ...] = (INIT_PY, INIT_PYI)
 
 ENCODING_UTF8 = "utf-8"
 ENCODING_UTF8_SIG = "utf-8-sig"
+# BOM-aware: decoding picks the byte order from the mark and drops it.
+ENCODING_UTF16 = "utf-16"
+ENCODING_UTF32 = "utf-32"
+# One byte order each, for the text after a BOM: writing that text back in
+# one of these, behind the same mark, gives the file's own bytes.
+ENCODING_UTF16_LE = "utf-16-le"
+ENCODING_UTF16_BE = "utf-16-be"
+ENCODING_UTF32_LE = "utf-32-le"
+ENCODING_UTF32_BE = "utf-32-be"
 ENCODING_ASCII = "ascii"
 # Codec names (as `codecs.lookup` normalises them) whose bytes the grammar
 # already reads as they are, so a source declaring one needs no transcoding.
@@ -120,6 +129,11 @@ class EventType(StrEnum):
 CONTENT_EVENT_TYPES = frozenset(
     {EventType.MODIFIED, EventType.CREATED, EventType.DELETED}
 )
+
+# The events that can change an ignore rule's input. A read cannot, and
+# re-reading the rules reads those very files: a watcher that followed reads
+# re-read `.gitignore` forever after one `git status` (issue #3583).
+RULE_INPUT_EVENT_TYPES = CONTENT_EVENT_TYPES | {EventType.MOVED, EventType.CLOSED}
 
 
 WATCHER_SLEEP_INTERVAL = 1
@@ -253,6 +267,9 @@ PRUNE_PENDING_FILENAME = ".cgr-prune-pending"
 # PR #3358). Not in CGR_STATE_FILENAMES: no cgr ever wrote one into the tree,
 # so there is nothing to move out of it.
 EMBEDDINGS_PENDING_PROJECT_TEMPLATE = ".cgr-embeddings-pending-{digest}"
+# The vector store backend a project's points were last settled in, one file
+# per project for the same reason; likewise never written into the tree.
+EMBEDDINGS_STORE_PROJECT_TEMPLATE = ".cgr-embeddings-store-{digest}"
 # The marker an earlier build shared between every project of a checkout: a
 # JSON list of the projects owing a pass, or an empty file. Read so that each
 # still retries once, then split into the per-project files above.
@@ -325,6 +342,23 @@ EDIT_MODE_MASK = 0o7777
 # Mode of the exclusively created temp sibling before the target's mode is
 # copied onto it: owner-only, so nothing reads staged bytes mid-write.
 EDIT_TEMP_FILE_MODE = 0o600
+# Approvals of repositories' .cgr.md files, under CGR_HOME (issue #3456).
+TRUSTED_INSTRUCTIONS_FILENAME = "trusted_instructions.json"
+ENV_CGR_HOME = "CGR_HOME"
+CGR_HOME_DIRNAME = ".cgr"
+TRUST_STORE_FILE_MODE = 0o600
+TRUST_STORE_DIR_MODE = 0o700
+# Between ~/.cgr.md and the repository's .cgr.md in the system prompt.
+CGR_INSTRUCTIONS_SEPARATOR = "\n\n---\n\n"
+# Read only from the environment cgr starts with, never from `.env` in the
+# working directory, which usually belongs to the repository being analysed.
+ENVIRONMENT_ONLY_SETTINGS = frozenset(
+    {
+        "CGR_TRUST_PROJECT_INSTRUCTIONS",
+        "CGR_ALLOW_SENSITIVE_READS",
+        "CGR_ALLOW_SENSITIVE_WRITES",
+    }
+)
 # Every file cgr keeps about one checkout. They live in that checkout's
 # directory under CGR_HOME / CGR_STATE_DIRNAME rather than in the working
 # tree, and a copy an older cgr left in the tree is moved there, so a name

@@ -62,6 +62,10 @@ re-parsed, as before.
 This module lives under `parsers/` on purpose: the parser fingerprint hashes
 every file here, so a change to these rules re-indexes existing graphs rather
 than comparing fingerprints of two generations.
+
+The tree bridge computes the same digest in Rust (`native_trees`), from the
+rules `bridge_rules` hands it; `python_interface_fingerprint` stays the
+reference and runs whenever the bridge cannot.
 """
 
 from __future__ import annotations
@@ -73,6 +77,8 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..language_spec import LANGUAGE_SPECS
+from ..types_defs import CallableScanRules, InterfaceLanguageRules, InterfaceRules
+from . import native_trees
 from .py.ast_analyzer import local_names, names_bound_within
 from .utils import callable_parameter_indices, safe_decode_text
 
@@ -152,7 +158,22 @@ def interface_fingerprint(
     root_node: Node, language: cs.SupportedLanguage
 ) -> str | None:
     """The hex digest of `root_node`'s interface, or None for a language
-    without rules."""
+    without rules; in Rust when the tree bridge can (issue #3473)."""
+    if language not in _RULES:
+        return None
+    if (bridge := native_trees.interface_bridge()) is not None:
+        try:
+            return bridge.interface_fingerprint(root_node, language)
+        except native_trees.NotBorrowed:
+            pass
+    return python_interface_fingerprint(root_node, language)
+
+
+def python_interface_fingerprint(
+    root_node: Node, language: cs.SupportedLanguage
+) -> str | None:
+    """`interface_fingerprint` as Python computes it: what runs without the
+    bridge, and the reference `TreeBridge.interface_fingerprint` must match."""
     rules = _RULES.get(language)
     if rules is None:
         return None
@@ -545,3 +566,120 @@ def _python_returns(statement: Node) -> list[_Item]:
         else:
             items.append(_token(cs.INTERFACE_FP_RETURN, value.type.encode()))
     return items
+
+
+def bridge_rules() -> InterfaceRules:
+    """The constants this module and the callable-parameter scan it asks
+    (`callable_parameter_indices`) read, as the tree bridge's `interface`
+    rules, so the two fingerprints cannot drift apart on them."""
+    return InterfaceRules(
+        languages={
+            language.value: _bridge_language_rules(language, rules)
+            for language, rules in _RULES.items()
+        },
+        version=cs.INTERFACE_FINGERPRINT_VERSION,
+        open=cs.INTERFACE_FP_OPEN,
+        close=cs.INTERFACE_FP_CLOSE,
+        leaf=cs.INTERFACE_FP_LEAF,
+        missing=cs.INTERFACE_FP_MISSING,
+        elided_body=cs.INTERFACE_FP_ELIDED_BODY,
+        returned=cs.INTERFACE_FP_RETURN,
+        call=cs.INTERFACE_FP_CALL,
+        argument=cs.INTERFACE_FP_ARGUMENT,
+        local=cs.INTERFACE_FP_LOCAL,
+        length_bytes=cs.INTERFACE_FP_LENGTH_BYTES,
+        byte_order=cs.INTERFACE_FP_BYTE_ORDER,
+        comment=cs.INTERFACE_FP_COMMENT_SUBSTRING,
+        dunder=cs.INTERFACE_FP_DUNDER,
+        body_field=cs.FIELD_BODY,
+        name_field=cs.FIELD_NAME,
+        left_field=cs.FIELD_LEFT,
+        arguments_field=cs.FIELD_ARGUMENTS,
+        value_field=cs.FIELD_VALUE,
+        key_field=cs.FIELD_KEY,
+        function_field=cs.FIELD_FUNCTION,
+        property_field=cs.FIELD_PROPERTY,
+        object_field=cs.FIELD_OBJECT,
+        parameters_field=cs.FIELD_PARAMETERS,
+        parameter_field=cs.TS_FIELD_PARAMETER,
+        pattern_field=cs.TS_FIELD_PATTERN,
+        alias_field=cs.FIELD_ALIAS,
+        callee_fields=list(cs.INTERFACE_FP_CALLEE_FIELDS),
+        identifier=cs.TS_IDENTIFIER,
+        keyword_argument=cs.TS_PY_KEYWORD_ARGUMENT,
+        name_arguments=sorted(cs.INTERFACE_FP_NAME_ARGUMENTS),
+        cast_wrappers=sorted(cs.TS_CAST_WRAPPER_TYPES),
+        call_expression=cs.TS_CALL_EXPRESSION,
+        member_expression=cs.TS_MEMBER_EXPRESSION,
+        prototype_methods=sorted(cs.JS_FUNCTION_PROTOTYPE_METHODS),
+        js_binder_fields={
+            node_type: list(fields)
+            for node_type, fields in cs.INTERFACE_FP_JS_BINDER_FIELDS.items()
+        },
+        js_bound_names=sorted(cs.INTERFACE_FP_JS_BOUND_NAMES),
+        js_return=cs.TS_RETURN_STATEMENT,
+        js_pair=cs.TS_PAIR,
+        js_computed_property_name=cs.TS_JS_COMPUTED_PROPERTY_NAME,
+        js_require=cs.JS_REQUIRE_KEYWORD,
+        js_typed_parameters=sorted(cs.JS_TS_TYPED_PARAMETER_TYPES),
+        py_identifier=cs.TS_PY_IDENTIFIER,
+        py_call=cs.TS_PY_CALL,
+        py_attribute=cs.TS_PY_ATTRIBUTE,
+        py_return=cs.TS_PY_RETURN_STATEMENT,
+        py_read_returns=sorted(_PY_READ_RETURN_TYPES),
+        receivers=[cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS],
+        py_target_holders=sorted(cs.INTERFACE_FP_PY_TARGET_HOLDERS),
+        py_target_wrappers=sorted(cs.INTERFACE_FP_PY_TARGET_WRAPPERS),
+        py_member_targets=sorted(cs.INTERFACE_FP_PY_MEMBER_TARGETS),
+        py_caller_scope=cs.INTERFACE_FP_PY_CALLER_SCOPE,
+        py_named_parameters=sorted(cs.PY_NAMED_PARAMETER_TYPES),
+        py_typed_parameter=cs.TS_PY_TYPED_PARAMETER,
+        py_scope_boundaries=sorted(cs.PY_SCOPE_BOUNDARY_TYPES),
+        py_decorated_definition=cs.TS_PY_DECORATED_DEFINITION,
+        py_decorated_definitions=sorted(cs.PY_DECORATED_DEFINITION_TYPES),
+        py_shadow_binders=sorted(cs.PY_CAPTURE_SHADOW_BINDERS),
+        py_as_pattern_target=cs.TS_PY_AS_PATTERN_TARGET,
+        py_imports=sorted(cs.PY_IMPORT_TYPES),
+        py_global=cs.TS_PY_GLOBAL_STATEMENT,
+        py_case_pattern=cs.TS_PY_CASE_PATTERN,
+        py_dotted_name=cs.TS_PY_DOTTED_NAME,
+        py_aliased_import=cs.TS_ALIASED_IMPORT,
+        python_scan=CallableScanRules(
+            call=cs.TS_PY_CALL,
+            identifier=cs.TS_PY_IDENTIFIER,
+            closures=sorted(cs.PY_CALLABLE_CLOSURE_TYPES),
+            opaque=sorted(cs.PY_CALLABLE_OPAQUE_TYPES),
+        ),
+        js_scan=CallableScanRules(
+            call=cs.TS_CALL_EXPRESSION,
+            identifier=cs.TS_IDENTIFIER,
+            closures=sorted(cs.JS_TS_CALLABLE_CLOSURE_TYPES),
+            opaque=sorted(cs.JS_TS_CALLABLE_OPAQUE_TYPES),
+        ),
+    )
+
+
+def _bridge_language_rules(
+    language: cs.SupportedLanguage, rules: _Rules
+) -> InterfaceLanguageRules:
+    return InterfaceLanguageRules(
+        flavor=_flavor(language),
+        functions=sorted(rules.functions),
+        blocks=sorted(rules.blocks),
+        definitions=sorted(rules.definitions),
+        blockers=sorted(rules.blockers),
+        kept_names=sorted(rules.kept_names),
+        calls=sorted(rules.calls),
+        returns=sorted(rules.returns),
+    )
+
+
+def _flavor(language: cs.SupportedLanguage) -> cs.InterfaceFlavor:
+    # The language branches above: `_is_read`, `_names_bound_within`,
+    # `_caller_locals`, `_projection`, `_is_python_dunder`, and the
+    # callable-parameter scan `_elidable_body` asks.
+    if language == cs.SupportedLanguage.PYTHON:
+        return cs.InterfaceFlavor.PYTHON
+    if language in cs.JS_TS_LANGUAGES:
+        return cs.InterfaceFlavor.JS
+    return cs.InterfaceFlavor.OTHER

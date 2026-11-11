@@ -65,15 +65,36 @@ def test_exact_and_heuristic_calls_are_tagged(
 ) -> None:
     (temp_repo / "pkg").mkdir()
     (temp_repo / "pkg" / "__init__.py").write_text("")
-    (temp_repo / "pkg" / "util.py").write_text(
-        "def helper():\n    return 1\n\n\ndef lonely():\n    return 2\n"
-    )
+    (temp_repo / "pkg" / "util.py").write_text("def helper():\n    return 1\n")
+    (temp_repo / "pkg" / "more.py").write_text("def lonely():\n    return 2\n")
     (temp_repo / "pkg" / "app.py").write_text(
-        "from pkg.util import helper\n\n\ndef run():\n    helper()\n    lonely()\n"
+        "from pkg.util import helper\nfrom pkg.more import *\n\n\n"
+        "def run():\n    helper()\n    lonely()\n"
     )
     create_and_run_updater(temp_repo, mock_ingestor)
     by_callee = _resolutions(mock_ingestor, ".pkg.app.run")
-    # Bound through the import: exact. Not imported, found by name only: heuristic.
+    # Bound through the import: exact. Through a star import, found by name
+    # only: heuristic.
+    assert by_callee["helper"] == {cs.EdgeResolution.EXACT}
+    assert by_callee["lonely"] == {cs.EdgeResolution.HEURISTIC}
+
+
+def test_a_call_through_a_rebound_local_carries_each_bindings_label(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `a()` reaches both functions `a` was bound to; each edge says how its
+    # own binding resolved, not how the last one did.
+    (temp_repo / "pkg").mkdir()
+    (temp_repo / "pkg" / "__init__.py").write_text("")
+    (temp_repo / "pkg" / "util.py").write_text("def helper():\n    return 1\n")
+    # Through a star import, `lonely` binds by name alone.
+    (temp_repo / "pkg" / "more.py").write_text("def lonely():\n    return 2\n")
+    (temp_repo / "pkg" / "app.py").write_text(
+        "from pkg.util import helper\nfrom pkg.more import *\n\n\n"
+        "def run(flag):\n    a = helper\n    if flag:\n        a = lonely\n    a()\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+    by_callee = _resolutions(mock_ingestor, ".pkg.app.run")
     assert by_callee["helper"] == {cs.EdgeResolution.EXACT}
     assert by_callee["lonely"] == {cs.EdgeResolution.HEURISTIC}
 
@@ -229,6 +250,30 @@ def test_python_property_reads_keep_each_site_and_resolution(
     assert kept[0][cs.KEY_RESOLUTION] == cs.EdgeResolution.EXACT
 
 
+@pytest.mark.parametrize(
+    "method",
+    [
+        "    def read(self, cls):\n        return cls.name\n",
+        "    @staticmethod\n    def read(self):\n        return self.name\n",
+    ],
+)
+def test_python_property_read_through_an_unbound_receiver_name_is_not_exact(
+    temp_repo: Path, mock_ingestor: MagicMock, method: str
+) -> None:
+    # A parameter merely named `cls`, or a staticmethod's `self`, holds
+    # whatever the caller passes, so it must not bind to the enclosing class.
+    (temp_repo / "models.py").write_text(
+        "class Local:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "local"\n\n' + method
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    by_callee = _resolutions(mock_ingestor, ".models.Local.read")
+    assert cs.EdgeResolution.EXACT not in by_callee.get("name", set())
+
+
 def test_an_engine_bound_call_does_not_inherit_the_previous_label(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -299,11 +344,13 @@ def test_a_higher_order_calls_callback_does_not_change_its_own_label(
     (temp_repo / "pkg").mkdir()
     (temp_repo / "pkg" / "__init__.py").write_text("")
     (temp_repo / "pkg" / "util.py").write_text(
-        "def sorted(items, key=None):\n    return items\n\n\n"
-        "def lonely(x):\n    return x\n"
+        "def sorted(items, key=None):\n    return items\n"
     )
+    # Through a star import, `lonely` binds by name alone.
+    (temp_repo / "pkg" / "more.py").write_text("def lonely(x):\n    return x\n")
     (temp_repo / "pkg" / "app.py").write_text(
-        "from pkg.util import sorted\n\n\ndef run(xs):\n    return sorted(xs, key=lonely)\n"
+        "from pkg.util import sorted\nfrom pkg.more import *\n\n\n"
+        "def run(xs):\n    return sorted(xs, key=lonely)\n"
     )
     create_and_run_updater(temp_repo, mock_ingestor)
     by_callee = _resolutions(mock_ingestor, ".pkg.app.run")
@@ -321,11 +368,13 @@ def test_a_callback_carries_its_own_verdict_not_the_enclosing_calls(
     (temp_repo / "pkg").mkdir()
     (temp_repo / "pkg" / "__init__.py").write_text("")
     (temp_repo / "pkg" / "util.py").write_text(
-        "def sorted(items, key=None):\n    return items\n\n\n"
-        "def lonely(x):\n    return x\n"
+        "def sorted(items, key=None):\n    return items\n"
     )
+    # Through a star import, `lonely` binds by name alone.
+    (temp_repo / "pkg" / "more.py").write_text("def lonely(x):\n    return x\n")
     (temp_repo / "pkg" / "app.py").write_text(
-        "from pkg.util import sorted\n\n\ndef run(xs):\n    return sorted(xs, key=lonely)\n"
+        "from pkg.util import sorted\nfrom pkg.more import *\n\n\n"
+        "def run(xs):\n    return sorted(xs, key=lonely)\n"
     )
     create_and_run_updater(temp_repo, mock_ingestor)
     by_callee = _resolutions(mock_ingestor, ".pkg.app.run")

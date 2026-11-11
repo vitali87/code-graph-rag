@@ -243,8 +243,9 @@ MCP_IMPORTERS = (
     "consumer side first (empty for a direct importer). " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_PARAM_ENDPOINT_TARGET = (
-    "The handler's qualified name, or the endpoint identity as `endpoints` "
-    "lists it (`GET /users/{id}`)."
+    "The handler's qualified name, or the endpoint identity (`GET /users/{id}`) "
+    "in any path-parameter syntax (`{id}`, `:id`, `<id>`), or a concrete "
+    "request (`GET /users/42`)."
 )
 MCP_ENDPOINTS = (
     "The endpoints a project exposes (routes, RPC methods, dispatch keys), one "
@@ -256,8 +257,11 @@ MCP_ENDPOINTS = (
 )
 MCP_ENDPOINT_CALLERS = (
     "Call sites, in any indexed project, that reach one endpoint: `target` is "
-    "the handler's qualified name or the endpoint identity (`GET /users/{id}`). "
-    "Each row names the caller, its file, the URL it accesses and the direction "
+    "the handler's qualified name or the endpoint identity (`GET /users/{id}`), "
+    "whichever parameter syntax the route declares (`:id`, `<id>`); a concrete "
+    "request (`GET /users/42`) matches the routes it is served by. A target "
+    "that names no endpoint the project exposes is refused with the close "
+    "identities and handlers, so an empty list means nothing reaches it. Each row names the caller, its file, the URL it accesses and the direction "
     "(READS_FROM or WRITES_TO); an RPC or dispatch caller reaches the endpoint "
     "directly, so its `url` is the endpoint identity. Literal URLs resolve; "
     "dynamic ones do not and are absent here. " + _MCP_DETERMINISTIC_NOTE
@@ -298,7 +302,7 @@ MCP_GLOSSES = (
     "Notes (Glosses) about one definition: `annotating` are filed on it, "
     "`mentioning` are filed on other definitions and refer to it. `target` "
     "is resolved as `annotate` resolves it. Each note's `anchor_state` is "
-    "graded after each sync: EXACT when its definition's content hash still "
+    "graded after each sync of its project: EXACT when its definition's content hash still "
     "equals the one recorded at writing, STALE when it differs (EXACT again "
     "on revert), MOVED when the name is gone and exactly one definition in "
     "the project carries the recorded hash (the note follows it; "
@@ -315,6 +319,11 @@ MCP_GLOSSES = (
     "hash to compare) and is LOST if its name disappears (a module has no span "
     "to quote); a class, interface, enum, type or union carries a hash like a "
     "function and is graded and repaired the same way. "
+    "A note's `mentions` are anchored the same way: a mentioned definition "
+    "that is renamed or moved is followed by its hash or quote, one that "
+    "cannot be placed is listed in `mentions_lost` with no edge (still, once "
+    "another mention has taken its name), and a new definition that reuses "
+    "its name does not inherit it. "
     "A target that no longer resolves returns the error plus `orphaned`: the "
     "unattached notes written against that name. " + _MCP_DETERMINISTIC_NOTE
 )
@@ -358,6 +367,53 @@ MCP_PARAM_ALLOW_HEURISTIC = (
     "occurrences the graph has no site for, too (default false)."
 )
 MCP_PARAM_RENAME_DRY_RUN = "Plan only: report the sites and diff, write nothing."
+MCP_CHANGE_SIGNATURE = (
+    "Change a Python or JavaScript function's or method's parameter list and "
+    "rewrite every "
+    "call site the graph knows, on the definition and on every override in "
+    "both directions. `new_params` lists the new parameters in order (`n: int`, "
+    "`limit: int = 10`, or a bare old name to carry it over unchanged). "
+    "`mapping` says where each new parameter's value comes from at a call site: "
+    "an old parameter's name, its 0-based index, or `=literal` to insert that "
+    "text at every site; a new parameter absent from the mapping takes the old "
+    "parameter of the same name. A site the mapping cannot complete (a missing "
+    "required value, a splat, a surplus argument, an undeclared keyword) or "
+    "that the graph resolved heuristically is left as written and listed as "
+    "`unmapped`; pass `allow_heuristic` to rewrite guessed sites too. Every "
+    "rewritten file must still parse, and with an indexed project the change "
+    "is undone when its postcondition fails. Set `dry_run` to see the plan and "
+    "diff without touching the tree. Applied edits are recorded for `cgr edits "
+    "undo`."
+)
+MCP_MOVE = (
+    "Move a module-level function or class to another module. The definition "
+    "(decorators, docstring, adjacent comments) is cut and pasted into "
+    "`target_module` (a dotted module name or a repo-relative path; created "
+    "when missing) with the imports it needs, every importer is rewritten, "
+    "uses through a module import (`pkg.util.helper`) follow, and the old "
+    "module keeps an import of the name when it still uses it. `keep_alias` "
+    "leaves a re-export at the old location so the old import path keeps "
+    "working. Refused before any file is touched when the move would create "
+    "an import cycle, naming the cycle. One transaction, held to the "
+    "postcondition contract; set `dry_run` to see the plan."
+)
+MCP_PARAM_TARGET_MODULE = (
+    "Destination module: a dotted module name (`pkg.core`) or a repo-relative path."
+)
+MCP_PARAM_MOVE_DRY_RUN = (
+    "Plan only: report the files, importers and copied imports, write nothing."
+)
+MCP_PARAM_KEEP_ALIAS = (
+    "Leave a re-export at the old location so the old import path still works."
+)
+MCP_PARAM_NEW_PARAMS = (
+    "The new parameter list in order, one entry per parameter (`name`, "
+    "`name: type`, `name = default`, `name: type = default`)."
+)
+MCP_PARAM_MAPPING = (
+    "Optional. New parameter name to its source: an old parameter name, a "
+    "0-based old index, or `=literal`."
+)
 
 MCP_QUERY_CODE_GRAPH = (
     "Prefer the deterministic tools (resolve, definition, callers, callees, "
@@ -516,7 +572,10 @@ MCP_EXPLAIN_TRACEBACK = (
     "runner, a container, a teammate's machine, Windows) is matched by the "
     "checkout root its frames share, reported as inferred_checkout_root; "
     "pass path_prefix_map when that root cannot be inferred. When nothing "
-    "resolves, note says why. Use this to ground a failure report in "
+    "resolves, note says why. For an ExceptionGroup, frames is the stack "
+    "that raised the group, and members holds each sub-exception (nested "
+    "groups included) with its own frames; omitted_members counts those "
+    "the traceback itself left out. Use this to ground a failure report in "
     "the indexed code before deciding where to look."
 )
 
@@ -539,7 +598,9 @@ MCP_RANK_ROOT_CAUSES = (
     "index_repository or update_repository, then reindex after changing it. "
     "Frames from another checkout "
     "resolve as in explain_traceback, and resolution plus note say why a "
-    "ranking is empty."
+    "ranking is empty. For an ExceptionGroup, the ranking anchors where the "
+    "group was raised, and members ranks each sub-exception against its own "
+    "failing frame."
 )
 
 MCP_CONTEXT = (
@@ -561,7 +622,8 @@ MCP_PARAM_BUDGET_TOKENS = "Token budget for the slice (default 4000)."
 MCP_PARAM_TRACEBACK_TEXT = (
     "The traceback text exactly as Python printed it (the 'Traceback "
     "(most recent call last):' block; chained tracebacks are fine, the "
-    "final propagated section is used)"
+    "final propagated section is used, and an ExceptionGroup's "
+    "sub-exceptions are each analysed under members)"
 )
 MCP_PARAM_PATH_PREFIX_MAP = (
     "Optional. Maps the checkout root the traceback was recorded under to a "
@@ -592,6 +654,8 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.ANNOTATE: MCP_ANNOTATE,
     MCPToolName.GLOSSES: MCP_GLOSSES,
     MCPToolName.RENAME: MCP_RENAME,
+    MCPToolName.CHANGE_SIGNATURE: MCP_CHANGE_SIGNATURE,
+    MCPToolName.MOVE: MCP_MOVE,
     MCPToolName.CONTEXT: MCP_CONTEXT,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,

@@ -35,6 +35,8 @@ from codebase_rag.parsers import call_processor, definition_docstring, export_de
 from codebase_rag.parsers.csharp import type_inference as cs_type_inference
 from codebase_rag.parsers.java import variable_analyzer
 from codebase_rag.parsers.js_ts import type_inference as js_type_inference
+from codebase_rag.parsers.py import ast_analyzer as py_ast_analyzer
+from codebase_rag.parsers.py import definition_index as py_definition_index
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
 _EXACT = cs.EdgeResolution.EXACT.value
@@ -273,6 +275,49 @@ def _js_module_receiver_source(n: int) -> dict[str, str]:
     }
 
 
+def _py_method_source(n: int) -> dict[str, str]:
+    # Each user types `r` from a different method's return, so each call
+    # site looks a method of `Big` up once.
+    methods = "".join(
+        f"    def m{i}(self):\n        return Big()\n\n" for i in range(n)
+    )
+    users = "".join(
+        f"def f{i}():\n    r = Big().m{i}()\n    r.m0()\n\n\n" for i in range(n)
+    )
+    return {
+        "big.py": f"class Big:\n{methods}",
+        "use.py": f"from big import Big\n\n\n{users}",
+    }
+
+
+def _py_function_source(n: int) -> dict[str, str]:
+    # Each user types `r` from a different imported function's return, so
+    # each call site looks a function of `lib` up once.
+    makers = "".join(f"def g{i}():\n    return Big()\n\n\n" for i in range(n))
+    imports = "".join(f"from lib import g{i}\n" for i in range(n))
+    users = "".join(f"def f{i}():\n    r = g{i}()\n    r.run()\n\n\n" for i in range(n))
+    return {
+        "lib.py": f"class Big:\n    def run(self):\n        return 1\n\n\n{makers}",
+        "use.py": f"{imports}\n\n{users}",
+    }
+
+
+# The Python definition lookups and the index behind them; the rest of the
+# type inference is linear and would dilute the ratio.
+_PY_LOOKUPS = frozenset(
+    {
+        "_find_class_node",
+        "_find_function_ast_node",
+        "_find_python_method_in_ast",
+        "_by_name",
+        "_classes_named",
+        "class_node",
+        "top_level_function",
+        "method",
+    }
+)
+
+
 DOCSTRING_CASES = [
     pytest.param(_c_source, "c", id="c"),
     pytest.param(_js_source, "javascript", id="javascript"),
@@ -412,3 +457,37 @@ def test_js_export_list_scan_stays_linear(
     scan = _Scan(_ts_source, "typescript", (export_detection,))
     small, large = _growth(tmp_path, scan, mock_ingestor)
     _assert_linear(small, large, "export-list detection")
+
+
+def test_python_method_lookup_is_linear_in_class_methods(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    """`r = Big().mK()` found `mK` by running the class query over `big.py`
+    and the function query over the class body, then scanning every method,
+    once per call site; the index runs each query once per tree."""
+    scan = _Scan(
+        _py_method_source,
+        "python",
+        (py_ast_analyzer, py_definition_index),
+        functions=_PY_LOOKUPS,
+    )
+    small, large = _growth(tmp_path, scan, mock_ingestor)
+    _assert_linear(small, large, "Python method lookup")
+    # Exact, not heuristic: every `r` was typed through its method's return.
+    assert _resolutions_into(mock_ingestor, "large.big.Big.m0") == {_EXACT}
+
+
+def test_python_function_lookup_is_linear_in_module_functions(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    """`r = lib.gK()` found `gK` by running the function query over `lib.py`
+    and scanning every function in it, once per call site."""
+    scan = _Scan(
+        _py_function_source,
+        "python",
+        (py_ast_analyzer, py_definition_index),
+        functions=_PY_LOOKUPS,
+    )
+    small, large = _growth(tmp_path, scan, mock_ingestor)
+    _assert_linear(small, large, "Python function lookup")
+    assert _resolutions_into(mock_ingestor, "large.lib.Big.run") == {_EXACT}

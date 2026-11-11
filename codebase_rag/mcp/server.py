@@ -4,24 +4,36 @@ import contextlib
 import json
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import jsonschema
 from loguru import logger
-from mcp.server import Server
+from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, TextContent, Tool
+from mcp.types import (
+    CallToolRequestParams,
+    CallToolResult,
+    ListToolsResult,
+    PaginatedRequestParams,
+    TextContent,
+    Tool,
+)
 
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
-from codebase_rag.mcp.tools import create_mcp_tools_registry
+from codebase_rag.mcp.tools import (
+    MCPToolsRegistry,
+    create_mcp_tools_registry,
+    tool_annotations,
+)
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import LazyCypherGenerator
-from codebase_rag.types_defs import MCPToolArguments
+from codebase_rag.types_defs import MCPHandlerType, MCPToolArguments
 from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.vector_store import close_qdrant_client
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceError, load_workspace
@@ -43,15 +55,32 @@ def setup_logging() -> None:
     )
 
 
+def _is_home_or_above(path: Path) -> bool:
+    """Whether `path` is the home directory, a directory above it, or a disk
+    root: serving it hands the client every file the user has."""
+    home = Path.home().resolve()
+    return path == path.parent or home.is_relative_to(path)
+
+
+def _existing_dir(repo_path: str) -> Path:
+    project_root = Path(repo_path).resolve()
+    if not project_root.exists():
+        raise ex.RepoPathError(te.MCP_PATH_NOT_EXISTS.format(path=project_root))
+    if not project_root.is_dir():
+        raise ex.RepoPathError(te.MCP_PATH_NOT_DIR.format(path=project_root))
+    return project_root
+
+
 def get_project_root() -> Path:
     repo_path: str | None = (
         os.environ.get(cs.MCPEnvVar.TARGET_REPO_PATH) or settings.TARGET_REPO_PATH
     )
+    # "." is the setting's default, so it names no folder anyone chose.
+    chosen = bool(repo_path) and repo_path != cs.ROOT_DIR_KEY
+    host_root = os.environ.get(cs.MCPEnvVar.CLAUDE_PROJECT_ROOT)
 
     if not repo_path:
-        repo_path = os.environ.get(cs.MCPEnvVar.CLAUDE_PROJECT_ROOT) or os.environ.get(
-            cs.MCPEnvVar.PWD
-        )
+        repo_path = host_root or os.environ.get(cs.MCPEnvVar.PWD)
 
         if repo_path:
             logger.info(lg.MCP_SERVER_INFERRED_ROOT.format(path=repo_path))
@@ -59,13 +88,22 @@ def get_project_root() -> Path:
             repo_path = str(Path.cwd())
             logger.info(lg.MCP_SERVER_NO_ROOT.format(path=repo_path))
 
-    project_root = Path(repo_path).resolve()
+    project_root = _existing_dir(repo_path)
 
-    if not project_root.exists():
-        raise ex.RepoPathError(te.MCP_PATH_NOT_EXISTS.format(path=project_root))
-
-    if not project_root.is_dir():
-        raise ex.RepoPathError(te.MCP_PATH_NOT_DIR.format(path=project_root))
+    # A client launches the server in whatever directory it likes, `/` or
+    # the home directory included, and every file tool then reached all of
+    # it. Only a root named in TARGET_REPO_PATH is served when it is that
+    # broad, as `cgr start` syncs one only with `--yes` (#2418). A project a
+    # host names in CLAUDE_PROJECT_ROOT is served instead when it is narrower;
+    # a narrower launch directory stays the root, as it always was.
+    if _is_home_or_above(project_root) and not chosen:
+        rescue = _existing_dir(host_root) if host_root else None
+        if rescue is None or _is_home_or_above(rescue):
+            raise ex.RepoPathError(te.MCP_ROOT_TOO_BROAD.format(path=project_root))
+        logger.info(lg.MCP_SERVER_INFERRED_ROOT.format(path=rescue))
+        project_root = rescue
+    elif _is_home_or_above(project_root):
+        logger.warning(lg.MCP_SERVER_BROAD_ROOT.format(path=project_root))
 
     logger.info(lg.MCP_SERVER_ROOT_RESOLVED.format(path=project_root))
     return project_root
@@ -147,37 +185,41 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
 
     logger.info(lg.MCP_SERVER_INIT_SUCCESS)
 
-    server = Server(cs.MCP_SERVER_NAME)
-
     def _create_error_content(message: str) -> CallToolResult:
         return _failed_call(te.failure(message))
 
-    @server.list_tools()
-    async def list_tools() -> list[Tool]:
-        schemas = tools.get_tool_schemas()
-        return [
-            Tool(
-                name=schema.name,
-                description=schema.description,
-                inputSchema={**schema.inputSchema},
-            )
-            for schema in schemas
-        ]
+    async def list_tools(
+        ctx: ServerRequestContext, params: PaginatedRequestParams | None
+    ) -> ListToolsResult:
+        return ListToolsResult(
+            tools=[
+                Tool(
+                    name=schema.name,
+                    description=schema.description,
+                    input_schema={**schema.inputSchema},
+                    annotations=tool_annotations(schema.name),
+                )
+                for schema in tools.get_tool_schemas()
+            ]
+        )
 
-    @server.call_tool()
     async def call_tool(
-        name: str, arguments: MCPToolArguments
-    ) -> list[TextContent] | CallToolResult:
+        ctx: ServerRequestContext, params: CallToolRequestParams
+    ) -> CallToolResult:
+        name = params.name
+        arguments: MCPToolArguments = params.arguments or {}
         logger.info(lg.MCP_SERVER_CALLING_TOOL.format(name=name))
 
         try:
-            handler_info = tools.get_tool_handler(name)
-            if not handler_info:
-                error_msg = cs.MCP_UNKNOWN_TOOL_ERROR.format(name=name)
-                logger.error(lg.MCP_SERVER_UNKNOWN_TOOL.format(name=name))
-                return _create_error_content(error_msg)
+            handler_info = _callable_handler(tools, name)
+            if isinstance(handler_info, str):
+                return _create_error_content(handler_info)
 
             handler, returns_json = handler_info
+
+            invalid = _invalid_arguments(tools, name, arguments)
+            if invalid is not None:
+                return _failed_call(invalid)
 
             result = await handler(**arguments)
 
@@ -188,17 +230,52 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
             else:
                 result_text = str(result)
 
-            content = [TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)]
-            if returns_json and _reports_failure(result):
-                return CallToolResult(content=content, isError=True)
-            return content
+            return CallToolResult(
+                content=[TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)],
+                is_error=returns_json and _reports_failure(result),
+            )
 
         except Exception as e:
             error_msg = cs.MCP_TOOL_EXEC_ERROR.format(name=name, error=e)
             logger.exception(lg.MCP_SERVER_TOOL_ERROR.format(name=name, error=e))
             return _create_error_content(error_msg)
 
+    server = Server(
+        cs.MCP_SERVER_NAME, on_list_tools=list_tools, on_call_tool=call_tool
+    )
     return server, ingestor
+
+
+def _callable_handler(
+    tools: MCPToolsRegistry, name: str
+) -> tuple[MCPHandlerType, bool] | str:
+    """Tool `name`'s handler and whether it returns JSON, or why it cannot
+    be called on this server."""
+    handler_info = tools.get_tool_handler(name)
+    if not handler_info:
+        logger.error(lg.MCP_SERVER_UNKNOWN_TOOL.format(name=name))
+        return cs.MCP_UNKNOWN_TOOL_ERROR.format(name=name)
+    # A client can call a tool it was never listed, so read-only mode
+    # refuses here too, before the handler runs (issue #3458).
+    if not tools.serves(name):
+        logger.warning(lg.MCP_SERVER_READ_ONLY_REFUSED.format(name=name))
+        return cs.MCP_READ_ONLY_REFUSED.format(name=name)
+    return handler_info
+
+
+def _invalid_arguments(
+    tools: MCPToolsRegistry, name: str, arguments: MCPToolArguments
+) -> str | None:
+    # mcp 1.x checked the arguments against the listed input schema before a
+    # handler ran; 2.x leaves that to the server, and the schemas' bounds
+    # (a non-negative `read_file` offset, say) are only enforced here.
+    for schema in tools.get_tool_schemas():
+        if schema.name == name:
+            try:
+                jsonschema.validate(instance=arguments, schema={**schema.inputSchema})
+            except jsonschema.ValidationError as e:
+                return cs.MCP_INPUT_VALIDATION_ERROR.format(error=e.message)
+    return None
 
 
 def _reports_failure(result: object) -> bool:
@@ -219,17 +296,16 @@ def _reports_failure(result: object) -> bool:
 
 
 def _failed_call(message: str) -> CallToolResult:
-    # A returned content list reaches the client as `isError: false`; a
-    # failure the server or a tool detected must say so in the protocol, not
-    # only in its prose (issue #2650).
+    # A failure the server or a tool detected must say so in the protocol
+    # with `isError: true`, not only in its prose (issue #2650).
     return CallToolResult(
         content=[TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=message)],
-        isError=True,
+        is_error=True,
     )
 
 
 @contextlib.contextmanager
-def _service_lifecycle(ingestor: MemgraphIngestor) -> Iterator[None]:
+def _service_lifecycle(ingestor: MemgraphIngestor) -> Generator[None]:
     """Manage shared service lifetimes for the MCP server.
 
     Opens the Memgraph ingestor connection and releases the vector store client
@@ -268,6 +344,24 @@ async def serve_stdio(workspace: str | None = None) -> None:
 
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+# The names a local client reaches a loopback bind by, as they appear in a
+# Host header (an IPv6 literal in brackets).
+_LOOPBACK_HOST_HEADERS = ("127.0.0.1", "localhost", "[::1]")
+
+
+def _loopback_only_headers(port: int) -> tuple[list[str], list[str]]:
+    """The Host and Origin values a request to a loopback bind on `port` may
+    carry: those of this server, so a web page cannot reach it.
+
+    Binding 127.0.0.1 keeps other machines out, not the browser on this one.
+    A page the user opens can point its own domain at 127.0.0.1 (DNS
+    rebinding) and call the tools; its requests then name that domain.
+    """
+    hosts = [f"{name}:{port}" for name in _LOOPBACK_HOST_HEADERS]
+    if port == cs.HTTP_DEFAULT_PORT:
+        hosts += list(_LOOPBACK_HOST_HEADERS)
+    origins = [f"{cs.HTTP_SCHEME}://{host}" for host in hosts]
+    return hosts, origins
 
 
 def _validate_http_exposure(host: str, auth_token: str | None) -> None:
@@ -325,6 +419,7 @@ async def serve_http(
 ) -> None:
     import uvicorn
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from mcp.server.transport_security import TransportSecuritySettings
     from starlette.applications import Starlette
     from starlette.routing import Mount
 
@@ -335,10 +430,24 @@ async def serve_http(
 
     server, ingestor = create_server(workspace)
 
+    # Without a token the bind is loopback (see _validate_http_exposure) and
+    # nothing else tells a local client from a web page, so the Host and
+    # Origin headers must be this server's. A token already keeps a page
+    # out, and a proxy in front of a remote server names its own host.
+    security = None
+    if not auth_token:
+        allowed_hosts, allowed_origins = _loopback_only_headers(port)
+        security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=allowed_hosts,
+            allowed_origins=allowed_origins,
+        )
+
     session_manager = StreamableHTTPSessionManager(
         app=server,
         json_response=False,
         stateless=False,
+        security_settings=security,
     )
 
     @contextlib.asynccontextmanager
