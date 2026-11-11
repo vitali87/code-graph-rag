@@ -48,6 +48,11 @@ KEY_IMPLEMENTERS_UNKNOWN = "implementers_unknown"
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
 KEY_IS_MACRO = "is_macro"
+# The path a Rust function's visibility is restricted to, as declared:
+# `self` for a private one, `crate`, `super` or the `in` path of a
+# `pub(...)`; absent for a plain `pub` one (PR #3242 review). A
+# `macro_rules!` macro reads `self`: no glob of its module imports it.
+KEY_RUST_VISIBILITY = "rust_visibility"
 KEY_IS_BODY_SCOPED_NAME = "is_body_scoped_name"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
@@ -1270,7 +1275,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "
     "n.signature AS signature, n.declared_in_class AS declared_in_class, "
     "n.generic_arity AS generic_arity, "
-    "n.is_exported AS is_exported, "
+    "n.is_exported AS is_exported, n.rust_visibility AS rust_visibility, "
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
     "n.extension_receiver_arity AS extension_receiver_arity, "

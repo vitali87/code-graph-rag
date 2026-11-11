@@ -3733,7 +3733,9 @@ class CallResolver:
         ):
             return result
 
-        return self._try_resolve_wildcard_imports(call_name, import_map)
+        return self._try_resolve_wildcard_imports(
+            call_name, import_map, language, module_qn
+        )
 
     def _php_target_for_namespace_import(
         self, imported_path: str, kind: NodeType | None = None
@@ -4300,7 +4302,11 @@ class CallResolver:
         return cs.SEPARATOR_DOT
 
     def _try_resolve_wildcard_imports(
-        self, call_name: str, import_map: dict[str, str]
+        self,
+        call_name: str,
+        import_map: dict[str, str],
+        language: cs.SupportedLanguage | None = None,
+        module_qn: str | None = None,
     ) -> tuple[str, str] | None:
         map_id = id(import_map)
         if map_id not in self._wildcard_cache:
@@ -4312,11 +4318,102 @@ class CallResolver:
         wildcards = self._wildcard_cache[map_id]
         if not wildcards:
             return None
+        if language == cs.SupportedLanguage.RUST:
+            return self._try_rust_globs(call_name, wildcards, module_qn)
         for _, imported_qn in wildcards:
             if result := self._try_wildcard_qns(call_name, imported_qn):
                 self.last_resolution = cs.EdgeResolution.HEURISTIC
                 return result
         return None
+
+    def _try_rust_globs(
+        self,
+        call_name: str,
+        wildcards: list[tuple[str, str]],
+        module_qn: str | None,
+    ) -> tuple[str, str] | None:
+        # rustc resolves a glob at compile time, as it does a named `use`;
+        # only Python's `import *` can hang on a run-time `__all__` (issue
+        # #3172). A glob imports only what it can see: under `use hidden::*;`
+        # a private `hidden::drop` is not what `drop(v)` calls, the
+        # prelude's is, so a function the glob may not see is never certain
+        # (PR #3242 review). Two visible providers are an ambiguity rustc
+        # rejects, and one whose visibility is unknown may be the second, so
+        # neither case is claimed exact.
+        hits = self._rust_glob_hits(call_name, wildcards, module_qn)
+        if not hits:
+            return None
+        visible = [hit for hit, sees in hits.items() if sees]
+        certain = len(visible) == 1 and None not in hits.values()
+        self.last_resolution = (
+            cs.EdgeResolution.EXACT if certain else cs.EdgeResolution.HEURISTIC
+        )
+        return (visible or list(hits))[0]
+
+    def _rust_glob_hits(
+        self,
+        call_name: str,
+        wildcards: list[tuple[str, str]],
+        module_qn: str | None,
+    ) -> dict[tuple[str, str], bool | None]:
+        # Everything the globs supply under the name, a globbed module's own
+        # members before those it re-exports, each with whether some glob
+        # supplying it can see it (None: not known).
+        direct: list[tuple[tuple[str, str], str]] = []
+        through: list[tuple[tuple[str, str], str]] = []
+        for _, imported_qn in wildcards:
+            if hit := self._try_wildcard_qns(call_name, imported_qn):
+                direct.append((hit, imported_qn))
+            elif hit := self._rust_glob_reexport(call_name, imported_qn, module_qn):
+                through.append((hit, imported_qn))
+        hits: dict[tuple[str, str], bool | None] = {}
+        for hit, imported_qn in (*direct, *through):
+            if hits.get(hit) is not True:
+                hits[hit] = self._rust_glob_sees(hit, imported_qn, module_qn)
+        return hits
+
+    def _rust_glob_sees(
+        self, hit: tuple[str, str], imported_qn: str, module_qn: str | None
+    ) -> bool | None:
+        # Plain `pub` reaches every module; any other visibility reaches the
+        # subtree of the module it names, counted from the function's own
+        # module (`crate`: the whole crate, `super`: the parent's). The
+        # globbed module must see the function to hold or re-export it, and
+        # the caller's module to import it. Only a function's visibility is
+        # recorded: a glob reaching a tuple struct's constructor, private
+        # or not, is not known to import it.
+        node_type, qn = hit
+        if node_type != NodeType.FUNCTION:
+            return None
+        if (path := self.function_registry.rust_visibility(qn)) is None:
+            return True
+        root = self.import_processor.rust_visibility_root(
+            path, qn.rpartition(cs.SEPARATOR_DOT)[0]
+        )
+        if root is None:
+            return True
+        return (
+            module_qn is not None
+            and self._rust_module_sees(module_qn, root)
+            and self._rust_module_sees(imported_qn, root)
+        )
+
+    def _rust_glob_reexport(
+        self, call_name: str, imported_qn: str, module_qn: str | None
+    ) -> tuple[str, str] | None:
+        # A globbed module may hold the function only through its own
+        # `pub use self::inner::*;` or `pub use inner::helper;`. Types already
+        # followed those hops; a function missed them, fell to the
+        # project-wide name search and bound a same-named decoy (#3172). The
+        # glob is the caller's module's, so a private `use` in the globbed
+        # module, which binds its name there alone, is not followed.
+        if cs.SEPARATOR_DOUBLE_COLON in imported_qn:
+            return None
+        target = f"{imported_qn}{cs.SEPARATOR_DOT}{call_name}"
+        hit, _unknown = self._follow_rust_scope_item(
+            target, {target}, via_glob_from=module_qn
+        )
+        return hit if hit is not None and hit[0] == NodeType.FUNCTION else None
 
     def _try_wildcard_qns(
         self, call_name: str, imported_qn: str

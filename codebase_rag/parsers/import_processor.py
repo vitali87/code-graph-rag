@@ -6521,9 +6521,15 @@ class ImportProcessor:
         path = rs_utils.use_visibility_path(use_node)
         if path is None:
             return None
+        return self.rust_visibility_root(path, effective_qn)
+
+    def rust_visibility_root(self, path: str, scope_qn: str) -> str | None:
+        """The module whose subtree alone sees an item declared in `scope_qn`
+        with its visibility restricted to `path` (`self`, `crate`, `super`,
+        an `in` path); None for a path that leaves the project."""
         if path == cs.KEYWORD_SELF:
-            return effective_qn
-        root = self._rewrite_rust_local_use_path(path, effective_qn)
+            return scope_qn
+        root = self._rewrite_rust_local_use_path(path, scope_qn)
         project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
         if root == self.project_name or root.startswith(project_prefix):
             return root

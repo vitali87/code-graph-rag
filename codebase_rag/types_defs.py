@@ -494,6 +494,12 @@ class FunctionRegistryTrieProtocol(Protocol):
 
     def is_module_private(self, qualified_name: QualifiedName) -> bool: ...
 
+    def mark_rust_visibility(
+        self, qualified_name: QualifiedName, path: str
+    ) -> None: ...
+
+    def rust_visibility(self, qualified_name: QualifiedName) -> str | None: ...
+
     def mark_body_scoped_name(self, qualified_name: QualifiedName) -> None: ...
 
     def is_body_scoped_name(self, qualified_name: QualifiedName) -> bool: ...
@@ -1654,7 +1660,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, first_return_type: string?, chain_return_type: string?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, rust_visibility: string?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, first_return_type: string?, chain_return_type: string?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
