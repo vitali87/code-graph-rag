@@ -125,7 +125,11 @@ from .parsers.parameter_nodes import PendingParameterType
 from .parsers.py.ast_analyzer import clear_scope_facts
 from .parsers.rs import utils as rs_utils
 from .parsers.structure_processor import StructureProcessor
-from .parsers.utils import mark_js_ts_module_private, sorted_captures
+from .parsers.utils import (
+    mark_js_ts_module_private,
+    mark_rust_visibility,
+    sorted_captures,
+)
 from .path_filters import matches_test_path
 from .services import (
     FilteringIngestor,
@@ -4554,6 +4558,11 @@ class GraphUpdater:
             # star lookup then counts it, as it did before.
             row.get(cs.KEY_IS_EXPORTED) is not False,
             get_language_for_extension(Path(path).suffix),
+        )
+        # An unchanged Rust function's declared visibility, or a re-parsed
+        # caller's glob call binds it exactly where a clean index does not.
+        mark_rust_visibility(
+            self.function_registry, qn, row.get(cs.KEY_RUST_VISIBILITY)
         )
         # The C# declared-form index (issue #1629) is filled only by
         # parsing; an unchanged type must stay reachable by `N.Widget`

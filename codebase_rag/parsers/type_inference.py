@@ -859,6 +859,20 @@ class TypeInferenceEngine:
             return False, None
         return self.js_type_inference.static_member(body, member_name)
 
+    def js_member_sides(
+        self, class_qn: str, member_name: str
+    ) -> tuple[bool, bool] | None:
+        """Whether a JS/TS class body declares `member_name` for instances
+        and statically (see `JsTypeInferenceEngine.member_sides`), or None
+        when the qn names no class body this can read."""
+        located = self._js_qn_path(class_qn)
+        body = (
+            js_ts_utils.find_class_body_at(located[0], located[3]) if located else None
+        )
+        if body is None:
+            return None
+        return self.js_type_inference.member_sides(body, member_name)
+
     def _js_qn_path(
         self, qualified_name: str
     ) -> tuple[ASTNode, cs.SupportedLanguage, str, list[str]] | None:
