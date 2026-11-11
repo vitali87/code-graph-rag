@@ -2935,7 +2935,7 @@ class ImportProcessor:
         self,
         entry: DeferredImportEdge,
         known_module_paths: dict[str, str],
-        module_aliases: dict[str, str],
+        module_aliases: dict[str, list[str]],
         siblings: StemSiblingModules,
     ) -> int:
         # A crate::/super::/self:: use path was rewritten to a project
@@ -2976,7 +2976,7 @@ class ImportProcessor:
         self,
         entry: DeferredImportEdge,
         known_module_paths: dict[str, str],
-        module_aliases: dict[str, str],
+        module_aliases: dict[str, list[str]],
         siblings: StemSiblingModules,
     ) -> int:
         if self._flush_js_whole_package_import(entry):
@@ -3107,23 +3107,54 @@ class ImportProcessor:
     ) -> str:
         """`name` re-rooted on its stem's module of the importer's family.
 
-        The longest prefix that names a module decides: one the importer can
-        reach keeps the name as written, and a stem whose module is missing or
-        in another family is swapped for the family's own sibling. A name
-        under a real submodule (`proj.util.sub.f`) therefore stays put.
+        The longest prefix that names a module the importer can reach decides,
+        and keeps the name as written: a name under a real submodule
+        (`proj.util.sub.f`) therefore stays put. A stem whose module is missing
+        or in another family is swapped for the family's own sibling, or for
+        its own directory index (`pkg/index.js` beside `pkg.py`). A name that
+        only modules of other families hold reaches nothing (issue #2756).
         """
         parts = name.split(cs.SEPARATOR_DOT)
+        blocked = False
         for end in range(len(parts), 1, -1):
             prefix = cs.SEPARATOR_DOT.join(parts[:end])
             holder = module_paths.get(prefix)
             if holder is not None and self._reachable_module(holder, family):
                 return name
-            own = siblings.get(prefix, {}).get(family)
+            own = siblings.get(prefix, {}).get(family) or self._own_language_index(
+                prefix, family, module_paths, siblings, beside_module=holder is not None
+            )
             if own is not None:
                 return f"{own}{name[len(prefix) :]}"
-            if holder is not None:
-                return "unresolved"
-        return name
+            # Not final: `util/helper.py` beside a `util.js` that exports
+            # `helper` holds the full name, and the shorter prefix reaches.
+            blocked = blocked or holder is not None
+        return cs.IMPORT_TARGET_UNREACHABLE if blocked else name
+
+    def _own_language_index(
+        self,
+        directory_qn: str,
+        family: LanguageFamily,
+        module_paths: Mapping[str, Path | str],
+        siblings: StemSiblingModules,
+        *,
+        beside_module: bool,
+    ) -> str | None:
+        """The index module of the importer's family in `directory_qn`.
+
+        An index whose stem is shared across families carries its extension
+        (`pkg/index.js` beside `pkg/index.py`) and no alias names it. A bare
+        one is only asked for where a module of another family took the
+        directory's name; everywhere else the alias map already leads to it.
+        """
+        for stem in sorted(cs.MODULE_INDEX_FILE_STEMS):
+            index = f"{directory_qn}{cs.SEPARATOR_DOT}{stem}"
+            if own := siblings.get(index, {}).get(family):
+                return own
+            path = module_paths.get(index)
+            if beside_module and path and self._reachable_module(path, family):
+                return index
+        return None
 
     @staticmethod
     def _reachable_module(path: Path | str, family: LanguageFamily) -> bool:
@@ -3146,8 +3177,6 @@ class ImportProcessor:
         reach, so CALLS and the edges resolved through the map follow it.
         """
         siblings = self.stem_sibling_modules(module_paths)
-        if not siblings:
-            return
         for importer in self.import_mapping:
             self.point_module_imports_at_own_language_siblings(
                 importer, module_paths, siblings
@@ -3162,7 +3191,7 @@ class ImportProcessor:
         """`point_imports_at_own_language_siblings` for one importer's map."""
         mapping = self.import_mapping.get(importer)
         importer_path = module_paths.get(importer)
-        if not mapping or not siblings or importer_path is None:
+        if not mapping or importer_path is None:
             return
         language = get_language_for_extension(importer_path.suffix)
         if language is None:
@@ -3480,15 +3509,17 @@ class ImportProcessor:
                     found[qn] = self.repo_path / rel
         return found
 
-    def _module_alias_map(self, known_module_qns: set[str]) -> dict[str, str]:
+    def _module_alias_map(self, known_module_qns: set[str]) -> dict[str, list[str]]:
         # A module reached through its container's name: pkg/__init__.py,
         # shared/index.js, utils/mod.rs. Importers write the container qn; the real
-        # Module node lives at the index-file leaf.
-        aliases: dict[str, str] = {}
-        for qn in known_module_qns:
+        # Module node lives at the index-file leaf. One directory can hold an
+        # index per language (pkg/__init__.py beside pkg/index.js), and each
+        # importer takes the one it can reach.
+        aliases: dict[str, list[str]] = {}
+        for qn in sorted(known_module_qns):
             base, _, leaf = qn.rpartition(cs.SEPARATOR_DOT)
             if base and leaf in cs.MODULE_INDEX_FILE_STEMS:
-                aliases[base] = qn
+                aliases.setdefault(base, []).append(qn)
         return aliases
 
     def _python_absolute_fallback(self, module_path: str, module_qn: str) -> str | None:
@@ -3511,23 +3542,22 @@ class ImportProcessor:
         self,
         module_path: str,
         known_module_paths: dict[str, str],
-        module_aliases: dict[str, str],
+        module_aliases: dict[str, list[str]],
         language: cs.SupportedLanguage,
         siblings: StemSiblingModules | None = None,
     ) -> str | None:
         family = language_family(language)
-        if siblings:
-            module_path = self._own_language_target(
-                module_path, family, known_module_paths, siblings
-            )
+
+        def reachable(qn: str) -> bool:
+            return self._reachable_module(known_module_paths.get(qn, ""), family)
+
+        module_path = self._own_language_target(
+            module_path, family, known_module_paths, siblings or {}
+        )
         if module_path in known_module_paths:
-            if self._reachable_module(known_module_paths[module_path], family):
-                return module_path
-            return None
-        if alias := module_aliases.get(module_path):
-            if self._reachable_module(known_module_paths.get(alias, ""), family):
-                return alias
-            return None
+            return module_path if reachable(module_path) else None
+        if aliases := module_aliases.get(module_path):
+            return next(filter(reachable, aliases), None)
         # A path resolved from the wrong root (`use crate::utils` written outside
         # src/) still names a unique real module; a whole-segment suffix match
         # recovers it. Ambiguity means no edge, not a guess.
@@ -3539,16 +3569,14 @@ class ImportProcessor:
             return None
         suffix = f"{cs.SEPARATOR_DOT}{tail}"
         matches = {
-            qn
-            for qn in known_module_paths
-            if qn.endswith(suffix)
-            and self._reachable_module(known_module_paths.get(qn, ""), family)
+            qn for qn in known_module_paths if qn.endswith(suffix) and reachable(qn)
         }
         matches.update(
             real
-            for base, real in module_aliases.items()
+            for base, aliases in module_aliases.items()
             if base.endswith(suffix)
-            and self._reachable_module(known_module_paths.get(real, ""), family)
+            for real in aliases
+            if reachable(real)
         )
         if len(matches) > 1:
             # A polyglot repo can hold same-named modules in several
