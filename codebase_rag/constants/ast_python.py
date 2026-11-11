@@ -432,6 +432,10 @@ ABSTRACT_DECORATORS: frozenset[str] = frozenset({"abstractmethod", "abstractprop
 STATIC_DECORATORS: frozenset[str] = frozenset({"staticmethod"})
 # A class method binds `cls` even when called through its class.
 CLASSMETHOD_DECORATORS: frozenset[str] = frozenset({"classmethod"})
+# Methods Python binds to the class without a decorator.
+PY_IMPLICIT_CLASS_RECEIVERS: frozenset[str] = frozenset(
+    {"__new__", "__init_subclass__", "__class_getitem__"}
+)
 # contextlib's generator-based context manager factories: a `with` target
 # takes the generator's yield type, not the factory's return type (#3340).
 PY_CONTEXTLIB_MODULE = "contextlib"

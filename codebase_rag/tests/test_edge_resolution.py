@@ -262,6 +262,7 @@ def test_python_property_reads_keep_each_site_and_resolution(
     [
         "    def read(self, cls):\n        return cls.name\n",
         "    @staticmethod\n    def read(self):\n        return self.name\n",
+        "    def read(self):\n        return (lambda self: self.name)(None)\n",
     ],
 )
 def test_python_property_read_through_an_unbound_receiver_name_is_not_exact(
@@ -279,6 +280,31 @@ def test_python_property_read_through_an_unbound_receiver_name_is_not_exact(
 
     by_callee = _resolutions(mock_ingestor, ".models.Local.read")
     assert cs.EdgeResolution.EXACT not in by_callee.get("name", set())
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "    @classmethod\n    def read(cls):\n        return cls.name\n",
+        "    def __init_subclass__(cls):\n        cls.kept = cls.name\n",
+    ],
+)
+def test_python_property_read_through_the_class_does_not_call_the_getter(
+    temp_repo: Path, mock_ingestor: MagicMock, method: str
+) -> None:
+    # Through the class a property is just an object; the getter never runs.
+    (temp_repo / "models.py").write_text(
+        "class Local:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "local"\n\n' + method
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    assert not any(
+        dst.endswith(".models.Local.name")
+        for _, dst, _ in _edges(mock_ingestor, cs.RelationshipType.CALLS)
+    )
 
 
 def test_an_engine_bound_call_does_not_inherit_the_previous_label(

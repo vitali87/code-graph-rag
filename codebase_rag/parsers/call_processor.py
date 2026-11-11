@@ -12143,7 +12143,11 @@ class CallProcessor:
             class_context
             and receiver
             in PythonTypeInferenceEngine._receiver_parameter_names(caller_node)
+            and not self._python_lambda_rebinds(node, caller_node, receiver)
         ):
+            if PythonTypeInferenceEngine.receiver_is_the_class(caller_node):
+                # `cls.name` hands back the property object: no getter runs.
+                return
             callee_info = self._resolver._try_resolve_method(
                 class_context, property_name
             )
@@ -12175,6 +12179,20 @@ class CallProcessor:
                     cs.RelationshipType.CALLS,
                     (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
                 )
+
+    @staticmethod
+    def _python_lambda_rebinds(node: Node, caller_node: Node, name: str) -> bool:
+        # `lambda self: self.name` inside a method reads its own parameter,
+        # not the method's receiver.
+        current = node.parent
+        while current is not None and current != caller_node:
+            if (
+                current.type == cs.TS_PY_LAMBDA
+                and name in PythonTypeInferenceEngine._parameter_names(current)
+            ):
+                return True
+            current = current.parent
+        return False
 
     @staticmethod
     def _python_attribute_is_write_target(node: Node) -> bool:
