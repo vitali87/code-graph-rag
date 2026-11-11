@@ -12135,34 +12135,15 @@ class CallProcessor:
         if is_call_target:
             return
 
-        receiver, _, property_name = attr_text.rpartition(cs.SEPARATOR_DOT)
-        # Only the method's bound receiver denotes the enclosing class: an
-        # ordinary parameter that happens to be named `self` or `cls` holds a
-        # caller-supplied value, so it takes the receiver-resolution path.
-        if (
-            class_context
-            and receiver
-            in PythonTypeInferenceEngine._receiver_parameter_names(caller_node)
-            and not self._python_lambda_rebinds(node, caller_node, receiver)
-        ):
-            if PythonTypeInferenceEngine.receiver_is_the_class(caller_node):
-                # `cls.name` hands back the property object: no getter runs.
-                return
-            callee_info = self._resolver._try_resolve_method(
-                class_context, property_name
-            )
-            if callee_info is None or not registry.is_property(callee_info[1]):
-                return
-            self._resolver.last_resolution = cs.EdgeResolution.EXACT
-        else:
-            callee_info = self._resolver.resolve_function_call(
-                attr_text,
-                module_qn,
-                local_var_types,
-                class_context,
-                caller_qn,
-            )
-
+        callee_info = self._resolve_property_getter(
+            caller_node,
+            node,
+            attr_text,
+            caller_qn,
+            module_qn,
+            local_var_types,
+            class_context,
+        )
         if callee_info is None:
             return
         callee_qn = callee_info[1]
@@ -12179,6 +12160,44 @@ class CallProcessor:
                     cs.RelationshipType.CALLS,
                     (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
                 )
+
+    def _resolve_property_getter(
+        self,
+        caller_node: Node,
+        node: Node,
+        attr_text: str,
+        caller_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+    ) -> tuple[str, str] | None:
+        receiver, _, property_name = attr_text.rpartition(cs.SEPARATOR_DOT)
+        # Only the method's bound receiver denotes the enclosing class: an
+        # ordinary parameter that happens to be named `self` or `cls` holds a
+        # caller-supplied value, so it takes the receiver-resolution path.
+        if not (
+            class_context
+            and receiver
+            in PythonTypeInferenceEngine._receiver_parameter_names(caller_node)
+            and not self._python_lambda_rebinds(node, caller_node, receiver)
+        ):
+            return self._resolver.resolve_function_call(
+                attr_text,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+            )
+        if PythonTypeInferenceEngine.receiver_is_the_class(caller_node):
+            # `cls.name` hands back the property object: no getter runs.
+            return None
+        callee_info = self._resolver._try_resolve_method(class_context, property_name)
+        if callee_info is None or not self._resolver.function_registry.is_property(
+            callee_info[1]
+        ):
+            return None
+        self._resolver.last_resolution = cs.EdgeResolution.EXACT
+        return callee_info
 
     @staticmethod
     def _python_lambda_rebinds(node: Node, caller_node: Node, name: str) -> bool:
