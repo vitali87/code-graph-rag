@@ -582,19 +582,50 @@ def test_an_export_named_as_another_languages_file_is_reached_through_the_index(
     )
 
 
+@pytest.mark.parametrize(
+    ("exporter", "target"),
+    [
+        pytest.param({"util.js": JS_UTIL}, "util.js:proj.util.helper", id="defined"),
+        pytest.param(
+            {
+                "util.js": "export { helper } from './impl';\n",
+                "impl.js": "export function helper() {\n  return 6;\n}\n",
+            },
+            "impl.js:proj.impl.helper",
+            id="re-exported",
+        ),
+        pytest.param(
+            {
+                "util.js": (
+                    "function impl() {\n  return 8;\n}\n"
+                    "module.exports = { helper: impl };\n"
+                ),
+                "util/helper.py": PY_UTIL,
+            },
+            "util.js:proj.util.impl",
+            id="aliased-beside-another-languages-file",
+        ),
+    ],
+)
 def test_an_export_named_as_a_directory_with_an_index_stays_with_its_exporter(
-    tmp_path: Path,
+    tmp_path: Path, exporter: dict[str, str], target: str
 ) -> None:
     # `util/helper/` has an index in each language, yet `helper` is what
-    # `util.js` exports: the reachable module above wins (#3601 review).
+    # `util.js` exports, its own or another module's: the import names
+    # `./util`, and the call follows the export (#3601 review).
     root = tmp_path / "proj"
     _write(
         root,
         {
-            "util.js": JS_UTIL,
-            "util/helper/index.js": "module.exports = function other() {};\n",
+            **exporter,
+            "util/helper/index.js": (
+                "module.exports = function other() {\n  return 7;\n};\n"
+            ),
             "util/helper/index.py": PY_UTIL,
-            "main.js": JS_APP,
+            "main.js": (
+                "import { helper } from './util';\n"
+                "export function go() {\n  return helper();\n}\n"
+            ),
         },
     )
     store = _StatefulIngestor()
@@ -608,7 +639,7 @@ def test_an_export_named_as_a_directory_with_an_index_stays_with_its_exporter(
         for src, dst in _edges(store, cs.RelationshipType.CALLS)
         if src == "main.js:proj.main.go"
     }
-    assert calls == {"util.js:proj.util.helper"}
+    assert calls == {target}
 
 
 @pytest.mark.parametrize(

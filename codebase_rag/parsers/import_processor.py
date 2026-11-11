@@ -953,6 +953,24 @@ def _js_binds_whole_module(site: PropertyDict | None) -> bool:
     return site.get(cs.KEY_IMPORTED_NAME) in (None, cs.IMPORTED_NAME_WILDCARD)
 
 
+def _js_binding_source(
+    full_name: str, site: PropertyDict | None
+) -> tuple[str, str | None]:
+    """A JS/TS binding's source module and the member it takes from it.
+
+    The member is `""` for a whole-module binding and None where the site
+    does not say, which leaves the split to the modules the name crosses.
+    """
+    if site is None:
+        return full_name, None
+    if _js_binds_whole_module(site):
+        return full_name, ""
+    member = f"{cs.SEPARATOR_DOT}{site.get(cs.KEY_IMPORTED_NAME)}"
+    if full_name.endswith(member):
+        return full_name[: -len(member)], member
+    return full_name, None
+
+
 def _is_known_js_module(qn: str, known_module_paths: Mapping[str, str]) -> bool:
     # A registered module whose FILE is JS/TS. Another language can own the
     # same qn (`pkg/__init__.py` is `proj.pkg`), and a JS/TS import must never
@@ -3127,15 +3145,10 @@ class ImportProcessor:
             holder = module_paths.get(prefix)
             if holder is not None and self._reachable_module(holder, family):
                 # A directory with an index, met on the way here, is the
-                # target unless the name is what this module defines: `helper`
-                # of `util.js` beside `util/helper/index.js`.
-                if through_index is not None and (
-                    names_module
-                    or (
-                        self.function_registry is not None
-                        and name not in self.function_registry
-                    )
-                ):
+                # target of an import's source. Any other name may be what
+                # this module exports or re-exports: `helper` of `util.js`
+                # beside `util/helper/index.js`.
+                if through_index is not None and names_module:
                     return through_index
                 return name
             rest = name[len(prefix) :]
@@ -3227,14 +3240,25 @@ class ImportProcessor:
         if language is None:
             return
         family = language_family(language)
+        sites = self._import_sites.get(importer, {})
         for local_name, full_name in mapping.items():
-            target = self._own_language_target(
-                full_name,
-                family,
-                module_paths,
-                siblings,
-                names_module=self.binds_js_whole_module(importer, local_name),
-            )
+            source, member = full_name, None
+            if language in cs.JS_TS_LANGUAGES:
+                source, member = _js_binding_source(full_name, sites.get(local_name))
+            if member is None:
+                target = self._own_language_target(
+                    full_name, family, module_paths, siblings
+                )
+            else:
+                # The site says where the source module ends, so a member is
+                # never read as a directory, nor a directory as a member.
+                target = self._own_language_target(
+                    source, family, module_paths, siblings, names_module=True
+                )
+                if target not in (source, cs.IMPORT_TARGET_UNREACHABLE):
+                    target = f"{target}{member}"
+                elif target == source:
+                    target = full_name
             if target != full_name:
                 mapping[local_name] = target
 
