@@ -5655,7 +5655,17 @@ class CallResolver:
         registered = self._registered_class_qn(class_qn, module_qn)
         if registered is None:
             return True
-        return not self.cpp_callable_fields[name].isdisjoint(self._mro(registered))
+        # The inferred type carries no qualifier (`b::Dev` is `Dev`), so the
+        # class found is one of those sharing the simple name, not
+        # necessarily the receiver's: any of them may hold the member.
+        simple = registered.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        suffix = f"{cs.SEPARATOR_DOT}{simple}"
+        declaring = self.cpp_callable_fields[name]
+        return any(
+            not declaring.isdisjoint(self._mro(qn))
+            for qn in {registered, *self.function_registry.find_ending_with(simple)}
+            if qn == registered or qn.endswith(suffix)
+        )
 
     def _try_resolve_static_type_method(
         self, object_name: str, method_name: str, call_name: str, module_qn: str

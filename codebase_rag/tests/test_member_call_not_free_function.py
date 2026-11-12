@@ -98,6 +98,14 @@ int on_std(std::string s) { return s.size(); }
 int on_plain(Plain p) { return p.size(); }
 int on_base(Sub* t) { return t->size(); }
 """,
+    # Two types share a name; the receiver's qualifier is lost in typing.
+    "ns.cpp": """\
+struct Dev { int x; };
+namespace b { struct Dev { int (*ns_cb)(); }; }
+
+int ns_cb() { return 1; }
+int ns_run(b::Dev* o) { return o->ns_cb(); }
+""",
     "ops.c": """\
 int open_dev(void) { return 0; }
 struct ops { int (*open_dev)(void); };
@@ -181,6 +189,7 @@ def test_rust_calls_that_can_reach_their_target_still_do(
         ("cb.start", "cb.open_dev"),
         ("cb.stop", "cb.on_close"),
         ("typed.on_base", "typed.size"),
+        ("ns.ns_run", "ns.ns_cb"),
     ],
     ids=[
         "qualified-free-fn",
@@ -188,6 +197,7 @@ def test_rust_calls_that_can_reach_their_target_still_do(
         "cpp-function-pointer-field",
         "cpp-std-function-field",
         "cpp-inherited-function-pointer-field",
+        "cpp-function-pointer-field-of-a-same-named-type",
     ],
 )
 def test_cpp_and_c_calls_that_can_reach_a_free_function_still_do(
