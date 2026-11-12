@@ -101,6 +101,15 @@ _RS_OWNER_NODE_TYPES = frozenset(
 _PY_SELF_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
 
 
+# Languages whose `recv.name()` member syntax reaches only methods, so the
+# name fallback never binds it to a free function (issue #3176). C is left
+# out: `ops->open()` through a function-pointer table names a free function,
+# and C++ keeps that for a name some type declares a callable data member.
+_MEMBER_SYNTAX_METHOD_ONLY = frozenset(
+    {cs.SupportedLanguage.RUST, cs.SupportedLanguage.CPP}
+)
+
+
 class _PhpCasedIndex(NamedTuple):
     """PHP definitions declared with capitals, by ASCII-folded name."""
 
@@ -336,6 +345,7 @@ class CallResolver:
         "rehydrated_definition_paths",
         "rust_function_modules",
         "declared_module_qns",
+        "cpp_callable_fields",
         "go_package_names",
         "_php_class_namespaces",
         "_php_cased_index",
@@ -356,6 +366,7 @@ class CallResolver:
         rehydrated_interface_implementers: dict[str, set[str]] | None = None,
         go_package_names: Mapping[str, str] | None = None,
         go_links: GoLinkState | None = None,
+        cpp_callable_fields: dict[str, set[str]] | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
@@ -383,6 +394,11 @@ class CallResolver:
         # cannot tell the two apart (issue #1093 review).
         self.declared_module_qns = (
             declared_module_qns if declared_module_qns is not None else set()
+        )
+        # Every C++ callable data member's name (shared ref): `ops->cb()`
+        # through one calls a free function, so member syntax keeps those.
+        self.cpp_callable_fields = (
+            cpp_callable_fields if cpp_callable_fields is not None else {}
         )
         # {interface_qn: [implementer_qns]} (shared ref, populated during
         # ingestion). Used to redirect an interface-typed call to the single
@@ -2099,7 +2115,12 @@ class CallResolver:
             return None
 
         result = self._try_resolve_via_trie(
-            call_name, module_qn, language, call_point, constructing
+            call_name,
+            module_qn,
+            language,
+            call_point,
+            constructing,
+            call.local_var_types,
         )
         self._remember_cacheable(cache_key, result)
         return result
@@ -5266,6 +5287,7 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
+        local_var_types: dict[str, str] | None = None,
     ) -> tuple[str, str] | None:
         search_name = _trie_search_name(call_name)
         possible_matches = self._trie_candidates(call_name, module_qn, call_point)
@@ -5293,6 +5315,22 @@ class CallResolver:
             # `defineGetter(req, 'host', function host () {...})`.
             possible_matches = [
                 qn for qn in possible_matches if not self._name_hidden_in_body(qn)
+            ]
+        if (
+            language in _MEMBER_SYNTAX_METHOD_ONLY
+            and call_name[: -len(search_name)].endswith(cs.SEPARATOR_DOT)
+            and not self._cpp_callable_member_call(
+                language, call_name, search_name, module_qn, local_var_types
+            )
+        ):
+            # `recv.name()` / `p->name()` can only call a method: a free
+            # function is never reachable with `.` syntax. With the receiver
+            # untyped, `s.is_none()` bound a `#[test] fn is_none` in another
+            # crate and `h->swap(x)` a namespace-level `swap` (issue #3176).
+            possible_matches = [
+                qn
+                for qn in possible_matches
+                if self.function_registry[qn] == cs.NodeLabel.METHOD.value
             ]
         if language == cs.SupportedLanguage.RUST and search_name == call_name:
             # A bare Rust path NEVER names a method (inherent methods need
@@ -5561,10 +5599,77 @@ class CallResolver:
         # (`String::new()` bound the file's own `fn new`, issue #2543).
         if language == cs.SupportedLanguage.RUST:
             return None
+        # Neither has C++: `obj.f()` / `p->f()` calls a member, never the
+        # file's namespace-level `f` (`h->swap(x)` bound `swap`, #3176),
+        # unless some type declares `f` a callable data member. A receiver
+        # whose type is known has to be such a type: `s.data()` on a
+        # `std::string` bound the file's `data` because an unrelated struct
+        # held an `int (*data)()` (#3220 review).
+        if (
+            language == cs.SupportedLanguage.CPP
+            and separator == cs.SEPARATOR_DOT
+            and not self._cpp_callable_member_call(
+                language, call_name, method_name, module_qn, local_var_types
+            )
+        ):
+            return None
         resolved = self._try_resolve_module_method(method_name, call_name, module_qn)
         if resolved is not None:
             self.last_resolution = cs.EdgeResolution.HEURISTIC
         return resolved
+
+    def _cpp_callable_member(
+        self, language: cs.SupportedLanguage | None, name: str
+    ) -> bool:
+        # A function-pointer or `std::function` member: `ops->cb()` calls
+        # whatever free function was stored in it, as in C.
+        return language == cs.SupportedLanguage.CPP and name in self.cpp_callable_fields
+
+    def _cpp_callable_member_call(
+        self,
+        language: cs.SupportedLanguage | None,
+        call_name: str,
+        name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> bool:
+        return self._cpp_callable_member(
+            language, name
+        ) and self._cpp_receiver_may_hold_callable(
+            call_name, name, module_qn, local_var_types
+        )
+
+    def _cpp_receiver_may_hold_callable(
+        self,
+        call_name: str,
+        name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> bool:
+        # An untyped receiver may be any type, so the name alone decides. A
+        # typed one calls through the member only when its own type, or a
+        # base, declares it; an external type declares none of ours.
+        var_type = self._two_part_receiver_type(call_name, local_var_types)
+        if var_type is None:
+            return True
+        if self._receiver_type_is_external(call_name, module_qn, local_var_types):
+            return False
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        class_qn = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
+        registered = self._registered_class_qn(class_qn, module_qn)
+        if registered is None:
+            return True
+        # The inferred type carries no qualifier (`b::Dev` is `Dev`), so the
+        # class found is one of those sharing the simple name, not
+        # necessarily the receiver's: any of them may hold the member.
+        simple = registered.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        suffix = f"{cs.SEPARATOR_DOT}{simple}"
+        declaring = self.cpp_callable_fields[name]
+        return any(
+            not declaring.isdisjoint(self._mro(qn))
+            for qn in {registered, *self.function_registry.find_ending_with(simple)}
+            if qn == registered or qn.endswith(suffix)
+        )
 
     def _try_resolve_static_type_method(
         self, object_name: str, method_name: str, call_name: str, module_qn: str

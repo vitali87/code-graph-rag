@@ -2311,6 +2311,7 @@ class CallProcessor:
         cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         macro_qns: set[str] | None = None,
+        cpp_callable_fields: dict[str, set[str]] | None = None,
         ast_cache: ASTCacheProtocol | None = None,
         go_package_names: Mapping[str, str] | None = None,
         sql_sources: Mapping[Path, bytes] | None = None,
@@ -2400,6 +2401,7 @@ class CallProcessor:
             rehydrated_interface_implementers=rehydrated_interface_implementers,
             go_package_names=self._go_package_names,
             go_links=go_links,
+            cpp_callable_fields=cpp_callable_fields,
         )
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
