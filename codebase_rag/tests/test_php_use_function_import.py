@@ -90,6 +90,67 @@ def test_reparse_clears_stale_php_function_imports(tmp_path: Path) -> None:
     assert "enum_value" not in processor.php_function_imports.get("proj.mod", set())
 
 
+def test_class_alias_survives_a_same_named_const_and_reparse(tmp_path: Path) -> None:
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.PHP not in parsers:
+        pytest.skip("php tree-sitter grammar not installed")
+    php = parsers[cs.SupportedLanguage.PHP]
+    processor = ImportProcessor(tmp_path, "proj")
+    both = php.parse(
+        b"<?php\nnamespace App;\n"
+        b"use Vendor\\Widget as Target;\n"
+        b"use const Settings\\TARGET as Target;\n"
+        b"use function Helpers\\build as Target;\n"
+    ).root_node
+    processor.parse_imports(both, "proj.mod", cs.SupportedLanguage.PHP, queries)
+    assert processor.php_class_imports["proj.mod"]["Target"] == "Vendor.Widget"
+    assert "Target" in processor.php_const_imports["proj.mod"]
+    assert "Target" in processor.php_function_imports["proj.mod"]
+
+    cleared = php.parse(b"<?php\nnamespace App;\n").root_node
+    processor.parse_imports(cleared, "proj.mod", cs.SupportedLanguage.PHP, queries)
+    assert "proj.mod" not in processor.php_class_imports
+
+
+def test_same_alias_construction_follows_the_class(tmp_path: Path) -> None:
+    # The const is recorded after the class, so the shared import map no
+    # longer points at Widget. The function alias is recorded before the
+    # class. Neither may send `new` to the current-namespace decoy.
+    root = tmp_path / "proj"
+    files = {
+        "src/Decoy.php": "<?php\nnamespace App;\nclass Target { public function __construct() {} }\nclass Maker { public function __construct() {} }\n",
+        "src/Widget.php": "<?php\nnamespace Vendor;\nclass Widget { public function __construct() {} }\nclass Maker { public function __construct() {} }\n",
+        "src/Caller.php": (
+            "<?php\nnamespace App;\n"
+            "use Vendor\\Widget as Target;\n"
+            "use const Settings\\TARGET as Target;\n"
+            "use function Helpers\\build as Maker;\n"
+            "use Vendor\\Maker as Maker;\n"
+            "class Caller { public function make(): void {"
+            " new Target(); new target(); new Maker(); new maker(); } }\n"
+        ),
+    }
+    for rel, source in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+    ingestor = _capture(root, "proj")
+    edges = {
+        (str(src), rel, str(dst))
+        for _fl, src, rel, _tl, dst in ingestor.rels
+        if rel in {"INSTANTIATES", "CALLS"}
+    }
+    caller = "proj.src.Caller.Caller.make"
+    widget = "proj.src.Widget.Widget"
+    maker = "proj.src.Widget.Maker"
+    assert (caller, "INSTANTIATES", widget) in edges
+    assert (caller, "CALLS", f"{widget}.__construct") in edges
+    assert (caller, "INSTANTIATES", maker) in edges
+    assert (caller, "CALLS", f"{maker}.__construct") in edges
+    assert not any(dst.endswith(".Decoy.Target") for _src, _rel, dst in edges)
+    assert not any(dst.endswith(".Decoy.Maker") for _src, _rel, dst in edges)
+
+
 def _use_clauses(source: bytes) -> list[Node]:
     parsers, _ = load_parsers()
     if cs.SupportedLanguage.PHP not in parsers:
@@ -109,6 +170,36 @@ def test_use_clause_binding_reads_path_and_local_name() -> None:
     aliased, plain = _use_clauses(b"<?php\nuse A\\B as C;\nuse A\\D;\n")
     assert _php_use_clause_binding(aliased) == ("A.B", "C")
     assert _php_use_clause_binding(plain) == ("A.D", "D")
+
+
+def test_grouped_use_records_prefixed_class_function_and_const(tmp_path: Path) -> None:
+    # `use App\{Resolver as R}` is not a direct child clause. The alias has
+    # to be the grouped class, or `[R::class, 'm']` resolves to `App.R`.
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.PHP not in parsers:
+        pytest.skip("php tree-sitter grammar not installed")
+    php = parsers[cs.SupportedLanguage.PHP]
+    processor = ImportProcessor(tmp_path, "proj")
+    source = php.parse(
+        b"<?php\nnamespace App;\n"
+        b"use App\\{Resolver as R, Models\\Crate as C, function foo, const BAR};\n"
+        b"use function Other\\{alpha, beta as b};\n"
+    ).root_node
+    processor.parse_imports(source, "proj.mod", cs.SupportedLanguage.PHP, queries)
+    classes = processor.php_class_imports["proj.mod"]
+    assert classes["R"] == "App.Resolver"
+    assert classes["C"] == "App.Models.Crate"
+    assert "foo" not in classes
+    assert "BAR" not in classes
+    assert processor.php_function_imports["proj.mod"] == {"foo", "alpha", "b"}
+    assert processor.php_const_imports["proj.mod"] == {"BAR"}
+    mapping = processor.import_mapping["proj.mod"]
+    assert mapping["R"] == "App.Resolver"
+    assert mapping["C"] == "App.Models.Crate"
+    assert mapping["foo"] == "App.foo"
+    assert mapping["BAR"] == "App.BAR"
+    assert mapping["alpha"] == "Other.alpha"
+    assert mapping["b"] == "Other.beta"
 
 
 def test_use_clause_without_a_qualified_name_binds_nothing() -> None:
