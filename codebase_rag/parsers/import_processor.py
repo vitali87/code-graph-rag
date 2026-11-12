@@ -3148,9 +3148,7 @@ class ImportProcessor:
                 # target of an import's source. Any other name may be what
                 # this module exports or re-exports: `helper` of `util.js`
                 # beside `util/helper/index.js`.
-                if through_index is not None and names_module:
-                    return through_index
-                return name
+                return (names_module and through_index) or name
             rest = name[len(prefix) :]
             if own := siblings.get(prefix, {}).get(family):
                 return f"{own}{rest}"
