@@ -24,12 +24,15 @@ on a rename through the same span mechanism.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import NamedTuple
 
+from tree_sitter import Node
+
 from .. import constants as cs
 from ..language_spec import get_language_for_extension
+from ..parser_loader import load_parsers
 from .patcher import Patcher
 
 
@@ -325,7 +328,118 @@ _JS_NAMED = re.compile(r"\{(?P<names>[^}]*)\}")
 _JS_KEYWORD = re.compile(r"\s*(?:import|export)\s+(?:type\s+)?")
 
 
-def _js_rewrite(statement: str, move: SymbolMove, importer_path: str) -> str | None:
+# `const { pad, pad: p } = U` (or `= require("./u")`): a destructure that
+# reads exports by key (issue #3252).
+_JS_DECLARATIONS = frozenset({cs.TS_LEXICAL_DECLARATION, cs.TS_VARIABLE_DECLARATION})
+
+
+def _js_destructured_keys(pattern: Node) -> Iterator[tuple[Node, str, bool]]:
+    """Each key an object pattern reads, with the local it binds and whether
+    it is a shorthand, in the shapes the index binds: `{ pad }`, `{ pad: p }`
+    and either with a default (`{ pad = d }`, `{ pad: p = d }`)."""
+    for entry in pattern.named_children:
+        node = (
+            entry.child_by_field_name(cs.FIELD_LEFT)
+            if entry.type == cs.TS_OBJECT_ASSIGNMENT_PATTERN
+            else entry
+        )
+        if node is None:
+            continue
+        if node.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
+            yield node, _node_text(node), True
+        elif node.type == cs.TS_PAIR_PATTERN and (pair := _js_pair_key(node)):
+            key, local = pair
+            yield key, local, False
+
+
+def _js_pair_key(pair: Node) -> tuple[Node, str] | None:
+    """The key of `{ pad: p }` or `{ pad: p = d }` and the local `p` it binds;
+    any other value shape (a nested pattern) binds no local the index tracks."""
+    key = pair.child_by_field_name(cs.FIELD_KEY)
+    value = pair.child_by_field_name(cs.FIELD_VALUE)
+    if value is not None and value.type == cs.TS_ASSIGNMENT_PATTERN:
+        value = value.child_by_field_name(cs.FIELD_LEFT)
+    if key is None or value is None or value.type != cs.TS_IDENTIFIER:
+        return None
+    return key, _node_text(value)
+
+
+def _node_text(node: Node) -> str:
+    return (node.text or b"").decode(cs.ENCODING_UTF8)
+
+
+def _js_object_patterns(source: bytes, importer_path: str) -> list[Node]:
+    """The object patterns a `const`/`let`/`var` statement destructures into;
+    none for any other statement or an importer no parser reads."""
+    language = get_language_for_extension(Path(importer_path).suffix)
+    parser = (
+        load_parsers()[0].get(language)
+        if isinstance(language, cs.SupportedLanguage)
+        else None
+    )
+    if parser is None:
+        return []
+    declaration = next(iter(parser.parse(source).root_node.named_children), None)
+    if declaration is None or declaration.type not in _JS_DECLARATIONS:
+        return []
+    return [
+        pattern
+        for declarator in declaration.named_children
+        if declarator.type == cs.TS_VARIABLE_DECLARATOR
+        and (pattern := declarator.child_by_field_name(cs.FIELD_NAME)) is not None
+        and pattern.type == cs.TS_OBJECT_PATTERN
+    ]
+
+
+def _js_destructure_rewrite(
+    statement: str,
+    move: SymbolMove,
+    importer_path: str,
+    bound: frozenset[str] | None,
+) -> str | None:
+    """The destructure with the renamed symbol's key renamed (issue #3252).
+
+    `{ pad: p }` keeps its local `p`; a shorthand `{ pad }` rebinds with
+    its uses, as a bare `import { pad }` does, or keeps its local by
+    spelling the key out (`{ padLeft: pad }`). Only the entries binding a
+    local of `bound` are the import's: one declaration can destructure
+    another object too (`const { pad: p } = other, { pad: q } = U`). The
+    statement is parsed, so a comment or a default beside a key is kept. A
+    move cannot retarget a namespace the statement does not name, so only a
+    rename is rewritten.
+    """
+    if move.old_module != ANY_MODULE or move.new_name is None:
+        return None
+    source = statement.encode(cs.ENCODING_UTF8)
+    patterns = _js_object_patterns(source, importer_path)
+    if not patterns:
+        return None
+    rewritten = source
+    keys = [entry for pattern in patterns for entry in _js_destructured_keys(pattern)]
+    for key, local, shorthand in reversed(keys):
+        if _node_text(key) != move.symbol or (bound is not None and local not in bound):
+            continue
+        new_key = move.new_name
+        if shorthand and not move.rebind:
+            new_key += cs.PATCH_SHORTHAND_KEY_SEPARATOR + move.symbol
+        rewritten = (
+            rewritten[: key.start_byte]
+            + new_key.encode(cs.ENCODING_UTF8)
+            + rewritten[key.end_byte :]
+        )
+    return rewritten.decode(cs.ENCODING_UTF8)
+
+
+def _js_rewrite(
+    statement: str,
+    move: SymbolMove,
+    importer_path: str,
+    bound: frozenset[str] | None = None,
+) -> str | None:
+    if (
+        destructured := _js_destructure_rewrite(statement, move, importer_path, bound)
+    ) is not None:
+        return destructured
     spec_match = _JS_SPEC.search(statement)
     if spec_match is None or not _module_matches(spec_match.group("spec"), move):
         return None
@@ -519,6 +633,15 @@ class ImportRewriter:
         and listed in `untouched`, so the caller can see what the rewrite
         deliberately did not do.
         """
+        sites = list(sites)
+        # The names each statement binds for the symbol, so a statement
+        # binding other names too rewrites only these.
+        bound: dict[tuple[str, int, int], set[str]] = {}
+        for site in sites:
+            if site.alias:
+                bound.setdefault((site.path, site.line, site.col), set()).add(
+                    site.alias
+                )
         applied: list[Rewrite] = []
         seen: set[tuple[str, int, int]] = set()
         for site in sites:
@@ -531,7 +654,13 @@ class ImportRewriter:
             language = get_language_for_extension(Path(site.path).suffix)
             source, start, end = self._statement(site)
             statement = source[start:end].decode(cs.ENCODING_UTF8)
-            replacement = self._rewrite_for(language, statement, move, site.path)
+            replacement = self._rewrite_for(
+                language,
+                statement,
+                move,
+                site.path,
+                frozenset(bound.get(span_key, ())),
+            )
             if replacement is None or replacement == statement:
                 self.untouched.append(site)
                 continue
@@ -547,11 +676,12 @@ class ImportRewriter:
         statement: str,
         move: SymbolMove,
         importer_path: str,
+        bound: frozenset[str],
     ) -> str | None:
         if language == cs.SupportedLanguage.PYTHON:
             return _py_rewrite(statement, move)
         if language in cs.JS_TS_LANGUAGES:
-            return _js_rewrite(statement, move, importer_path)
+            return _js_rewrite(statement, move, importer_path, bound)
         if language == cs.SupportedLanguage.JAVA:
             return _java_rewrite(statement, move)
         if language == cs.SupportedLanguage.GO:
