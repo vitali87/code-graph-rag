@@ -469,6 +469,10 @@ INDEX_LUA_INIT = "init"
 MODULE_INDEX_FILE_STEMS = frozenset(
     {INDEX_INIT, INDEX_INDEX, INDEX_MOD, INDEX_LUA_INIT}
 )
+# What an import is pointed at when only modules of another language family
+# hold its name (`require("./util")` beside a lone `util.py`): nothing the
+# importer can load, so no module or definition answers to it (issue #2756).
+IMPORT_TARGET_UNREACHABLE = "unresolved"
 # A Rust library crate's root, where its `pub use` facade lives.
 INDEX_RS_LIB = "lib"
 # Stems of the files a package exposes its internals through (issue #2573):
