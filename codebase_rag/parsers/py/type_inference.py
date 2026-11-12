@@ -146,16 +146,42 @@ class PythonTypeInferenceEngine(
         return names
 
     @staticmethod
-    def _is_static_method(def_node: Node) -> bool:
+    def _has_decorator(def_node: Node, names: frozenset[str]) -> bool:
         parent = def_node.parent
         if parent is None or parent.type != cs.TS_PY_DECORATED_DEFINITION:
             return False
         for child in parent.named_children:
             if child.type == cs.TS_PY_DECORATOR and child.text is not None:
                 text = child.text.decode(cs.ENCODING_UTF8).lstrip("@").strip()
-                if text.split("(", 1)[0].rsplit(".", 1)[-1] in cs.STATIC_DECORATORS:
+                if text.split("(", 1)[0].rsplit(".", 1)[-1] in names:
                     return True
         return False
+
+    @classmethod
+    def _is_static_method(cls, def_node: Node) -> bool:
+        return cls._has_decorator(def_node, cs.STATIC_DECORATORS)
+
+    @classmethod
+    def receiver_is_the_class(cls, caller_node: Node) -> bool:
+        """Whether the method enclosing `caller_node` receives the class itself.
+
+        A property read through such a receiver (`cls.name` in a classmethod)
+        yields the property object and never runs the getter.
+        """
+        method: Node | None = None
+        node: Node | None = caller_node
+        while node is not None and node.type != cs.TS_PY_CLASS_DEFINITION:
+            if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+                method = node
+            node = node.parent
+        if node is None or method is None:
+            return False
+        name = method.child_by_field_name(cs.FIELD_NAME)
+        return cls._has_decorator(method, cs.CLASSMETHOD_DECORATORS) or (
+            name is not None
+            and name.text is not None
+            and name.text.decode(cs.ENCODING_UTF8) in cs.PY_IMPLICIT_CLASS_RECEIVERS
+        )
 
     @staticmethod
     def _binds_name(target: Node, name: str) -> bool:

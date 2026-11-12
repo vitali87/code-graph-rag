@@ -712,6 +712,14 @@ def _dart_is_bare_read(node: Node) -> bool:
     return True
 
 
+_PY_DESTRUCTURING_TARGET_TYPES = frozenset(
+    {
+        cs.TS_PY_PATTERN_LIST,
+        cs.TS_PY_TUPLE_PATTERN,
+        cs.TS_PY_LIST_PATTERN,
+        cs.TS_PY_LIST_SPLAT_PATTERN,
+    }
+)
 # Python nested-scope boundaries and sequence-literal node types used when
 # scanning a scope for dispatch tables of function references.
 _PY_SCOPE_BOUNDARY_TYPES = frozenset(
@@ -3118,6 +3126,10 @@ class CallProcessor:
                 combined_captures,
                 sorted_func_nodes,
             )
+            has_python_property_reads = (
+                language == cs.SupportedLanguage.PYTHON
+                and bool(self._resolver.function_registry.property_names())
+            )
             if (
                 not all_call_nodes
                 and language
@@ -3127,6 +3139,7 @@ class CallProcessor:
                     cs.SupportedLanguage.DART,
                 )
                 and language not in _JS_TS_LANGUAGES
+                and not has_python_property_reads
             ):
                 # A file with no call expressions has nothing further to
                 # process, except in C#, where a class can still READ
@@ -12069,7 +12082,6 @@ class CallProcessor:
         attr_type = cs.TS_PY_ATTRIBUTE
         function_types = lang_config.function_node_types
         class_types = lang_config.class_node_types
-        seen: set[str] = set()
 
         stack = list(caller_node.children)
         while stack:
@@ -12084,6 +12096,7 @@ class CallProcessor:
                         caller_node, node, local_var_types, module_qn
                     ) or (local_var_types,):
                         self._emit_property_access(
+                            caller_node,
                             node,
                             attr_text,
                             caller_spec,
@@ -12091,12 +12104,12 @@ class CallProcessor:
                             module_qn,
                             var_types,
                             class_context,
-                            seen,
                         )
             stack.extend(node.children)
 
     def _emit_property_access(
         self,
+        caller_node: Node,
         node: Node,
         attr_text: str,
         caller_spec: tuple[str, str, str],
@@ -12104,11 +12117,12 @@ class CallProcessor:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
-        seen: set[str],
     ) -> None:
         # One property-named attribute access: a CALLS edge to the getter it
         # invokes, unless the attribute is itself a call's function.
         registry = self._resolver.function_registry
+        if self._python_attribute_is_write_target(node):
+            return
         parent = node.parent
         is_call_target = (
             parent is not None
@@ -12120,28 +12134,104 @@ class CallProcessor:
             # permanently False.
             and parent.child_by_field_name(cs.TS_FIELD_FUNCTION) == node
         )
-        if not is_call_target and (
-            callee_info := self._resolver.resolve_function_call(
+        if is_call_target:
+            return
+
+        callee_info = self._resolve_property_getter(
+            caller_node,
+            node,
+            attr_text,
+            caller_qn,
+            module_qn,
+            local_var_types,
+            class_context,
+        )
+        if callee_info is None:
+            return
+        callee_qn = callee_info[1]
+        if registry.is_property(callee_qn) and callee_qn != caller_qn:
+            targets = registry.variants(callee_qn)
+            self._resolution = (
+                cs.EdgeResolution.OVERLOAD
+                if len(targets) > 1
+                else self._resolver.last_resolution
+            )
+            for target_qn in targets:
+                self._emit_rel(
+                    caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+
+    def _resolve_property_getter(
+        self,
+        caller_node: Node,
+        node: Node,
+        attr_text: str,
+        caller_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+    ) -> tuple[str, str] | None:
+        receiver, _, property_name = attr_text.rpartition(cs.SEPARATOR_DOT)
+        # Only the method's bound receiver denotes the enclosing class: an
+        # ordinary parameter that happens to be named `self` or `cls` holds a
+        # caller-supplied value, so it takes the receiver-resolution path.
+        if not (
+            class_context
+            and receiver
+            in PythonTypeInferenceEngine._receiver_parameter_names(caller_node)
+            and not self._python_lambda_rebinds(node, caller_node, receiver)
+        ):
+            return self._resolver.resolve_function_call(
                 attr_text,
                 module_qn,
                 local_var_types,
                 class_context,
                 caller_qn,
             )
+        if PythonTypeInferenceEngine.receiver_is_the_class(caller_node):
+            # `cls.name` hands back the property object: no getter runs.
+            return None
+        callee_info = self._resolver._try_resolve_method(class_context, property_name)
+        if callee_info is None or not self._resolver.function_registry.is_property(
+            callee_info[1]
         ):
-            callee_qn = callee_info[1]
+            return None
+        self._resolver.last_resolution = cs.EdgeResolution.EXACT
+        return callee_info
+
+    @staticmethod
+    def _python_lambda_rebinds(node: Node, caller_node: Node, name: str) -> bool:
+        # `lambda self: self.name` inside a method reads its own parameter,
+        # not the method's receiver. Only the body is in the lambda's scope:
+        # a default (`lambda self=self.name: ...`) is evaluated outside it.
+        inner = node
+        current = node.parent
+        while current is not None and current != caller_node:
             if (
-                registry.is_property(callee_qn)
-                and callee_qn != caller_qn
-                and callee_qn not in seen
+                current.type == cs.TS_PY_LAMBDA
+                and current.child_by_field_name(cs.FIELD_BODY) == inner
+                and name in PythonTypeInferenceEngine._parameter_names(current)
             ):
-                seen.add(callee_qn)
-                for target_qn in registry.variants(callee_qn):
-                    self._emit_rel(
-                        caller_spec,
-                        cs.RelationshipType.CALLS,
-                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
-                    )
+                return True
+            inner = current
+            current = current.parent
+        return False
+
+    @staticmethod
+    def _python_attribute_is_write_target(node: Node) -> bool:
+        # Only the attribute that IS the target, or one element of a
+        # destructuring target, is written. Anything else under the left side
+        # (a receiver, a subscript index or slice bound) is evaluated as a read.
+        current = node
+        while (parent := current.parent) is not None:
+            if parent.type == cs.TS_PY_ASSIGNMENT:
+                return parent.child_by_field_name(cs.TS_FIELD_LEFT) == current
+            if parent.type not in _PY_DESTRUCTURING_TARGET_TYPES:
+                return False
+            current = parent
+        return False
 
     @_site_scoped
     def _ingest_dart_getter_reads(
