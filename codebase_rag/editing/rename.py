@@ -55,6 +55,7 @@ from ..utils.path_utils import (
     declaration_implementations,
     python_stub_implementations,
 )
+from ..utils.source_encoding import decode_source
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
 from .occurrences import (
@@ -2120,7 +2121,12 @@ class Renamer:
         the same answer it gives for a genuinely unrestored entry.
         """
         try:
-            text = (self.repo_root / path).read_text(encoding="utf-8")
+            text = decode_source(
+                (self.repo_root / path).read_bytes(), self.repo_root / path
+            )
+            # read_text translated \r\n to \n before #3334; the staged
+            # byte offsets address that normalized text, so keep it.
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
         except OSError:
             return False
         # Every recorded entry must read the old name AND still sit inside an
@@ -2157,9 +2163,8 @@ class Renamer:
         and the rewrite agree by construction.
         """
         try:
-            lines = (
-                (self.repo_root / site.path).read_text(encoding="utf-8").splitlines()
-            )
+            site_path = self.repo_root / site.path
+            lines = decode_source(site_path.read_bytes(), site_path).splitlines()
         except OSError:
             return False
         if not 0 < site.line <= len(lines):
@@ -2201,7 +2206,8 @@ class Renamer:
         SHOWN restored is a no rather than a skip.
         """
         try:
-            lines = (self.repo_root / relative).read_text(encoding="utf-8").splitlines()
+            file_path = self.repo_root / relative
+            lines = decode_source(file_path.read_bytes(), file_path).splitlines()
         except OSError:
             return False
         for site in sites:
