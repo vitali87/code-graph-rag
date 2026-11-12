@@ -1,0 +1,10 @@
+{
+  "_comment": "代码仓库别名表。alias 用于命令行简写，path 必须是绝对路径。此文件不纳入版本控制（见 .gitignore），因为路径与本机相关。首次使用请复制为 repos.json 后修改。",
+  "default": "myrepo",
+  "repos": {
+    "myrepo": {
+      "path": "D:\\code\\your-repo",
+      "desc": "示例仓库，改成你自己的路径"
+    }
+  }
+}

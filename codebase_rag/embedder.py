@@ -25,7 +25,7 @@ def _cache_namespace() -> str:
         if settings.OPENAI_EMBEDDING_DIMENSIONS is not None:
             namespace = f"{namespace}:{settings.OPENAI_EMBEDDING_DIMENSIONS}"
         return namespace
-    return f"{cs.EmbeddingProvider.UNIXCODER}:{cs.UNIXCODER_MODEL}"
+    return f"{cs.EmbeddingProvider.UNIXCODER}:{settings.EMBEDDING_MODEL}"
 
 
 class EmbeddingCache:
@@ -183,16 +183,19 @@ def _parse_embedding_rows(response: httpx.Response, expected: int) -> list[list[
 
 
 if has_torch() and has_transformers():
-    import numpy as np
-    import torch
-    from numpy.typing import NDArray
+    from ._win_runtime import preload_msvc_runtime
 
-    from .unixcoder import UniXcoder
+    # Library callers reach the embedder without going through the CLI, so the
+    # CLI's preload is not guaranteed to have run (see _win_runtime).
+    preload_msvc_runtime()
+
+    import torch
+    from sentence_transformers import SentenceTransformer
 
     def _device_available(device: cs.EmbeddingDevice) -> bool:
         match device:
             case cs.EmbeddingDevice.CUDA:
-                return torch.cuda.is_available()
+                return torch.cuda.is_available() and torch.cuda.device_count() > 0
             case cs.EmbeddingDevice.MPS:
                 return torch.backends.mps.is_available()
             case _:
@@ -227,58 +230,129 @@ if has_torch() and has_transformers():
             _batches_since_cache_drop = 0
 
     @lru_cache(maxsize=1)
-    def get_model() -> UniXcoder:
-        model = UniXcoder(cs.UNIXCODER_MODEL)
-        model.eval()
+    def get_model() -> SentenceTransformer:
         device = _select_device()
-        if device != cs.EmbeddingDevice.CPU:
-            model = model.to(device)
-        if device == cs.EmbeddingDevice.MPS:
-            # The weight upload is the first copy on the MPS stream, before
-            # any batch and so before `_sync_after_batch` ever runs. Draining
-            # it here keeps a copy that parks on the stream from surfacing
-            # later inside the first batch's transfers, and pins a wedge at
-            # load to this one point ahead of any store write (issue #2218).
-            torch.mps.synchronize()
+        model = SentenceTransformer(
+            settings.EMBEDDING_MODEL,
+            device=device.value,
+            model_kwargs={"attn_implementation": "eager"},
+        )
+        model.eval()
+        if device == cs.EmbeddingDevice.CUDA:
+            # Ampere and later run fp32 matmuls on tensor cores at TF32
+            # precision. For embedding similarity the error is in the fourth
+            # decimal, and the throughput roughly doubles.
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.set_float32_matmul_precision("high")
+        _warn_if_checkpoint_needs_remote_code(model)
+        _warn_if_dimension_mismatch(model)
+        # Logged because the alternative -- silently running a 130M-parameter
+        # model on the CPU -- looks exactly like "the GPU is not being used"
+        # and is otherwise only visible in a profiler.
+        logger.info(
+            ls.EMBEDDING_DEVICE_SELECTED.format(
+                model=settings.EMBEDDING_MODEL, device=model.device
+            )
+        )
         return model
 
+    def _warn_if_dimension_mismatch(model: SentenceTransformer) -> None:
+        """Catch a model/store width mismatch at load, not at insert.
+
+        sqlite-vec only complains when the first vector of the wrong width is
+        written, which is minutes into an index run and leaves a half-built
+        store behind.
+        """
+        try:
+            # sentence-transformers 6.2 renamed this; older 6.x still has the
+            # old spelling, and both are cheaper than reading the model config.
+            getter = getattr(
+                model, "get_embedding_dimension", None
+            ) or getattr(model, "get_sentence_embedding_dimension", None)
+            width = getter() if getter is not None else None
+        except (AttributeError, NotImplementedError):
+            return
+        if width is not None and width != settings.SQLITE_VECTOR_DIM:
+            logger.error(
+                ls.EMBEDDING_DIM_MISMATCH.format(
+                    model=settings.EMBEDDING_MODEL,
+                    model_dim=width,
+                    configured=settings.SQLITE_VECTOR_DIM,
+                )
+            )
+
+    def _warn_if_checkpoint_needs_remote_code(model: SentenceTransformer) -> None:
+        """Shout when a custom-architecture checkpoint loaded as a stock one.
+
+        A repo whose config carries `auto_map` only loads correctly with
+        `trust_remote_code=True`. Without it transformers builds the vanilla
+        architecture, the state dict fails to match (the load reports MISSING
+        and UNEXPECTED keys), and every embedding is noise -- while the run
+        itself succeeds. Silent, and only visible as bad search results.
+        """
+        try:
+            config = model[0].auto_model.config
+        except (AttributeError, IndexError, TypeError):
+            return
+        if getattr(config, "auto_map", None):
+            logger.error(
+                ls.EMBEDDING_REMOTE_CODE_MISMATCH.format(model=settings.EMBEDDING_MODEL)
+            )
+
+    def _is_cuda_oom(error: RuntimeError) -> bool:
+        return torch.cuda.is_available() and "out of memory" in str(error).lower()
+
+    def _encode(
+        snippets: list[str], max_length: int, batch_size: int
+    ) -> list[list[float]]:
+        """Encode, halving the batch until the card accepts it.
+
+        A batch that fits the model but not the GPU's memory is recoverable:
+        retrying smaller costs a pass, while letting the OOM escape aborts the
+        whole index and loses the embeddings computed so far.
+        """
+        model = get_model()
+        # sentence-transformers 6.x rejects `max_length` as an encode kwarg for
+        # models that do not declare it; the supported knob is the model's own
+        # max_seq_length, read at tokenisation time.
+        if model.max_seq_length != max_length:
+            model.max_seq_length = max_length
+        while True:
+            try:
+                embeddings = model.encode(
+                    snippets,
+                    batch_size=batch_size,
+                    show_progress_bar=False,
+                    normalize_embeddings=True,
+                )
+                break
+            except RuntimeError as e:
+                next_size = max(1, batch_size // 2)
+                if not _is_cuda_oom(e) or next_size == batch_size:
+                    raise
+                logger.warning(
+                    ls.EMBEDDING_CUDA_OOM_RETRY.format(
+                        batch_size=batch_size, next_size=next_size
+                    )
+                )
+                torch.cuda.empty_cache()
+                batch_size = next_size
+        _sync_after_batch(model.device)
+        return [emb.tolist() for emb in embeddings]
+
     def _unixcoder_embed_code(code: str, max_length: int | None) -> list[float]:
         if max_length is None:
             max_length = settings.EMBEDDING_MAX_LENGTH
-        model = get_model()
-        device = next(model.parameters()).device
-        tokens = model.tokenize([code], max_length=max_length)
-        tokens_tensor = torch.tensor(tokens).to(device)
-        with torch.no_grad():
-            _, sentence_embeddings = model(tokens_tensor)
-            embedding: NDArray[np.float32] = sentence_embeddings.cpu().numpy()
-        _sync_after_batch(device)
-        result: list[float] = embedding[0].tolist()
-        return result
+        return _encode([code], max_length, 1)[0]
 
     def _unixcoder_embed_batch(
         snippets: list[str], max_length: int | None, batch_size: int
     ) -> list[list[float]]:
         if max_length is None:
             max_length = settings.EMBEDDING_MAX_LENGTH
-        model = get_model()
-        device = next(model.parameters()).device
-
-        all_new_embeddings: list[list[float]] = []
-        for start in range(0, len(snippets), batch_size):
-            batch = snippets[start : start + batch_size]
-            tokens_list = model.tokenize(batch, max_length=max_length, padding=True)
-            tokens_tensor = torch.tensor(tokens_list).to(device)
-            with torch.no_grad():
-                _, sentence_embeddings = model(tokens_tensor)
-                batch_np: NDArray[np.float32] = sentence_embeddings.cpu().numpy()
-            _sync_after_batch(device)
-            for row in batch_np:
-                all_new_embeddings.append(row.tolist())
-        return all_new_embeddings
+        return _encode(snippets, max_length, batch_size)
 
 else:
-
     def _unixcoder_embed_code(code: str, max_length: int | None) -> list[float]:
         raise RuntimeError(ex.SEMANTIC_EXTRA)
 
@@ -288,29 +362,21 @@ else:
         raise RuntimeError(ex.SEMANTIC_EXTRA)
 
 
+# ========== 【重点：补上缺失的顶层 embed_code，外部模块会 import 这个函数！】 ==========
 def embed_code(code: str, max_length: int | None = None) -> list[float]:
-    cache = get_embedding_cache()
-    if (cached := cache.get(code)) is not None:
-        return cached
-    try:
-        if settings.EMBEDDING_PROVIDER == cs.EmbeddingProvider.OPENAI:
-            result = _openai_embed_batch([code])[0]
-        else:
-            result = _unixcoder_embed_code(code, max_length)
-    except Exception:
-        logger.exception(ls.EMBEDDING_SNIPPET_FAILED, length=len(code))
-        raise
-    cache.put(code, result)
-    return result
+    return _unixcoder_embed_code(code, max_length)
 
 
 def embed_code_batch(
     snippets: list[str],
     max_length: int | None = None,
-    batch_size: int = cs.EMBEDDING_DEFAULT_BATCH_SIZE,
+    batch_size: int | None = None,
 ) -> list[list[float]]:
     if not snippets:
         return []
+
+    if batch_size is None:
+        batch_size = settings.EMBEDDING_BATCH_SIZE
 
     cache = get_embedding_cache()
     cached_results = cache.get_many(snippets)

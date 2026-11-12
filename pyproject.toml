@@ -3,7 +3,7 @@ name = "code-graph-rag"
 version = "0.5.6"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 license = "MIT"
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -67,6 +67,13 @@ dependencies = [
     # is the first without the distrusted eMudhra roots. Declared so an
     # upgrade over an older install moves it too.
     "certifi>=2026.10.23",
+    # Imported directly by embedder.py, providers/base.py, tools/health_checker.py
+    # and tools/web_search.py. It used to arrive only as a transitive dependency
+    # of another package, so a resolver that picked `httpx2` (a different
+    # distribution that installs a `httpx2` module, not `httpx`) left `cgr`
+    # dying at import time with `ModuleNotFoundError: No module named 'httpx'`.
+    # Declaring it keeps the name the code actually imports.
+    "httpx>=0.27.0",
     # The embedded graph's `=~`: unlike `re`, a match takes a timeout, so a
     # backtracking pattern stops at the query's deadline. tiktoken already
     # installs it.
@@ -76,6 +83,14 @@ dependencies = [
     # Python twin of every part. The floor is the crate version this code
     # was written against, raised with each crate release.
     "cgr-graph-rs>=0.1.5,<0.2; platform_python_implementation == 'CPython' and ((sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64'))",
+    "sentence-transformers>=6.2.0",
+    # Matches the floor in the `semantic` extra below and, more importantly,
+    # the floor transformers 5.x enforces: it silently disables PyTorch when it
+    # finds anything older than 2.6, which turns the embedder into a no-op
+    # instead of an error. This resolves to the CPU wheel on PyPI; for a CUDA
+    # build install torch from https://download.pytorch.org/whl/cuXXX after the
+    # rest of the project (see scripts/install_cuda_torch.ps1).
+    "torch>=2.6.0",
 ]
 
 [project.scripts]
@@ -91,7 +106,15 @@ package = true
 # Patched grammars: upstream tree-sitter-c drops declarations after a
 # #define whose value embeds a block comment (issue #555). Our forks carry
 # the repeat(preproc_arg) fix; drop these overrides once upstream releases it.
+
+
 [tool.uv.sources]
+# NOTE: these two point at commits on GitHub. When the host cannot reach them
+# (offline/内网/镜像环境) every `uv pip install .` / `uv sync` fails with
+# "failed to find branch, tag, or commit". Install with `--no-sources` there:
+#     uv pip install --no-sources -e ".[semantic]"
+# which resolves the grammars from PyPI instead.
+#
 # A checkout builds the crate it carries (with a Rust toolchain), so the
 # Python and Rust halves of a change are tested together; installs from
 # PyPI get the published wheels.
@@ -99,9 +122,20 @@ cgr-graph-rs = { path = "rust/cgr_graph_rs" }
 tree-sitter-c = { git = "https://github.com/vitali87/tree-sitter-c", rev = "fa327ad98f847f8173fc46926be4165c7971f960" }
 tree-sitter-cpp = { git = "https://github.com/vitali87/tree-sitter-cpp", rev = "b4a7be2f62f36dd460a14b2d1728d42d81d2c486" }
 
+
+
+
+
 [tool.setuptools.packages.find]
 include = ["codebase_rag*", "codec*", "cgr*"]
-exclude = ["*.tests", "*.tests.*"]
+# `cgr-data/` is the local data root (graph db, vectors, bge-m3 model, state).
+# It has no __init__.py, but setuptools' default namespace discovery still
+# matches it as `cgr-data` under the `cgr*` pattern: find_namespace_packages
+# returns `cgr-data.db`, `cgr-data.hf-cache.models--jinaai--...` and so on, so
+# a wheel built here would try to ship the 2.5 GB data directory. Excluding the
+# pattern keeps it out of the package list (verified: 60 packages, none of them
+# under cgr-data).
+exclude = ["*.tests", "*.tests.*", "cgr-data*", "cgr_data*"]
 
 [tool.setuptools.package-data]
 codebase_rag = [
@@ -192,8 +226,18 @@ semantic = [
     # the first without emSign ECC Root CA - G3.
     "grpcio>=1.84.1",
     "sqlite-vec>=0.1.9; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64')",
+    # scipy >= 1.14 (pulled in by sentence-transformers/scikit-learn) refuses
+    # to import under numpy 1.x, and the failure surfaces as
+    # `AttributeError: module 'numpy' has no attribute 'long'` from inside
+    # scipy.sparse, which reads like a sentence-transformers bug. Flooring
+    # numpy here stops a resolver from pinning the two apart.
+    "numpy>=2.0.0",
     "torch>=2.6.0",
     "transformers>=5.0.0",
+    "sentence-transformers>=6.2.0",
+    # BGE-M3's tokenizer_config.json declares the slow XLMRobertaTokenizer;
+    # without sentencepiece transformers only manages the fast one.
+    "sentencepiece>=0.2.0",
 ]
 
 milvus = [

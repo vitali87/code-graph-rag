@@ -13,7 +13,7 @@ from typing import Any, NamedTuple, TypedDict, Unpack
 
 from dotenv.main import DotEnv
 from loguru import logger
-from pydantic import Field, ValidationError, field_validator
+from pydantic import AliasChoices, Field, ValidationError, field_validator
 from pydantic.fields import FieldInfo
 from pydantic_core import ErrorDetails
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -473,7 +473,7 @@ class AppConfig(BaseSettings):
     # CGR_HOME, beside the embedded graph's, so semantic search needs no
     # server either.
     SQLITE_VECTOR_PATH: Path | None = None
-    SQLITE_VECTOR_DIM: int = 768
+    SQLITE_VECTOR_DIM: int = cs.EMBEDDING_DIM
     SQLITE_VECTOR_TOP_K: int = 5
 
     @property
@@ -497,13 +497,32 @@ class AppConfig(BaseSettings):
     EMBEDDING_PROVIDER: cs.EmbeddingProvider = Field(
         cs.EmbeddingProvider.UNIXCODER, validation_alias="CGR_EMBEDDING_PROVIDER"
     )
+    # The local sentence-transformers model. Point this at a directory to run
+    # fully offline (see scripts/fetch_embedding_model.ps1).
+    EMBEDDING_MODEL: str = Field(
+        cs.EMBEDDING_MODEL, validation_alias="CGR_EMBEDDING_MODEL"
+    )
     OPENAI_EMBEDDING_BASE_URL: str = cs.OPENAI_DEFAULT_ENDPOINT
     OPENAI_EMBEDDING_MODEL: str = cs.OPENAI_EMBEDDING_DEFAULT_MODEL
     OPENAI_EMBEDDING_API_KEY: str | None = None
     OPENAI_EMBEDDING_DIMENSIONS: int | None = Field(default=None, gt=0)
     OPENAI_EMBEDDING_BATCH_SIZE: int = Field(default=128, gt=0)
     OPENAI_EMBEDDING_TIMEOUT: float = Field(default=60.0, gt=0)
-    EMBEDDING_MAX_LENGTH: int = 512
+    EMBEDDING_MAX_LENGTH: int = Field(
+        512,
+        validation_alias=AliasChoices(
+            "CGR_EMBEDDING_MAX_LENGTH", "EMBEDDING_MAX_LENGTH"
+        ),
+    )
+    # Batch size the local embedder hands to sentence-transformers. The 64
+    # default is sized for a CPU; a GPU with headroom (a 16 GB card among
+    # them) indexes several times faster at 128-256. An out-of-memory batch is
+    # halved and retried, so raising this cannot wedge a run.
+    EMBEDDING_BATCH_SIZE: int = Field(
+        default=cs.EMBEDDING_DEFAULT_BATCH_SIZE,
+        gt=0,
+        validation_alias="CGR_EMBEDDING_BATCH_SIZE",
+    )
     EMBEDDING_PROGRESS_INTERVAL: int = 10
     SKIP_EMBEDDINGS: bool = Field(False, validation_alias="CGR_SKIP_EMBEDDINGS")
     EMBEDDING_DEVICE: cs.EmbeddingDevice | None = Field(

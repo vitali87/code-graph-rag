@@ -224,6 +224,26 @@ EMBEDDING_DEVICE_UNAVAILABLE = (
     "Requested embedding device '{device}' is unavailable, falling back to"
     " automatic selection"
 )
+EMBEDDING_DEVICE_SELECTED = "Embedding model {model} running on {device}"
+MCP_EMBEDDINGS_WARMING = (
+    "Pre-loading the embedding model in the background; the first search will"
+    " not pay for it"
+)
+MCP_EMBEDDINGS_WARM = "Embedding model pre-loaded and ready"
+MCP_EMBEDDINGS_WARM_FAILED = "Embedding pre-load skipped: {error}"
+EMBEDDING_DIM_MISMATCH = (
+    "{model} produces {model_dim}-dim vectors but SQLITE_VECTOR_DIM is"
+    " {configured}. Set SQLITE_VECTOR_DIM={model_dim} (or CGR_EMBEDDING_MODEL"
+    " back) and rebuild the index, or every insert will be rejected."
+)
+EMBEDDING_REMOTE_CODE_MISMATCH = (
+    "{model} declares auto_map (custom modelling code) but was loaded without"
+    " trust_remote_code; its weights do not match the stock architecture, so the"
+    " vectors are effectively random. See docs: embedding model compatibility."
+)
+EMBEDDING_CUDA_OOM_RETRY = (
+    "CUDA out of memory at batch size {batch_size}; retrying at {next_size}"
+)
 NO_FUNCTIONS_FOR_EMBEDDING = "No functions or methods found for embedding generation"
 GENERATING_EMBEDDINGS = "Generating embeddings for {count} functions/methods"
 EMBEDDING_PROGRESS = "Generated {done}/{total} embeddings"

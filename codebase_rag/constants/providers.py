@@ -78,7 +78,24 @@ MODEL_ID_SUGGESTION_LIMIT = 20
 
 HTTP_OK = 200
 
-UNIXCODER_MODEL = "microsoft/unixcoder-base"
+# The local embedding model, loaded by sentence-transformers.
+#
+# It MUST load without `trust_remote_code`: a checkpoint whose config carries
+# `auto_map` ships its own modelling code, and the code shipped with 2024-era
+# repos (jina-embeddings-v2-*, for one) imports names transformers 5 removed
+# (`find_pruneable_heads_and_indices`) and reads config attributes it no longer
+# sets (`is_decoder`). Without remote code transformers silently builds the
+# stock architecture, the state dict does not match, and every vector is noise.
+#
+# BGE-M3: XLM-RoBERTa encoder, 1024 dims, 8192-token context, trained for
+# Chinese + English + code retrieval, and native to transformers.
+EMBEDDING_MODEL = "BAAI/bge-m3"
+# Width of EMBEDDING_MODEL's vectors. Must equal SQLITE_VECTOR_DIM: a mismatch
+# is rejected by sqlite-vec at insert time, not at load time.
+EMBEDDING_DIM = 1024
+# Kept because dependencies.py and the tests import it; the name predates the
+# switch away from UniXcoder.
+UNIXCODER_MODEL = EMBEDDING_MODEL
 EMBEDDING_DEFAULT_BATCH_SIZE = 64
 EMBEDDING_CACHE_FILENAME = ".embedding_cache.json"
 

@@ -4,6 +4,7 @@ import contextlib
 import json
 import os
 import sys
+import threading
 from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -130,6 +131,39 @@ def get_workspace(name: str | None = None) -> WorkspaceConfig | None:
     return config
 
 
+def _start_embedding_warmup() -> None:
+    """Load the embedding model while the client is still connecting.
+
+    sentence-transformers is imported and the checkpoint is read on first use,
+    which measured ~20 s on a warm cache (import torch ~14 s, weights to GPU
+    ~5 s). Paying that on the first `semantic_search` makes the tool look
+    broken, and the GPU sits idle for the whole of it. A daemon thread moves
+    the cost to server start, where the client is still doing its own
+    handshake.
+
+    Best effort by design: a missing `semantic` extra, an unreachable model
+    directory or a machine without CUDA must not stop the deterministic tools
+    from serving.
+    """
+    if settings.EMBEDDING_PROVIDER != cs.EmbeddingProvider.UNIXCODER:
+        return
+
+    def warm() -> None:
+        try:
+            from codebase_rag.embedder import get_model
+
+            logger.info(lg.MCP_EMBEDDINGS_WARMING)
+            model = get_model()
+            # One real encode allocates the CUDA context and the tokenizer
+            # caches; loading the weights alone leaves both for the first query.
+            model.encode(["warmup"], show_progress_bar=False)
+            logger.info(lg.MCP_EMBEDDINGS_WARM)
+        except Exception as e:  # noqa: BLE001 - warmup must never break startup
+            logger.debug(lg.MCP_EMBEDDINGS_WARM_FAILED.format(error=e))
+
+    threading.Thread(target=warm, name="cgr-embedding-warmup", daemon=True).start()
+
+
 def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngestor]:
     setup_logging()
 
@@ -184,6 +218,8 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
     )
 
     logger.info(lg.MCP_SERVER_INIT_SUCCESS)
+
+    _start_embedding_warmup()
 
     def _create_error_content(message: str) -> CallToolResult:
         return _failed_call(te.failure(message))

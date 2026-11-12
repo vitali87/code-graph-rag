@@ -16,5 +16,11 @@ the same way, leaving a value the user already set as it is (issue #2358).
 
 import os
 
+from ._win_runtime import preload_msvc_runtime
+
+# Before anything else can bind a shadowed MSVC runtime (see the module
+# docstring): the embedder imports torch later, and by then it is too late.
+preload_msvc_runtime()
+
 os.environ.setdefault("PYDANTIC_DISABLE_PLUGINS", "logfire-plugin")
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
