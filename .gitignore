@@ -93,3 +93,6 @@ evals/results/logs/
 .cgr-parser-fingerprint
 .cgr-exclusion-state.json
 .cgr-*.tmp
+
+# 本地凭据，永不提交
+.token.txt
