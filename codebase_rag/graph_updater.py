@@ -1541,6 +1541,13 @@ def _drop_class_keyed_entry(
     processor.class_inheritance.pop(qn, None)
     processor.class_field_types.pop(qn, None)
     drop_callable_fields(processor.cpp_callable_fields, qn)
+    # A Rust struct's guard-inner and element maps go with its field types:
+    # the re-parse records them only for fields that still have one, and a
+    # field retyped from `Mutex<State>` to a lock of its own kept unwrapping
+    # to State at `.lock()` (a scoped re-ingest reads the old map back from
+    # the graph before it re-parses).
+    processor.class_field_guard_inner.pop(qn, None)
+    processor.class_field_element_types.pop(qn, None)
     # A partial part leaves its group too. The group list is the
     # very list `_csharp_partial_index` holds under the syntactic
     # key, so removing the part there keeps both views in step;
@@ -2560,6 +2567,9 @@ class GraphUpdater:
         if rehydrate:
             self._rehydrate_registry_from_graph()
 
+        # After rehydration, which reads the impl methods back, and before
+        # the walk below, which then follows what the restored maps reach.
+        self._restore_unparsed_rust_impl_self_paths()
         # After rehydration, which tells a re-export from a definition, and
         # before every stage below that resolves through the import maps.
         self._restore_reached_import_state()
@@ -2751,6 +2761,102 @@ class GraphUpdater:
                     )
                 pending.append(holder)
         return restored
+
+    def _restore_unparsed_rust_impl_self_paths(self) -> None:
+        """Re-read the self path of each unparsed Rust impl block away from
+        its type.
+
+        A call written with its type's path (`crate::model::Foo::run()`)
+        binds such a block only when the block's own self path names that
+        type, and parsing records the path only for the files it reads. An
+        incremental run that re-parsed only the caller lost the edge into an
+        unchanged `impl crate::model::Foo { fn run() }` that a clean index
+        emits (PR #2993 review).
+
+        The path is read the way the block's module reads it, so the maps
+        that reading follows come back too: the block's file's, where a bare
+        `impl Foo` finds its `use`, and the module a written path names,
+        whose `pub use` may re-export the type. The import walk after this
+        follows each of those maps on to the next re-export.
+        """
+        modules = self._unparsed_rust_impl_modules()
+        if not modules:
+            return
+        # Read only now: the view loads a grammar on first access, and a
+        # project with no Rust must not pay for one.
+        lang_queries = self.queries.get(cs.SupportedLanguage.RUST)
+        if lang_queries is None:
+            return
+        dp = self.factory.definition_processor
+        for module_qn in sorted(modules):
+            path = dp.module_qn_to_file_path.get(module_qn)
+            if path is None:
+                continue
+            # First: restoring a Rust file's imports drops the impl paths it
+            # recorded.
+            self._restore_unheld_imports(module_qn)
+            entry = self.ast_cache.load(path)
+            if entry is None:
+                continue
+            for written in dp.restore_rust_impl_self_paths(
+                entry[0], module_qn, lang_queries
+            ):
+                self._restore_rust_path_module_imports(written.path, written.module_qn)
+
+    def _restore_rust_path_module_imports(self, path: str, module_qn: str) -> None:
+        # `impl crate::facade::Foo` reads `Foo` in `facade`'s map. A head the
+        # file imports instead (`impl facade::Foo`) leads there through that
+        # import, which the walk follows.
+        if cs.SEPARATOR_DOUBLE_COLON not in path:
+            return
+        module_paths = self.factory.definition_processor.module_qn_to_file_path
+        target = self._rust_written_path_qn(path, module_qn, module_paths)
+        if target is None:
+            return
+        holder = _file_module_holding(target, module_paths)
+        if holder is not None:
+            self._restore_unheld_imports(holder)
+
+    def _rust_written_path_qn(
+        self, path: str, module_qn: str, module_paths: Mapping[str, Path]
+    ) -> str | None:
+        # Rewritten as the resolver reads it: `crate::`, `self::`, `super::`
+        # and a workspace crate head the way a `use` is, and a head naming a
+        # module beside the block (`impl inner::Foo` under `mod inner;`)
+        # from that module.
+        import_processor = self.factory.import_processor
+        target = import_processor._rewrite_rust_local_use_path(path, module_qn)
+        if target == cs.RUST_UNRESOLVABLE_QN:
+            return None
+        if cs.SEPARATOR_DOUBLE_COLON not in target:
+            return target
+        segments = path.split(cs.SEPARATOR_DOUBLE_COLON)
+        head_qn = import_processor._rust_resolve_relative(
+            module_qn, segments[:1], module_qn
+        )
+        if head_qn not in module_paths:
+            return None
+        return import_processor._rust_resolve_relative(module_qn, segments, module_qn)
+
+    def _restore_unheld_imports(self, module_qn: str) -> None:
+        if module_qn not in self.factory.import_processor.import_mapping:
+            self._restore_requeued_imports(module_qn)
+
+    def _unparsed_rust_impl_modules(self) -> set[str]:
+        # The files of the Rust methods read back from the graph whose impl
+        # block sits away from its type: only such a block's owner is
+        # unregistered, and only its written path says which type it is on.
+        modules: set[str] = set()
+        rehydrated = self.factory.definition_processor.rehydrated_definition_paths
+        for qn, path in rehydrated.items():
+            if (
+                path.endswith(cs.EXT_RS)
+                and self.function_registry.get(qn) == NodeType.METHOD
+                and _natural_qn(qn).rpartition(cs.SEPARATOR_DOT)[0]
+                not in self.function_registry
+            ):
+                modules.add(self._recorded_module_qn(path))
+        return modules
 
     def _restore_requeued_imports(self, module_qn: str) -> None:
         """Parse the imports of an unchanged module for its requeued
@@ -4378,12 +4484,36 @@ class GraphUpdater:
                 namespace if isinstance(namespace, str) else "",
                 arity if isinstance(arity, int) else 0,
             )
+        # Restore an unchanged class's field types: only parsing records them,
+        # and a re-parsed file's field-hop receiver (`args.mode.update()`)
+        # types through them (issue #3004).
+        if isinstance(fields := row.get(cs.KEY_FIELD_TYPES), list):
+            self._rehydrate_class_field_types(qn, fields)
         # Record the defining file so _is_cpp_defined can language-check
         # rehydrated candidates (deferred C++ INHERITS resolution runs
         # after this and must reach bases in UNCHANGED headers).
         if isinstance(path := row.get(cs.KEY_PATH), str):
             self._rehydrate_definition_path(node_type, qn, path, row)
         return True
+
+    def _rehydrate_class_field_types(self, qn: str, fields: Sequence[object]) -> None:
+        field_types: dict[str, str] = {}
+        guard_inner: dict[str, str] = {}
+        for entry in fields:
+            # `name<TAB>type`, plus `<TAB>inner` for a Rust guard field.
+            name, _, rest = str(entry).partition(cs.FIELD_TYPE_SEPARATOR)
+            type_name, _, inner = rest.partition(cs.FIELD_TYPE_SEPARATOR)
+            if name and type_name:
+                field_types[name] = type_name
+                if inner:
+                    guard_inner[name] = inner
+        dp = self.factory.definition_processor
+        # A re-parsed class's fresh maps win, its guard inner types included.
+        if not field_types or qn in dp.class_field_types:
+            return
+        dp.class_field_types[qn] = field_types
+        if guard_inner:
+            dp.class_field_guard_inner[qn] = guard_inner
 
     def _rehydrate_go_return_types(self, rows: list[ResultRow]) -> None:
         # The result type names ingest records only while parsing the
@@ -6867,8 +6997,8 @@ class GraphUpdater:
         self, module_qn_prefixes: set[str], file_path: Path
     ) -> None:
         """Drop a removed file's entries from `class_inheritance`,
-        `class_field_types`, the C# partial groups and the parsed implementer
-        pairs.
+        `class_field_types` (with the Rust guard-inner and element maps), the
+        C# partial groups and the parsed implementer pairs.
 
         All three are keyed by a CLASS qn; the first two were never mentioned
         in `remove_file_from_state`, so a deleted file's rows outlived it on a

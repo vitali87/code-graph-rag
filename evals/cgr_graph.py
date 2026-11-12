@@ -1660,6 +1660,7 @@ class _StatefulIngestor:
                         cs.KEY_CALLABLE_FIELDS: _texts(
                             props.get(cs.KEY_CALLABLE_FIELDS)
                         ),
+                        cs.KEY_FIELD_TYPES: _texts(props.get(cs.KEY_FIELD_TYPES)),
                     }
                     defs.append(row)
                 return defs

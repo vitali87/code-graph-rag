@@ -2725,6 +2725,15 @@ class CallResolver:
             self._remember_cacheable(cache_key, None)
             return True, None
 
+        # Likewise for a JS/TS name the export walk followed to another
+        # binding (`export { beta as renamed } from "left-pad"`): the import
+        # names that binding, which nothing above resolved, so no same-named
+        # function is it. The guard above reads only the importer's own
+        # target, which names the barrel (bot review on PR #2994).
+        if self._js_reexport_led_nowhere(call_name, module_qn, call.language):
+            self._remember_cacheable(cache_key, None)
+            return True, None
+
         # A dotted call on an import whose target still holds a raw
         # slash-separated module path (github.com/x/y) is a call into an
         # EXTERNAL module: local Go paths were rewritten to project qns at
@@ -2857,6 +2866,15 @@ class CallResolver:
         # place is unknown rather than known, and keeps the trie.
         if path := _rust_assoc_path(call):
             object_path, item = path
+            # A path names one type, so a block written away from it counts
+            # only when its own self path names that type: by name alone,
+            # another same-named type's block won on import distance.
+            if (bound := self._rust_path_type_qn(object_path, call)) is not None:
+                result = self._rust_bound_type_method(
+                    bound, item, object_path[-1], call
+                )
+                self._remember_cacheable(cache_key, result)
+                return True, result
             owners = self._rust_qualifier_types(
                 object_path, call.module_qn, call.class_context
             )
@@ -2904,6 +2922,28 @@ class CallResolver:
         ):
             owners.add(type_qn)
         return frozenset(owners) or None
+
+    def _rust_path_type_qn(self, object_path: list[str], call: _CallSite) -> str | None:
+        # A qualifier written with its path (`grep_searcher::BinaryDetection`,
+        # `crate::searcher::BinaryDetection`) names one type, read where the
+        # call is written the way a receiver's declared path is: an inline
+        # mod's `self::` counts from the mod, and a head may be a module of
+        # the caller's own that re-exports the type. Handing the bare last
+        # segment to the class lookup dropped the path, and that lookup
+        # declines a name several types share (issue #2982).
+        if len(object_path) < 2:
+            return None
+        path = cs.SEPARATOR_DOUBLE_COLON.join(object_path)
+        type_qn = (
+            self._rust_inline_path_type(path, call.module_qn, call.caller_qn)
+            if call.caller_qn
+            else None
+        ) or self._rust_module_path_type(path, call.module_qn)
+        if type_qn is None or (
+            self.function_registry.get(type_qn) not in _RS_OWNER_NODE_TYPES
+        ):
+            return None
+        return type_qn
 
     def _rust_owned_method(
         self,
@@ -3674,19 +3714,26 @@ class CallResolver:
             or call_name.startswith(f"{cs.KEYWORD_SUPER}()")
         )
 
-    def _try_resolve_js_reexport(
+    def _followed_js_reexport(
         self,
         call_name: str,
         import_map: dict[str, str],
         language: cs.SupportedLanguage | None,
         module_qn: str,
-    ) -> tuple[str, str] | None:
+    ) -> str | None:
         # `import { plus } from "./lib"` maps `plus` to `lib.plus`, where a
         # barrel registers nothing: its `export { add as plus } from` names
         # the definition, possibly through further barrels. Without this the
         # call fell to the name-only fallback, which found no `plus` at all,
-        # or only guessed the right `add` (issue #2464).
+        # or only guessed the right `add` (issue #2464). None when the name
+        # leads nowhere else.
         if language not in cs.JS_TS_LANGUAGES or call_name not in import_map:
+            return None
+        # `const fn = require("./lib")` maps `fn` to the module `pkg.lib`,
+        # which spells the same as `pkg/index.js`'s export `lib`: walked, the
+        # whole-module import reached that unrelated export (bot review on
+        # PR #2994).
+        if self.import_processor.binds_js_whole_module(module_qn, call_name):
             return None
         imported_qn = import_map[call_name]
         followed = self.import_processor.follow_js_reexports(
@@ -3694,12 +3741,23 @@ class CallResolver:
             self.type_inference.module_qn_to_file_path,
             self.function_registry,
         )
-        if followed == imported_qn:
-            return None
-        # The chain's end resolves as a direct import of it would, so a
-        # CommonJS whole-module export there is still reached.
-        return self._try_resolve_direct_import(
-            call_name, {call_name: followed}, language, module_qn
+        return None if followed == imported_qn else followed
+
+    def _js_reexport_led_nowhere(
+        self, call_name: str, module_qn: str, language: cs.SupportedLanguage | None
+    ) -> bool:
+        # Asked once every precise lookup has failed, so a followed name is
+        # one whose end resolved to nothing. An end behind a non-standard
+        # scheme (`ext:`) is first-party code the walk cannot read, and keeps
+        # the name-only fallback, as a direct import of it does.
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        if not import_map:
+            return False
+        followed = self._followed_js_reexport(
+            call_name, import_map, language, module_qn
+        )
+        return followed is not None and not (
+            self.import_processor.names_js_aliased_scheme(followed)
         )
 
     def _try_resolve_via_imports(
@@ -3734,12 +3792,22 @@ class CallResolver:
                 return None
             import_map = {}
 
-        if result := self._try_resolve_direct_import(
+        # The export walk goes first: a module may publish a name for another
+        # of its bindings (`export { beta as renamed }`, `module.exports = {
+        # renamed: beta }`) beside a local of that name, and the import gets
+        # the published one (bot review on PR #2994). The chain's end
+        # resolves as a direct import of it would, so a CommonJS whole-module
+        # export there is still reached; when it resolves to nothing (an
+        # external package), the module's own `renamed` is still not what
+        # the import names, so the direct import of it is skipped.
+        if followed := self._followed_js_reexport(
             call_name, import_map, language, module_qn
         ):
-            return result
-
-        if result := self._try_resolve_js_reexport(
+            if result := self._try_resolve_direct_import(
+                call_name, {call_name: followed}, language, module_qn
+            ):
+                return result
+        elif result := self._try_resolve_direct_import(
             call_name, import_map, language, module_qn
         ):
             return result
