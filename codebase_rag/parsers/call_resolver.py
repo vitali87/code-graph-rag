@@ -5319,15 +5319,8 @@ class CallResolver:
         if (
             language in _MEMBER_SYNTAX_METHOD_ONLY
             and call_name[: -len(search_name)].endswith(cs.SEPARATOR_DOT)
-            and not (
-                self._cpp_callable_member(language, search_name)
-                and self._cpp_receiver_may_hold_callable(
-                    call_name,
-                    search_name,
-                    self.import_processor.import_mapping.get(module_qn, {}),
-                    module_qn,
-                    local_var_types,
-                )
+            and not self._cpp_callable_member_call(
+                language, call_name, search_name, module_qn, local_var_types
             )
         ):
             # `recv.name()` / `p->name()` can only call a method: a free
@@ -5615,11 +5608,8 @@ class CallResolver:
         if (
             language == cs.SupportedLanguage.CPP
             and separator == cs.SEPARATOR_DOT
-            and not (
-                self._cpp_callable_member(language, method_name)
-                and self._cpp_receiver_may_hold_callable(
-                    call_name, method_name, import_map, module_qn, local_var_types
-                )
+            and not self._cpp_callable_member_call(
+                language, call_name, method_name, module_qn, local_var_types
             )
         ):
             return None
@@ -5635,11 +5625,24 @@ class CallResolver:
         # whatever free function was stored in it, as in C.
         return language == cs.SupportedLanguage.CPP and name in self.cpp_callable_fields
 
+    def _cpp_callable_member_call(
+        self,
+        language: cs.SupportedLanguage | None,
+        call_name: str,
+        name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> bool:
+        return self._cpp_callable_member(
+            language, name
+        ) and self._cpp_receiver_may_hold_callable(
+            call_name, name, module_qn, local_var_types
+        )
+
     def _cpp_receiver_may_hold_callable(
         self,
         call_name: str,
         name: str,
-        import_map: dict[str, str],
         module_qn: str,
         local_var_types: dict[str, str] | None,
     ) -> bool:
@@ -5651,6 +5654,7 @@ class CallResolver:
             return True
         if self._receiver_type_is_external(call_name, module_qn, local_var_types):
             return False
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
         class_qn = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
         registered = self._registered_class_qn(class_qn, module_qn)
         if registered is None:
