@@ -1657,6 +1657,7 @@ class _StatefulIngestor:
                             props.get(cs.KEY_RUST_VISIBILITY)
                         ),
                         cs.KEY_EMBEDS: _texts(props.get(cs.KEY_EMBEDS)),
+                        cs.KEY_FIELD_TYPES: _texts(props.get(cs.KEY_FIELD_TYPES)),
                     }
                     defs.append(row)
                 return defs
