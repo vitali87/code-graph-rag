@@ -6009,6 +6009,24 @@ class ImportProcessor:
             original=original_name,
         )
 
+    def binds_js_whole_module(self, module_qn: str, local_name: str) -> bool:
+        """Whether `local_name` in `module_qn` is a JS/TS whole-module binding.
+
+        A bare `require` or a namespace import maps the local to the module's
+        own qn, not to an export of the module that qn's prefix names.
+        """
+        site = self._import_sites.get(module_qn, {}).get(local_name)
+        return site is not None and _js_binds_whole_module(site)
+
+    @staticmethod
+    def names_js_aliased_scheme(qn: str) -> bool:
+        """Whether a JS/TS import's target qn is a non-standard scheme's.
+
+        `ext:alias/util.ts` keeps its scheme in the qn it maps to
+        (`ext:alias.util.ts`), and names first-party code no file path does.
+        """
+        return _has_aliased_scheme(qn)
+
     def follow_js_reexports(
         self,
         qn: str,
