@@ -753,17 +753,17 @@ def _tsconfig_custom_conditions(
 def _load_ts_custom_conditions(
     repo_path: Path,
 ) -> tuple[tuple[str, frozenset[str]], ...]:
-    # (config directory as a dotted module prefix, its effective
-    # `customConditions`), deepest directory first, governed exactly like
-    # `baseUrl` above: the nearest config holding a file decides which
-    # `exports` conditions that file's imports select (issue #2935).
+    # (config directory as a repo-relative path prefix, its effective
+    # `customConditions`), deepest directory first, governed like `baseUrl`
+    # above: the nearest config holding a file decides which `exports`
+    # conditions that file's imports select (issue #2935). The prefix keeps
+    # its slashes so it matches whole segments: joined with dots,
+    # `packages/mylib/` would also claim the sibling `packages/mylib.extra/`.
     governing: dict[str, frozenset[str]] = {}
     for cfg in _find_tsconfig_files(repo_path):
-        dotted = _tsconfig_dir_prefix(cfg, repo_path).replace(
-            cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT
-        )
-        if dotted not in governing:
-            governing[dotted] = _tsconfig_custom_conditions(cfg, repo_path) or (
+        directory = _tsconfig_dir_prefix(cfg, repo_path)
+        if directory not in governing:
+            governing[directory] = _tsconfig_custom_conditions(cfg, repo_path) or (
                 frozenset()
             )
     return tuple(sorted(governing.items(), key=lambda item: -len(item[0])))
@@ -5604,11 +5604,11 @@ class ImportProcessor:
     def _js_governing_custom_conditions(self, current_module: str) -> frozenset[str]:
         # The `customConditions` of the nearest tsconfig whose directory
         # holds the module, read the way `_js_governing_base_url` reads its
-        # `baseUrl`. The importer's DIRECTORY is matched, not its qualified
-        # name: `packages/app.test.ts` is `packages.app.test`, which starts
-        # with the `packages.app.` key of a config that does not hold it.
+        # `baseUrl`. The importer's DIRECTORY is matched, as a path, not its
+        # qualified name: `packages/app.test.ts` is `packages.app.test`, which
+        # reads as though it sat inside `packages/app/`.
         importer_dir = "".join(
-            f"{part}{cs.SEPARATOR_DOT}"
+            f"{part}{cs.SEPARATOR_SLASH}"
             for part in self._js_module_directory_parts(current_module)[1:]
         )
         return next(

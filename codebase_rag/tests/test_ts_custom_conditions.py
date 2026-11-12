@@ -185,3 +185,22 @@ def test_dotted_sibling_file_is_not_governed_by_the_package_config(
     )
     calls = _calls(rels, "mylib.test.testObject")
     assert "repo.packages.mylib.src.v4.index.object" not in calls, calls
+
+
+def test_dotted_sibling_directory_is_not_governed_by_the_package_config(
+    tmp_path: Path,
+) -> None:
+    # `packages/mylib.extra/` is a sibling of `packages/mylib/` with no config
+    # of its own. Joined with dots the two directories share a prefix, so the
+    # match must be on whole path segments.
+    rels = _run(
+        tmp_path,
+        {
+            "packages/mylib/package.json": _SOURCE_FIRST,
+            "packages/mylib/tsconfig.json": _tsconfig(customConditions=[_CONDITION]),
+            "packages/mylib/src/v4/index.ts": _INDEX,
+            "packages/mylib.extra/main.ts": _CALLER,
+        },
+    )
+    calls = _calls(rels, "main.testObject")
+    assert "repo.packages.mylib.src.v4.index.object" not in calls, calls
