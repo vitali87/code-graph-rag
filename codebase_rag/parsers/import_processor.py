@@ -5604,13 +5604,18 @@ class ImportProcessor:
     def _js_governing_custom_conditions(self, current_module: str) -> frozenset[str]:
         # The `customConditions` of the nearest tsconfig whose directory
         # holds the module, read the way `_js_governing_base_url` reads its
-        # `baseUrl`.
-        relative = current_module.removeprefix(f"{self.project_name}{cs.SEPARATOR_DOT}")
+        # `baseUrl`. The importer's DIRECTORY is matched, not its qualified
+        # name: `packages/app.test.ts` is `packages.app.test`, which starts
+        # with the `packages.app.` key of a config that does not hold it.
+        importer_dir = "".join(
+            f"{part}{cs.SEPARATOR_DOT}"
+            for part in self._js_module_directory_parts(current_module)[1:]
+        )
         return next(
             (
                 conditions
                 for directory, conditions in self.js_custom_conditions
-                if relative.startswith(directory)
+                if importer_dir.startswith(directory)
             ),
             frozenset(),
         )

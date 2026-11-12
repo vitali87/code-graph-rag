@@ -166,3 +166,22 @@ def test_manifest_order_still_decides_between_selectable_keys(
     calls = _calls(rels, "object.test.testObject")
     assert "repo.packages.mylib.src.v4.legacy.object" in calls, calls
     assert "repo.packages.mylib.src.v4.index.object" not in calls, calls
+
+
+def test_dotted_sibling_file_is_not_governed_by_the_package_config(
+    tmp_path: Path,
+) -> None:
+    # `packages/mylib.test.ts` sits beside `packages/mylib/`, not inside it.
+    # Its qualified name (`packages.mylib.test`) still starts with the
+    # config's `packages.mylib.` key, so the match must be on directories.
+    rels = _run(
+        tmp_path,
+        {
+            "packages/mylib/package.json": _SOURCE_FIRST,
+            "packages/mylib/tsconfig.json": _tsconfig(customConditions=[_CONDITION]),
+            "packages/mylib/src/v4/index.ts": _INDEX,
+            "packages/mylib.test.ts": _CALLER,
+        },
+    )
+    calls = _calls(rels, "mylib.test.testObject")
+    assert "repo.packages.mylib.src.v4.index.object" not in calls, calls
