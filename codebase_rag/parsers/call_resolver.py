@@ -2115,7 +2115,12 @@ class CallResolver:
             return None
 
         result = self._try_resolve_via_trie(
-            call_name, module_qn, language, call_point, constructing
+            call_name,
+            module_qn,
+            language,
+            call_point,
+            constructing,
+            call.local_var_types,
         )
         self._remember_cacheable(cache_key, result)
         return result
@@ -5282,6 +5287,7 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
+        local_var_types: dict[str, str] | None = None,
     ) -> tuple[str, str] | None:
         search_name = _trie_search_name(call_name)
         possible_matches = self._trie_candidates(call_name, module_qn, call_point)
@@ -5313,7 +5319,16 @@ class CallResolver:
         if (
             language in _MEMBER_SYNTAX_METHOD_ONLY
             and call_name[: -len(search_name)].endswith(cs.SEPARATOR_DOT)
-            and not self._cpp_callable_member(language, search_name)
+            and not (
+                self._cpp_callable_member(language, search_name)
+                and self._cpp_receiver_may_hold_callable(
+                    call_name,
+                    search_name,
+                    self.import_processor.import_mapping.get(module_qn, {}),
+                    module_qn,
+                    local_var_types,
+                )
+            )
         ):
             # `recv.name()` / `p->name()` can only call a method: a free
             # function is never reachable with `.` syntax. With the receiver
@@ -5593,11 +5608,19 @@ class CallResolver:
             return None
         # Neither has C++: `obj.f()` / `p->f()` calls a member, never the
         # file's namespace-level `f` (`h->swap(x)` bound `swap`, #3176),
-        # unless some type declares `f` a callable data member.
+        # unless some type declares `f` a callable data member. A receiver
+        # whose type is known has to be such a type: `s.data()` on a
+        # `std::string` bound the file's `data` because an unrelated struct
+        # held an `int (*data)()` (#3220 review).
         if (
             language == cs.SupportedLanguage.CPP
             and separator == cs.SEPARATOR_DOT
-            and not self._cpp_callable_member(language, method_name)
+            and not (
+                self._cpp_callable_member(language, method_name)
+                and self._cpp_receiver_may_hold_callable(
+                    call_name, method_name, import_map, module_qn, local_var_types
+                )
+            )
         ):
             return None
         resolved = self._try_resolve_module_method(method_name, call_name, module_qn)
@@ -5611,6 +5634,28 @@ class CallResolver:
         # A function-pointer or `std::function` member: `ops->cb()` calls
         # whatever free function was stored in it, as in C.
         return language == cs.SupportedLanguage.CPP and name in self.cpp_callable_fields
+
+    def _cpp_receiver_may_hold_callable(
+        self,
+        call_name: str,
+        name: str,
+        import_map: dict[str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> bool:
+        # An untyped receiver may be any type, so the name alone decides. A
+        # typed one calls through the member only when its own type, or a
+        # base, declares it; an external type declares none of ours.
+        var_type = self._two_part_receiver_type(call_name, local_var_types)
+        if var_type is None:
+            return True
+        if self._receiver_type_is_external(call_name, module_qn, local_var_types):
+            return False
+        class_qn = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
+        registered = self._registered_class_qn(class_qn, module_qn)
+        if registered is None:
+            return True
+        return not self.cpp_callable_fields[name].isdisjoint(self._mro(registered))
 
     def _try_resolve_static_type_method(
         self, object_name: str, method_name: str, call_name: str, module_qn: str

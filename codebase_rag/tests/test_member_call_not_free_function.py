@@ -84,6 +84,20 @@ struct Ops { int (*open_dev)(); std::function<int()> on_close; };
 int start(Ops* o) { return o->open_dev(); }
 int stop(Ops& o) { return o.on_close(); }
 """,
+    # A typed receiver reaches a free function only through a callable
+    # member its own type, or a base, declares.
+    "typed.cpp": """\
+#include <string>
+
+int size() { return 1; }
+struct Table { int (*size)(); };
+struct Sub : Table {};
+struct Plain { int v; };
+
+int on_std(std::string s) { return s.size(); }
+int on_plain(Plain p) { return p.size(); }
+int on_base(Sub* t) { return t->size(); }
+""",
     "ops.c": """\
 int open_dev(void) { return 0; }
 struct ops { int (*open_dev)(void); };
@@ -132,6 +146,15 @@ def test_a_cpp_member_call_skips_free_functions(cpp: _Calls) -> None:
     assert cpp.get(("a.use", "a.swap")) == "exact", cpp
 
 
+@pytest.mark.parametrize("caller", ["typed.on_std", "typed.on_plain"])
+def test_a_callable_member_of_another_type_does_not_exempt_a_typed_receiver(
+    cpp: _Calls, caller: str
+) -> None:
+    # `Table` declares `int (*size)()`, but a `std::string` or a `Plain`
+    # receiver holds no such member, so `s.size()` is not the free `size`.
+    assert (caller, "typed.size") not in cpp, cpp
+
+
 @pytest.mark.parametrize(
     ("caller", "callee", "resolution"),
     [
@@ -157,12 +180,14 @@ def test_rust_calls_that_can_reach_their_target_still_do(
         ("ops.start", "ops.open_dev"),
         ("cb.start", "cb.open_dev"),
         ("cb.stop", "cb.on_close"),
+        ("typed.on_base", "typed.size"),
     ],
     ids=[
         "qualified-free-fn",
         "c-function-pointer-table",
         "cpp-function-pointer-field",
         "cpp-std-function-field",
+        "cpp-inherited-function-pointer-field",
     ],
 )
 def test_cpp_and_c_calls_that_can_reach_a_free_function_still_do(
