@@ -20,6 +20,7 @@ from ..language_spec import (
     LANGUAGE_FQN_SPECS,
     LanguageSpec,
     decode_node_text,
+    module_directory_qn,
     sql_object_reference_name,
 )
 from ..parser_loader import COMBINED_FUNC_CLASS_QUERIES
@@ -4594,7 +4595,10 @@ class CallProcessor:
         # definition pass registered exactly that qn as a Class, so a
         # misread can never invent a caller. When the directory already
         # spells the namespace the registered qn drops it (issue #1629),
-        # so the candidate misses and the structural qn is correct.
+        # so the candidate misses; the folded form below is then tried
+        # before the structural qn, which is only correct for a
+        # non-generic class: for a generic twin it names the
+        # non-generic twin instead (Greptile P1 on #3526).
         # The own name carries its CLR arity spelling when the file
         # declares the name at another arity too (issue #2579): a plain
         # candidate would match the non-generic twin and misattribute a
@@ -4609,6 +4613,23 @@ class CallProcessor:
         candidate = f"{module_qn}{cs.SEPARATOR_DOT}{qualified}"
         if self._resolver.function_registry.get(candidate) == cs.NodeLabel.CLASS:
             return candidate
+        if (namespace := csharp_utils.declared_namespace(class_node)) is not None:
+            prefix = f"{namespace}{cs.SEPARATOR_DOT}"
+            if qualified.startswith(prefix):
+                # The definition pass folds the namespace run out of the
+                # registered qn exactly when the module's directory
+                # already spells it (`_csharp_fold_scopes`); retry the
+                # same arity-qualified path without that run.
+                directory = module_directory_qn(
+                    module_qn, self.module_qn_to_file_path.get(module_qn)
+                )
+                if directory.endswith(f"{cs.SEPARATOR_DOT}{namespace}"):
+                    folded = f"{module_qn}{cs.SEPARATOR_DOT}{qualified[len(prefix) :]}"
+                    if (
+                        self._resolver.function_registry.get(folded)
+                        == cs.NodeLabel.CLASS
+                    ):
+                        return folded
         return class_qn
 
     @staticmethod

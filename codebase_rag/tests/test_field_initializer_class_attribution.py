@@ -805,6 +805,44 @@ public class Pair<T, U> {
     ), calls
 
 
+def test_csharp_generic_twins_dir_spells_namespace_attribute_to_own_class(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Greptile P1 on #3526: the same arity twins, but the file lives in
+    # a directory that already spells the namespace (`X/N/App.cs` under
+    # `namespace N`), so the registered qn drops it (issue #1629) and
+    # the arity-qualified candidate misses. The structural fallback
+    # must not then land the generic twin's initializer on the
+    # non-generic twin: each twin's edge belongs to its OWN class node.
+    project = temp_repo / "X"
+    (project / "N").mkdir(parents=True)
+    (project / "N" / "App.cs").write_text(
+        """
+namespace N;
+public class Factory { public Factory() {} }
+public class Box {
+  private readonly Factory factory = new Factory();
+}
+public class Box<T> {
+  private readonly Factory factory = new Factory();
+}
+public class Pair<T> {
+  private readonly Factory factory = new Factory();
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing="c_sharp")
+
+    instantiates = _instantiates(mock_ingestor)
+    assert len(instantiates) == 3, instantiates
+    assert all(t.endswith("Factory") for _, t in instantiates), instantiates
+    sources = [s for s, _ in instantiates]
+    assert sum(1 for s in sources if s.endswith("N.App.Box")) == 1, instantiates
+    assert any(s.endswith("N.App.Box`1") for s in sources), instantiates
+    assert any(s.endswith("N.App.Pair") for s in sources), instantiates
+
+
 def test_ts_self_reference_and_self_instantiation_attribute_to_constructor(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
