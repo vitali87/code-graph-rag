@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.2.13"
+version = "0.6.43"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -9,11 +9,15 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "Operating System :: OS Independent",
+    # cgr requires cgr-graph-rs, whose CPython wheels cover these systems only.
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Code Generators",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -36,17 +40,19 @@ keywords = [
 ]
 dependencies = [
     "loguru>=0.7.3",
-    # mcp 2.x removed the Server.list_tools()/call_tool() decorators that
-    # codebase_rag/mcp/server.py registers its handlers with, and every
-    # documented install resolves this range rather than uv.lock (#2519).
-    "mcp>=1.30.0,<2",
+    # codebase_rag/mcp/server.py registers its handlers through the 2.x
+    # Server constructor, which 1.x lacks, and every documented install
+    # resolves this range rather than uv.lock (#2519).
+    "mcp>=2.3.0,<3",
+    # The MCP server checks tool arguments against their input schemas, which
+    # the 1.x SDK did for it.
+    "jsonschema>=4.20.0",
     # Only the providers codebase_rag/providers imports. The `pydantic-ai`
     # meta-package also installs logfire, evals, a CLI and a web UI, none used.
     "pydantic-ai-slim[anthropic,google,openai]>=2.0.0",
     "pydantic-settings>=2.12.0",
     "python-dotenv>=1.2.1",
     "tiktoken>=0.12.0",
-    "tomli-w>=1.2.0",
     "tree-sitter-python>=0.25.0",
     "tree-sitter==0.26.0",
     "watchdog>=6.0.0",
@@ -56,19 +62,30 @@ dependencies = [
     "diff-match-patch>=20241021",
     "click>=8.3.3",
     "protobuf>=6.33.5",
-    "defusedxml>=0.7.1",
-    "huggingface-hub[hf-xet]>=1.7.2",
+    # codebase_rag/stack/manager.py reads docker-compose files with it, and
+    # the CLI imports that module on every run.
+    "pyyaml>=6.0",
     "pathspec>=1.0.4",
     "pygments>=2.20.0",
+    # Imported directly (embedder, health checks, token counting, web
+    # search). It used to arrive only through the provider SDKs, and
+    # google-genai 3 moved to httpx2, which a fresh install then took alone.
+    "httpx>=0.28.1",
+    # certifi is the CA bundle httpx and requests verify against; 2026.10.23
+    # is the first without the distrusted eMudhra roots. Declared so an
+    # upgrade over an older install moves it too.
+    "certifi>=2026.10.23",
     # The embedded graph's `=~`: unlike `re`, a match takes a timeout, so a
     # backtracking pattern stops at the query's deadline. tiktoken already
     # installs it.
     "regex>=2024.11.6",
-    # The embedded graph's Rust acceleration (rust/cgr_graph_rs), shipped as
-    # abi3 wheels for exactly these platforms; elsewhere the engine runs its
-    # Python twin of every part. The floor is the crate version this code
-    # was written against, raised with each crate release.
-    "cgr-graph-rs>=0.1.0,<0.2; platform_python_implementation == 'CPython' and ((sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64'))",
+    # The Rust half that does the work behind the Python interface
+    # (rust/cgr_graph_rs), required everywhere: cgr does not run without it.
+    # It ships as abi3 wheels for CPython on Linux x86_64/aarch64, macOS and
+    # Windows x64, and has no sdist, so other platforms cannot install cgr.
+    # The floor is the crate version this code was written against, raised
+    # with each crate release.
+    "cgr-graph-rs>=0.1.8,<0.2",
 ]
 
 [project.scripts]
@@ -80,13 +97,6 @@ cgr_trace = "codebase_rag.trace.pytest_plugin"
 
 [tool.uv]
 package = true
-# semgrep (dev group) pins pyjwt~=2.13.0, which holds the single locked PyJWT
-# below the 2.14.0 fix for GHSA-ffc3-869f-jxw9 and its sibling advisories.
-# Drop this once a semgrep release accepts pyjwt>=2.14.0.
-# semgrep also pins mcp==1.29.0, which holds the locked SDK below the 1.30.0
-# fix for GHSA-84m7-p3x7-pcfv (StreamableHTTP sessions never reclaimed).
-# Drop that entry once a semgrep release accepts mcp>=1.30.0.
-override-dependencies = ["pyjwt[crypto]>=2.14.0", "mcp>=1.30.0,<2"]
 
 # Patched grammars: upstream tree-sitter-c drops declarations after a
 # #define whose value embeds a block comment (issue #555). Our forks carry
@@ -134,7 +144,7 @@ test = [
     "testcontainers>=4.9.0",
     "libclang>=18.1.1",
     "filelock>=3.12",
-    "ast-grep-py>=0.44.0",
+    "ast-grep-py>=0.51.0",
     "pyyaml>=6.0",
     # The suite exercises the Memgraph backend with a mocked server, but
     # imports the real driver's exception types to do it.
@@ -182,24 +192,39 @@ treesitter-full = [
     "tree-sitter-markdown>=0.5.1",
 ]
 
+# sqlite-vec is the default vector store's, on the platforms it ships wheels
+# for (it has no sdist), which cover every one torch ships wheels for; no
+# marker tells musl from glibc, and torch has no musl wheels either.
+# qdrant-client is for CGR_VECTOR_STORE_BACKEND=qdrant, the default before it.
 semantic = [
     "qdrant-client>=1.9.0",
+    # The gRPC client verifies TLS against grpcio's own roots.pem; 1.84.1 is
+    # the first without emSign ECC Root CA - G3.
+    "grpcio>=1.84.1",
+    "sqlite-vec>=0.1.9; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64')",
     "torch>=2.6.0",
     "transformers>=5.0.0",
+    # transformers downloads the UniXcoder model through it, and nothing
+    # outside this extra imports it, so a default install leaves it out with
+    # the five packages it brings (hf-xet, fsspec, tqdm, filelock, packaging).
+    "huggingface-hub[hf-xet]>=1.7.2",
 ]
 
 milvus = [
     "pymilvus[milvus-lite]>=3.0.0",
+    # As in `semantic`: pymilvus's gRPC client trusts grpcio's roots.pem.
+    "grpcio>=1.84.1",
 ]
 
-# The `sqlite` vector store (CGR_VECTOR_STORE_BACKEND=sqlite): vectors in a
-# file beside the embedded graph, so semantic search needs no server either.
+# The default `sqlite` vector store alone, for an install that computes its
+# embeddings elsewhere (CGR_EMBEDDING_PROVIDER=openai): vectors in a file
+# beside the embedded graph, so semantic search needs no server either.
 sqlite-vec = [
     "sqlite-vec>=0.1.9",
 ]
 
 ast-grep = [
-    "ast-grep-py>=0.44.0",
+    "ast-grep-py>=0.51.0",
     "pyyaml>=6.0",
 ]
 python-semantics = [
@@ -311,13 +336,12 @@ dev = [
     # ty resolves the Memgraph driver's types where the code names them.
     "pymgclient>=1.6.0",
     "ruff>=0.5.5",
-    "semgrep>=1.79.0",
     "ty>=0.0.7",
     "types-protobuf>=5.0.0",
 ]
 docs = [
     # Exact pin while Zensical is pre-1.0.
-    "zensical==0.0.65",
+    "zensical==0.0.73",
 ]
 fuzz = [
     "atheris>=2.3.0",
@@ -325,7 +349,7 @@ fuzz = [
 # Builds the cgr-graph-rs wheels (.github/workflows/rust-wheels.yml): zig
 # links each Linux wheel against the oldest glibc or musl its tag promises.
 rust-wheels = [
-    "maturin==1.15.0",
+    "maturin==1.16.0",
     # Only the Linux wheels are linked with zig, and it ships no Windows build.
     "ziglang==0.17.0; sys_platform == 'linux'",
 ]

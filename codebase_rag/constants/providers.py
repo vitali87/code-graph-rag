@@ -138,6 +138,7 @@ ANTHROPIC_COUNT_TIMEOUT_S = 10.0
 
 DEFAULT_CONTEXT_WINDOW = 200_000
 MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    "MiniMax-M3.1-Flash": 1_000_000,
     "MiniMax-M3": 1_000_000,
     "MiniMax-M2.7": 204_800,
     "claude-opus-5": 1_000_000,
@@ -175,6 +176,15 @@ LEGACY_MAX_OUTPUT_TOKENS: dict[str, int] = {
     "claude-3-haiku-20240307": DEFAULT_MAX_OUTPUT_TOKENS,
 }
 
+# Output floor for the Anthropic provider while MODEL_MAX_TOKENS is left at its
+# default. Claude Opus 5 and later think by default, and thinking tokens count
+# toward `max_tokens`, so the shared default can end a reply mid-answer. Claude
+# 4 and later models accept 16000, which also stays within what a
+# non-streaming request should ask for. claude-3 ids keep the configured budget.
+ANTHROPIC_MIN_OUTPUT_TOKENS = 16_000
+ANTHROPIC_PRE_THINKING_PREFIX = "claude-3"
+MODEL_MAX_TOKENS_FIELD = "MODEL_MAX_TOKENS"
+
 MODULE_TORCH = "torch"
 MODULE_TRANSFORMERS = "transformers"
 MODULE_QDRANT_CLIENT = "qdrant_client"
@@ -191,6 +201,13 @@ QDRANT_DEFAULT_DB_PATH = "./.qdrant_code_embeddings"
 # The settings field that holds it. Whether it was supplied is read from the
 # fields the settings sources set, since a supplied value can equal the default.
 SETTING_QDRANT_DB_PATH = "QDRANT_DB_PATH"
+# Settings whose presence, with VECTOR_STORE_BACKEND left unset, marks an
+# install that stored its embeddings in Qdrant when Qdrant was the default.
+SETTING_VECTOR_STORE_BACKEND = "VECTOR_STORE_BACKEND"
+QDRANT_CONNECTION_SETTINGS = ("QDRANT_URL", SETTING_QDRANT_DB_PATH, "QDRANT_API_KEY")
+# The backend a project synced before cgr stamped its vector store was embedded
+# into: the default then.
+EMBEDDINGS_STORE_UNSTAMPED = VectorStoreBackend.QDRANT
 
 SEMANTIC_DEPENDENCIES = (
     MODULE_PYMILVUS,

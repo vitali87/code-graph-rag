@@ -19,6 +19,26 @@ class DartConstructorDelegation(NamedTuple):
     name: str | None
 
 
+class DartCombinator(NamedTuple):
+    """One `show A, B` (`shows`) or `hide C` clause of a Dart directive."""
+
+    shows: bool
+    names: frozenset[str]
+
+
+class DartDirective(NamedTuple):
+    """A directive naming a library with the `show` / `hide` clauses it
+    applies: an unprefixed `import` or a `part`, which bring the library's
+    names in, or an `export`, which hands them on to importers."""
+
+    library: str
+    combinators: tuple[DartCombinator, ...]
+
+    def admits(self, name: str) -> bool:
+        # The clauses apply in turn, so `show A, B hide B` lets in `A` only.
+        return all((name in c.names) == c.shows for c in self.combinators)
+
+
 def _identifier_texts(node: Node) -> list[bytes]:
     return [
         text
@@ -217,10 +237,26 @@ def dart_exposes_library(directive: Node) -> bool:
     `export 'x.dart';` re-exports x, and `part 'x.dart';` makes x part of the
     library itself; a plain `import` only brings x into this file's scope.
     """
-    if directive.type == cs.TS_DART_PART_DIRECTIVE:
-        return True
+    return directive.type == cs.TS_DART_PART_DIRECTIVE or dart_is_export(directive)
+
+
+def dart_is_export(directive: Node) -> bool:
+    """Is this an `export` directive? It hands its target's names to the
+    library's importers but brings none into the library's own scope."""
     return any(
         child.type == cs.TS_DART_LIBRARY_EXPORT for child in directive.named_children
+    )
+
+
+def dart_combinators(directive: Node) -> tuple[DartCombinator, ...]:
+    """The `show` / `hide` clauses of an import or export, in source order."""
+    return tuple(
+        DartCombinator(
+            shows=node.children[0].type == cs.TS_DART_SHOW,
+            names=frozenset(decode_node_text(text) for text in _identifier_texts(node)),
+        )
+        for node in _walk_named(directive)
+        if node.type == cs.TS_DART_COMBINATOR and node.children
     )
 
 
@@ -552,6 +588,44 @@ def dart_call_name(call_node: Node) -> str | None:
     if not tokens or all(token == _CALL_HOP for token in tokens):
         return None
     return _assemble_chain(tokens)
+
+
+def dart_call_site_start(call_node: Node) -> Node:
+    """Where the site of a Dart call selector starts: its callee's name.
+
+    `dhelper(1)` is `identifier` + `selector(argument_part)`, and `a.b(1)`
+    adds a `.b` selector between them: the call node is only the argument
+    list, so a site that should cover the callee, as every other language's
+    does, starts earlier (issue #2769). At the callee's own name token, not
+    the chain's first node: the two calls of `a.grow().grow()` then keep
+    sites of their own instead of merging into one (bot review on PR
+    #2782). Any other callee (`(f)(1)`) starts at the chain's first node.
+    """
+    prev = call_node.prev_named_sibling
+    if prev is not None and prev.type == cs.TS_DART_IDENTIFIER:
+        return prev
+    if prev is not None and prev.type == cs.TS_DART_SELECTOR:
+        accessor = next(iter(prev.named_children), None)
+        if accessor is not None and accessor.type in (
+            cs.TS_DART_UNCONDITIONAL_ASSIGNABLE_SELECTOR,
+            cs.TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR,
+        ):
+            name = next(
+                (
+                    c
+                    for c in reversed(accessor.named_children)
+                    if c.type == cs.TS_DART_IDENTIFIER
+                ),
+                None,
+            )
+            if name is not None:
+                return name
+    start = call_node
+    prev = call_node.prev_named_sibling
+    while prev is not None and prev.type == cs.TS_DART_SELECTOR:
+        start = prev
+        prev = prev.prev_named_sibling
+    return prev if prev is not None else start
 
 
 def _construction_name(node: Node) -> str | None:

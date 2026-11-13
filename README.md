@@ -61,7 +61,13 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **GitHub Sponsors**: Added support for GitHub Sponsors via the command line.
+- **Type Handling**: Improved handling of type context managers, walrus operators, and match binding targets in both Python and TypeScript.
+- **Rename Refinement**: Prevented Go renames from unexporting names used by other packages.
+- **Profile Naming**: Corrected the naming of pprof profiles to avoid "malformed" errors when no samples are present.
+- **Output Budget**: Increased the Anthropic output budget to improve the default thinking experience.
+- **Module Resolution**: Resolved issues with module resolution in various scenarios, including ES module default imports and bare name bindings.
+- **Dead Code Elimination**: Removed dead code roots associated with IPython rich-display methods.
+- **Incremental Refresh**: Improved incremental refresh to ensure callers are updated when dispatch targets change.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -118,13 +124,14 @@ Three version lines exist and they intentionally differ:
 | where | what it tracks |
 |---|---|
 | git tags | every version, one per merge |
-| GitHub Releases (binaries, signatures) | every 50th version, plus any security fix or breaking change |
-| PyPI | every 50th version, plus any security fix or breaking change |
+| GitHub Releases (binaries, signatures) | every 50th version, plus any security fix, breaking change or merge labelled `release now` |
+| PyPI | every 50th version, plus any security fix, breaking change or merge labelled `release now` |
 
 So the newest tag on `main` usually runs ahead of the newest release, often by
 tens of patch versions; they coincide only just after a release. Nothing is
-stuck, the cadences differ by design. A security fix or a breaking change does
-NOT wait for the cadence: either ships a release and a PyPI upload immediately.
+stuck, the cadences differ by design. A security fix, a breaking change or a
+merge a maintainer labels `release now` does NOT wait for the cadence: each ships
+a release and a PyPI upload immediately.
 
 `uv tool install` and `pipx install` give you the newest PyPI version, which is the
 newest RELEASE, not the newest tag. Interim tags exist so every merge is
@@ -141,7 +148,7 @@ To upgrade an existing install, run `uv tool upgrade code-graph-rag` (with pipx,
 You also need Python 3.12+ and `ripgrep`. The graph lives in an embedded SQLite file by default, so there is no database server to run: no Docker and no `cmake`. Memgraph and Neo4j remain available as opt-in backends ([Graph Backends](docs/architecture/embedded-graph.md)). Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
 
 > [!NOTE]
-> The wheel is pure Python (`py3-none-any`), so it installs on any platform with Python 3.12 or newer. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md#older-system-interpreters) for the commands.
+> cgr requires its native extension, `cgr-graph-rs`, which ships for CPython 3.12 or newer on Linux (x86_64, aarch64), macOS and Windows x64, so it installs on those platforms only. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md#older-system-interpreters) for the commands.
 
 ## Quick Start
 
@@ -187,6 +194,7 @@ Code-Graph-RAG runs as an [MCP](https://modelcontextprotocol.io) server so Claud
 - [Real-Time Updates](docs/guide/realtime-updates.md)
 - [C/C++ Semantic Mode](docs/guide/cpp-semantic-mode.md)
 - [MCP Server](docs/guide/mcp-server.md)
+- [Porting Between Languages](docs/guide/porting.md)
 
 **Architecture**
 - [Overview](docs/architecture/overview.md)
@@ -227,6 +235,10 @@ Please see [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines. Good 
 For issues or questions, check the [Troubleshooting](docs/advanced/troubleshooting.md) guide first, then open an issue.
 
 If cgr is useful to you, please consider pledging support on [GitHub Sponsors](https://github.com/sponsors/vitali87). cgr links the page under `cgr --version` and, in a terminal, after most commands finish; set `CGR_SPONSOR_PLEDGE=false` to hide that line.
+
+## Accessibility
+
+[ACCESSIBILITY.md](ACCESSIBILITY.md) describes what cgr and its documentation support for people using assistive technology or alternative settings, the known limitations and their workarounds, and how to report a barrier.
 
 ## License
 

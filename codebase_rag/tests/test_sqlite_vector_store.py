@@ -13,15 +13,18 @@ import sqlite3
 import subprocess
 import sys
 import threading
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Iterator, Sequence
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from loguru import logger
 
 from codebase_rag import constants as cs
+from codebase_rag import exceptions as ex
 from codebase_rag import vector_store as vs
+from codebase_rag.config import AppConfig
 from codebase_rag.constants import VectorStoreBackend
 from codebase_rag.sqlite_vectors import (
     SqliteVectorPoint,
@@ -536,6 +539,36 @@ class TestFailures:
 
         assert vs._CLIENT is None
 
+    def test_a_python_that_cannot_load_extensions_has_no_sqlite_store(
+        self,
+    ) -> None:
+        # As without sqlite-vec: semantic search is off, so a sync does not
+        # owe a pass it can never pay, and `--clean` does not fail after the
+        # graph is already wiped. The reason is logged once.
+        from codebase_rag import sqlite_vectors
+        from codebase_rag.utils import dependencies
+
+        dependencies._warn_sqlite_extensions_unsupported.cache_clear()
+        messages: list[str] = []
+        sink = logger.add(
+            lambda message: messages.append(message.record["message"]),
+            level="WARNING",
+        )
+        try:
+            with patch.object(
+                sqlite_vectors, "extensions_loadable", return_value=False
+            ):
+                assert dependencies.has_vector_store_dependencies() is False
+                assert vs._get_vector_store() is None
+                vs.clear_all_embeddings()
+        finally:
+            logger.remove(sink)
+            dependencies._warn_sqlite_extensions_unsupported.cache_clear()
+
+        assert [m for m in messages if "extension loading" in m] == [
+            ex.SQLITE_VEC_EXTENSIONS_UNSUPPORTED
+        ]
+
     def test_switching_to_sqlite_closes_the_other_backends_client(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -674,3 +707,91 @@ def test_importing_the_vector_store_does_not_load_sqlite_vec() -> None:
     )
 
     assert result.stdout.strip().splitlines()[-1] == "False"
+
+
+class TestTheDefaultStore:
+    """The `sqlite` store is the default, as the embedded graph is: a fresh
+    install stores and searches vectors with no server and no Docker. An
+    install upgraded in place from when Qdrant was the default keeps its
+    QDRANT_* settings and never set CGR_VECTOR_STORE_BACKEND. Its embeddings
+    are still in Qdrant while cgr now opens an empty file, so it is told so,
+    once."""
+
+    @pytest.fixture
+    def notes(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> Iterator[list[str]]:
+        for name in (
+            "CGR_VECTOR_STORE_BACKEND",
+            cs.SETTING_VECTOR_STORE_BACKEND,
+            *cs.QDRANT_CONNECTION_SETTINGS,
+        ):
+            monkeypatch.delenv(name, raising=False)
+        # AppConfig reads `.env` from the working directory.
+        monkeypatch.chdir(tmp_path)
+        vs._note_qdrant_set_without_backend.cache_clear()
+        messages: list[str] = []
+        sink = logger.add(
+            lambda message: messages.append(message.record["message"]),
+            level="WARNING",
+        )
+        yield messages
+        logger.remove(sink)
+        vs._note_qdrant_set_without_backend.cache_clear()
+
+    @staticmethod
+    def _open(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setattr(vs, "settings", AppConfig(CGR_HOME=tmp_path))
+        vs.close_vector_store_client()
+        vs.get_sqlite_vector_client()
+
+    def test_sqlite_is_the_default(self, notes: list[str], tmp_path: Path) -> None:
+        config = AppConfig(CGR_HOME=tmp_path)
+        assert config.VECTOR_STORE_BACKEND == VectorStoreBackend.SQLITE
+        assert config.vector_db_file == tmp_path / "vectors.sqlite"
+
+    @pytest.mark.parametrize(
+        ("name", "value"),
+        [
+            ("QDRANT_URL", "http://qdrant.internal:6333"),
+            ("QDRANT_DB_PATH", "./.qdrant_code_embeddings"),
+        ],
+    )
+    def test_qdrant_settings_without_a_backend_are_noted_once(
+        self,
+        notes: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        name: str,
+        value: str,
+    ) -> None:
+        monkeypatch.setenv(name, value)
+        self._open(monkeypatch, tmp_path)
+        self._open(monkeypatch, tmp_path)
+        assert len(notes) == 1
+        assert str(tmp_path / "vectors.sqlite") in notes[0]
+        assert "CGR_VECTOR_STORE_BACKEND=qdrant" in notes[0]
+
+    @pytest.mark.parametrize(
+        "env",
+        [
+            # Nothing chosen: a first install, nothing to warn about.
+            {},
+            # An explicit choice settles it.
+            {
+                "QDRANT_URL": "http://qdrant.internal:6333",
+                "CGR_VECTOR_STORE_BACKEND": "sqlite",
+            },
+        ],
+    )
+    def test_a_settled_choice_is_not_noted(
+        self,
+        notes: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        env: dict[str, str],
+    ) -> None:
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        self._open(monkeypatch, tmp_path)
+        assert notes == []

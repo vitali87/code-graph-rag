@@ -161,6 +161,23 @@ class ProtobufFileIngestor:
             payload_message = getattr(node, payload_field_name)
             self._nodes[node_key] = node
 
+        self._assign_payload_fields(payload_message, properties)
+
+    def update_node_properties(self, label: str, properties: PropertyDict) -> None:
+        # A node already held takes the given keys; one never written stays
+        # absent, as a graph `MATCH ... SET` matches nothing, rather than
+        # appearing as a record that carries only these keys.
+        node_label = cs.NodeLabel(label)
+        payload_field_name = LABEL_TO_ONEOF_FIELD.get(node_label)
+        node = self._nodes.get((node_label, self._get_node_id(node_label, properties)))
+        if node is None or payload_field_name is None:
+            return
+        self._unflushed = True
+        self._assign_payload_fields(getattr(node, payload_field_name), properties)
+
+    def _assign_payload_fields(
+        self, payload_message: Message, properties: PropertyDict
+    ) -> None:
         for key, value in properties.items():
             if value is not None and hasattr(payload_message, key):
                 self._assign_payload_field(payload_message, key, value)

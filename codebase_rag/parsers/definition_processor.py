@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -57,6 +57,7 @@ from .notebook import is_notebook_path
 from .parameter_nodes import PendingParameterType
 from .php.namespaces import declared_namespace
 from .py.overloads import folded_overload_stubs
+from .sql_recovery import lost_sql_functions
 from .utils import (
     get_function_captures,
     safe_decode_with_fallback,
@@ -129,6 +130,12 @@ class DefinitionProcessor(
         # {go module qn: its `package` clause name}; Go package membership is
         # (directory, clause), so receiver binding needs both.
         self.go_package_names: dict[str, str] = {}
+        # {SQL file: the bytes its tree was parsed from}, kept only where the
+        # tree's text is the statement-isolated copy (issue #3180), which
+        # blanks the DDL the call pass reads routine references from (issue
+        # #3181). Written at every parse, an evicted tree's reload included,
+        # so they always belong to the tree the call pass walks.
+        self.sql_sources: dict[Path, bytes] = {}
         # Each Go file's build constraint, for telling a name each build
         # declares again (`i_linux.go`, `i_windows.go`) from a redeclaration
         # (shared with the call resolver and type inference).
@@ -185,6 +192,12 @@ class DefinitionProcessor(
         # method resolves via the field's declared type. Populated at class
         # ingestion, read by the type-inference engine at call resolution.
         self.class_field_types: dict[str, dict[str, str]] = {}
+        # {name of a C++ data member a call can invoke (a function pointer, a
+        # `std::function`): the types declaring it}, so `ops->cb()` may still
+        # reach a free `cb` (#3176 review). Keyed by type so a deleted or
+        # re-parsed one takes its names with it (Greptile, PR #3220).
+        # Populated at class ingestion, read at resolution.
+        self.cpp_callable_fields: dict[str, set[str]] = {}
         # Java anonymous-class override methods: (anon_method_qn, method_name,
         # base_type_name, module_qn). An anon class `new Base(){ @Override m(){} }`
         # is not modelled as a subclass, so its overrides register under the
@@ -558,11 +571,15 @@ class DefinitionProcessor(
             f"{module_qn}{cs.SEPARATOR_DOT}{file_path.suffix.lstrip(cs.SEPARATOR_DOT)}"
         )
 
-    def emit_type_edges(self) -> int:
+    def emit_type_edges(
+        self, restore_imports: Callable[[str], None] | None = None
+    ) -> int:
         """Resolve queued return/parameter annotations into RETURNS/ACCEPTS.
 
         Runs once the registry holds every file's types (issue #1527); the
         queue empties, so a watch-mode re-parse only re-resolves its own.
+        `restore_imports` loads an unchanged module's imports, by its qn, for
+        the annotations requeued from it (#3007 review).
         """
         from .type_facts import (
             TypeReferenceResolver,
@@ -587,6 +604,7 @@ class DefinitionProcessor(
             self.csharp_class_generic_arity,
         )
         resolver.join_partial_groups(self.csharp_partial_groups)
+        resolver.join_unparsed(self.rehydrated_definition_paths, restore_imports)
         emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
         # Parameter OF_TYPE edges resolve in the same pass, for the same
         # reason: the annotation may name a type from a later file.
@@ -628,12 +646,17 @@ class DefinitionProcessor(
                 return None
 
             self._handler = get_handler(language)
+            source_bytes = self._read_sql_once(file_path, language, source_bytes)
             parsed = self._parse_file_root(
                 file_path, language, queries, source_bytes, pre_parsed
             )
             if parsed is None:
                 return None
             root_node, pre_combined_captures = parsed
+            if language == cs.SupportedLanguage.SQL:
+                self._settle_sql_file(
+                    file_path, relative_path_str, root_node, source_bytes
+                )
 
             module_qn = base_module_qn(relative_path, self.project_name)
             module_qn = self._disambiguate_module_qn(module_qn, file_path)
@@ -790,6 +813,58 @@ class DefinitionProcessor(
             pre_combined_captures = None
         return root_node, pre_combined_captures
 
+    @staticmethod
+    def _read_sql_once(
+        file_path: Path, language: cs.SupportedLanguage, source_bytes: bytes | None
+    ) -> bytes | None:
+        # Read once: the call pass reads DDL from the bytes parsed (#3181).
+        if language == cs.SupportedLanguage.SQL and source_bytes is None:
+            return file_path.read_bytes()
+        return source_bytes
+
+    def _settle_sql_file(
+        self,
+        file_path: Path,
+        relative_path: str,
+        root_node: ASTNode,
+        source: bytes | None,
+    ) -> None:
+        if source is None:
+            return
+        self._warn_lost_sql_functions(file_path, relative_path, root_node, source)
+        self.keep_sql_source(
+            file_path,
+            root_node,
+            grammar_bytes(source, cs.SupportedLanguage.SQL, file_path),
+        )
+
+    def keep_sql_source(
+        self, file_path: Path, root_node: ASTNode, parsed: bytes
+    ) -> None:
+        """Note the bytes a SQL tree was parsed from, when its text is not them."""
+        start, end = root_node.start_byte, root_node.end_byte
+        # A blanked statement that opens or closes the file lies outside the
+        # root's span, where an unrecovered parse leaves only whitespace.
+        if (
+            root_node.text == parsed[start:end]
+            and not parsed[:start].strip()
+            and not parsed[end:].strip()
+        ):
+            self.sql_sources.pop(file_path, None)
+        else:
+            self.sql_sources[file_path] = parsed
+
+    @staticmethod
+    def _warn_lost_sql_functions(
+        file_path: Path, relative_path: str, root_node: ASTNode, source: bytes | None
+    ) -> None:
+        # A function even a statement-isolated parse cannot read is missing
+        # from the graph with its calls; the sync says so (issue #3180).
+        if source is None:
+            source = file_path.read_bytes()
+        if count := lost_sql_functions(source, root_node):
+            logger.warning(ls.SQL_FUNCTIONS_UNPARSED, path=relative_path, count=count)
+
     def _ingest_module_node(
         self,
         file_path: Path,
@@ -813,6 +888,8 @@ class DefinitionProcessor(
             module_props[cs.KEY_DOCSTRING] = docstring
         if fingerprint := interface_fingerprint(root_node, language):
             module_props[cs.KEY_INTERFACE_FINGERPRINT] = fingerprint
+        if package := self.go_package_names.get(module_qn):
+            module_props[cs.KEY_GO_PACKAGE] = package
         if language == cs.SupportedLanguage.PHP and (
             namespace := declared_namespace(root_node)
         ):
@@ -964,6 +1041,7 @@ class DefinitionProcessor(
             module_qn, self._pending_direct_module_exports
         )
         self._pending_direct_module_exports = []
+        self.record_esm_default_export(root_node, module_qn)
 
     def process_dependencies(self, filepath: Path) -> None:
         logger.debug(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))
@@ -985,7 +1063,9 @@ class DefinitionProcessor(
             cs.NodeLabel.EXTERNAL_PACKAGE, {cs.KEY_NAME: dep_name}
         )
 
-        rel_properties = {cs.KEY_VERSION_SPEC: dep_spec} if dep_spec else {}
+        rel_properties: PropertyDict = (
+            {cs.KEY_VERSION_SPEC: dep_spec} if dep_spec else {}
+        )
         if properties:
             rel_properties |= properties
 

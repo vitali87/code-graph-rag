@@ -150,6 +150,233 @@ NodeIdentifier = tuple[NodeLabel | str, str, str | None]
 type ASTNode = Node
 
 
+class ScopeRules(TypedDict):
+    """The node types and fields the Python scope walks read, under the
+    names `scope_rules_from` in rust/cgr_graph_rs/src/trees/python.rs reads."""
+
+    identifier: str
+    nested_scopes: list[str]
+    left_binders: list[str]
+    name_binders: list[str]
+    imports: list[str]
+    patterns: list[str]
+    declarations: list[str]
+    comprehensions: list[str]
+    nonlocal_statement: str
+    with_statement: str
+    except_clause: str
+    case_pattern: str
+    as_pattern: str
+    aliased_import: str
+    dotted_name: str
+    wildcard: str
+    function_definition: str
+    class_definition: str
+    lambda_expression: str
+    for_in_clause: str
+    attribute: str
+    keyword_argument: str
+    separator: str
+    left_field: str
+    name_field: str
+    value_field: str
+    alias_field: str
+    module_field: str
+    parameters_field: str
+    body_field: str
+    attribute_field: str
+
+
+class InterfaceLanguageRules(TypedDict):
+    """One language's `_Rules` in parsers/interface_fingerprint.py, and
+    which of its language branches the language takes."""
+
+    flavor: str
+    functions: list[str]
+    blocks: list[str]
+    definitions: list[str]
+    blockers: list[str]
+    kept_names: list[str]
+    calls: list[str]
+    returns: list[str]
+
+
+class CallableScanRules(TypedDict):
+    """`_CallableScanConfig` in parsers/utils.py."""
+
+    call: str
+    identifier: str
+    closures: list[str]
+    opaque: list[str]
+
+
+class InterfaceRules(TypedDict):
+    """The constants parsers/interface_fingerprint.py and the callable-
+    parameter scan it asks read, under the names `interface_rules_from` in
+    rust/cgr_graph_rs/src/trees/python.rs reads."""
+
+    languages: dict[str, InterfaceLanguageRules]
+    version: str
+    open: bytes
+    close: bytes
+    leaf: bytes
+    missing: bytes
+    elided_body: bytes
+    returned: bytes
+    call: bytes
+    argument: bytes
+    local: bytes
+    length_bytes: int
+    byte_order: str
+    comment: str
+    dunder: str
+    body_field: str
+    name_field: str
+    left_field: str
+    arguments_field: str
+    value_field: str
+    key_field: str
+    function_field: str
+    property_field: str
+    object_field: str
+    parameters_field: str
+    parameter_field: str
+    pattern_field: str
+    alias_field: str
+    callee_fields: list[str]
+    identifier: str
+    keyword_argument: str
+    name_arguments: list[str]
+    cast_wrappers: list[str]
+    call_expression: str
+    member_expression: str
+    prototype_methods: list[str]
+    js_binder_fields: dict[str, list[str]]
+    js_bound_names: list[str]
+    js_return: str
+    js_pair: str
+    js_computed_property_name: str
+    js_require: str
+    js_typed_parameters: list[str]
+    py_identifier: str
+    py_call: str
+    py_attribute: str
+    py_return: str
+    py_read_returns: list[str]
+    receivers: list[str]
+    py_target_holders: list[str]
+    py_target_wrappers: list[str]
+    py_member_targets: list[str]
+    py_caller_scope: str
+    py_named_parameters: list[str]
+    py_typed_parameter: str
+    py_scope_boundaries: list[str]
+    py_decorated_definition: str
+    py_decorated_definitions: list[str]
+    py_shadow_binders: list[str]
+    py_as_pattern_target: str
+    py_imports: list[str]
+    py_global: str
+    py_case_pattern: str
+    py_dotted_name: str
+    py_aliased_import: str
+    python_scan: CallableScanRules
+    js_scan: CallableScanRules
+
+
+class AliasRules(TypedDict):
+    """The constants `python_local_aliases` in parsers/py/variable_analyzer.py
+    reads, under the names `alias_rules_from` in
+    rust/cgr_graph_rs/src/trees/python.rs reads."""
+
+    boundaries: list[str]
+    assignment: str
+    identifier: str
+    attribute: str
+    call: str
+    binary_operator: str
+    boolean_operator: str
+    conditional_expression: str
+    parenthesized_expression: str
+    left_field: str
+    right_field: str
+    operator_field: str
+    and_operator: str
+    dunders: dict[str, str]
+    max_depth: int
+
+
+class TreeRules(TypedDict):
+    """The classification constants the Rust tree bridge applies, under the
+    names `rules_from` in rust/cgr_graph_rs/src/trees/python.rs reads."""
+
+    anchor_version: str
+    comment: str
+    punct: list[str]
+    id_token: str
+    lit_token: str
+    id_substring: str
+    id_extras: list[str]
+    lit_substrings: list[str]
+    lit_extras: list[str]
+    block_substrings: list[str]
+    block_extras: list[str]
+    min_branch_nodes: int
+    wrapped_def_substring: str
+    expression_body_types: list[str]
+    self_body_types: list[str]
+    hash_open: bytes
+    hash_close: bytes
+    digest_size: int
+    body_field: str
+    dart_signature_types: list[str]
+    dart_signature_wrappers: list[str]
+    dart_function_body: str
+    scopes: ScopeRules
+    interface: InterfaceRules
+    aliases: AliasRules
+
+
+class ScopeFacts(NamedTuple):
+    """What one Python scope's own body binds, read once per scope by the
+    scope walks in parsers/py/ast_analyzer.py (issue #3473)."""
+
+    # Its parameters, in order.
+    params: tuple[str, ...]
+    # Every name its statements bind, whatever binds it.
+    bound: frozenset[str]
+    # The names bound where no import-map entry can make them a re-import.
+    plain: frozenset[str]
+    # Each other binding's name with the import paths that, when the import
+    # map holds one of them for the name, make it a re-import.
+    conditional: tuple[tuple[str, tuple[str, ...]], ...]
+    # Names a `global` or `nonlocal` statement declares.
+    declared: frozenset[str]
+    # Names a `nonlocal` statement declares.
+    nonlocals: frozenset[str]
+
+
+# `TreeBridge.scope_facts` as Rust returns it: parameters, plain names,
+# (name, import paths) pairs, declared names and nonlocal names, each sorted
+# but the parameters.
+type NativeScopeFacts = tuple[
+    list[str], list[str], list[tuple[str, list[str]]], list[str], list[str]
+]
+
+
+# `TreeBridge.local_aliases` as Rust returns one alias: the local, its
+# candidate leaves, its dunder and its reflected leaves, each leaf as its
+# descendant index under the scope (`TreeCursor.goto_descendant`).
+type NativeAlias = tuple[str, list[int], str | None, list[int]]
+
+
+# One node as the tree bridge's probe compares it: symbol, type, named flag,
+# byte range, start and end points, child count and field name.
+type DescribedNode = tuple[
+    int, str, bool, int, int, tuple[int, int], tuple[int, int], int, str | None
+]
+
+
 class NodeType(StrEnum):
     FUNCTION = "Function"
     METHOD = "Method"
@@ -266,6 +493,12 @@ class FunctionRegistryTrieProtocol(Protocol):
     def mark_module_private(self, qualified_name: QualifiedName) -> None: ...
 
     def is_module_private(self, qualified_name: QualifiedName) -> bool: ...
+
+    def mark_rust_visibility(
+        self, qualified_name: QualifiedName, path: str
+    ) -> None: ...
+
+    def rust_visibility(self, qualified_name: QualifiedName) -> str | None: ...
 
     def mark_body_scoped_name(self, qualified_name: QualifiedName) -> None: ...
 
@@ -637,6 +870,10 @@ class ShellCommandArgs(TypedDict, total=False):
     command: str
 
 
+class ReadFileArgs(TypedDict, total=False):
+    file_path: str
+
+
 class StructuralReplaceArgs(TypedDict, total=False):
     pattern: str
     rewrite: str
@@ -657,7 +894,13 @@ class RawToolArgs:
     dry_run: bool = True
 
 
-ToolArgs = ReplaceCodeArgs | CreateFileArgs | ShellCommandArgs | StructuralReplaceArgs
+ToolArgs = (
+    ReplaceCodeArgs
+    | CreateFileArgs
+    | ShellCommandArgs
+    | ReadFileArgs
+    | StructuralReplaceArgs
+)
 
 
 class LanguageQueries(TypedDict):
@@ -763,6 +1006,9 @@ class ProjectSync(NamedTuple):
     # one whose first sync never finished.
     last_synced_at: str | None
     interrupted: bool
+    # The checkout the project was indexed from (#2479); None for a project
+    # that records none, or one known only from its incomplete-run marker.
+    root_path: str | None = None
 
 
 class AstFingerprintResult(NamedTuple):
@@ -1161,6 +1407,15 @@ class PendingTypeFact(NamedTuple):
     # RETURNS/ACCEPTS unbuilt (issue #1892). None only when the definition
     # was ingested without a file, in which case the module qn is the key.
     path: str | None = None
+    # The types the definition's RETURNS, and its ACCEPTS, already reach, set
+    # only on a fact requeued from an unchanged file. Its file's imports are
+    # not loaded on such a run, so re-resolving a name its import bound fell
+    # back to the nearest same-named type and added a wrong edge beside the
+    # right one (issue #3007); only a name none of these reach needs
+    # resolving. Kept apart, so a parameter's edge never stands in for a
+    # return edge that is missing (CodeRabbit, PR #3218).
+    resolved_returns: frozenset[str] = frozenset()
+    resolved_accepts: frozenset[str] = frozenset()
 
 
 class DeferredImportEdge(NamedTuple):
@@ -1373,7 +1628,9 @@ _GLOSS_NODE_PROPS = (
     "target_qn: string, target_hash: string?, anchor_quote: string?, "
     "anchor_prefix: string?, anchor_suffix: string?, anchor_state: string, "
     "moved_from: string?, candidate_qns: list[string]?, project: string?, "
-    "write_id: string?, mention_qns: list[string]?}"
+    "write_id: string?, mention_qns: list[string]?, "
+    "mention_hashes: list[string]?, mention_quotes: list[string]?, "
+    "mentions_lost: list[string]?}"
 )
 
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (
@@ -1395,23 +1652,23 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, broken_links: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?, interface_fingerprint: string?, php_namespace: string?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, go_package: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, broken_links: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?, interface_fingerprint: string?, php_namespace: string?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, non_method_members: list[string]?, type_checking_only: boolean?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, non_method_members: list[string]?, callable_fields: list[string]?, type_checking_only: boolean?, field_types: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, rust_visibility: string?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, first_return_type: string?, chain_return_type: string?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, member_aliases: list[string]?, overrides_external: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, signature: string?, declared_in_class: boolean?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, member_aliases: list[string]?, overrides_external: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, chain_return_type: string?, signature: string?, declared_in_class: boolean?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, embeds: list[string]?, implementers_unknown: string?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, embeds: list[string]?, implementers_unknown: string?, field_types: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.ENUM,
@@ -1423,7 +1680,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.UNION,
-        "{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, callable_fields: list[string]?, field_types: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.MODULE_INTERFACE,

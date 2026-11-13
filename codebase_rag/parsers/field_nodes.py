@@ -13,6 +13,7 @@ docstring extractor can be pointed at it once both land on main.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -580,6 +581,73 @@ def _cpp_record(decl: Node, access: str, out: list[DeclaredField]) -> None:
     for declarator in decl.children_by_field_name(cs.FIELD_DECLARATOR):
         name_node = _cpp_field_identifier(declarator)
         _add(out, _declared_field(name_node, type_name, modifiers, is_static, decl))
+
+
+# `std::function<int()>`, `boost::function<...>`, `std::move_only_function<...>`.
+_CPP_FUNCTION_WRAPPER = "function<"
+
+
+def add_callable_fields(
+    fields: dict[str, set[str]], type_qn: str, names: Iterable[str]
+) -> None:
+    """Record that `type_qn` declares each callable data member in `names`."""
+    for name in names:
+        fields.setdefault(name, set()).add(type_qn)
+
+
+def drop_callable_fields(fields: dict[str, set[str]], type_qn: str) -> None:
+    """Forget `type_qn`'s callable data members, in place: the resolver reads
+    this same dict, and a name no remaining type declares leaves it."""
+    for name in [name for name, types in fields.items() if type_qn in types]:
+        types = fields[name]
+        types.discard(type_qn)
+        if not types:
+            del fields[name]
+
+
+def cpp_callable_field_names(class_node: Node) -> set[str]:
+    """Data members a call can invoke: function pointers and `std::function`s.
+
+    `ops.cb()` through one calls whatever free function was stored in it, so
+    member syntax does not rule a free function out for these names.
+    """
+    body = class_node.child_by_field_name(cs.FIELD_BODY)
+    names: set[str] = set()
+    if body is not None:
+        _cpp_collect_callable(body, names)
+    return names
+
+
+def _cpp_collect_callable(node: Node, out: set[str]) -> None:
+    # The same member scope `_cpp_collect` walks.
+    for child in node.children:
+        if child.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+            continue
+        if child.type != cs.CppNodeType.FIELD_DECLARATION:
+            _cpp_collect_callable(child, out)
+            continue
+        _cpp_record_callable(child, out)
+
+
+def _cpp_record_callable(decl: Node, out: set[str]) -> None:
+    type_text = _type_text(decl.child_by_field_name(cs.FIELD_TYPE)) or ""
+    wrapper = _CPP_FUNCTION_WRAPPER in type_text
+    for declarator in decl.children_by_field_name(cs.FIELD_DECLARATOR):
+        if not (wrapper or _cpp_declares_function(declarator)):
+            continue
+        # A method's declarator is a function_declarator too; only a
+        # parenthesised one (`(*cb)`) names a field.
+        name_node = _cpp_field_identifier(declarator)
+        if name_node is not None and (name := safe_decode_text(name_node)):
+            out.add(name)
+
+
+def _cpp_declares_function(declarator: Node) -> bool:
+    # `(*cb)()`, and `*(*cb)()` returning a pointer, both end in one.
+    node: Node | None = declarator
+    while node is not None and node.type not in _CPP_DECLARATOR_STOP:
+        node = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    return node is not None
 
 
 def _cpp_field_identifier(declarator: Node) -> Node | None:

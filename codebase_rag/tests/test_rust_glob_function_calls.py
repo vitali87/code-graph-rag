@@ -1,0 +1,410 @@
+"""A Rust free function reached through a glob `use` binds exactly.
+
+rustc resolves `use crate::shapes::*;` at compile time, as it does a named
+`use`, yet every function call through a glob was labelled `heuristic`, so
+`rename` refused it (mdBook's `set_dest_dir`). And a globbed module holding
+the function only through its own `pub use self::inner::*;` was not
+followed: the call fell to the project-wide name search and bound a
+same-named decoy (issue #3172).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    force_mtime_after_cache,
+    get_relationships,
+)
+from evals.cgr_graph import _StatefulIngestor
+
+_RUST = {
+    "Cargo.toml": '[package]\nname = "rsglob"\nversion = "0.1.0"\nedition = "2021"\n',
+    "src/lib.rs": (
+        "pub mod app;\npub mod child;\npub mod decoy;\npub mod prelude;\n"
+        "pub mod shapes;\npub mod util;\n"
+        "use crate::shapes::*;\n"
+        "pub fn top_helper() -> u32 { 1 }\n"
+        "pub fn via_glob() -> u32 {\n    total() + helper()\n}\n"
+        "pub fn via_named() -> u32 { crate::util::build() }\n"
+    ),
+    "src/shapes/mod.rs": "mod inner;\npub use self::inner::*;\npub fn total() -> u32 { 1 }\n",
+    "src/shapes/inner.rs": "pub fn helper() -> u32 { 2 }\n",
+    "src/decoy.rs": (
+        "pub fn total() -> u32 { 99 }\npub fn helper() -> u32 { 99 }\n"
+        "pub fn build() -> u32 { 99 }\npub fn top_helper() -> u32 { 99 }\n"
+    ),
+    "src/child.rs": "use super::*;\npub fn f() -> u32 { top_helper() }\n",
+    "src/util.rs": "pub fn build() -> u32 { 3 }\n",
+    "src/prelude.rs": "pub use crate::util::build;\n",
+    "src/app.rs": "use crate::prelude::*;\npub fn go() -> u32 { build() }\n",
+}
+_PYTHON = {
+    "pkg/__init__.py": "",
+    "pkg/helpers.py": "def shout():\n    return 1\n",
+    "pkg/use.py": "from pkg.helpers import *\n\n\ndef run():\n    return shout()\n",
+}
+
+_Calls = dict[tuple[str, str], str]
+
+
+def _calls(
+    root: Path,
+    files: dict[str, str],
+    grammar: str,
+    rel_types: tuple[cs.RelationshipType, ...] = (cs.RelationshipType.CALLS,),
+) -> _Calls:
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    mock = MagicMock()
+    create_and_run_updater(root, mock, skip_if_missing=grammar)
+    return {
+        (str(c.args[0][2]).split(".", 1)[1], str(c.args[2][2]).split(".", 1)[1]): str(
+            (c.kwargs.get("properties") or {}).get(cs.KEY_RESOLUTION)
+        )
+        for rel_type in rel_types
+        for c in get_relationships(mock, rel_type)
+    }
+
+
+@pytest.fixture(scope="module")
+def rust(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
+    return _calls(tmp_path_factory.mktemp("rs3172") / "rsglob", _RUST, "rust")
+
+
+def _callees(calls: _Calls, caller: str) -> dict[str, str]:
+    return {to: res for (src, to), res in calls.items() if src == caller}
+
+
+def test_a_glob_imported_function_binds_exactly(rust: _Calls) -> None:
+    assert _callees(rust, "src.lib.via_glob") == {
+        "src.shapes.total": "exact",
+        "src.shapes.inner.helper": "exact",
+    }, rust
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("src.child.f", "src.lib.top_helper"),
+        ("src.app.go", "src.util.build"),
+    ],
+    ids=["use-super-glob", "prelude-named-reexport"],
+)
+def test_other_glob_shapes_bind_exactly(rust: _Calls, caller: str, callee: str) -> None:
+    assert _callees(rust, caller) == {callee: "exact"}, rust
+
+
+def test_a_named_use_and_a_python_star_import_are_unchanged(
+    rust: _Calls, tmp_path: Path
+) -> None:
+    # Negatives: a path call stays exact, and a Python `import *` stays a
+    # heuristic, since a run-time `__all__` can change what it binds.
+    assert _callees(rust, "src.lib.via_named") == {"src.util.build": "exact"}, rust
+    python = _calls(tmp_path / "pystar", _PYTHON, "python")
+    assert _callees(python, "pkg.use.run") == {"pkg.helpers.shout": "heuristic"}
+
+
+_RUST_VISIBILITY = {
+    "Cargo.toml": '[package]\nname = "rsvis"\nversion = "0.1.0"\nedition = "2021"\n',
+    "src/lib.rs": (
+        "pub mod api;\npub mod app;\npub mod facade;\npub mod hidden;\n"
+        "pub mod pick;\npub mod private_build;\npub mod util;\npub mod visible;\n"
+    ),
+    # `helper` is private to `hidden`, so `use hidden::*` cannot import it.
+    "src/hidden.rs": "fn helper() -> u32 { 99 }\npub fn other() -> u32 { 0 }\n",
+    "src/visible.rs": "pub fn helper() -> u32 { 1 }\n",
+    "src/pick.rs": (
+        "use crate::hidden::*;\nuse crate::visible::*;\n"
+        "pub fn go() -> u32 { helper() + other() }\n"
+    ),
+    # `facade`'s private `use` binds `make` for `facade` alone.
+    "src/facade.rs": (
+        "use crate::private_build::build as make;\n"
+        "pub fn unrelated() -> u32 { make() }\n"
+    ),
+    "src/api.rs": "pub use crate::util::build as make;\n",
+    "src/private_build.rs": "pub fn build() -> u32 { 99 }\n",
+    "src/util.rs": "pub fn build() -> u32 { 3 }\n",
+    "src/app.rs": (
+        "use crate::facade::*;\nuse crate::api::*;\npub fn go() -> u32 { make() }\n"
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def rust_visibility(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
+    return _calls(
+        tmp_path_factory.mktemp("rs3172vis") / "rsvis", _RUST_VISIBILITY, "rust"
+    )
+
+
+def test_two_globs_supplying_a_name_bind_the_one_they_can_see(
+    rust_visibility: _Calls,
+) -> None:
+    # `hidden::helper` is private, so `use crate::hidden::*;` does not import
+    # it and rustc takes `visible`'s; `other`, which only `hidden` supplies,
+    # is exact too.
+    assert _callees(rust_visibility, "src.pick.go") == {
+        "src.visible.helper": "exact",
+        "src.hidden.other": "exact",
+    }, rust_visibility
+
+
+def test_a_glob_does_not_follow_a_private_use_of_its_base(
+    rust_visibility: _Calls,
+) -> None:
+    # `facade`'s private `use ... as make` is not importable through
+    # `facade::*`; `api`'s public re-export is what `make` names.
+    assert _callees(rust_visibility, "src.app.go") == {"src.util.build": "exact"}, (
+        rust_visibility
+    )
+
+
+_RUST_PRIVATE = {
+    "Cargo.toml": '[package]\nname = "rspriv"\nversion = "0.1.0"\nedition = "2021"\n',
+    "src/lib.rs": (
+        "pub mod hidden;\npub mod shapes;\npub mod user;\nfn secret() -> u32 { 1 }\n"
+    ),
+    # `drop` is private to `hidden`: a glob outside it does not import it,
+    # and `drop(v)` there calls the prelude's. `hidden::below` sees it.
+    "src/hidden.rs": (
+        "pub mod below;\nfn drop<T>(_value: T) {}\npub fn keep() {}\n"
+        "pub(crate) fn shared() {}\n"
+    ),
+    "src/hidden/below.rs": "use super::*;\npub fn go(v: u32) { keep(); drop(v) }\n",
+    "src/user.rs": (
+        "use crate::hidden::*;\nuse super::*;\n"
+        "pub fn go(v: u32) -> u32 { keep(); shared(); drop(v); secret() }\n"
+    ),
+    # `inner::child` sees `inner`'s private `drop`, but `shapes` does not,
+    # so its `pub use self::inner::*;` does not pass `drop` on.
+    "src/shapes/mod.rs": "pub mod inner;\npub use self::inner::*;\n",
+    "src/shapes/inner.rs": "pub mod child;\nfn drop<T>(_value: T) {}\n",
+    "src/shapes/inner/child.rs": (
+        "use crate::shapes::*;\npub fn go(v: u32) { drop(v) }\n"
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def rust_private(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
+    return _calls(
+        tmp_path_factory.mktemp("rs3242priv") / "rspriv", _RUST_PRIVATE, "rust"
+    )
+
+
+def test_a_private_function_outside_the_globbing_module_is_not_exact(
+    rust_private: _Calls,
+) -> None:
+    callees = _callees(rust_private, "src.user.go")
+    assert callees.get("src.hidden.keep") == "exact", rust_private
+    assert callees.get("src.hidden.shared") == "exact", rust_private
+    assert callees.get("src.hidden.drop") != "exact", rust_private
+
+
+def test_a_private_function_the_glob_can_see_stays_exact(
+    rust_private: _Calls,
+) -> None:
+    # A private item is visible to its module and every module below it, so
+    # `use super::*;` imports it, from a crate root's sibling files as well.
+    assert _callees(rust_private, "src.user.go").get("src.lib.secret") == "exact"
+    assert _callees(rust_private, "src.hidden.below.go") == {
+        "src.hidden.keep": "exact",
+        "src.hidden.drop": "exact",
+    }, rust_private
+
+
+def test_a_function_the_reexporting_module_cannot_see_is_not_exact(
+    rust_private: _Calls,
+) -> None:
+    callees = _callees(rust_private, "src.shapes.inner.child.go")
+    assert callees.get("src.shapes.inner.drop") != "exact", rust_private
+
+
+def _store_calls(store: _StatefulIngestor, caller: str) -> dict[str, str]:
+    return {
+        str(edge[4]): str(store.props_for(edge).get(cs.KEY_RESOLUTION))
+        for edge in store.edges
+        if edge[2] == cs.RelationshipType.CALLS.value and edge[1] == caller
+    }
+
+
+def _index(store: _StatefulIngestor, root: Path, *, force: bool = False) -> None:
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.RUST not in parsers:
+        pytest.skip("rust parser not available")
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    ).run(force=force)
+
+
+def test_an_unchanged_private_function_stays_not_exact_after_a_sync(
+    tmp_path: Path,
+) -> None:
+    # Only the caller is re-parsed; `hidden.rs` is read back from the graph,
+    # and its private `drop` must not turn exact there.
+    root = tmp_path / "proj"
+    for rel, text in _RUST_PRIVATE.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    store = _StatefulIngestor()
+    _index(store, root)
+    caller = root / "src/user.rs"
+    caller.write_text(
+        _RUST_PRIVATE["src/user.rs"] + "pub fn unrelated() {}\n", encoding="utf-8"
+    )
+    force_mtime_after_cache(root, caller)
+    _index(store, root)
+    clean = _StatefulIngestor()
+    _index(clean, root, force=True)
+    synced = _store_calls(store, "proj.src.user.go")
+    assert synced == _store_calls(clean, "proj.src.user.go"), synced
+    assert synced.get("proj.src.hidden.drop") != "exact", synced
+
+
+_RUST_SCOPED = {
+    "Cargo.toml": '[package]\nname = "rsscope"\nversion = "0.1.0"\nedition = "2021"\n',
+    "src/lib.rs": (
+        "pub mod a;\npub mod amb;\npub mod amb_kinds;\npub mod b;\npub mod far;\n"
+        "pub mod nest;\npub mod sib;\npub mod t;\n"
+    ),
+    "src/a.rs": "pub(crate) fn helper() -> u32 { 1 }\npub(crate) fn drop<T>(_value: T) {}\n",
+    "src/b.rs": "pub fn helper() -> u32 { 2 }\npub fn Make(x: u32) -> u32 { x }\n",
+    # Visible too, though only functions record visibility: also ambiguous.
+    "src/t.rs": "pub struct Make(pub u32);\n",
+    "src/amb_kinds.rs": "use crate::b::*;\nuse crate::t::*;\npub fn go() { Make(1); }\n",
+    "src/sib.rs": "use crate::a::*;\npub fn go() -> u32 { drop(0u32); helper() }\n",
+    # Both `helper`s are visible here, so rustc rejects the call as ambiguous.
+    "src/amb.rs": "use crate::a::*;\nuse crate::b::*;\npub fn go() -> u32 { helper() }\n",
+    "src/nest.rs": "pub mod inner;\npub mod peer;\n",
+    "src/nest/inner.rs": (
+        "pub(super) fn drop<T>(_value: T) {}\npub(in crate::nest) fn deep() {}\n"
+    ),
+    "src/nest/peer.rs": "use super::inner::*;\npub fn go(v: u32) { drop(v); deep() }\n",
+    "src/far.rs": "use crate::nest::inner::*;\npub fn go(v: u32) { drop(v) }\n",
+    # The binary is a crate of its own: the library's `pub(crate)` items are
+    # not visible to it, and `drop` is the prelude's.
+    "src/main.rs": "use rsscope::a::*;\nfn main() { drop(0u32) }\n",
+}
+
+
+@pytest.fixture(scope="module")
+def rust_scoped(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
+    return _calls(
+        tmp_path_factory.mktemp("rs3242scope") / "rsscope", _RUST_SCOPED, "rust"
+    )
+
+
+@pytest.mark.parametrize(
+    ("caller", "callees"),
+    [
+        ("src.sib.go", {"src.a.drop": "exact", "src.a.helper": "exact"}),
+        (
+            "src.nest.peer.go",
+            {"src.nest.inner.drop": "exact", "src.nest.inner.deep": "exact"},
+        ),
+    ],
+    ids=["pub-crate-sibling", "pub-super-and-in-path"],
+)
+def test_a_restricted_function_visible_to_the_glob_binds_exactly(
+    rust_scoped: _Calls, caller: str, callees: dict[str, str]
+) -> None:
+    assert _callees(rust_scoped, caller) == callees, rust_scoped
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("src.far.go", "src.nest.inner.drop"),
+        ("src.main.main", "src.a.drop"),
+    ],
+    ids=["pub-super-outside-its-parent", "pub-crate-from-the-binary"],
+)
+def test_a_restricted_function_the_glob_cannot_see_is_not_exact(
+    rust_scoped: _Calls, caller: str, callee: str
+) -> None:
+    assert _callees(rust_scoped, caller).get(callee) != "exact", rust_scoped
+
+
+@pytest.mark.parametrize(
+    "caller", ["src.amb.go", "src.amb_kinds.go"], ids=["pub-crate-fn", "tuple-struct"]
+)
+def test_a_second_provider_the_glob_may_see_is_ambiguous(
+    rust_scoped: _Calls, caller: str
+) -> None:
+    # `a::helper` is `pub(crate)`, which `amb` sees as well as `b::helper`;
+    # `t::Make` is a struct, whose visibility the graph does not record.
+    callees = _callees(rust_scoped, caller)
+    assert callees, rust_scoped
+    assert "exact" not in callees.values(), rust_scoped
+
+
+_RUST_KINDS = {
+    "Cargo.toml": '[package]\nname = "rskinds"\nversion = "0.1.0"\nedition = "2021"\n',
+    "src/lib.rs": (
+        "#[macro_use]\nmod loud;\npub mod ffi;\npub mod mac;\npub mod shapes;\n"
+        "pub mod user;\n"
+    ),
+    # `loud`'s `shout!` is in scope by text order in every later module.
+    "src/loud.rs": "macro_rules! shout {\n    () => {};\n}\n",
+    # An `extern` block's declarations take visibility as a fn does.
+    "src/ffi.rs": 'extern "C" {\n    fn drop(value: u32);\n    pub fn open(value: u32);\n}\n',
+    # `mac`'s `shout!` is no path item of `mac`, so `use crate::mac::*;`
+    # does not import it; its own child sees it by text order.
+    "src/mac.rs": "macro_rules! shout {\n    () => {};\n}\npub mod kid;\n",
+    "src/mac/kid.rs": "use super::*;\npub fn go() { shout!(); }\n",
+    "src/shapes.rs": "struct Ok(u32);\n",
+    "src/user.rs": (
+        "use crate::ffi::*;\nuse crate::mac::*;\nuse crate::shapes::*;\n"
+        "pub fn go() {\n    unsafe { open(1) };\n    drop(1u32);\n    shout!();\n"
+        "    let _ = Ok::<u32, ()>(1);\n}\n"
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def rust_kinds(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
+    # A tuple struct's constructor call is an INSTANTIATES edge.
+    return _calls(
+        tmp_path_factory.mktemp("rs3242kinds") / "rskinds",
+        _RUST_KINDS,
+        "rust",
+        (cs.RelationshipType.CALLS, cs.RelationshipType.INSTANTIATES),
+    )
+
+
+@pytest.mark.parametrize(
+    "callee",
+    ["src.ffi.drop", "src.mac.shout", "src.shapes.Ok"],
+    ids=["private-extern-fn", "macro-rules", "private-tuple-struct"],
+)
+def test_what_a_glob_does_not_import_is_not_exact(
+    rust_kinds: _Calls, callee: str
+) -> None:
+    # Each is what `user`'s globs reach, and none is what the call names:
+    # `drop` and `Ok` are the prelude's, `shout!` is `loud`'s.
+    assert _callees(rust_kinds, "src.user.go").get(callee) != "exact", rust_kinds
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [("src.user.go", "src.ffi.open"), ("src.mac.kid.go", "src.mac.shout")],
+    ids=["pub-extern-fn", "macro-rules-in-its-child"],
+)
+def test_what_a_glob_does_import_stays_exact(
+    rust_kinds: _Calls, caller: str, callee: str
+) -> None:
+    assert _callees(rust_kinds, caller).get(callee) == "exact", rust_kinds

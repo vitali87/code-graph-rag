@@ -266,6 +266,9 @@ TS_COMPILER_OPTIONS_KEY = "compilerOptions"
 TS_PATHS_KEY = "paths"
 TS_BASE_URL_KEY = "baseUrl"
 TS_EXTENDS_KEY = "extends"
+# TypeScript 5 conditions a tsconfig adds to the `exports` keys it selects
+# (issue #2935).
+TS_CUSTOM_CONDITIONS_KEY = "customConditions"
 TSCONFIG_EXTENSION = EXT_JSON
 PATH_RELATIVE_PREFIX = "./"
 PATH_PARENT_PREFIX = "../"
@@ -315,6 +318,50 @@ DECLARED_ARITY_LANGUAGES = frozenset(
 ARITY_REJECTS_MISSING = DECLARED_ARITY_LANGUAGES - {SupportedLanguage.JS}
 # Where a surplus argument fails too. PHP and JavaScript drop it at run time.
 ARITY_REJECTS_SURPLUS = ARITY_REJECTS_MISSING - {SupportedLanguage.PHP}
+
+# Languages whose decorators or modifiers the structural delta reads as a
+# calling convention (issue #3259): Python's `@property`, `@staticmethod` and
+# `@classmethod`, the JavaScript and TypeScript `get`, `set` and `static`,
+# and Java's `static`, each with the visibility below where it has one.
+CONVENTION_LANGUAGES = frozenset(
+    {
+        SupportedLanguage.PYTHON,
+        SupportedLanguage.JS,
+        SupportedLanguage.TS,
+        SupportedLanguage.TSX,
+        SupportedLanguage.JAVA,
+    }
+)
+# Where a call through an instance of a static method fails: TypeScript does
+# not type-check it and JavaScript finds no such member. Java allows it.
+STATIC_REJECTS_INSTANCE_CALL = frozenset(
+    {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
+)
+# Visibility modifiers ranked by reach. Java's `protected` reaches its whole
+# package as well as subclasses, so it outranks a member with no modifier,
+# which is package-private in a class but public in an interface; the node
+# does not say which, so a Java member with none is not ranked.
+VISIBILITY_PRIVATE = 0
+VISIBILITY_PROTECTED = 1
+VISIBILITY_PUBLIC = 2
+VISIBILITY_RANKS: dict[SupportedLanguage, dict[str, int]] = {
+    language: {
+        "private": VISIBILITY_PRIVATE,
+        "protected": VISIBILITY_PROTECTED,
+        "public": VISIBILITY_PUBLIC,
+    }
+    for language in (
+        SupportedLanguage.TS,
+        SupportedLanguage.TSX,
+        SupportedLanguage.JAVA,
+    )
+}
+# The rank of a member written with no visibility modifier, where the
+# language fixes it: a TypeScript member is public.
+VISIBILITY_DEFAULT: dict[SupportedLanguage, int] = {
+    SupportedLanguage.TS: VISIBILITY_PUBLIC,
+    SupportedLanguage.TSX: VISIBILITY_PUBLIC,
+}
 
 
 class LanguageStatus(StrEnum):
@@ -401,7 +448,7 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
     ),
     SupportedLanguage.SQL: LanguageMetadata(
         LanguageStatus.DEV,
-        "Stored functions (CREATE FUNCTION), schema-qualified names, invocations between routines. CREATE PROCEDURE and in-depth PL/pgSQL bodies await upstream grammar support: the published grammar parses plain SQL statements only",
+        "Stored functions (CREATE FUNCTION), each one a dead-code root, schema-qualified names, invocations between routines, and the DDL that runs a routine by name (trigger EXECUTE FUNCTION, aggregate SFUNC/FINALFUNC, cast WITH FUNCTION, operator FUNCTION, type INPUT/OUTPUT, HANDLER/VALIDATOR, SUPPORT). CREATE PROCEDURE and in-depth PL/pgSQL bodies await upstream grammar support: the published grammar parses plain SQL statements only",
         "SQL (PostgreSQL)",
     ),
     SupportedLanguage.JULIA: LanguageMetadata(
@@ -422,6 +469,10 @@ INDEX_LUA_INIT = "init"
 MODULE_INDEX_FILE_STEMS = frozenset(
     {INDEX_INIT, INDEX_INDEX, INDEX_MOD, INDEX_LUA_INIT}
 )
+# What an import is pointed at when only modules of another language family
+# hold its name (`require("./util")` beside a lone `util.py`): nothing the
+# importer can load, so no module or definition answers to it (issue #2756).
+IMPORT_TARGET_UNREACHABLE = "unresolved"
 # A Rust library crate's root, where its `pub use` facade lives.
 INDEX_RS_LIB = "lib"
 # Stems of the files a package exposes its internals through (issue #2573):

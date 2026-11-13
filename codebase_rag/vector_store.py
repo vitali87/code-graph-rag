@@ -5,6 +5,7 @@ import json
 import time
 import uuid
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from functools import cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Required, TypedDict, cast
@@ -31,7 +32,12 @@ from .sqlite_vectors import (
     open_sqlite_vector_client,
 )
 from .types_defs import EmbeddingPoint, EmbeddingSymbol
-from .utils.dependencies import has_pymilvus, has_qdrant_client, has_sqlite_vec
+from .utils.dependencies import (
+    has_pymilvus,
+    has_qdrant_client,
+    has_sqlite_vec,
+    sqlite_vec_loadable,
+)
 
 if TYPE_CHECKING:
     from qdrant_client.models import Filter, Record
@@ -232,6 +238,8 @@ def _get_vector_store() -> VectorStore | None:
     if backend == VectorStoreBackend.SQLITE:
         if not has_sqlite_vec():
             logger.warning(ls.VECTOR_STORE_BACKEND_UNAVAILABLE.format(backend=backend))
+            return None
+        if not sqlite_vec_loadable():
             return None
         return SqliteVectorStore()
     return None
@@ -486,6 +494,13 @@ def _ensure_sqlite_collection(client: SqliteVectorClient, validate: bool) -> Non
         )
 
 
+@cache
+def _note_qdrant_set_without_backend() -> None:
+    # Once per process, as the graph's own notice: the client reopens after
+    # every close, and the setting cannot change under it.
+    logger.warning(ls.QDRANT_SET_WITHOUT_BACKEND.format(path=settings.vector_db_file))
+
+
 def get_sqlite_vector_client(validate: bool = True) -> SqliteVectorClient:
     global _CLIENT, _CLIENT_BACKEND
     if not has_sqlite_vec():
@@ -493,6 +508,8 @@ def get_sqlite_vector_client(validate: bool = True) -> SqliteVectorClient:
 
     _ensure_client_backend(VectorStoreBackend.SQLITE)
     if _CLIENT is None:
+        if settings.qdrant_set_without_backend:
+            _note_qdrant_set_without_backend()
         client = open_sqlite_vector_client(settings.vector_db_file)
         try:
             _ensure_sqlite_collection(client, validate)

@@ -2,19 +2,19 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.vitali87/code-graph-rag",
   "title": "Code-Graph-RAG",
-  "description": "Graph-based RAG system for multi-language codebases. Parse, index, query, and edit code using knowledge graphs and natural language.",
+  "description": "Knowledge-graph RAG for multi-language codebases: index, query and edit code in natural language.",
   "websiteUrl": "https://code-graph-rag.com",
   "repository": {
     "url": "https://github.com/vitali87/code-graph-rag",
     "source": "github"
   },
-  "version": "0.2.13",
+  "version": "0.6.43",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "code-graph-rag",
-      "version": "0.2.13",
+      "version": "0.6.43",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

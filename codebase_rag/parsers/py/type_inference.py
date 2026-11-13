@@ -15,6 +15,7 @@ from ...types_defs import (
 )
 from ..import_processor import ImportProcessor
 from .ast_analyzer import PythonAstAnalyzerMixin
+from .definition_index import PythonDefinitionIndexes
 from .expression_analyzer import PythonExpressionAnalyzerMixin
 from .variable_analyzer import PythonVariableAnalyzerMixin
 from .with_analyzer import PythonWithBindingMixin
@@ -76,6 +77,7 @@ class PythonTypeInferenceEngine(
         "_return_stmt_cache",
         "_self_assignment_cache",
         "_class_member_type_cache",
+        "_definition_indexes",
     )
 
     def __init__(
@@ -112,6 +114,7 @@ class PythonTypeInferenceEngine(
         self._return_stmt_cache: dict[Node, list] = {}
         self._self_assignment_cache: dict[tuple[Node, str], dict[str, str] | None] = {}
         self._class_member_type_cache: dict[str, dict[str, str]] = {}
+        self._definition_indexes = PythonDefinitionIndexes()
 
     @staticmethod
     def _first_parameter_name(def_node: Node) -> str | None:
@@ -143,16 +146,42 @@ class PythonTypeInferenceEngine(
         return names
 
     @staticmethod
-    def _is_static_method(def_node: Node) -> bool:
+    def _has_decorator(def_node: Node, names: frozenset[str]) -> bool:
         parent = def_node.parent
         if parent is None or parent.type != cs.TS_PY_DECORATED_DEFINITION:
             return False
         for child in parent.named_children:
             if child.type == cs.TS_PY_DECORATOR and child.text is not None:
                 text = child.text.decode(cs.ENCODING_UTF8).lstrip("@").strip()
-                if text.split("(", 1)[0].rsplit(".", 1)[-1] in cs.STATIC_DECORATORS:
+                if text.split("(", 1)[0].rsplit(".", 1)[-1] in names:
                     return True
         return False
+
+    @classmethod
+    def _is_static_method(cls, def_node: Node) -> bool:
+        return cls._has_decorator(def_node, cs.STATIC_DECORATORS)
+
+    @classmethod
+    def receiver_is_the_class(cls, caller_node: Node) -> bool:
+        """Whether the method enclosing `caller_node` receives the class itself.
+
+        A property read through such a receiver (`cls.name` in a classmethod)
+        yields the property object and never runs the getter.
+        """
+        method: Node | None = None
+        node: Node | None = caller_node
+        while node is not None and node.type != cs.TS_PY_CLASS_DEFINITION:
+            if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+                method = node
+            node = node.parent
+        if node is None or method is None:
+            return False
+        name = method.child_by_field_name(cs.FIELD_NAME)
+        return cls._has_decorator(method, cs.CLASSMETHOD_DECORATORS) or (
+            name is not None
+            and name.text is not None
+            and name.text.decode(cs.ENCODING_UTF8) in cs.PY_IMPLICIT_CLASS_RECEIVERS
+        )
 
     @staticmethod
     def _binds_name(target: Node, name: str) -> bool:
@@ -400,7 +429,7 @@ class PythonTypeInferenceEngine(
                         local_var_types[name] = class_context
                         seeded.append(name)
             # Single-pass traversal avoids O(5*N) traversals for type inference.
-            comprehensions, for_statements = self._traverse_single_pass(
+            comprehensions, for_statements, decisions = self._traverse_single_pass(
                 caller_node, local_var_types, module_qn
             )
             self._infer_instance_attributes_from_init(
@@ -416,7 +445,18 @@ class PythonTypeInferenceEngine(
             )
             for for_stmt in for_statements:
                 self._analyze_for_loop(for_stmt, local_var_types, module_qn)
-            aliases = self._collect_local_aliases(caller_node)
+            # Those passes write the map without the last-binding rule, so
+            # a name a later `case` alias or capture decides gets that
+            # decision back (CodeRabbit review on #3585).
+            decisions.apply(local_var_types)
+            # A decided name is settled: an earlier `t = other` must not
+            # retype one a decision left untyped (CodeRabbit review on
+            # #3585).
+            aliases = {
+                name: alias
+                for name, alias in self._collect_local_aliases(caller_node).items()
+                if name not in decisions.types
+            }
             self._expand_chained_attribute_types(local_var_types, module_qn, aliases)
             # The seed itself goes (a body binding that replaced it stays), and
             # so do the `cls.<field>` entries the chained-attribute pass
@@ -437,3 +477,19 @@ class PythonTypeInferenceEngine(
             logger.debug(lg.PY_BUILD_VAR_MAP_FAILED, error=e)
 
         return local_var_types
+
+    def expression_type(
+        self, value: Node, module_qn: str, local_var_types: dict[str, str]
+    ) -> str | None:
+        """The type one value expression gives the name it is bound to, by the
+        same rules the map's assignment passes apply: what a flow-sensitive
+        caller asks of each binding that reaches a call separately."""
+        try:
+            return self._infer_type_from_expression_simple(
+                value, module_qn
+            ) or self._infer_type_from_expression_complex(
+                value, module_qn, local_var_types
+            )
+        except Exception as e:
+            logger.debug(lg.PY_BUILD_VAR_MAP_FAILED, error=e)
+            return None

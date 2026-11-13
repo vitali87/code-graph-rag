@@ -1,0 +1,42 @@
+name: Breaking Change Notes
+
+# The release job publishes changes/breaking/<number>.md from each pull request
+# labelled "breaking change" as the release's breaking-change section (issue
+# #3431). This check keeps the label, a conventional-commit "!" in the title
+# and that file in step. It reruns on label and title edits, because a
+# maintainer's label is often the last thing to change on a pull request.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  breaking-change-notes:
+    name: Breaking Change Notes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The merge commit and its first parent, the base, so the check
+          # sees which notes this pull request adds.
+          fetch-depth: 2
+
+      - name: Check the label, the title and the notes agree
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          ADDED=$(git diff --name-only --no-renames --diff-filter=A HEAD^1 HEAD \
+            -- changes/breaking/)
+          python3 scripts/breaking_notes.py check --number "$PR_NUMBER" \
+            --title "$PR_TITLE" --labels-json "$PR_LABELS" --added "$ADDED"

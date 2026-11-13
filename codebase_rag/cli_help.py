@@ -15,6 +15,7 @@ class CLICommandName(StrEnum):
     DEAD_CODE = "dead-code"
     DUPLICATES = "duplicates"
     DELETE_PROJECT = "delete-project"
+    PRUNE = "prune"
     DAEMON = "daemon"
     WORKSPACE = "workspace"
     TRACE = "trace"
@@ -22,7 +23,10 @@ class CLICommandName(StrEnum):
     GRAPH = "graph"
     CHECK = "check"
     RENAME = "rename"
+    CHANGE_SIGNATURE = "change-signature"
+    MOVE = "move"
     CONTEXT = "context"
+    PORT = "port"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -182,8 +186,9 @@ HELP_CHECK_ISOLATED = (
 )
 CMD_RENAME = (
     "Rename a definition everywhere the graph references it (definition, call "
-    "and reference sites, imports, overrides, __all__); refuses on guessed sites "
-    "and on occurrences the graph has no site for."
+    "and reference sites, imports, overrides, __all__); refuses on guessed sites, "
+    "on occurrences the graph has no site for, and on a graph a stopped sync "
+    "left partial."
 )
 EXAMPLES_RENAME = (
     "Examples:\n  cgr rename myproj.pkg.util.helper assist --dry-run\n"
@@ -196,6 +201,49 @@ HELP_RENAME_ALLOW_HEURISTIC = (
     "occurrences of the old name the graph has no site for, as well."
 )
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
+CMD_CHANGE_SIGNATURE = (
+    "Change a Python or JavaScript definition's parameter list and rewrite "
+    "every call site "
+    "the graph knows; sites the mapping cannot complete are listed, not touched; "
+    "refuses on a graph a stopped sync left partial."
+)
+EXAMPLES_CHANGE_SIGNATURE = (
+    "Examples:\n"
+    "  cgr change-signature myproj.pkg.util.helper a 'n: int' b --map n==1 --dry-run\n"
+    "  cgr change-signature myproj.pkg.util.helper b a\n"
+    "  cgr change-signature myproj.pkg.util.helper 'times: int' 'text: str' "
+    "--map times=0 --map text=1"
+)
+HELP_CHANGE_SIGNATURE_QN = "Qualified name of the function or method to change."
+HELP_CHANGE_SIGNATURE_PARAMS = (
+    "The new parameters in order: NAME, 'NAME: TYPE', 'NAME = DEFAULT' or "
+    "'NAME: TYPE = DEFAULT'; a bare old name carries it over unchanged."
+)
+HELP_CHANGE_SIGNATURE_MAP = (
+    "NEW=SOURCE, repeatable: SOURCE is an old parameter name, its 0-based "
+    "index, or =LITERAL to pass that text at every site (so NEW==1 inserts 1)."
+)
+HELP_CHANGE_SIGNATURE_ALLOW_HEURISTIC = (
+    "Rewrite sites the graph resolved heuristically, by overload fan-out or by "
+    "a trace as well, instead of listing them as unmapped."
+)
+HELP_CHANGE_SIGNATURE_DRY_RUN = "Print the plan and diff without writing anything."
+CMD_MOVE = (
+    "Move a module-level definition to another module: importers rewritten, "
+    "needed imports carried, refused when it would create an import cycle."
+)
+EXAMPLES_MOVE = (
+    "Examples:\n  cgr move myproj.pkg.util.helper pkg.core --dry-run\n"
+    "  cgr move myproj.pkg.util.helper pkg/core.py --keep-alias"
+)
+HELP_MOVE_QN = "Qualified name of the module-level definition to move."
+HELP_MOVE_DRY_RUN = (
+    "Print the plan (files, importers, copied imports) without writing anything."
+)
+HELP_MOVE_TARGET = "Destination module: dotted name (pkg.core) or repo-relative path."
+HELP_MOVE_KEEP_ALIAS = (
+    "Leave a re-export at the old location so the old import path still works."
+)
 CMD_CONTEXT = (
     "Print a graph-ranked context slice for a symbol, location or task within "
     "a token budget: source, caller lines, callee signatures, types, tests, docs."
@@ -206,6 +254,43 @@ EXAMPLES_CONTEXT = (
 )
 HELP_CONTEXT_TARGET = "Qualified name, bare name, path:line, or a free-text task."
 HELP_CONTEXT_BUDGET = "Token budget for the slice."
+CMD_PORT = "Judge a port between languages: pair the functions of two implementations and compare their calls and arity, as JSON, no LLM."
+CMD_PORT_GROUP = CMD_PORT
+CMD_PORT_CHECK = (
+    "Pair the functions and methods under OLD_SCOPE with those under "
+    "NEW_SCOPE (paths relative to the repository root) and judge each pair "
+    "MATCH, DIFFERS or UNKNOWN on the first-party calls it makes and its "
+    "positional arity; unpaired and ambiguous definitions are listed."
+)
+EPILOG_PORT = "Run 'cgr help port COMMAND' for command-specific help."
+# `\b` opens a paragraph click prints as written instead of rewrapping it,
+# which keeps one example per line.
+EPILOG_PORT_CHECK = (
+    "\b\nExamples:\n  cgr port check src/legacy src/rewrite\n"
+    "  cgr port check codebase_rag/embedded_graph rust/cgr_graph_rs/src "
+    "--fail-on-found\n"
+    "  cgr port check py rs --pair py.lexer._lex=rs.lexer.tokenize\n\n"
+    "Exit status: 0 with the JSON report; 1 with --fail-on-found when a pair "
+    "DIFFERS; 2 when the scopes overlap or a --pair is malformed or repeated; "
+    "3 when a project is not indexed; 4 when a scope holds no function or "
+    "method, or a --pair names none or several."
+)
+HELP_PORT_NEW_PROJECT = (
+    "Project holding NEW_SCOPE, when the new implementation was indexed as a "
+    "project of its own (default: the project of OLD_SCOPE)."
+)
+HELP_PORT_PAIR = (
+    "Pair two definitions explicitly, OLD=NEW, each a qualified name or a "
+    "dotted suffix naming exactly one definition of its side. Repeatable."
+)
+HELP_PORT_INCLUDE_TESTS = (
+    "Pair test functions too; by default they are left out, classified as "
+    "tests-reaching classifies them."
+)
+HELP_PORT_FAIL_ON_FOUND = (
+    "Exit with status 1 when any pair DIFFERS. UNKNOWN pairs and unpaired "
+    "definitions do not fail the check."
+)
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
 CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
@@ -550,6 +635,11 @@ HELP_QUERY_OUTPUT_FORMAT = "Format --ask-agent output as table or json."
 HELP_MCP_TRANSPORT = "Transport to serve: stdio or http."
 HELP_MCP_HTTP_HOST = "HTTP bind host. Used only with --transport http."
 HELP_MCP_HTTP_PORT = "HTTP bind port. Used only with --transport http."
+HELP_MCP_READ_ONLY = (
+    "Serve only the tools that read (graph queries, file reads, ask_agent); "
+    "write_file, the edit tools, indexing, annotate and the delete tools are "
+    "neither listed nor run. Also set by MCP_READ_ONLY=true."
+)
 HELP_MCP_WORKSPACE = (
     "Serve the projects of workspace NAME: `list_projects` shows them, a "
     "`project` argument, when given, must name one (omitted, the server "
@@ -604,7 +694,8 @@ HELP_DEADCODE_ENDPOINT_ROOTS = (
     "(RESOLVES_TO into it, or a direct READS_FROM/WRITES_TO for RPC and "
     "dispatch resources), so an endpoint nobody calls is reported. A handler "
     "registered by a call (Go HandleFunc, Express app.get) stays live "
-    "through that call."
+    "through that call. Endpoints are recorded only by the io capture group: "
+    "index the project with --capture io first, or the command refuses."
 )
 HELP_DEADCODE_MIN_RESOLUTION = (
     "Ignore call edges below this confidence when deciding liveness: "
@@ -653,6 +744,10 @@ HELP_DELETE_PROJECT_REPO_PATH = (
     "Repository whose project to delete when --project is not given. Its "
     "local hash cache is removed too."
 )
+HELP_PRUNE_DRY_RUN = "List the projects that would be pruned without deleting anything."
+HELP_PRUNE_YES = "Prune without asking for confirmation."
+CMD_PRUNE = "Prune projects whose repository root no longer exists"
+EXAMPLES_PRUNE = "EXAMPLE\n\n  cgr prune --dry-run\n\n  cgr prune --yes"
 HELP_COMMAND = "Command path to document, such as 'start' or 'daemon logs'."
 
 CMD_VERIFY_INDEX = "Verify a protobuf index against its provenance manifest"
@@ -670,6 +765,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.DEAD_CODE: CMD_DEAD_CODE,
     CLICommandName.DUPLICATES: CMD_DUPLICATES,
     CLICommandName.DELETE_PROJECT: CMD_DELETE_PROJECT,
+    CLICommandName.PRUNE: CMD_PRUNE,
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DAEMON: CMD_DAEMON,
     CLICommandName.TRACE: CMD_TRACE,
@@ -677,7 +773,10 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.GRAPH: CMD_GRAPH,
     CLICommandName.CHECK: CMD_CHECK,
     CLICommandName.RENAME: CMD_RENAME,
+    CLICommandName.CHANGE_SIGNATURE: CMD_CHANGE_SIGNATURE,
+    CLICommandName.MOVE: CMD_MOVE,
     CLICommandName.CONTEXT: CMD_CONTEXT,
+    CLICommandName.PORT: CMD_PORT,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,
