@@ -11,11 +11,13 @@ from ... import constants as cs
 from ... import logs as ls
 from ...decorators import depth_exhausted, depth_guard, recursion_guard
 from ...types_defs import ASTNode
+from ...utils.path_utils import cached_relative_path
 from ..utils import safe_decode_text
 from .utils import (
     extract_class_info,
     extract_field_info,
     extract_method_call_info,
+    find_package_start_index,
     get_root_node_from_module_qn,
     spread_element_type_node,
 )
@@ -108,8 +110,11 @@ def _first_type_identifier_text(parent: ASTNode) -> str | None:
 class JavaVariableAnalyzerMixin:
     __slots__ = ()
     ast_cache: ASTCacheProtocol
+    repo_path: Path
     module_qn_to_file_path: dict[str, Path]
     class_inheritance: dict[str, list[str]]
+    class_owner_module: dict[str, str]
+    rehydrated_definition_paths: dict[str, str]
     _lookup_cache: dict[str, str | None]
     _lookup_in_progress: set[str]
     # Annotation only, never a def: this mixin precedes JavaMethodResolverMixin
@@ -142,6 +147,8 @@ class JavaVariableAnalyzerMixin:
             scope_node, local_var_types, module_qn
         )
         self._analyze_java_enhanced_for_loops(scope_node, local_var_types, module_qn)
+        self._analyze_java_try_resources(scope_node, local_var_types, module_qn)
+        self._analyze_java_catch_parameters(scope_node, local_var_types, module_qn)
 
     def _analyze_java_parameters(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
@@ -401,6 +408,286 @@ class JavaVariableAnalyzerMixin:
                     name=var_name,
                     type=resolved_type,
                 )
+
+    def _analyze_java_try_resources(
+        self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        self._traverse_for(
+            scope_node,
+            cs.TS_JAVA_RESOURCE,
+            self._process_java_resource,
+            local_var_types,
+            module_qn,
+        )
+
+    def _process_java_resource(
+        self, resource_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        # A `resource` binds via the same `name`/`type`/`value` fields as a
+        # variable declarator, so it is typed exactly like a local: the
+        # constructed type for `var r = new Res()`, else the declared type
+        # (issue #3341). A bare Java 9 resource `try (r)` has no `type`
+        # field: it declares nothing, so it must not touch the outer
+        # variable's type either.
+        if not (type_node := resource_node.child_by_field_name(cs.FIELD_TYPE)):
+            return
+        if not (declared_type := safe_decode_text(type_node)):
+            return
+        self._process_variable_declarator(
+            resource_node, declared_type, local_var_types, module_qn
+        )
+
+    def _analyze_java_catch_parameters(
+        self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        self._traverse_for(
+            scope_node,
+            cs.TS_CATCH_FORMAL_PARAMETER,
+            self._process_catch_formal_parameter,
+            local_var_types,
+            module_qn,
+        )
+
+    def _process_catch_formal_parameter(
+        self,
+        param_node: ASTNode,
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        if not (name_node := param_node.child_by_field_name(cs.FIELD_NAME)):
+            return
+        if not (var_name := safe_decode_text(name_node)):
+            return
+        alternatives = self._catch_type_alternatives(param_node)
+        if not alternatives:
+            return
+        if len(alternatives) == 1:
+            resolved_type = self._resolve_java_type_name(alternatives[0], module_qn)
+            local_var_types[var_name] = resolved_type
+            logger.debug(ls.JAVA_CATCH_PARAMETER, name=var_name, type=resolved_type)
+            return
+        # A multi-catch parameter is typed by the nearest common first-party
+        # supertype, if there is one. With none, it stays untyped: writing
+        # nothing leaves any outer variable of the same name untouched.
+        if common := self._common_first_party_supertype(alternatives, module_qn):
+            local_var_types[var_name] = common
+            logger.debug(ls.JAVA_CATCH_PARAMETER, name=var_name, type=common)
+
+    def _catch_type_alternatives(self, param_node: ASTNode) -> list[str]:
+        # The `catch_type` child holds the parameter's type(s): one type node,
+        # or one per `|`-separated alternative of a multi-catch. An ERROR
+        # child means the type list did not parse (e.g. annotations on a
+        # union alternative, which this grammar rejects): bind nothing
+        # rather than read a fragment of it as a type.
+        for child in param_node.children:
+            if child.type != cs.TS_JAVA_CATCH_TYPE:
+                continue
+            alternatives: list[str] = []
+            for type_child in child.named_children:
+                if type_child.type in (
+                    cs.TS_ANNOTATION,
+                    cs.TS_MARKER_ANNOTATION,
+                    cs.TS_ERROR,
+                ):
+                    return []
+                if text := safe_decode_text(type_child):
+                    alternatives.append(text)
+            return list(dict.fromkeys(alternatives))
+        return []
+
+    def _common_first_party_supertype(
+        self, alternatives: list[str], module_qn: str
+    ) -> str | None:
+        # Lowest common ancestor over the superclass chains `class_inheritance`
+        # records, restricted to first-party types: a supertype only counts
+        # if it is itself a parsed class in the repo. A chain that runs into
+        # a JDK type (Exception, Throwable, ...) therefore ends there with
+        # no match, instead of guessing that type for the parameter.
+        chains = []
+        for alternative in alternatives:
+            resolved = self._resolve_java_type_name(alternative, module_qn)
+            key = self._inheritance_key_for(resolved)
+            chains.append(self._java_superclass_chain(key or resolved))
+        best: str | None = None
+        best_key: tuple[int, int] | None = None
+        for candidate in chains[0]:
+            if candidate not in self.class_inheritance:
+                continue
+            positions = []
+            for chain in chains:
+                if candidate not in chain:
+                    break
+                positions.append(chain.index(candidate))
+            else:
+                key = (max(positions), sum(positions))
+                if best_key is None or key < best_key:
+                    best, best_key = candidate, key
+        return best
+
+    def _inheritance_key_for(self, resolved_type: str) -> str | None:
+        # The qn a type name resolves to and the qn `class_inheritance` keys
+        # its classes by are not always the same string: a resolved
+        # same-package name can stay a simple name while the registry keys
+        # the class under its doubled file-module form
+        # (`<module>.AppError.AppError`). An UNQUALIFIED name may therefore
+        # match on its simple name, and only when exactly one parsed class
+        # carries it (the same uniqueness rule `_resolve_java_type_name`
+        # applies to a nested type). A QUALIFIED name that starts with a
+        # class is a relative name (such as `Outer.Inner`) and keeps
+        # matching on its suffix, in plain or doubled form. A QUALIFIED
+        # name that starts lowercase carries its package, so it must prove
+        # its identity from that package instead: the key must hold exactly
+        # the written package after the source root (project names never
+        # hold the separator, issue #2412), and the rest must be the class
+        # path in plain form, with the simple name doubled, or prefixed by
+        # the file stem — the stem form also covers the doubled outermost
+        # class, since the stem sits where the doubled segment is, and it
+        # is only accepted when the stem names a real module in the
+        # declaring package. Splits are tried at every segment boundary, so
+        # an uppercase package segment (`com.Example.Outer.A`) does not
+        # misplace the package/class boundary, and a nested class in a
+        # file whose stem is not the outer class still matches through
+        # its stem. A same-named class in another package never stands in
+        # for a qualified name — in particular, `java.io.IOException`
+        # never resolves to a first-party `IOException`, and a written
+        # `example.Outer.A` never resolves to first-party
+        # `com.example.Outer.A`. As before, an ambiguous match resolves
+        # to nothing.
+        if resolved_type in self.class_inheritance:
+            return resolved_type
+        if cs.SEPARATOR_DOT not in resolved_type:
+            matches = [
+                qn
+                for qn in self.class_inheritance
+                if qn.rpartition(cs.SEPARATOR_DOT)[2] == resolved_type
+            ]
+            return matches[0] if len(matches) == 1 else None
+        parts = resolved_type.split(cs.SEPARATOR_DOT)
+        if not parts[0][:1].isupper():
+            return self._package_anchored_inheritance_key(parts)
+        simple_name = resolved_type.rpartition(cs.SEPARATOR_DOT)[2]
+        doubled_nested: str | None = None
+        for index, part in enumerate(parts):
+            if part[:1].isupper():
+                doubled_nested = cs.SEPARATOR_DOT.join(
+                    [*parts[: index + 1], part, *parts[index + 1 :]]
+                )
+                break
+        matches = [
+            qn
+            for qn in self.class_inheritance
+            if qn.endswith(f"{cs.SEPARATOR_DOT}{resolved_type}")
+            or qn.endswith(
+                f"{cs.SEPARATOR_DOT}{resolved_type}{cs.SEPARATOR_DOT}{simple_name}"
+            )
+            or (
+                doubled_nested is not None
+                and qn.endswith(f"{cs.SEPARATOR_DOT}{doubled_nested}")
+            )
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def _package_anchored_inheritance_key(self, parts: list[str]) -> str | None:
+        # Match a package-carrying qualified name against registry keys by
+        # structure, not by suffix: the key must hold exactly the written
+        # package, then the class path in plain form, with the simple name
+        # doubled, or prefixed by one file-stem segment. Every package/class
+        # split is tried, so the boundary is not guessed from casing alone.
+        # A multi-segment class path must start with a class (an uppercase
+        # segment); a single-segment class path is a top-level class of any
+        # case. The package is matched after the source root
+        # (`find_package_start_index`, the same helper the rest of the Java
+        # frontend uses): a Maven key keeps `src.main.java` between the
+        # project segment and the package, so matching right after the
+        # project segment alone would reject every qualified type in that
+        # layout. But a package segment named like a source root (`java`,
+        # `src`, ...) makes the helper skip past the real package, so the
+        # position right after the project segment is tried as well; a key
+        # only ever matches when its package and class path line up exactly
+        # at one of the two.
+        # The file-stem form is only accepted when the stem names the
+        # candidate's actual declaring module: the longest module qn
+        # prefixing the key (`_is_declaring_module`). The segment before
+        # the class path may be a package segment of a longer package
+        # instead (a top-level class in `com/example/sub/Outer.java` is
+        # keyed `<project>.com.example.sub.Outer.A`), and a same-named
+        # file beside that package's directory (`com/example/sub.java`)
+        # must not stand in for the declaring file, so a written
+        # `com.example.Outer.A` never binds to it.
+        matches: set[str] = set()
+        for split in range(1, len(parts)):
+            package, class_path = parts[:split], parts[split:]
+            if len(class_path) > 1 and not class_path[0][:1].isupper():
+                continue
+            for qn in self.class_inheritance:
+                segments = qn.split(cs.SEPARATOR_DOT)
+                # Both candidate package starts: the helper's answer and
+                # the position right after the project segment (see above).
+                package_starts = {find_package_start_index(segments) or 1, 1}
+                for package_start in package_starts:
+                    if (
+                        segments[package_start : package_start + len(package)]
+                        != package
+                    ):
+                        continue
+                    rest = segments[package_start + len(package) :]
+                    if rest == class_path or rest == [*class_path, class_path[-1]]:
+                        matches.add(qn)
+                    elif len(rest) == len(class_path) + 1 and rest[1:] == class_path:
+                        stem_module_qn = cs.SEPARATOR_DOT.join(
+                            segments[: package_start + len(package) + 1]
+                        )
+                        if self._is_declaring_module(qn, stem_module_qn):
+                            matches.add(qn)
+        return matches.pop() if len(matches) == 1 else None
+
+    def _is_declaring_module(self, class_qn: str, module_qn: str) -> bool:
+        # True when `module_qn` is the file that declares the top-level
+        # class of `class_qn`. The owner record written at class ingest
+        # names that file (issue #1772): a class qn embeds its package
+        # path, so the longest module qn prefixing the key need not be
+        # the declaring file — `com/example/Helpers.java` declares
+        # `Outer.A` while `com/example/Helpers/Outer.java` is a separate
+        # package's file whose module qn is the longer prefix (Greptile
+        # P1 on #3525). Trust the record when it exists; a class carried
+        # over by a rehydrate has none, so the rehydrate record is
+        # consulted next (the same record `_prune_class_keyed_maps`
+        # reads): without either, fall back to the longest module
+        # prefix there, as the prune does (graph_updater
+        # `_prune_class_keyed_maps`). Without a record, the first module
+        # found walking the key's prefixes from longest to shortest is
+        # the declaring one, so a same-named file beside the real file's
+        # directory never stands in for it.
+        if (owner := self.class_owner_module.get(class_qn)) is not None:
+            return owner == module_qn
+        if (rehydrated := self.rehydrated_definition_paths.get(class_qn)) is not None:
+            declaring = self.module_qn_to_file_path.get(module_qn)
+            if declaring is None:
+                return False
+            try:
+                return (
+                    cached_relative_path(declaring, self.repo_path).as_posix()
+                    == rehydrated
+                )
+            except ValueError:
+                return False
+        segments = class_qn.split(cs.SEPARATOR_DOT)
+        for end in range(len(segments) - 1, 0, -1):
+            candidate = cs.SEPARATOR_DOT.join(segments[:end])
+            if candidate in self.module_qn_to_file_path:
+                return candidate == module_qn
+        return False
+
+    def _java_superclass_chain(self, class_qn: str) -> list[str]:
+        chain: list[str] = []
+        seen: set[str] = set()
+        current: str | None = class_qn
+        while current and current not in seen:
+            seen.add(current)
+            chain.append(current)
+            parents = self.class_inheritance.get(current)
+            current = parents[0] if parents else None
+        return chain
 
     @depth_guard(
         max_depth=cs.JAVA_MAX_INFERENCE_DEPTH,

@@ -898,3 +898,929 @@ class TestDoVariableTypeLookup:
         result = engine._do_variable_type_lookup("varName", "com.example")
 
         assert result is None
+
+
+class TestTryWithResourcesAndCatchParameters:
+    # Issue #3341: try-with-resources variables and catch parameters never
+    # entered the variable-type map, so calls through them got no CALLS edge.
+
+    def test_explicit_resource(self, engine: JavaTypeInferenceEngine) -> None:
+        method = _parse_java_method("try (Res r = new Res()) { int y = r.hashCode(); }")
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["r"] == "Res"
+
+    def test_var_resource_inferred_from_initializer(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        method = _parse_java_method("try (var r = new Res()) { int y = r.hashCode(); }")
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["r"] == "Res"
+
+    def test_final_resource(self, engine: JavaTypeInferenceEngine) -> None:
+        method = _parse_java_method(
+            "try (final Res r = new Res()) { int y = r.hashCode(); }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["r"] == "Res"
+
+    def test_two_resources(self, engine: JavaTypeInferenceEngine) -> None:
+        method = _parse_java_method(
+            "try (Res a = new Res(); Res b = new Res()) { int y = 1; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["a"] == "Res"
+        assert result["b"] == "Res"
+
+    def test_catch_parameter(self, engine: JavaTypeInferenceEngine) -> None:
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "AppError"
+
+    def test_catch_parameter_final_and_annotated(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        method = _parse_java_method(
+            "try { int x = 1; } catch (final @Deprecated AppError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "AppError"
+
+    def test_catch_parameter_scoped_type(self, engine: JavaTypeInferenceEngine) -> None:
+        method = _parse_java_method(
+            "try { int x = 1; } catch (pkg.AppError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "pkg.AppError"
+
+    def _engine_with_inheritance(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+        class_inheritance: dict[str, list[str]],
+    ) -> JavaTypeInferenceEngine:
+        return JavaTypeInferenceEngine(
+            import_processor=mock_import_processor,
+            function_registry=mock_function_registry,
+            repo_path=Path("/test/repo"),
+            project_name="test_project",
+            ast_cache=mock_ast_cache,
+            queries={},
+            module_qn_to_file_path={},
+            class_inheritance=class_inheritance,
+            simple_name_lookup=defaultdict(set),
+        )
+
+    def test_multi_catch_common_first_party_supertype(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "AppError": ["BaseError"],
+                "OtherError": ["BaseError"],
+                "BaseError": ["RuntimeException"],
+            },
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError | OtherError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "BaseError"
+
+    def test_multi_catch_unrelated_types_stay_untyped(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "AppError": ["RuntimeException"],
+                "OtherError": ["RuntimeException"],
+            },
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError | OtherError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert "e" not in result
+
+    def test_multi_catch_jdk_types_stay_untyped(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # IOException | SQLException share only JDK supertypes: never guess.
+        method = _parse_java_method(
+            "try { int x = 1; } catch (IOException | SQLException e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert "e" not in result
+
+    def test_bare_resource_keeps_outer_type(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Java 9 `try (r)` declares nothing: it must not clobber the outer type.
+        method = _parse_java_method("Other r = new Other(); try (r) { int y = 2; }")
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["r"] == "Other"
+
+    def test_undeclared_bare_resource_binds_nothing(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Guard (passes with or without the fix): a bare `try (r)` with no
+        # declaration of `r` anywhere produces no entry at all. It proves
+        # the resource pass never invents a binding from a bare reference;
+        # it is not a fail-before regression test.
+        method = _parse_java_method("try (r) { int y = 2; }")
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert "r" not in result
+
+    def test_qualified_multi_catch_binds_first_party_lca(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        # Qualified alternatives whose keys use the doubled file-module form
+        # still resolve: identity comes from the package path, not the
+        # simple name alone (case 5/9 of the #3341 case matrix).
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "jX.com.example.AppError.AppError": [
+                    "jX.com.example.BaseError.BaseError"
+                ],
+                "jX.com.example.OtherError.OtherError": [
+                    "jX.com.example.BaseError.BaseError"
+                ],
+                "jX.com.example.BaseError.BaseError": ["java.lang.RuntimeException"],
+            },
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } "
+            "catch (com.example.AppError | com.example.OtherError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "jX.com.example.BaseError.BaseError"
+
+    def test_first_party_plus_jdk_alternative_stays_untyped(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        # The JDK alternative contributes no chain: a same-named first-party
+        # IOException must not stand in for java.io.IOException (case 11).
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "AppError": ["BaseError"],
+                "BaseError": ["java.lang.RuntimeException"],
+                "IOException": ["BaseError"],
+            },
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError | java.io.IOException e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert "e" not in result
+
+    def test_three_alternatives_bind_common_supertype(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "AppError": ["BaseError"],
+                "OtherError": ["BaseError"],
+                "ThirdError": ["BaseError"],
+                "BaseError": ["java.lang.RuntimeException"],
+            },
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } "
+            "catch (AppError | OtherError | ThirdError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "BaseError"
+
+    def test_duplicate_alternatives_dedupe_to_one_type(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError | AppError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "AppError"
+
+    def test_error_alternative_binds_nothing(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Annotations on union alternatives do not parse with this grammar:
+        # the catch_type carries an ERROR node, so nothing is bound.
+        tsjava = pytest.importorskip("tree_sitter_java")
+        source = (
+            "class Example { void run() { "
+            "try { int x = 1; } "
+            "catch (@A AppError | @B OtherError e) { int y = 2; } } }"
+        )
+        tree = Parser(Language(tsjava.language())).parse(source.encode())
+        assert tree.root_node.has_error
+        class_body = tree.root_node.named_children[0].child_by_field_name(cs.FIELD_BODY)
+        assert class_body is not None
+        method = class_body.named_children[0]
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert "e" not in result
+
+    def test_diamond_inheritance_binds_nearest_common_supertype(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "B": ["A"],
+                "C": ["A"],
+                "A": ["java.lang.Object"],
+            },
+        )
+        method = _parse_java_method("try { int x = 1; } catch (B | C e) { int y = 2; }")
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "A"
+
+    def test_grandparent_supertype_binds(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "AppError": ["MidError"],
+                "MidError": ["BaseError"],
+                "BaseError": ["java.lang.RuntimeException"],
+                "OtherError": ["BaseError"],
+            },
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError | OtherError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "BaseError"
+
+    def test_chain_into_jdk_parent_stays_untyped(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "AppError": ["java.lang.RuntimeException"],
+                "OtherError": ["BaseError"],
+                "BaseError": ["java.lang.RuntimeException"],
+            },
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError | OtherError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert "e" not in result
+
+    def test_inheritance_cycle_terminates(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {"A": ["B"], "B": ["A"]},
+        )
+        method = _parse_java_method("try { int x = 1; } catch (A | B e) { int y = 2; }")
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        # Both chains contain both classes; the tie breaks deterministically
+        # to the first alternative's nearest candidate. The point is that
+        # the walk terminates and binds one of them, never hangs.
+        assert result["e"] == "A"
+
+    def test_missing_parent_stays_untyped(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {"AppError": ["Missing"], "OtherError": ["BaseError"]},
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError | OtherError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert "e" not in result
+
+    def test_single_qualified_jdk_catch_keeps_qualified_type(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Case 20: the single-catch path resolves through
+        # `_resolve_java_type_name`, which returns a dotted name verbatim, so
+        # a qualified JDK type is never re-identified as a first-party class.
+        method = _parse_java_method(
+            "try { int x = 1; } catch (java.io.IOException e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "java.io.IOException"
+
+    def test_untyped_multi_catch_leaves_outer_binding(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Case 22: with no common supertype, the catch pass writes nothing,
+        # so an outer variable of the same name keeps its type.
+        method = _parse_java_method(
+            "Other e = new Other(); "
+            "try { int x = 1; } catch (AppError | OtherError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "Other"
+
+
+class TestInheritanceKeyFor:
+    # Direct contract tests for `_inheritance_key_for`, the lookup the
+    # Greptile P1 / CodeRabbit finding is about. Keys use the doubled
+    # file-module form the real registry produces.
+
+    def _key_for(self, engine: JavaTypeInferenceEngine, resolved: str) -> str | None:
+        return engine._inheritance_key_for(resolved)
+
+    def test_simple_name_resolves_doubled_key(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {
+            "jX.com.example.AppError.AppError": ["jX.com.example.BaseError.BaseError"]
+        }
+
+        assert self._key_for(engine, "AppError") == "jX.com.example.AppError.AppError"
+
+    def test_simple_name_without_class_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {
+            "jX.com.example.AppError.AppError": ["jX.com.example.BaseError.BaseError"]
+        }
+
+        assert self._key_for(engine, "Nope") is None
+
+    def test_simple_name_shared_by_two_classes_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {
+            "jX.com.example.AppError.AppError": ["jX.com.example.BaseError.BaseError"],
+            "jX.other.AppError.AppError": ["jX.other.BaseError.BaseError"],
+        }
+
+        assert self._key_for(engine, "AppError") is None
+
+    def test_qualified_name_exact_key_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {"com.example.AppError": ["com.example.BaseError"]}
+
+        assert self._key_for(engine, "com.example.AppError") == "com.example.AppError"
+
+    def test_qualified_name_doubled_key_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {
+            "jX.com.example.AppError.AppError": ["jX.com.example.BaseError.BaseError"]
+        }
+
+        assert (
+            self._key_for(engine, "com.example.AppError")
+            == "jX.com.example.AppError.AppError"
+        )
+
+    def test_qualified_name_plain_key_suffix_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {
+            "jX.com.example.AppError": ["jX.com.example.BaseError"]
+        }
+
+        assert (
+            self._key_for(engine, "com.example.AppError") == "jX.com.example.AppError"
+        )
+
+    def test_qualified_jdk_name_never_resolves_to_first_party(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {
+            "jX.com.example.IOException.IOException": [
+                "jX.com.example.BaseError.BaseError"
+            ],
+            "jX.com.example.SQLException.SQLException": [
+                "jX.com.example.BaseError.BaseError"
+            ],
+            "jX.com.example.Exception.Exception": [
+                "jX.com.example.BaseError.BaseError"
+            ],
+        }
+
+        assert self._key_for(engine, "java.io.IOException") is None
+        assert self._key_for(engine, "java.sql.SQLException") is None
+        assert self._key_for(engine, "java.lang.Exception") is None
+
+    def test_qualified_unknown_package_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {
+            "jX.com.example.AppError.AppError": ["jX.com.example.BaseError.BaseError"]
+        }
+
+        assert self._key_for(engine, "foo.bar.Baz") is None
+
+    def test_nested_name_resolves_on_package_identity(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {"com.example.Outer.Inner": ["com.example.Base"]}
+
+        assert self._key_for(engine, "Outer.Inner") == "com.example.Outer.Inner"
+
+        engine.class_inheritance = {
+            "jX.com.example.Outer.Inner.Inner": ["jX.com.example.Base.Base"]
+        }
+
+        assert (
+            self._key_for(engine, "Outer.Inner") == "jX.com.example.Outer.Inner.Inner"
+        )
+
+    def test_qualified_nested_name_resolves_doubled_outer(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Greptile P1 on #3525: the stored key doubles the outermost class
+        # (`<module>.com.example.Outer.Outer.A`), so the written qualified
+        # name `com.example.Outer.A` matches neither the plain nor the
+        # simple-doubled suffix.
+        engine.class_inheritance = {
+            "jX.com.example.Outer.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.com.example.Outer.Outer.B": ["jX.com.example.Base.Base"],
+            "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+        # The doubled outer class is the stem form, so the stem's module
+        # must be in the map (CodeRabbit Minor on #3525).
+        engine.module_qn_to_file_path = {
+            "jX.com.example.Outer": Path("/test/repo/com/example/Outer.java"),
+            "jX.com.example.Base": Path("/test/repo/com/example/Base.java"),
+        }
+
+        assert (
+            self._key_for(engine, "com.example.Outer.A")
+            == "jX.com.example.Outer.Outer.A"
+        )
+        assert (
+            self._key_for(engine, "com.example.Outer.B")
+            == "jX.com.example.Outer.Outer.B"
+        )
+
+    def test_qualified_nested_name_with_two_suffix_matches_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # The same nested path in two packages stays ambiguous.
+        engine.class_inheritance = {
+            "jX.com.example.Outer.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.org.example.Outer.Outer.A": ["jX.org.example.Base.Base"],
+        }
+
+        assert self._key_for(engine, "example.Outer.A") is None
+
+    def test_qualified_name_with_two_suffix_matches_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Two different packages both end in the written path: identity is
+        # ambiguous, so nothing is claimed.
+        engine.class_inheritance = {
+            "jX.com.example.AppError.AppError": ["jX.com.example.BaseError.BaseError"],
+            "jX.org.example.AppError.AppError": ["jX.org.example.BaseError.BaseError"],
+        }
+
+        assert self._key_for(engine, "example.AppError") is None
+
+    def test_qualified_name_single_suffix_match_wrong_package_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # CodeRabbit Minor on #3525: even a unique same-suffix class in a
+        # longer package must not stand in for the written package.
+        engine.class_inheritance = {
+            "jX.com.example.AppError.AppError": ["jX.com.example.BaseError.BaseError"],
+        }
+
+        assert self._key_for(engine, "example.AppError") is None
+
+    def test_qualified_nested_name_uppercase_package_segment_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # CodeRabbit Minor on #3525: `com.Example.Outer.A` must double
+        # `Outer` (the outermost class), not `Example` (the first
+        # uppercase segment).
+        engine.class_inheritance = {
+            "jX.com.Example.Outer.Outer.A": ["jX.com.Example.Base.Base"],
+            "jX.com.Example.Outer.Outer.B": ["jX.com.Example.Base.Base"],
+            "jX.com.Example.Base.Base": ["java.lang.RuntimeException"],
+        }
+        # The doubled outer class is the stem form, so the stem's module
+        # must be in the map (CodeRabbit Minor on #3525).
+        engine.module_qn_to_file_path = {
+            "jX.com.Example.Outer": Path("/test/repo/com/Example/Outer.java"),
+            "jX.com.Example.Base": Path("/test/repo/com/Example/Base.java"),
+        }
+
+        assert (
+            self._key_for(engine, "com.Example.Outer.A")
+            == "jX.com.Example.Outer.Outer.A"
+        )
+        assert (
+            self._key_for(engine, "com.Example.Outer.B")
+            == "jX.com.Example.Outer.Outer.B"
+        )
+
+    def test_qualified_nested_name_other_file_stem_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # CodeRabbit Minor on #3525: a nested class in a file whose stem is
+        # not the outer class is keyed with that stem in the middle
+        # (`<module>.com.example.Helpers.Outer.A`).
+        engine.class_inheritance = {
+            "jX.com.example.Helpers.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.com.example.Helpers.Outer.B": ["jX.com.example.Base.Base"],
+            "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+        # The stem form only matches when the stem names a real module in
+        # the declaring package (CodeRabbit Minor on #3525): a stray
+        # package segment must not pose as a file stem.
+        engine.module_qn_to_file_path = {
+            "jX.com.example.Helpers": Path("/test/repo/com/example/Helpers.java"),
+            "jX.com.example.Base": Path("/test/repo/com/example/Base.java"),
+        }
+
+        assert (
+            self._key_for(engine, "com.example.Outer.A")
+            == "jX.com.example.Helpers.Outer.A"
+        )
+        assert (
+            self._key_for(engine, "com.example.Outer.B")
+            == "jX.com.example.Helpers.Outer.B"
+        )
+
+    def test_qualified_nested_name_longer_module_is_other_package(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Greptile P1 on #3525: `com/example/Helpers.java` declares
+        # `Outer.A` while `com/example/Helpers/Outer.java` belongs to the
+        # separate package `com.example.Helpers`, so the longer module qn
+        # prefixing the key is the unrelated file's. The ingest owner
+        # record names the declaring file; the longest-prefix rule alone
+        # rejects it.
+        engine.class_inheritance = {
+            "jX.com.example.Helpers.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.com.example.Helpers.Outer.B": ["jX.com.example.Base.Base"],
+            "jX.com.example.Helpers.Outer.Outer": [],
+            "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+        engine.class_owner_module = {
+            "jX.com.example.Helpers.Outer.A": "jX.com.example.Helpers",
+            "jX.com.example.Helpers.Outer.B": "jX.com.example.Helpers",
+            "jX.com.example.Helpers.Outer.Outer": "jX.com.example.Helpers.Outer",
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.example.Helpers": Path("/test/repo/com/example/Helpers.java"),
+            "jX.com.example.Helpers.Outer": Path(
+                "/test/repo/com/example/Helpers/Outer.java"
+            ),
+            "jX.com.example.Base": Path("/test/repo/com/example/Base.java"),
+        }
+
+        assert (
+            self._key_for(engine, "com.example.Outer.A")
+            == "jX.com.example.Helpers.Outer.A"
+        )
+        assert (
+            self._key_for(engine, "com.example.Outer.B")
+            == "jX.com.example.Helpers.Outer.B"
+        )
+
+    def test_qualified_nested_name_rehydrated_owner_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Greptile P1 on #3525, incremental runs: the same layout as
+        # above, but the classes were REHYDRATED from the graph, so
+        # they have no `class_owner_module` entry and the longest-prefix
+        # fallback rejects the real declaring file. The rehydrate record
+        # names it instead, so the qualified multi-catch still types.
+        engine.class_inheritance = {
+            "jX.com.example.Helpers.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.com.example.Helpers.Outer.B": ["jX.com.example.Base.Base"],
+            "jX.com.example.Helpers.Outer.Outer": [],
+            "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+        engine.class_owner_module = {}
+        engine.rehydrated_definition_paths = {
+            "jX.com.example.Helpers.Outer.A": "com/example/Helpers.java",
+            "jX.com.example.Helpers.Outer.B": "com/example/Helpers.java",
+            "jX.com.example.Helpers.Outer.Outer": "com/example/Helpers/Outer.java",
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.example.Helpers": Path("/test/repo/com/example/Helpers.java"),
+            "jX.com.example.Helpers.Outer": Path(
+                "/test/repo/com/example/Helpers/Outer.java"
+            ),
+            "jX.com.example.Base": Path("/test/repo/com/example/Base.java"),
+        }
+
+        assert (
+            self._key_for(engine, "com.example.Outer.A")
+            == "jX.com.example.Helpers.Outer.A"
+        )
+        assert (
+            self._key_for(engine, "com.example.Outer.B")
+            == "jX.com.example.Helpers.Outer.B"
+        )
+
+    def test_qualified_nested_name_rehydrated_owner_is_longer_module_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # The same rehydrated layout with the record naming the longer
+        # module: the class is a top-level class of
+        # `Helpers/Outer.java` (package `com.example.Helpers`), so a
+        # written `com.example.Outer.A` must not bind to it.
+        engine.class_inheritance = {
+            "jX.com.example.Helpers.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+        engine.class_owner_module = {}
+        engine.rehydrated_definition_paths = {
+            "jX.com.example.Helpers.Outer.A": "com/example/Helpers/Outer.java",
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.example.Helpers": Path("/test/repo/com/example/Helpers.java"),
+            "jX.com.example.Helpers.Outer": Path(
+                "/test/repo/com/example/Helpers/Outer.java"
+            ),
+            "jX.com.example.Base": Path("/test/repo/com/example/Base.java"),
+        }
+
+        assert self._key_for(engine, "com.example.Outer.A") is None
+
+    def test_qualified_nested_name_owner_is_longer_module_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # The same layout with the owner record naming the longer module:
+        # the class is a top-level class of `Helpers/Outer.java` (package
+        # `com.example.Helpers`), so a written `com.example.Outer.A` must
+        # not bind to it.
+        engine.class_inheritance = {
+            "jX.com.example.Helpers.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+        engine.class_owner_module = {
+            "jX.com.example.Helpers.Outer.A": "jX.com.example.Helpers.Outer",
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.example.Helpers": Path("/test/repo/com/example/Helpers.java"),
+            "jX.com.example.Helpers.Outer": Path(
+                "/test/repo/com/example/Helpers/Outer.java"
+            ),
+            "jX.com.example.Base": Path("/test/repo/com/example/Base.java"),
+        }
+
+        assert self._key_for(engine, "com.example.Outer.A") is None
+
+    def test_qualified_nested_name_wrong_package_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # CodeRabbit Minor on #3525: a same-suffix class in a longer package
+        # must not stand in for the written package, even when it is the
+        # only candidate.
+        engine.class_inheritance = {
+            "jX.com.example.Outer.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.com.example.Outer.Outer.B": ["jX.com.example.Base.Base"],
+            "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+
+        assert self._key_for(engine, "example.Outer.A") is None
+        assert self._key_for(engine, "example.Outer.B") is None
+
+    def test_qualified_nested_name_maven_layout_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Greptile P1 / CodeRabbit Minor on #3525: in a Maven layout the
+        # registry key keeps the source root, so the written package must
+        # be matched after it, not right after the project segment.
+        engine.class_inheritance = {
+            "jX.src.main.java.com.example.Outer.Outer.A": [
+                "jX.src.main.java.com.example.Base.Base"
+            ],
+            "jX.src.main.java.com.example.Outer.Outer.B": [
+                "jX.src.main.java.com.example.Base.Base"
+            ],
+            "jX.src.main.java.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+        # The doubled outer class is the stem form, so the stem's module
+        # must be in the map (CodeRabbit Minor on #3525).
+        engine.module_qn_to_file_path = {
+            "jX.src.main.java.com.example.Outer": Path(
+                "/test/repo/src/main/java/com/example/Outer.java"
+            ),
+            "jX.src.main.java.com.example.Base": Path(
+                "/test/repo/src/main/java/com/example/Base.java"
+            ),
+        }
+
+        assert (
+            self._key_for(engine, "com.example.Outer.A")
+            == "jX.src.main.java.com.example.Outer.Outer.A"
+        )
+        assert (
+            self._key_for(engine, "com.example.Outer.B")
+            == "jX.src.main.java.com.example.Outer.Outer.B"
+        )
+
+    def test_qualified_nested_name_maven_wrong_package_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # The source-root skip must not let a shorter written package
+        # stand in for the Maven key's real package.
+        engine.class_inheritance = {
+            "jX.src.main.java.com.example.Outer.Outer.A": [
+                "jX.src.main.java.com.example.Base.Base"
+            ],
+        }
+
+        assert self._key_for(engine, "example.Outer.A") is None
+
+    def test_qualified_nested_name_stem_segment_is_package_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # CodeRabbit Minor on #3525: a top-level class `A` in
+        # `com/example/sub/Outer.java` is keyed
+        # `jX.com.example.sub.Outer.A`; the `sub` segment is a package
+        # segment, not a file stem, so a written `com.example.Outer.A`
+        # must not bind to it. The real file's module qn is in the map;
+        # the stem-form parse's implied module qn is not.
+        engine.class_inheritance = {
+            "jX.com.example.sub.Outer.A": ["jX.com.example.sub.Base.Base"],
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.example.sub.Outer": Path("/test/repo/com/example/sub/Outer.java"),
+            "jX.com.example.sub.Base": Path("/test/repo/com/example/sub/Base.java"),
+        }
+
+        assert self._key_for(engine, "com.example.Outer.A") is None
+
+    def test_qualified_nested_name_flat_layout_java_package_segment_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Greptile P1 / CodeRabbit Minor on #3525: in a flat layout a
+        # package segment can itself be named `java`, so the source-root
+        # helper skips past the real package (`com.acme.java`) and the
+        # written qualified name never matches. The package must also be
+        # tried right after the project segment.
+        engine.class_inheritance = {
+            "jX.com.acme.java.Errors.Outer.A": ["jX.com.acme.java.Base.Base"],
+            "jX.com.acme.java.Errors.Outer.B": ["jX.com.acme.java.Base.Base"],
+            "jX.com.acme.java.Base.Base": ["java.lang.RuntimeException"],
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.acme.java.Errors": Path("/test/repo/com/acme/java/Errors.java"),
+            "jX.com.acme.java.Base": Path("/test/repo/com/acme/java/Base.java"),
+        }
+
+        assert (
+            self._key_for(engine, "com.acme.java.Outer.A")
+            == "jX.com.acme.java.Errors.Outer.A"
+        )
+        assert (
+            self._key_for(engine, "com.acme.java.Outer.B")
+            == "jX.com.acme.java.Errors.Outer.B"
+        )
+
+    def test_qualified_nested_name_flat_layout_src_package_segment_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Same root cause as the `java` segment above: a flat-layout
+        # package segment named `src` is read as a source root, so the
+        # written package must also be tried after the project segment.
+        engine.class_inheritance = {
+            "jX.com.acme.src.Errors.Outer.A": ["jX.com.acme.src.Base.Base"],
+            "jX.com.acme.src.Base.Base": ["java.lang.RuntimeException"],
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.acme.src.Errors": Path("/test/repo/com/acme/src/Errors.java"),
+            "jX.com.acme.src.Base": Path("/test/repo/com/acme/src/Base.java"),
+        }
+
+        assert (
+            self._key_for(engine, "com.acme.src.Outer.A")
+            == "jX.com.acme.src.Errors.Outer.A"
+        )
+
+    def test_qualified_nested_name_stem_sibling_module_does_not_bind(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # CodeRabbit Minor on #3525: the stem guard must check the
+        # candidate's actual declaring module, not just that some module
+        # with the stem's name exists. A `sub.java` file beside the `sub/`
+        # directory puts `jX.com.example.sub` in the map, but the
+        # candidate `jX.com.example.sub.Outer.A` is declared by
+        # `jX.com.example.sub.Outer`, so a written `com.example.Outer.A`
+        # must not bind to it.
+        engine.class_inheritance = {
+            "jX.com.example.sub.Outer.A": ["jX.com.example.sub.Base.Base"],
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.example.sub.Outer": Path("/test/repo/com/example/sub/Outer.java"),
+            "jX.com.example.sub.Base": Path("/test/repo/com/example/sub/Base.java"),
+            "jX.com.example.sub": Path("/test/repo/com/example/sub.java"),
+        }
+
+        assert self._key_for(engine, "com.example.Outer.A") is None
