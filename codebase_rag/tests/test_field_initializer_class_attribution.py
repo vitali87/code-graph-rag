@@ -152,6 +152,78 @@ export class Svc {
     assert next(iter(sources)).endswith("Svc"), sources
 
 
+def test_ts_local_class_field_initializer_attributes_to_enclosing_function_class(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A class declared inside a function with no explicit constructor:
+    # the definition pass registers `module.make.Svc`, so the
+    # initializer's calls must attribute to that qn, not to a phantom
+    # `module.Svc` (Greptile P1 on #3526).
+    project = temp_repo / "tslocal"
+    project.mkdir()
+    (project / "svc.ts").write_text(
+        """
+export function helper(): number { return 1; }
+export function make() {
+  class Svc {
+    n = helper();
+  }
+  return new Svc();
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing="typescript")
+
+    sources = {s for s, t in _calls(mock_ingestor) if t.endswith("helper")}
+    # The initializer's call reaches the registered `make.Svc` class
+    # node, not a phantom bare `Svc`. The enclosing function `make`
+    # also claims the call — its pass walks the class body — which is
+    # pre-existing double-attribution for local classes (it also covers
+    # their method bodies, not just initializers) and out of scope here.
+    assert any(s.endswith("make.Svc") for s in sources), sources
+    assert not any(
+        s.endswith("svc.Svc") and not s.endswith("make.Svc") for s in sources
+    ), sources
+
+
+def test_java_local_class_field_initializer_attributes_to_enclosing_method_class(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A class declared inside a method with no explicit constructor: the
+    # definition pass registers `module.Outer.make.Svc`, so the
+    # initializer's calls must attribute to that qn, not to a phantom
+    # `module.Svc` (same shape as the TS local-class case, Greptile P1
+    # on #3526).
+    project = temp_repo / "jlocal"
+    (project / "com" / "example").mkdir(parents=True)
+    (project / "com" / "example" / "M.java").write_text(
+        """
+package com.example;
+class Outer {
+  void make() {
+    class Svc {
+      int n = helper();
+      int helper() { return 1; }
+    }
+    new Svc();
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="java")
+
+    sources = {s for s, t in _calls(mock_ingestor) if t.endswith("Svc.helper()")}
+    # Same as the TS case above: the initializer reaches the registered
+    # `Outer.make.Svc`, not a phantom bare `Outer.Svc`; the enclosing
+    # method's own claim is the same pre-existing double-attribution.
+    assert any(s.endswith("make.Svc") for s in sources), sources
+    assert not any(
+        s.endswith("Outer.Svc") and not s.endswith("make.Svc") for s in sources
+    ), sources
+
+
 def test_java_instance_field_initializers_attribute_to_constructor(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

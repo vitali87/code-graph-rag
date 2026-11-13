@@ -17,6 +17,7 @@ from .. import constants as cs
 from .. import logs as ls
 from ..capture import ALL_ENABLED, CaptureSelection
 from ..language_spec import (
+    LANGUAGE_FQN_SPECS,
     LanguageSpec,
     decode_node_text,
     sql_object_reference_name,
@@ -34,6 +35,7 @@ from ..types_defs import (
     ScalaBinding,
 )
 from ..utils import qn_markers
+from ..utils.fqn_resolver import scoped_name_parts
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
@@ -379,6 +381,21 @@ _FIELD_INITIALIZER_LANGUAGES = frozenset(
         cs.SupportedLanguage.CSHARP,
     }
 )
+# Languages where a class may be declared inside a function/method body
+# (a JS/TS function, a Java method-local class): the definition pass
+# registers such a class under its enclosing function's scope
+# (`module.make.Svc`), so the call pass must build its qn with the same
+# scope builder or every edge from it dangles off a phantom `module.Svc`
+# (issue #3339; Greptile P1 on #3526). C# cannot declare a class inside a
+# method, so it never needs this fallback.
+_FUNCTION_SCOPED_CLASS_LANGUAGES = frozenset(
+    {
+        cs.SupportedLanguage.JS,
+        cs.SupportedLanguage.TS,
+        cs.SupportedLanguage.TSX,
+        cs.SupportedLanguage.JAVA,
+    }
+)
 # Callable-valued expressions whose bodies run when invoked, not at
 # construction: a Java/C# lambda or a C# anonymous method assigned to a
 # field. They are not in those languages' `function_node_types`, so the
@@ -538,11 +555,47 @@ def _class_qn_for_calls(
         anonymous_qn := php_utils.anonymous_class_qn(class_node, module_qn)
     ):
         return anonymous_qn
+    if language in _FUNCTION_SCOPED_CLASS_LANGUAGES:
+        # The definition pass's scope builder subsumes the nested build
+        # below (an enclosing class is a scope too) and also covers a
+        # class declared inside a function/method, whose segment the
+        # nested build and the bare `module.class_name` join both drop:
+        # a local class's calls must attribute to the registered
+        # `module.make.Svc`, not to a phantom `module.Svc`
+        # (issue #3339; Greptile P1 on #3526).
+        if scoped_qn := _scoped_class_qn_for_calls(
+            class_node, module_qn, class_name, language
+        ):
+            return scoped_qn
     return (
         build_nested_qualified_name_for_class(
             class_node, module_qn, class_name, queries[language][cs.QUERY_CONFIG]
         )
         or f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
+    )
+
+
+def _scoped_class_qn_for_calls(
+    class_node: Node,
+    module_qn: str,
+    class_name: str,
+    language: cs.SupportedLanguage,
+) -> str | None:
+    # The definition pass's qualified name for the class: the FQN spec's
+    # scope walk over the class's ancestors, so an enclosing function or
+    # method contributes its segment exactly as the registered node has
+    # it. No file path is available in the call pass; the C# namespace
+    # fold that needs it is not attempted here, which is safe because
+    # C# cannot declare a class inside a method.
+    fqn_config = LANGUAGE_FQN_SPECS.get(language)
+    if fqn_config is None:
+        return None
+    parts = scoped_name_parts(class_node.parent, fqn_config, module_qn, None)
+    if not parts:
+        return None
+    return (
+        f"{module_qn}{cs.SEPARATOR_DOT}"
+        f"{cs.SEPARATOR_DOT.join(parts)}{cs.SEPARATOR_DOT}{class_name}"
     )
 
 
