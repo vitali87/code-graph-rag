@@ -11,6 +11,7 @@ from ... import constants as cs
 from ... import logs as ls
 from ...decorators import depth_exhausted, depth_guard, recursion_guard
 from ...types_defs import ASTNode
+from ...utils.path_utils import cached_relative_path
 from ..utils import safe_decode_text
 from .utils import (
     extract_class_info,
@@ -109,9 +110,11 @@ def _first_type_identifier_text(parent: ASTNode) -> str | None:
 class JavaVariableAnalyzerMixin:
     __slots__ = ()
     ast_cache: ASTCacheProtocol
+    repo_path: Path
     module_qn_to_file_path: dict[str, Path]
     class_inheritance: dict[str, list[str]]
     class_owner_module: dict[str, str]
+    rehydrated_definition_paths: dict[str, str]
     _lookup_cache: dict[str, str | None]
     _lookup_in_progress: set[str]
     # Annotation only, never a def: this mixin precedes JavaMethodResolverMixin
@@ -647,14 +650,27 @@ class JavaVariableAnalyzerMixin:
         # `Outer.A` while `com/example/Helpers/Outer.java` is a separate
         # package's file whose module qn is the longer prefix (Greptile
         # P1 on #3525). Trust the record when it exists; a class carried
-        # over by a rehydrate has none, so fall back to the longest
-        # module prefix there, as the prune does (graph_updater
+        # over by a rehydrate has none, so the rehydrate record is
+        # consulted next (the same record `_prune_class_keyed_maps`
+        # reads): without either, fall back to the longest module
+        # prefix there, as the prune does (graph_updater
         # `_prune_class_keyed_maps`). Without a record, the first module
         # found walking the key's prefixes from longest to shortest is
         # the declaring one, so a same-named file beside the real file's
         # directory never stands in for it.
         if (owner := self.class_owner_module.get(class_qn)) is not None:
             return owner == module_qn
+        if (rehydrated := self.rehydrated_definition_paths.get(class_qn)) is not None:
+            declaring = self.module_qn_to_file_path.get(module_qn)
+            if declaring is None:
+                return False
+            try:
+                return (
+                    cached_relative_path(declaring, self.repo_path).as_posix()
+                    == rehydrated
+                )
+            except ValueError:
+                return False
         segments = class_qn.split(cs.SEPARATOR_DOT)
         for end in range(len(segments) - 1, 0, -1):
             candidate = cs.SEPARATOR_DOT.join(segments[:end])

@@ -167,6 +167,9 @@ class ProcessorFactory:
                 class_field_guard_inner=self.definition_processor.class_field_guard_inner,
                 class_field_element_types=self.definition_processor.class_field_element_types,
                 class_owner_module=self.definition_processor.class_owner_module,
+                rehydrated_definition_paths=(
+                    self.definition_processor.rehydrated_definition_paths
+                ),
                 method_return_types=self.definition_processor.method_return_types,
                 go_function_return_types=self.definition_processor.go_function_return_types,
                 go_package_names=self.definition_processor.go_package_names,

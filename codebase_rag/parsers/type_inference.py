@@ -79,6 +79,7 @@ class TypeInferenceEngine:
         "csharp_class_generic_arity",
         "csharp_class_owner_module",
         "class_owner_module",
+        "rehydrated_definition_paths",
         "csharp_class_namespaced",
         "csharp_namespaced_qns",
         "csharp_method_return_types",
@@ -137,6 +138,7 @@ class TypeInferenceEngine:
         csharp_class_generic_arity: dict[str, int] | None = None,
         csharp_class_owner_module: dict[str, str] | None = None,
         class_owner_module: dict[str, str] | None = None,
+        rehydrated_definition_paths: dict[str, str] | None = None,
         csharp_class_namespaced: dict[str, str] | None = None,
         csharp_namespaced_qns: dict[str, set[str]] | None = None,
         csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
@@ -249,6 +251,13 @@ class TypeInferenceEngine:
         # in a subpackage (Greptile P1 on #3525). Forwarded to the Java
         # engine below.
         self.class_owner_module = _shared(class_owner_module, dict)
+        # Shared reference (as with class_owner_module): {class qn: the
+        # repo-relative path its definition was rehydrated from}, written
+        # when a row is read back from the graph and read by the Java
+        # variable analyzer for rehydrated classes, which have no
+        # `class_owner_module` entry (Greptile P1 on #3525). Forwarded
+        # to the Java engine below, and nowhere else.
+        self.rehydrated_definition_paths = _shared(rehydrated_definition_paths, dict)
         self.csharp_class_namespaced = _shared(csharp_class_namespaced, dict)
         self.csharp_namespaced_qns = _shared(csharp_namespaced_qns, dict)
         self.csharp_method_return_types = _shared(csharp_method_return_types, dict)
@@ -312,6 +321,7 @@ class TypeInferenceEngine:
                 class_inheritance=self.class_inheritance,
                 simple_name_lookup=self.simple_name_lookup,
                 class_owner_module=self.class_owner_module,
+                rehydrated_definition_paths=self.rehydrated_definition_paths,
                 java_call_sites=self.java_call_sites,
                 java_external_sites=self.java_external_sites,
                 function_locations=self.function_locations,

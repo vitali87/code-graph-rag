@@ -1589,6 +1589,68 @@ class TestInheritanceKeyFor:
             == "jX.com.example.Helpers.Outer.B"
         )
 
+    def test_qualified_nested_name_rehydrated_owner_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Greptile P1 on #3525, incremental runs: the same layout as
+        # above, but the classes were REHYDRATED from the graph, so
+        # they have no `class_owner_module` entry and the longest-prefix
+        # fallback rejects the real declaring file. The rehydrate record
+        # names it instead, so the qualified multi-catch still types.
+        engine.class_inheritance = {
+            "jX.com.example.Helpers.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.com.example.Helpers.Outer.B": ["jX.com.example.Base.Base"],
+            "jX.com.example.Helpers.Outer.Outer": [],
+            "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+        engine.class_owner_module = {}
+        engine.rehydrated_definition_paths = {
+            "jX.com.example.Helpers.Outer.A": "com/example/Helpers.java",
+            "jX.com.example.Helpers.Outer.B": "com/example/Helpers.java",
+            "jX.com.example.Helpers.Outer.Outer": "com/example/Helpers/Outer.java",
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.example.Helpers": Path("/test/repo/com/example/Helpers.java"),
+            "jX.com.example.Helpers.Outer": Path(
+                "/test/repo/com/example/Helpers/Outer.java"
+            ),
+            "jX.com.example.Base": Path("/test/repo/com/example/Base.java"),
+        }
+
+        assert (
+            self._key_for(engine, "com.example.Outer.A")
+            == "jX.com.example.Helpers.Outer.A"
+        )
+        assert (
+            self._key_for(engine, "com.example.Outer.B")
+            == "jX.com.example.Helpers.Outer.B"
+        )
+
+    def test_qualified_nested_name_rehydrated_owner_is_longer_module_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # The same rehydrated layout with the record naming the longer
+        # module: the class is a top-level class of
+        # `Helpers/Outer.java` (package `com.example.Helpers`), so a
+        # written `com.example.Outer.A` must not bind to it.
+        engine.class_inheritance = {
+            "jX.com.example.Helpers.Outer.A": ["jX.com.example.Base.Base"],
+            "jX.com.example.Base.Base": ["java.lang.RuntimeException"],
+        }
+        engine.class_owner_module = {}
+        engine.rehydrated_definition_paths = {
+            "jX.com.example.Helpers.Outer.A": "com/example/Helpers/Outer.java",
+        }
+        engine.module_qn_to_file_path = {
+            "jX.com.example.Helpers": Path("/test/repo/com/example/Helpers.java"),
+            "jX.com.example.Helpers.Outer": Path(
+                "/test/repo/com/example/Helpers/Outer.java"
+            ),
+            "jX.com.example.Base": Path("/test/repo/com/example/Base.java"),
+        }
+
+        assert self._key_for(engine, "com.example.Outer.A") is None
+
     def test_qualified_nested_name_owner_is_longer_module_returns_none(
         self, engine: JavaTypeInferenceEngine
     ) -> None:
