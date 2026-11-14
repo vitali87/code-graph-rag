@@ -82,9 +82,9 @@ Every relationship type belongs to exactly one [capture group](#capture-groups).
 | ModuleImplementation | IMPLEMENTS | ModuleInterface |
 | Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
 | Module, Section | LINKS_TO | File, Section |
-| Module, Function, Method | CALLS | Function, Method, Enum, Type |
-| Module, Function, Method | REFERENCES | Function, Method, Class |
-| Module, Function, Method | INSTANTIATES | Class |
+| Module, Function, Method, Class | CALLS | Function, Method, Enum, Type |
+| Module, Function, Method, Class | REFERENCES | Function, Method, Class |
+| Module, Function, Method, Class | INSTANTIATES | Class |
 | Module, Function, Method | READS_FROM (opt-in: [`io`](#capture-groups)) | Resource |
 | Module, Function, Method | WRITES_TO (opt-in: [`io`](#capture-groups)) | Resource |
 | Module, Function, Method, Resource | FLOWS_TO (opt-in: [`io`](#capture-groups)) | Module, Function, Method, Resource |
