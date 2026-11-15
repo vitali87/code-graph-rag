@@ -1,10 +1,12 @@
 """The per-file lookup tables behind issue #2453 never outlive their source.
 
 The linear-scan fix replaced per-definition and per-call rescans with tables
-built once per parent, tree, scope, class or pass. A table that survived an
-edit would answer for code that is no longer there, so each test here edits
-the one fact a table holds (a doc comment, a factory's return, an overload,
-a field's type, a loop's element type), syncs, and requires the graph to
+built once per parent, tree, scope, class or pass, and the Python type
+inference's definition lookups now read a per-tree index the same way. A
+table that survived an edit would answer for code that is no longer there, so
+each test here edits the one fact a table holds (a doc comment, a factory's
+return, an overload, a field's type, a loop's element type, a Python callee's
+return or class attribute), syncs, and requires the graph to
 equal a clean index of the edited tree: through a fresh updater, as
 `cgr start --update-graph` runs, and through `reingest` on the SAME updater,
 as the watcher and the MCP tool run, which keeps every instance-level table.
@@ -160,7 +162,88 @@ namespace N {
 }
 """
 
+# Python: `use` calls into what `shapes` returns or declares, which type
+# inference reads from `shapes`' definition index. Each edit swaps `Lid` for
+# `Jar`, the same length, so an index keyed by file or byte span rather than
+# by tree would still answer with the old class.
+_PY_SHAPES = """\
+class Lid:
+    def seal(self):
+        return 1
+
+
+class Jar:
+    def twist(self):
+        return 2
+
+
+"""
+_PY_USE_RESULT = """\
+from shapes import {name}
+
+
+def use():
+    r = {call}
+    r.seal()
+    r.twist()
+"""
+_PY_METHOD_BEFORE = (
+    _PY_SHAPES + "class Maker:\n    def make(self):\n        return Lid()\n"
+)
+_PY_FUNCTION_BEFORE = _PY_SHAPES + "def make():\n    return Lid()\n"
+_PY_ATTRIBUTE_BEFORE = _PY_SHAPES + "class Holder:\n    part: Lid\n"
+_PY_ATTRIBUTE_USE = """\
+from shapes import Holder
+
+
+def use():
+    h = Holder()
+    p = h.part
+    p.seal()
+    p.twist()
+"""
+_PY_TWIST = {("proj.use.use", "proj.shapes.Jar.twist"): _EXACT}
+
 EDIT_CASES = [
+    pytest.param(
+        EditCase(
+            cs.SupportedLanguage.PYTHON,
+            {
+                "shapes.py": _PY_METHOD_BEFORE,
+                "use.py": _PY_USE_RESULT.format(name="Maker", call="Maker().make()"),
+            },
+            "shapes.py",
+            _PY_METHOD_BEFORE.replace("return Lid()", "return Jar()"),
+            docs={},
+            calls=_PY_TWIST,
+        ),
+        id="python-method-return",
+    ),
+    pytest.param(
+        EditCase(
+            cs.SupportedLanguage.PYTHON,
+            {
+                "shapes.py": _PY_FUNCTION_BEFORE,
+                "use.py": _PY_USE_RESULT.format(name="make", call="make()"),
+            },
+            "shapes.py",
+            _PY_FUNCTION_BEFORE.replace("return Lid()", "return Jar()"),
+            docs={},
+            calls=_PY_TWIST,
+        ),
+        id="python-function-return",
+    ),
+    pytest.param(
+        EditCase(
+            cs.SupportedLanguage.PYTHON,
+            {"shapes.py": _PY_ATTRIBUTE_BEFORE, "use.py": _PY_ATTRIBUTE_USE},
+            "shapes.py",
+            _PY_ATTRIBUTE_BEFORE.replace("part: Lid", "part: Jar"),
+            docs={},
+            calls=_PY_TWIST,
+        ),
+        id="python-class-attribute",
+    ),
     pytest.param(
         EditCase(
             cs.SupportedLanguage.C,

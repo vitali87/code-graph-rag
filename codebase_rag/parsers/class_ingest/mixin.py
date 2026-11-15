@@ -21,6 +21,7 @@ from ...types_defs import (
     DeferredCppInherit,
     DeferredInherit,
     FunctionLocation,
+    FunctionLocations,
     FunctionSpanKey,
     NodeType,
     PendingTypeFact,
@@ -38,7 +39,12 @@ from ..csharp.arity import CSharpArityIndex
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
 from ..enum_variants import emit_declared_variants, is_python_enum
-from ..field_nodes import PendingFieldType, emit_declared_fields
+from ..field_nodes import (
+    PendingFieldType,
+    add_callable_fields,
+    cpp_callable_field_names,
+    emit_declared_fields,
+)
 from ..go import GoTypeInferenceEngine
 from ..go import interfaces as go_ifaces
 from ..java import utils as java_utils
@@ -175,6 +181,23 @@ class RustImplScope(NamedTuple):
     module_qn: str
     owner_module_qn: str
     impl_target: str
+
+
+class RustWrittenPath(NamedTuple):
+    # An impl block's self type as written, and the module it is read in.
+    path: str
+    module_qn: str
+
+
+def _rust_impl_owner_module(class_node: Node, module_qn: str) -> str:
+    # An impl block inside `mod inner` targets a type whose node lives
+    # under the module path (proj...inner.Widget). Resolve the impl target
+    # against its enclosing module so the method binds to the real type
+    # node instead of a phantom under the file module.
+    mod_parts = rs_utils.build_module_path(class_node)
+    if not mod_parts:
+        return module_qn
+    return f"{module_qn}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(mod_parts)}"
 
 
 def _impl_body_method_nodes(
@@ -345,6 +368,12 @@ class _MethodScope(NamedTuple):
     module_qn: str | None
 
 
+def _field_type_entry(name: str, type_name: str, guard_inner: str | None) -> str:
+    # `name<TAB>type`, plus `<TAB>inner` for a Rust guard field (#3004).
+    parts = (name, type_name, guard_inner) if guard_inner else (name, type_name)
+    return cs.FIELD_TYPE_SEPARATOR.join(parts)
+
+
 class ClassIngestMixin:
     # No __slots__: this mixin lazily creates _deferred_* registries on the
     # host instance, which requires the host to provide a __dict__.
@@ -363,6 +392,7 @@ class ClassIngestMixin:
     dart_constructor_qns: set[str]
     dart_extension_on_types: dict[str, str]
     class_field_types: dict[str, dict[str, str]]
+    cpp_callable_fields: dict[str, set[str]]
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
     csharp_override_methods: set[str]
@@ -387,7 +417,7 @@ class ClassIngestMixin:
     rust_impl_owner_module: dict[str, str]
     rehydrated_definition_paths: dict[str, str]
     go_interfaces: dict[str, go_ifaces.GoInterfaceDecl]
-    function_locations: dict[FunctionSpanKey, FunctionLocation]
+    function_locations: FunctionLocations
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
     _deferred_parent_links: list[DeferredParentLink]
@@ -1508,6 +1538,26 @@ class ClassIngestMixin:
         # this file can register them again.
         if non_method_members := _python_non_method_members(class_node, language):
             class_props[cs.KEY_NON_METHOD_MEMBERS] = non_method_members
+        # For a templated class the canonical node is the template_declaration
+        # wrapper, which has no `body` field. Its members (base clause, fields,
+        # methods) live on the inner class_specifier (type_spec). Extract them
+        # from there so they bind to the class's natural qn. For a plain class
+        # type_spec is class_node, so this is a no-op for non-templates and for
+        # Go/Rust (which never take the template_declaration branch).
+        member_node = type_spec if type_spec is not None else class_node
+        # Recorded before the node write so the field map rides on the type's
+        # one row: a second row for the same qn is a second node under an
+        # ingestor that CREATEs (`use_merge=False`).
+        self._record_class_field_types(
+            class_node,
+            member_node,
+            class_qn,
+            module_qn,
+            language,
+            modifiers,
+            file_path,
+        )
+        self._add_class_field_types_prop(class_qn, class_props)
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         mark_js_ts_module_private(
@@ -1539,13 +1589,6 @@ class ClassIngestMixin:
             module_qn,
             parent_span=parent_span,
         )
-        # For a templated class the canonical node is the template_declaration
-        # wrapper, which has no `body` field. Its members (base clause, fields,
-        # methods) live on the inner class_specifier (type_spec). Extract them
-        # from there so they bind to the class's natural qn. For a plain class
-        # type_spec is class_node, so this is a no-op for non-templates and for
-        # Go/Rust (which never take the template_declaration branch).
-        member_node = type_spec if type_spec is not None else class_node
         # Declared fields ride with their owner: same gate, same props source
         # for path/absolute_path, queued type for the deferred OF_TYPE pass.
         # Emitted AFTER the owner node so a batch flush never writes the edge
@@ -1601,15 +1644,6 @@ class ClassIngestMixin:
             self._ingest_go_interface_methods(
                 class_node, class_qn, module_qn, file_path
             )
-        self._record_class_field_types(
-            class_node,
-            member_node,
-            class_qn,
-            module_qn,
-            language,
-            modifiers,
-            file_path,
-        )
         self._ingest_class_methods(
             member_node,
             class_qn,
@@ -1717,6 +1751,21 @@ class ClassIngestMixin:
             # to the real implementation, so no edge ever reaches it; only the
             # parse can tell dead code it is a declaration.
             class_props[cs.KEY_TYPE_CHECKING_ONLY] = True
+        elif language == cs.SupportedLanguage.CPP:
+            self._record_cpp_callable_fields(class_node, class_qn, class_props)
+
+    def _record_cpp_callable_fields(
+        self, class_node: Node, class_qn: str, class_props: PropertyDict
+    ) -> None:
+        # Stored on the node so an incremental run that does not re-parse
+        # this header still lets a re-parsed `o->cb()` reach a free `cb`. A
+        # templated class's members live on its inner class_specifier.
+        member_node = _cpp_type_spec(class_node)
+        if member_node is None:
+            return
+        if names := sorted(cpp_callable_field_names(member_node)):
+            class_props[cs.KEY_CALLABLE_FIELDS] = names
+            add_callable_fields(self.cpp_callable_fields, class_qn, names)
 
     def _record_declared_type_members(
         self,
@@ -1876,6 +1925,24 @@ class ClassIngestMixin:
                 member_node, class_qn, module_qn, modifiers, file_path
             )
 
+    def _add_class_field_types_prop(
+        self, class_qn: str, class_props: PropertyDict
+    ) -> None:
+        # Only parsing fills `class_field_types`, so an incremental run that
+        # re-parses `defs.rs` but not `lowargs.rs` lost `LowArgs.mode: Mode`
+        # and `args.mode.update()` fell to a by-name guess (issue #3004).
+        # Store the map on the type's node for the rehydration to read back:
+        # a C# interface's properties and a union's fields type a field hop
+        # as a class's fields do, and a Rust guard field's inner type
+        # (`state: Mutex<State>` -> State) is what a `.lock()` hop reaches.
+        if not (fields := self.class_field_types.get(class_qn)):
+            return
+        guard_inner = self.class_field_guard_inner.get(class_qn, {})
+        class_props[cs.KEY_FIELD_TYPES] = [
+            _field_type_entry(name, type_name, guard_inner.get(name))
+            for name, type_name in sorted(fields.items())
+        ]
+
     def _record_rust_class_field_types(self, class_node: Node, class_qn: str) -> None:
         # Record Rust struct field types so a field-hop receiver
         # (`self.shutdown.is_shutdown()`) resolves through the field's type,
@@ -2028,16 +2095,7 @@ class ClassIngestMixin:
         if not (impl_target := rs_utils.extract_impl_target(class_node)):
             return
 
-        # An impl block inside `mod inner` targets a type whose node lives
-        # under the module path (proj...inner.Widget). Resolve the impl target
-        # against its enclosing module so the method binds to the real type
-        # node instead of a phantom under the file module.
-        mod_parts = rs_utils.build_module_path(class_node)
-        owner_module_qn = (
-            f"{module_qn}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(mod_parts)}"
-            if mod_parts
-            else module_qn
-        )
+        owner_module_qn = _rust_impl_owner_module(class_node, module_qn)
         class_qn = f"{owner_module_qn}.{impl_target}"
         written_path = rs_utils.extract_impl_target_path(class_node)
         if written_path:
@@ -2128,6 +2186,85 @@ class ClassIngestMixin:
             or trait_unrepresentable
         ):
             self.rust_inherent_impl_methods.update(impl_method_qns)
+
+    def restore_rust_impl_self_paths(
+        self, root_node: Node, module_qn: str, lang_queries: LanguageQueries
+    ) -> list[RustWrittenPath]:
+        """Record each impl block's written self type for an unparsed file.
+
+        What `_ingest_rust_impl_methods` records while it parses. A call
+        written with its type's path binds a block away from that type only
+        when the block's own path names it (#2982), and an incremental run
+        reads an unchanged block's methods back from the graph with no path:
+        the bare name stood in, named nothing in the block's module for
+        `impl crate::model::Foo`, and the edge a clean index emits was lost
+        (PR #2993 review). Returns each path as written where it is read.
+        """
+        if not (query := lang_queries[cs.QUERY_CLASSES]):
+            return []
+        lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
+        captures = sorted_captures(QueryCursor(query), root_node)
+        record = self.import_processor.record_rust_impl_self_path
+        written: list[RustWrittenPath] = []
+        for class_node in captures.get(cs.CAPTURE_CLASS, []):
+            if not (
+                (impl_target := rs_utils.extract_impl_target(class_node))
+                and (written_path := rs_utils.extract_impl_target_path(class_node))
+            ):
+                continue
+            owner_module_qn = _rust_impl_owner_module(class_node, module_qn)
+            class_qn = f"{owner_module_qn}{cs.SEPARATOR_DOT}{impl_target}"
+            record(module_qn, class_qn, written_path)
+            for method_qn in self._read_back_impl_method_qns(
+                class_node, class_qn, lang_queries, lang_config
+            ):
+                record(module_qn, method_qn, written_path)
+            written.append(
+                RustWrittenPath(path=written_path, module_qn=owner_module_qn)
+            )
+        return written
+
+    def _read_back_impl_method_qns(
+        self,
+        class_node: Node,
+        class_qn: str,
+        lang_queries: LanguageQueries,
+        lang_config: LanguageSpec,
+    ) -> list[str]:
+        body_node = class_node.child_by_field_name(cs.FIELD_BODY)
+        if body_node is None:
+            return []
+        method_qns: list[str] = []
+        for method_node in (
+            _impl_body_method_nodes(body_node, lang_queries, None, None) or []
+        ):
+            name_node = method_node.child_by_field_name(cs.FIELD_NAME)
+            if (
+                not _skip_method(method_node, class_node, body_node, lang_config)
+                and name_node is not None
+                and (name := safe_decode_text(name_node))
+                and (
+                    method_qn := self._read_back_method_qn(
+                        f"{class_qn}{cs.SEPARATOR_DOT}{name}", method_node
+                    )
+                )
+            ):
+                method_qns.append(method_qn)
+        return method_qns
+
+    def _read_back_method_qn(self, natural_qn: str, method_node: Node) -> str | None:
+        # The natural qn, or the `@line` variant the method took beside a
+        # same-named method of another block on the type: the variant is what
+        # tells the two blocks apart.
+        line, col = method_node.start_point[0] + 1, method_node.start_point[1]
+        by_position = {
+            qn_markers.marker_position(qn): qn
+            for qn in self.function_registry.variants(natural_qn)
+        }
+        found = by_position.get((line, col)) or by_position.get((line, -1))
+        if found is None and natural_qn in self.function_registry:
+            return natural_qn
+        return found
 
     def _defer_rust_impl_trait(
         self,
