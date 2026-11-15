@@ -37,6 +37,9 @@ KEY_MEMBER_ALIASES = "member_aliases"
 # The member names a Python class body binds to a value that is no method
 # (`run = None`), which hide a base class's `run` (issue #2620).
 KEY_NON_METHOD_MEMBERS = "non_method_members"
+# The C++ data members a call can invoke (`int (*cb)()`, `std::function`), so
+# `o->cb()` may reach a free `cb` that member syntax otherwise rules out.
+KEY_CALLABLE_FIELDS = "callable_fields"
 # The types a Go interface embeds, as written (`Reader`, `io.Writer`): its
 # method set includes theirs, so satisfying it needs them too (issue #2483).
 KEY_EMBEDS = "embeds"
@@ -48,6 +51,11 @@ KEY_IMPLEMENTERS_UNKNOWN = "implementers_unknown"
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
 KEY_IS_MACRO = "is_macro"
+# The path a Rust function's visibility is restricted to, as declared:
+# `self` for a private one, `crate`, `super` or the `in` path of a
+# `pub(...)`; absent for a plain `pub` one (PR #3242 review). A
+# `macro_rules!` macro reads `self`: no glob of its module imports it.
+KEY_RUST_VISIBILITY = "rust_visibility"
 KEY_IS_BODY_SCOPED_NAME = "is_body_scoped_name"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
@@ -934,6 +942,11 @@ KEY_CALL_QUALIFIER = "call_qualifier"
 # file module win over another target's gate (src/lib.rs gating what
 # src/main.rs compiles for real).
 KEY_RUST_CFG_TEST_MODS = "rust_cfg_test_mods"
+# A type's field types (`mode\tMode`; a Rust guard field adds its inner type,
+# `state\tMutex\tState`), read back on an incremental run so a re-parsed
+# file's `args.mode.update()` still types the field (issue #3004).
+KEY_FIELD_TYPES = "field_types"
+FIELD_TYPE_SEPARATOR = "\t"
 KEY_RUST_UNGATED_MODS = "rust_ungated_mods"
 KEY_MODIFIERS = "modifiers"
 # The namespace a C# type is declared in, kept apart from the qualified
@@ -1263,6 +1276,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.member_aliases AS member_aliases, "
     "n.non_method_members AS non_method_members, "
+    "n.callable_fields AS callable_fields, "
     "n.modifiers AS modifiers, n.decorators AS decorators, "
     "n.return_type AS return_type, n.param_types AS param_types, "
     "n.first_return_type AS first_return_type, "
@@ -1270,11 +1284,12 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "
     "n.signature AS signature, n.declared_in_class AS declared_in_class, "
     "n.generic_arity AS generic_arity, "
-    "n.is_exported AS is_exported, "
+    "n.is_exported AS is_exported, n.rust_visibility AS rust_visibility, "
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
     "n.extension_receiver_arity AS extension_receiver_arity, "
-    "n.embeds AS embeds"
+    "n.embeds AS embeds, "
+    "n.field_types AS field_types"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:

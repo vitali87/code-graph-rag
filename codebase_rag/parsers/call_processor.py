@@ -17,8 +17,10 @@ from .. import constants as cs
 from .. import logs as ls
 from ..capture import ALL_ENABLED, CaptureSelection
 from ..language_spec import (
+    LANGUAGE_FQN_SPECS,
     LanguageSpec,
     decode_node_text,
+    module_directory_qn,
     sql_object_reference_name,
 )
 from ..parser_loader import COMBINED_FUNC_CLASS_QUERIES
@@ -34,6 +36,7 @@ from ..types_defs import (
     ScalaBinding,
 )
 from ..utils import qn_markers
+from ..utils.fqn_resolver import scoped_name_parts
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
@@ -368,6 +371,81 @@ _JS_FIELD_WRITE_TYPES = frozenset(
         cs.TS_JS_UPDATE_EXPRESSION,
     }
 )
+# Languages whose instance field initializers run at construction time, so
+# their calls belong to the enclosing class's constructor (issue #3339).
+_FIELD_INITIALIZER_LANGUAGES = frozenset(
+    {
+        cs.SupportedLanguage.JS,
+        cs.SupportedLanguage.TS,
+        cs.SupportedLanguage.TSX,
+        cs.SupportedLanguage.JAVA,
+        cs.SupportedLanguage.CSHARP,
+    }
+)
+# Languages where a class may be declared inside a function/method body
+# (a JS/TS function, a Java method-local class): the definition pass
+# registers such a class under its enclosing function's scope
+# (`module.make.Svc`), so the call pass must build its qn with the same
+# scope builder or every edge from it dangles off a phantom `module.Svc`
+# (issue #3339; Greptile P1 on #3526). C# cannot declare a class inside a
+# method, so it never needs this fallback.
+_FUNCTION_SCOPED_CLASS_LANGUAGES = frozenset(
+    {
+        cs.SupportedLanguage.JS,
+        cs.SupportedLanguage.TS,
+        cs.SupportedLanguage.TSX,
+        cs.SupportedLanguage.JAVA,
+    }
+)
+# Callable-valued expressions whose bodies run when invoked, not at
+# construction: a Java/C# lambda or a C# anonymous method assigned to a
+# field. They are not in those languages' `function_node_types`, so the
+# initializer-value walk must name them explicitly, or their bodies'
+# calls would be attributed to the constructor (Greptile review).
+_INITIALIZER_DEFERRED_NODE_TYPES = frozenset(
+    {
+        cs.TS_JAVA_LAMBDA_EXPRESSION,
+        cs.TS_CSHARP_LAMBDA_EXPRESSION,
+        cs.TS_CSHARP_ANONYMOUS_METHOD_EXPRESSION,
+    }
+)
+# The class-body member type holding a field initializer, per language.
+_JS_TS_FIELD_NODE_TYPES = frozenset(
+    {cs.TS_PUBLIC_FIELD_DEFINITION, cs.TS_JS_FIELD_DEFINITION}
+)
+
+
+class _TsTypeArg(NamedTuple):
+    """A type argument of an alias reference, read where it was written."""
+
+    node: Node
+    module_qn: str
+    scope: _TsTypeScope
+
+
+class _TsTypeScope(NamedTuple):
+    """Type parameters bound while reading through aliases (issue #3276).
+
+    `Maybe<Box>` against `type Maybe<T> = T | null` reads `T | null` with
+    `T` bound to `Box`; `depth` counts the aliases followed, so a chain that
+    refers back to itself is abandoned.
+    """
+
+    bindings: Mapping[str, _TsTypeArg]
+    depth: int
+
+
+_NO_TS_SCOPE = _TsTypeScope({}, 0)
+
+
+def _ts_type_reference_name(node: Node) -> str | None:
+    # `Box`, or the `Array` of `Array<Box>`.
+    name_node = (
+        node.child_by_field_name(cs.FIELD_NAME)
+        if node.type == cs.TS_GENERIC_TYPE
+        else node
+    )
+    return safe_decode_text(name_node) if name_node is not None else None
 
 
 class _ReceiverDeclaration(NamedTuple):
@@ -511,11 +589,47 @@ def _class_qn_for_calls(
         anonymous_qn := php_utils.anonymous_class_qn(class_node, module_qn)
     ):
         return anonymous_qn
+    if language in _FUNCTION_SCOPED_CLASS_LANGUAGES:
+        # The definition pass's scope builder subsumes the nested build
+        # below (an enclosing class is a scope too) and also covers a
+        # class declared inside a function/method, whose segment the
+        # nested build and the bare `module.class_name` join both drop:
+        # a local class's calls must attribute to the registered
+        # `module.make.Svc`, not to a phantom `module.Svc`
+        # (issue #3339; Greptile P1 on #3526).
+        if scoped_qn := _scoped_class_qn_for_calls(
+            class_node, module_qn, class_name, language
+        ):
+            return scoped_qn
     return (
         build_nested_qualified_name_for_class(
             class_node, module_qn, class_name, queries[language][cs.QUERY_CONFIG]
         )
         or f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
+    )
+
+
+def _scoped_class_qn_for_calls(
+    class_node: Node,
+    module_qn: str,
+    class_name: str,
+    language: cs.SupportedLanguage,
+) -> str | None:
+    # The definition pass's qualified name for the class: the FQN spec's
+    # scope walk over the class's ancestors, so an enclosing function or
+    # method contributes its segment exactly as the registered node has
+    # it. No file path is available in the call pass; the C# namespace
+    # fold that needs it is not attempted here, which is safe because
+    # C# cannot declare a class inside a method.
+    fqn_config = LANGUAGE_FQN_SPECS.get(language)
+    if fqn_config is None:
+        return None
+    parts = scoped_name_parts(class_node.parent, fqn_config, module_qn, None)
+    if not parts:
+        return None
+    return (
+        f"{module_qn}{cs.SEPARATOR_DOT}"
+        f"{cs.SEPARATOR_DOT.join(parts)}{cs.SEPARATOR_DOT}{class_name}"
     )
 
 
@@ -679,6 +793,14 @@ def _dart_is_bare_read(node: Node) -> bool:
     return True
 
 
+_PY_DESTRUCTURING_TARGET_TYPES = frozenset(
+    {
+        cs.TS_PY_PATTERN_LIST,
+        cs.TS_PY_TUPLE_PATTERN,
+        cs.TS_PY_LIST_PATTERN,
+        cs.TS_PY_LIST_SPLAT_PATTERN,
+    }
+)
 # Python nested-scope boundaries and sequence-literal node types used when
 # scanning a scope for dispatch tables of function references.
 _PY_SCOPE_BOUNDARY_TYPES = frozenset(
@@ -2278,6 +2400,7 @@ class CallProcessor:
         cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         macro_qns: set[str] | None = None,
+        cpp_callable_fields: dict[str, set[str]] | None = None,
         ast_cache: ASTCacheProtocol | None = None,
         go_package_names: Mapping[str, str] | None = None,
         sql_sources: Mapping[Path, bytes] | None = None,
@@ -2367,6 +2490,7 @@ class CallProcessor:
             rehydrated_interface_implementers=rehydrated_interface_implementers,
             go_package_names=self._go_package_names,
             go_links=go_links,
+            cpp_callable_fields=cpp_callable_fields,
         )
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
@@ -3083,6 +3207,10 @@ class CallProcessor:
                 combined_captures,
                 sorted_func_nodes,
             )
+            has_python_property_reads = (
+                language == cs.SupportedLanguage.PYTHON
+                and bool(self._resolver.function_registry.property_names())
+            )
             if (
                 not all_call_nodes
                 and language
@@ -3092,6 +3220,7 @@ class CallProcessor:
                     cs.SupportedLanguage.DART,
                 )
                 and language not in _JS_TS_LANGUAGES
+                and not has_python_property_reads
             ):
                 # A file with no call expressions has nothing further to
                 # process, except in C#, where a class can still READ
@@ -3104,7 +3233,7 @@ class CallProcessor:
                 # when the class pass runs (issue #970); these passes run per
                 # caller inside class processing, so they proceed.
                 return
-            self._process_calls_in_classes(
+            field_initializer_starts = self._process_calls_in_classes(
                 root_node,
                 module_qn,
                 language,
@@ -3119,6 +3248,14 @@ class CallProcessor:
             module_calls = self._module_level_calls(
                 all_call_nodes, call_starts, sorted_func_nodes, language, module_qn
             )
+            if field_initializer_starts:
+                # Field-initializer calls already attributed to a
+                # constructor/class must not also reach the Module.
+                module_calls = [
+                    call
+                    for call in module_calls
+                    if call.start_byte not in field_initializer_starts
+                ]
             self._ingest_function_calls(
                 root_node,
                 module_qn,
@@ -4311,13 +4448,17 @@ class CallProcessor:
         combined_captures: dict[str, list] | None = None,
         sorted_func_nodes: list[Node] | None = None,
         func_node_starts: list[int] | None = None,
-    ) -> None:
+    ) -> set[int]:
+        # Returns the start bytes of the field-initializer calls attributed
+        # to a constructor/class below, so the module pass does not also
+        # attribute them to the file's Module (issue #3339).
+        attributed: set[int] = set()
         if combined_captures is not None:
             class_nodes = combined_captures.get(cs.CAPTURE_CLASS, [])
         else:
             query = queries[language][cs.QUERY_CLASSES]
             if not query:
-                return
+                return attributed
             cursor = QueryCursor(query)
             captures = sorted_captures(cursor, root_node)
             class_nodes = captures.get(cs.CAPTURE_CLASS, [])
@@ -4348,6 +4489,380 @@ class CallProcessor:
                     sorted_func_nodes=sorted_func_nodes,
                     func_node_starts=func_node_starts,
                 )
+                attributed.update(
+                    self._process_field_initializers_in_class(
+                        body_node,
+                        class_node,
+                        class_name,
+                        class_qn,
+                        module_qn,
+                        language,
+                        queries,
+                        all_call_nodes,
+                        call_starts,
+                        call_name_cache=call_name_cache,
+                    )
+                )
+        return attributed
+
+    def _process_field_initializers_in_class(
+        self,
+        body_node: Node,
+        class_node: Node,
+        class_name: str,
+        class_qn: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        all_call_nodes: list[Node] | None = None,
+        call_starts: list[int] | None = None,
+        call_name_cache: dict[int, str | None] | None = None,
+    ) -> set[int]:
+        # An instance field initializer runs when an object is constructed,
+        # so its calls/instantiations belong to the constructor (or the
+        # class node when there is no single constructor to own them), not
+        # to the file's Module (issue #3339). A static initializer runs at
+        # definition time and stays module-attributed, so it is skipped
+        # here and left for the module pass. Only the initializer VALUE is
+        # walked: a decorator or computed key on the field runs at
+        # definition time too, and calls inside a nested function (an
+        # arrow-valued field) belong to that function, which already gets
+        # its own caller pass. Returns the attributed calls' start bytes.
+        if language not in _FIELD_INITIALIZER_LANGUAGES:
+            return set()
+        if all_call_nodes is None or call_starts is None:
+            return set()
+        lang_config = queries[language][cs.QUERY_CONFIG]
+        target = self._field_initializer_target(
+            body_node,
+            class_node,
+            class_name,
+            class_qn,
+            module_qn,
+            language,
+            lang_config,
+        )
+        caller_qn, caller_label, class_context = target
+        attributed: set[int] = set()
+        for field_node in body_node.children:
+            if not self._is_instance_field_node(field_node, language):
+                continue
+            for value_node in self._field_initializer_values(field_node, language):
+                calls = self._initializer_calls(
+                    value_node, all_call_nodes, call_starts, lang_config
+                )
+                if not calls:
+                    continue
+                attributed.update(call.start_byte for call in calls)
+                try:
+                    self._ingest_function_calls(
+                        field_node,
+                        caller_qn,
+                        caller_label,
+                        module_qn,
+                        language,
+                        queries,
+                        class_context,
+                        call_nodes=calls,
+                        call_name_cache=call_name_cache,
+                    )
+                except Exception as e:
+                    # Contained to this field, as for a single method (#3173).
+                    self._record_caller_failure(ls.CALLER_CALLS_FAILED, caller_qn, e)
+        return attributed
+
+    def _field_initializer_target(
+        self,
+        body_node: Node,
+        class_node: Node,
+        class_name: str,
+        class_qn: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_config: LanguageSpec,
+    ) -> tuple[str, str, str]:
+        # (caller qn, caller label, class-context qn). The class-context
+        # qn is the scope bare calls resolve in: for C# it is the
+        # registered class qn, not the structural one, because the
+        # structural build drops the namespace and bare-call scoping
+        # against it finds no registered member (a bare `Helper()` in a
+        # no-constructor class would otherwise be swallowed: filtered
+        # out of the module pass but unresolvable in the class pass).
+        # One explicit constructor owns the initializers. Overloads
+        # attribute to their single non-delegating sink only: a
+        # `this(...)`-chained constructor performs none of the field
+        # initializations (JLS 12.5 steps 2-4; C# ECMA-334 17.10.2),
+        # so the initializers run exactly once, in the sink, however
+        # long the chain — counting non-delegators needs no target
+        # resolution. Overloads with no single sink (no non-delegator,
+        # or several independent ones, or a delegation cycle, which is
+        # a compile error) fall back to the class node rather than
+        # guessing one of them, and fanning one source site out over
+        # every overload would duplicate it. The class qn is the
+        # definition pass's registered one: the structural build drops
+        # a C# namespace, which would dangle the edge off a phantom node.
+        class_target = (
+            self._registered_class_qn(class_node, class_name, class_qn, module_qn)
+            if language == cs.SupportedLanguage.CSHARP
+            else class_qn
+        )
+        ctor_nodes = self._class_constructor_nodes(body_node, language)
+        if len(ctor_nodes) == 1:
+            ctor_node = ctor_nodes[0]
+        elif ctor_nodes:
+            sinks = [
+                node
+                for node in ctor_nodes
+                if not self._constructor_delegates(node, language)
+            ]
+            if len(sinks) != 1:
+                return class_target, cs.NodeLabel.CLASS, class_target
+            ctor_node = sinks[0]
+        else:
+            return class_target, cs.NodeLabel.CLASS, class_target
+        if loc := self._recorded_caller(ctor_node, module_qn):
+            return loc.qualified_name, loc.label, class_target
+        if language == cs.SupportedLanguage.CSHARP:
+            # A C# constructor's registered qn carries its parameter
+            # signature; rebuilding it here risks a phantom caller, so an
+            # unrecorded constructor falls back to the class node.
+            return class_target, cs.NodeLabel.CLASS, class_target
+        ctor_name = (
+            cs.KEYWORD_CONSTRUCTOR
+            if language in _JS_TS_LANGUAGES
+            else self._get_node_name(ctor_node)
+        )
+        if not ctor_name:
+            return class_target, cs.NodeLabel.CLASS, class_target
+        member_qn, member_label = self._class_member_qn_and_label(
+            ctor_node, class_qn, ctor_name, lang_config, language
+        )
+        return member_qn, member_label, class_target
+
+    def _registered_class_qn(
+        self, class_node: Node, class_name: str, class_qn: str, module_qn: str
+    ) -> str:
+        # A C# class's registered qn inserts its namespace (and any
+        # enclosing types) between the module and the class name, which
+        # the structural build omits. Rebuild from the declaration's
+        # namespace-qualified name and accept it only when the
+        # definition pass registered exactly that qn as a Class, so a
+        # misread can never invent a caller. When the directory already
+        # spells the namespace the registered qn drops it (issue #1629),
+        # so the candidate misses; the folded form below is then tried
+        # before the structural qn, which is only correct for a
+        # non-generic class: for a generic twin it names the
+        # non-generic twin instead (Greptile P1 on #3526).
+        # The own name carries its CLR arity spelling when the file
+        # declares the name at another arity too (issue #2579): a plain
+        # candidate would match the non-generic twin and misattribute a
+        # generic twin's initializers to it, or dangle when there is no
+        # non-generic twin at all. Every enclosing type segment carries
+        # its own arity spelling too, for the same reason: qualifying
+        # the leaf alone resolves a nested type inside a generic twin
+        # to its non-generic namesake.
+        qualified = csharp_utils.arity_qualified_path(class_node)
+        if qualified is None:
+            return class_qn
+        candidate = f"{module_qn}{cs.SEPARATOR_DOT}{qualified}"
+        if self._resolver.function_registry.get(candidate) == cs.NodeLabel.CLASS:
+            return candidate
+        if (namespace := csharp_utils.declared_namespace(class_node)) is not None:
+            prefix = f"{namespace}{cs.SEPARATOR_DOT}"
+            if qualified.startswith(prefix):
+                # The definition pass folds the namespace run out of the
+                # registered qn exactly when the module's directory
+                # already spells it (`_csharp_fold_scopes`); retry the
+                # same arity-qualified path without that run.
+                directory = module_directory_qn(
+                    module_qn, self.module_qn_to_file_path.get(module_qn)
+                )
+                if directory.endswith(f"{cs.SEPARATOR_DOT}{namespace}"):
+                    folded = f"{module_qn}{cs.SEPARATOR_DOT}{qualified[len(prefix) :]}"
+                    if (
+                        self._resolver.function_registry.get(folded)
+                        == cs.NodeLabel.CLASS
+                    ):
+                        return folded
+        return class_qn
+
+    @staticmethod
+    def _class_constructor_nodes(
+        body_node: Node, language: cs.SupportedLanguage
+    ) -> list[Node]:
+        # Only direct members count: a nested class's constructors belong
+        # to that class and are collected when it is iterated. A TS
+        # overload signature (`method_signature`) is not an implementation
+        # and never owns the initializer.
+        if language in _JS_TS_LANGUAGES:
+            return [
+                child
+                for child in body_node.children
+                if child.type == cs.TS_METHOD_DEFINITION
+                and safe_decode_text(child.child_by_field_name(cs.FIELD_NAME))
+                == cs.KEYWORD_CONSTRUCTOR
+            ]
+        if language == cs.SupportedLanguage.JAVA:
+            return [
+                child
+                for child in body_node.children
+                if child.type == cs.TS_CONSTRUCTOR_DECLARATION
+            ]
+        if language == cs.SupportedLanguage.CSHARP:
+            # A static constructor runs once at type load, not per
+            # instance, so it never owns instance field initializers:
+            # exclude it, or a static-only class would attribute to it
+            # and a class with both would fall back to the class node
+            # instead of the instance constructor (Greptile/CodeRabbit
+            # review). The `static` modifier is a direct `modifier`
+            # child, as for fields in `_is_instance_field_node`.
+            return [
+                child
+                for child in body_node.children
+                if child.type == cs.TS_CSHARP_CONSTRUCTOR_DECLARATION
+                and not any(
+                    grandchild.type == cs.TS_CSHARP_MODIFIER
+                    and safe_decode_text(grandchild) == cs.TS_STATIC
+                    for grandchild in child.children
+                )
+            ]
+        return []
+
+    @staticmethod
+    def _constructor_delegates(ctor_node: Node, language: cs.SupportedLanguage) -> bool:
+        # True when this constructor hands construction to a sibling via
+        # `this(...)`: Java's explicit constructor invocation as the first
+        # statement, or C#'s `: this(...)` initializer. A `super(...)` /
+        # `: base(...)` call constructs the base, not a sibling, so the
+        # constructor still runs its own field initializers.
+        if language == cs.SupportedLanguage.JAVA:
+            body = ctor_node.child_by_field_name(cs.FIELD_BODY)
+            if body is None or not body.named_children:
+                return False
+            # Comments are named children in tree-sitter-java, so a
+            # leading comment must not hide the invocation behind it.
+            statements = [
+                child
+                for child in body.named_children
+                if child.type not in (cs.TS_LINE_COMMENT, cs.TS_BLOCK_COMMENT)
+            ]
+            if not statements:
+                return False
+            first = statements[0]
+            if first.type != cs.TS_EXPLICIT_CONSTRUCTOR_INVOCATION:
+                return False
+            return any(
+                safe_decode_text(child) == cs.TS_THIS for child in first.children
+            )
+        if language == cs.SupportedLanguage.CSHARP:
+            for child in ctor_node.children:
+                if child.type != cs.TS_CSHARP_CONSTRUCTOR_INITIALIZER:
+                    continue
+                return any(
+                    grandchild.type == cs.TS_CSHARP_THIS
+                    for grandchild in child.children
+                )
+            return False
+        return False
+
+    def _is_instance_field_node(
+        self, node: Node, language: cs.SupportedLanguage
+    ) -> bool:
+        if language in _JS_TS_LANGUAGES:
+            if node.type not in _JS_TS_FIELD_NODE_TYPES:
+                return False
+            # `static` is a direct keyword child of the field node.
+            return not any(child.type == cs.TS_STATIC for child in node.children)
+        if language == cs.SupportedLanguage.JAVA:
+            if node.type != cs.TS_FIELD_DECLARATION:
+                return False
+            for child in node.children:
+                if child.type == cs.TS_MODIFIERS:
+                    return not any(
+                        safe_decode_text(grandchild) == cs.TS_STATIC
+                        for grandchild in child.children
+                    )
+            return True
+        if language == cs.SupportedLanguage.CSHARP:
+            if node.type != cs.TS_CSHARP_FIELD_DECLARATION:
+                return False
+            return not any(
+                child.type == cs.TS_CSHARP_MODIFIER
+                and safe_decode_text(child) == cs.TS_STATIC
+                for child in node.children
+            )
+        return False
+
+    @staticmethod
+    def _field_initializer_values(
+        field_node: Node, language: cs.SupportedLanguage
+    ) -> list[Node]:
+        if language in _JS_TS_LANGUAGES:
+            value = field_node.child_by_field_name(cs.FIELD_VALUE)
+            return [value] if value is not None else []
+        if language == cs.SupportedLanguage.JAVA:
+            values: list[Node] = []
+            for declarator in field_node.children_by_field_name(cs.FIELD_DECLARATOR):
+                value = declarator.child_by_field_name(cs.FIELD_VALUE)
+                if value is not None:
+                    values.append(value)
+            return values
+        # C#: a variable_declarator carries no `value` field; its value is
+        # the named child after the `=` token.
+        values = []
+        for child in field_node.children:
+            if child.type != cs.TS_CSHARP_VARIABLE_DECLARATION:
+                continue
+            for declarator in child.children:
+                if declarator.type != cs.TS_CSHARP_VARIABLE_DECLARATOR:
+                    continue
+                seen_equals = False
+                for part in declarator.children:
+                    if part.type == cs.CHAR_EQUALS:
+                        seen_equals = True
+                    elif seen_equals and part.is_named:
+                        values.append(part)
+                        break
+        return values
+
+    def _initializer_calls(
+        self,
+        value_node: Node,
+        all_call_nodes: list[Node],
+        call_starts: list[int],
+        lang_config: LanguageSpec,
+    ) -> list[Node]:
+        calls = self._filter_calls_in_node(all_call_nodes, call_starts, value_node)
+        if not calls:
+            return calls
+        # Calls owned by a function or class nested inside the value (an
+        # arrow-valued field, an anonymous class's method) run when that
+        # nested callable runs, not at construction; they already get
+        # their own caller pass. A call that CONTAINS the nested node (an
+        # immediately-invoked arrow) still runs at construction time.
+        nested_spans: list[tuple[int, int]] = []
+        stack = [value_node]
+        while stack:
+            node = stack.pop()
+            if (
+                node.type in lang_config.function_node_types
+                or node.type in lang_config.class_node_types
+                or node.type in _INITIALIZER_DEFERRED_NODE_TYPES
+            ):
+                nested_spans.append((node.start_byte, node.end_byte))
+            stack.extend(node.children)
+        if not nested_spans:
+            return calls
+        return [
+            call
+            for call in calls
+            if not any(
+                start <= call.start_byte
+                and call.end_byte <= end
+                and (call.start_byte > start or call.end_byte < end)
+                for start, end in nested_spans
+            )
+        ]
 
     def _span_bindings(
         self,
@@ -6574,8 +7089,11 @@ class CallProcessor:
         # What the name lookup found, checked against what the call site says.
         if ctx.is_csharp and call_node.type in _OBJECT_CREATION_NODE_TYPES:
             return self._csharp_construction_by_arity(call_node, call_name, callee_info)
-        if ctx.is_js_ts and callee_info is not None:
-            return self._judge_js_member_pick(ctx, call_node, callee_info)
+        if (
+            ctx.is_js_ts
+            and self._resolver.last_resolution == cs.EdgeResolution.HEURISTIC
+        ):
+            return self._judge_js_member_pick(ctx, call_node, call_name, callee_info)
         return callee_info
 
     def _csharp_construction_by_arity(
@@ -6609,18 +7127,20 @@ class CallProcessor:
         return callee_info[0], engine.arity_twin(callee_info[1], arity)
 
     def _judge_js_member_pick(
-        self, ctx: _CallScanContext, call_node: Node, callee_info: tuple[str, str]
+        self,
+        ctx: _CallScanContext,
+        call_node: Node,
+        call_name: str,
+        callee_info: tuple[str, str] | None,
     ) -> tuple[str, str] | None:
         # The resolver binds `recv.m()` on a receiver it could not type to the
         # one visible class defining `m`, and calls that a heuristic (issue
-        # #2609). What the receiver is declared as here decides further: a
-        # first-party type owning `m` (itself or a base) makes the binding
-        # the one the type implies, so it is exact; a type the project does
-        # not define (`Map`, a library class, `any`) cannot be that class, so
-        # there is no edge, as for a local `new Map()`. Anything else stays
-        # the heuristic it is.
-        if self._resolver.last_resolution != cs.EdgeResolution.HEURISTIC:
-            return callee_info
+        # #2609); with several visible, or none, it binds nothing. What the
+        # receiver is declared as here decides further: a first-party type
+        # owning `m` (itself or a base) makes the binding the one the type
+        # implies, so it is exact; a type the project does not define (`Map`,
+        # a library class, `any`) cannot be that class, so there is no edge,
+        # as for a local `new Map()`. Anything else stays the heuristic it is.
         func = call_node.child_by_field_name(cs.FIELD_FUNCTION)
         if func is not None and func.type in cs.TS_JS_PREFIXED_CALLEES:
             # `await recv.m<T>(x)`: the receiver sits under the operator.
@@ -6634,12 +7154,67 @@ class CallProcessor:
             return callee_info
         if declared.foreign:
             return None
-        owner_qn = callee_info[1].rpartition(cs.SEPARATOR_DOT)[0]
-        if owner_qn in self._resolver._mro(
-            self._resolver._follow_reexports(declared.qn)
-        ):
+        class_qn = self._resolver._follow_reexports(declared.qn)
+        if callee_info is None or not self._js_class_owns(class_qn, callee_info):
+            # The declaration brings its class into view for this receiver,
+            # as importing the class would: an imported alias may be all that
+            # names it here (`h: Handler` for `type Handler = Box`), and
+            # adding it to the whole module made every other receiver's call
+            # ambiguous (issue #3276). A class already in view changes
+            # nothing.
+            callee_info = self._resolver._resolve_js_member_call_unique(
+                call_name, ctx.module_qn, class_qn
+            )
+        if callee_info is not None and self._js_class_owns(class_qn, callee_info):
             self._resolver.last_resolution = cs.EdgeResolution.EXACT
         return callee_info
+
+    def _js_class_owns(self, class_qn: str, callee_info: tuple[str, str]) -> bool:
+        # The callee is what the class's instances run: an instance member of
+        # the class, or of a base that no class nearer in the chain hides. A
+        # pick of `Base.size` on a `Box` overriding `size` names the wrong
+        # method, and so does a static `size`, which no instance reaches
+        # (issue #3276).
+        owner_qn, _, method = callee_info[1].rpartition(cs.SEPARATOR_DOT)
+        for ancestor in self._resolver._mro(class_qn):
+            if ancestor == owner_qn:
+                return not self._js_declares_static_member(owner_qn, method)
+            if self._js_hides_instance_member(ancestor, method):
+                return False
+        return False
+
+    def _js_hides_instance_member(self, class_qn: str, method: str) -> bool:
+        # Whether the class declares `method` for its instances, hiding a
+        # base's: as a method, accessor, field, overload or abstract
+        # signature, all of which TypeScript reads as the class's own member
+        # (an abstract one is what each concrete subclass supplies). A static
+        # member belongs to the class, not its instances, so it hides nothing.
+        registered = (
+            f"{class_qn}{cs.SEPARATOR_DOT}{method}" in self._resolver.function_registry
+        )
+        sides = self._resolver.type_inference.js_member_sides(class_qn, method)
+        if sides is None:
+            # No class body to read (an interface, a constructor function):
+            # a member registered under it is the nearer declaration, as an
+            # `interface IFoo extends IBase` restating `size` is IFoo's.
+            return registered
+        instance, static = sides
+        # A member registered with no declaration in the body comes from
+        # outside it: a merged `interface` (a mixin's), a prototype write.
+        return instance or (registered and not static)
+
+    def _js_declares_static_member(self, class_qn: str, method: str) -> bool:
+        # The pick may be the class's static `method`, which no instance
+        # reaches. Beside an instance member of the name, a static field
+        # registers nothing, so the pick is the instance one; a static method
+        # may be the pick.
+        sides = self._resolver.type_inference.js_member_sides(class_qn, method)
+        if sides is None or not sides[1]:
+            return False
+        return (
+            not sides[0]
+            or self._resolver._js_static_member_target(class_qn, method) is not None
+        )
 
     def _js_receiver_declaration(
         self, ctx: _CallScanContext, receiver: Node | None
@@ -6663,6 +7238,8 @@ class CallProcessor:
             return None
         if receiver.type == cs.TS_IDENTIFIER:
             return self._js_identifier_declaration(ctx, receiver)
+        if receiver.type == cs.TS_SUBSCRIPT_EXPRESSION:
+            return self._js_subscript_declaration(ctx, receiver)
         if receiver.type == cs.TS_MEMBER_EXPRESSION:
             return self._js_this_field_declaration(ctx, receiver)
         return None
@@ -6693,6 +7270,40 @@ class CallProcessor:
             kind, value, name, ctx.module_qn, depth=0
         )
         return _ReceiverDeclaration(class_qn, foreign=False) if class_qn else None
+
+    def _js_subscript_declaration(
+        self, ctx: _CallScanContext, receiver: Node
+    ) -> _ReceiverDeclaration | None:
+        # `xs[0]` is an element of what `xs` is declared as.
+        obj = receiver.child_by_field_name(cs.FIELD_OBJECT)
+        if obj is None or obj.type != cs.TS_IDENTIFIER:
+            return None
+        index = receiver.child_by_field_name(cs.TS_FIELD_INDEX)
+        if index is None or index.type in cs.TS_PROPERTY_NAME_INDEX_TYPES:
+            return None
+        annotation = self._js_identifier_annotation(obj)
+        inner = next(iter(annotation.named_children), None) if annotation else None
+        return (
+            self._ts_element_declaration(inner, ctx.module_qn, _NO_TS_SCOPE)
+            if inner is not None
+            else None
+        )
+
+    def _js_identifier_annotation(self, ident: Node) -> Node | None:
+        """The type annotation `ident` was introduced with, if any."""
+        name = safe_decode_text(ident)
+        intro = self._js_innermost_introduction(ident, name) if name else None
+        if name is None or intro is None:
+            return None
+        kind, value = intro
+        if value is None:
+            return None
+        if kind == _JS_DECL_PARAM:
+            return self._js_param_annotation(value, name)
+        declarator = value.parent if kind == _JS_DECL_PLAIN else None
+        if declarator is not None and declarator.type == cs.TS_VARIABLE_DECLARATOR:
+            return declarator.child_by_field_name(cs.FIELD_TYPE)
+        return None
 
     def _js_param_declaration(
         self, ctx: _CallScanContext, callable_node: Node, name: str
@@ -6931,33 +7542,97 @@ class CallProcessor:
         return self._ts_type_declaration(inner, module_qn) if inner else None
 
     def _ts_type_declaration(
-        self, node: Node, module_qn: str
+        self, node: Node, module_qn: str, scope: _TsTypeScope = _NO_TS_SCOPE
     ) -> _ReceiverDeclaration | None:
         node_type = node.type
+        if scope.depth > cs.TS_ALIAS_MAX_DEPTH:
+            return None
         if node_type in (cs.TS_PREDEFINED_TYPE, cs.TS_ARRAY_TYPE, cs.TS_TUPLE_TYPE):
             # `any`, `unknown`, `string`, `A[]`: nothing the project defines.
             return _ReceiverDeclaration(safe_decode_text(node) or "", foreign=True)
-        if node_type == cs.TS_PARENTHESIZED_TYPE:
+        if node_type in (cs.TS_PARENTHESIZED_TYPE, cs.TS_READONLY_TYPE):
             inner = next(iter(node.named_children), None)
-            return self._ts_type_declaration(inner, module_qn) if inner else None
+            return self._ts_type_declaration(inner, module_qn, scope) if inner else None
         if node_type == cs.TS_UNION_TYPE:
-            return self._ts_union_declaration(node, module_qn)
-        if node_type == cs.TS_TYPE_IDENTIFIER:
-            name = safe_decode_text(node)
-            return (
-                self._ts_type_name_declaration(name, node, module_qn) if name else None
-            )
+            return self._ts_union_declaration(node, module_qn, scope)
+        if node_type in (cs.TS_TYPE_IDENTIFIER, cs.TS_NESTED_TYPE_IDENTIFIER):
+            # `Box` or `ns.Box`, read in the same scope: a dotted name read
+            # afresh restarted the alias depth, so `A = b.B` and `B = a.A`
+            # recursed until the stack ran out (issue #3276).
+            return self._ts_type_identifier_declaration(node, module_qn, scope)
         if node_type == cs.TS_GENERIC_TYPE:
-            return self._ts_generic_declaration(node, module_qn)
-        if node_type == cs.TS_NESTED_TYPE_IDENTIFIER:
-            name = safe_decode_text(node)
-            return (
-                self._ts_type_name_declaration(name, node, module_qn) if name else None
-            )
+            return self._ts_generic_declaration(node, module_qn, scope)
         return None
 
+    def _ts_type_identifier_declaration(
+        self, node: Node, module_qn: str, scope: _TsTypeScope
+    ) -> _ReceiverDeclaration | None:
+        name = safe_decode_text(node)
+        if not name:
+            return None
+        if name in scope.bindings:
+            # A type parameter of an alias being read: what it was bound to.
+            arg = scope.bindings[name]
+            return self._ts_type_declaration(
+                arg.node, arg.module_qn, arg.scope._replace(depth=scope.depth + 1)
+            )
+        return self._ts_type_name_declaration(name, node, module_qn, None, scope)
+
+    def _ts_element_declaration(
+        self, node: Node, module_qn: str, scope: _TsTypeScope
+    ) -> _ReceiverDeclaration | None:
+        """What `xs[i]` is, for `xs` declared as `node` (issue #3276): the
+        element of `T[]`, `readonly T[]`, `Array<T>` or an alias of one."""
+        if scope.depth > cs.TS_ALIAS_MAX_DEPTH:
+            return None
+        node_type = node.type
+        if node_type in (cs.TS_PARENTHESIZED_TYPE, cs.TS_READONLY_TYPE):
+            inner = next(iter(node.named_children), None)
+            return (
+                self._ts_element_declaration(inner, module_qn, scope) if inner else None
+            )
+        if node_type == cs.TS_ARRAY_TYPE:
+            element = next(iter(node.named_children), None)
+            return (
+                self._ts_type_declaration(element, module_qn, scope)
+                if element
+                else None
+            )
+        if node_type not in (cs.TS_TYPE_IDENTIFIER, cs.TS_GENERIC_TYPE):
+            return None
+        name = _ts_type_reference_name(node)
+        if not name:
+            return None
+        arguments = node.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS)
+        if (
+            name in cs.TS_INDEXABLE_GENERIC_NAMES
+            and arguments is not None
+            and self._ts_names_the_platform_type(name, node, module_qn)
+        ):
+            element = next(iter(arguments.named_children), None)
+            return (
+                self._ts_type_declaration(element, module_qn, scope)
+                if element
+                else None
+            )
+        aliased = self._ts_aliased_type(name, node, module_qn, arguments, scope)
+        return (
+            self._ts_element_declaration(aliased[0], aliased[1], aliased[2])
+            if aliased is not None
+            else None
+        )
+
+    def _ts_names_the_platform_type(
+        self, name: str, anchor: Node, module_qn: str
+    ) -> bool:
+        # A module's own `type Array<T> = ...`, or an imported `Array`,
+        # shadows the platform's: its element is what it declares.
+        import_map = self._resolver.import_processor.import_mapping.get(module_qn) or {}
+        declared = self._ts_named_type(name, anchor, module_qn)
+        return name not in import_map and (declared is None or declared.foreign)
+
     def _ts_union_declaration(
-        self, node: Node, module_qn: str
+        self, node: Node, module_qn: str, scope: _TsTypeScope = _NO_TS_SCOPE
     ) -> _ReceiverDeclaration | None:
         # `A | null` declares A. A wider union declares nothing usable unless
         # no member is first-party (`string | number`).
@@ -6967,20 +7642,37 @@ class CallProcessor:
             if (safe_decode_text(child) or "") not in cs.TS_NULLISH_TYPE_TEXTS
         ]
         if len(members) == 1:
-            return self._ts_type_declaration(members[0], module_qn)
-        declared = [self._ts_type_declaration(member, module_qn) for member in members]
-        if declared and all(d is not None and d.foreign for d in declared):
+            return self._ts_type_declaration(members[0], module_qn, scope)
+        # Read member by member, stopping at the first that is not foreign:
+        # reading every one expanded aliases that refer back to each other
+        # through unions (`W = V | V`, `V = W | W`) once per member at every
+        # level, exponentially in the depth limit (issue #3276).
+        if members and all(
+            self._ts_declares_foreign(member, module_qn, scope) for member in members
+        ):
             return _ReceiverDeclaration(safe_decode_text(node) or "", foreign=True)
         return None
 
+    def _ts_declares_foreign(
+        self, node: Node, module_qn: str, scope: _TsTypeScope
+    ) -> bool:
+        declared = self._ts_type_declaration(node, module_qn, scope)
+        return declared is not None and declared.foreign
+
     def _ts_generic_declaration(
-        self, node: Node, module_qn: str
+        self, node: Node, module_qn: str, scope: _TsTypeScope = _NO_TS_SCOPE
     ) -> _ReceiverDeclaration | None:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         name = safe_decode_text(name_node) if name_node is not None else None
         if not name:
             return None
-        declared = self._ts_type_name_declaration(name, node, module_qn)
+        declared = self._ts_type_name_declaration(
+            name,
+            node,
+            module_qn,
+            node.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS),
+            scope,
+        )
         # TypeScript's own utility types are no value type of their own and
         # are read through. A name the project defines or a package exports
         # (`Wrapper<Cache>`, or an imported `Readonly`) is that type, whatever
@@ -6991,10 +7683,55 @@ class CallProcessor:
             # `Readonly<A>` and friends keep A's members: A is the declaration.
             arguments = node.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS)
             first = next(iter(arguments.named_children), None) if arguments else None
-            return self._ts_type_declaration(first, module_qn) if first else None
+            return self._ts_type_declaration(first, module_qn, scope) if first else None
         return None
 
     def _ts_type_name_declaration(
+        self,
+        name: str,
+        anchor: Node,
+        module_qn: str,
+        arguments: Node | None = None,
+        scope: _TsTypeScope = _NO_TS_SCOPE,
+    ) -> _ReceiverDeclaration | None:
+        # A first-party type alias is the type it stands for (issue #3276).
+        aliased = self._ts_aliased_type(name, anchor, module_qn, arguments, scope)
+        if aliased is not None:
+            return self._ts_type_declaration(*aliased)
+        return self._ts_named_type(name, anchor, module_qn)
+
+    def _ts_aliased_type(
+        self,
+        name: str,
+        anchor: Node,
+        module_qn: str,
+        arguments: Node | None,
+        scope: _TsTypeScope,
+    ) -> tuple[Node, str, _TsTypeScope] | None:
+        """The target of the first-party alias `name` names, with its type
+        parameters bound to `arguments` as written in `module_qn`."""
+        declared = self._ts_named_type(name, anchor, module_qn)
+        if declared is None:
+            return None
+        alias_module, _, alias_name = declared.qn.rpartition(cs.SEPARATOR_DOT)
+        alias = self._resolver.ts_type_alias(alias_module, alias_name)
+        value = alias.child_by_field_name(cs.FIELD_VALUE) if alias is not None else None
+        if alias is None or value is None:
+            return None
+        parameters = alias.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+        names = [
+            safe_decode_text(param.child_by_field_name(cs.FIELD_NAME))
+            for param in (parameters.named_children if parameters is not None else [])
+        ]
+        written = arguments.named_children if arguments is not None else []
+        bindings = {
+            param: _TsTypeArg(arg, module_qn, scope)
+            for param, arg in zip(names, written)
+            if param
+        }
+        return value, alias_module, _TsTypeScope(bindings, scope.depth + 1)
+
+    def _ts_named_type(
         self, name: str, anchor: Node, module_qn: str
     ) -> _ReceiverDeclaration | None:
         # A type name is first-party when an enclosing scope declares it, an
@@ -11812,7 +12549,6 @@ class CallProcessor:
         attr_type = cs.TS_PY_ATTRIBUTE
         function_types = lang_config.function_node_types
         class_types = lang_config.class_node_types
-        seen: set[str] = set()
 
         stack = list(caller_node.children)
         while stack:
@@ -11827,6 +12563,7 @@ class CallProcessor:
                         caller_node, node, local_var_types, module_qn
                     ) or (local_var_types,):
                         self._emit_property_access(
+                            caller_node,
                             node,
                             attr_text,
                             caller_spec,
@@ -11834,12 +12571,12 @@ class CallProcessor:
                             module_qn,
                             var_types,
                             class_context,
-                            seen,
                         )
             stack.extend(node.children)
 
     def _emit_property_access(
         self,
+        caller_node: Node,
         node: Node,
         attr_text: str,
         caller_spec: tuple[str, str, str],
@@ -11847,11 +12584,12 @@ class CallProcessor:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
-        seen: set[str],
     ) -> None:
         # One property-named attribute access: a CALLS edge to the getter it
         # invokes, unless the attribute is itself a call's function.
         registry = self._resolver.function_registry
+        if self._python_attribute_is_write_target(node):
+            return
         parent = node.parent
         is_call_target = (
             parent is not None
@@ -11863,28 +12601,104 @@ class CallProcessor:
             # permanently False.
             and parent.child_by_field_name(cs.TS_FIELD_FUNCTION) == node
         )
-        if not is_call_target and (
-            callee_info := self._resolver.resolve_function_call(
+        if is_call_target:
+            return
+
+        callee_info = self._resolve_property_getter(
+            caller_node,
+            node,
+            attr_text,
+            caller_qn,
+            module_qn,
+            local_var_types,
+            class_context,
+        )
+        if callee_info is None:
+            return
+        callee_qn = callee_info[1]
+        if registry.is_property(callee_qn) and callee_qn != caller_qn:
+            targets = registry.variants(callee_qn)
+            self._resolution = (
+                cs.EdgeResolution.OVERLOAD
+                if len(targets) > 1
+                else self._resolver.last_resolution
+            )
+            for target_qn in targets:
+                self._emit_rel(
+                    caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+
+    def _resolve_property_getter(
+        self,
+        caller_node: Node,
+        node: Node,
+        attr_text: str,
+        caller_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+    ) -> tuple[str, str] | None:
+        receiver, _, property_name = attr_text.rpartition(cs.SEPARATOR_DOT)
+        # Only the method's bound receiver denotes the enclosing class: an
+        # ordinary parameter that happens to be named `self` or `cls` holds a
+        # caller-supplied value, so it takes the receiver-resolution path.
+        if not (
+            class_context
+            and receiver
+            in PythonTypeInferenceEngine._receiver_parameter_names(caller_node)
+            and not self._python_lambda_rebinds(node, caller_node, receiver)
+        ):
+            return self._resolver.resolve_function_call(
                 attr_text,
                 module_qn,
                 local_var_types,
                 class_context,
                 caller_qn,
             )
+        if PythonTypeInferenceEngine.receiver_is_the_class(caller_node):
+            # `cls.name` hands back the property object: no getter runs.
+            return None
+        callee_info = self._resolver._try_resolve_method(class_context, property_name)
+        if callee_info is None or not self._resolver.function_registry.is_property(
+            callee_info[1]
         ):
-            callee_qn = callee_info[1]
+            return None
+        self._resolver.last_resolution = cs.EdgeResolution.EXACT
+        return callee_info
+
+    @staticmethod
+    def _python_lambda_rebinds(node: Node, caller_node: Node, name: str) -> bool:
+        # `lambda self: self.name` inside a method reads its own parameter,
+        # not the method's receiver. Only the body is in the lambda's scope:
+        # a default (`lambda self=self.name: ...`) is evaluated outside it.
+        inner = node
+        current = node.parent
+        while current is not None and current != caller_node:
             if (
-                registry.is_property(callee_qn)
-                and callee_qn != caller_qn
-                and callee_qn not in seen
+                current.type == cs.TS_PY_LAMBDA
+                and current.child_by_field_name(cs.FIELD_BODY) == inner
+                and name in PythonTypeInferenceEngine._parameter_names(current)
             ):
-                seen.add(callee_qn)
-                for target_qn in registry.variants(callee_qn):
-                    self._emit_rel(
-                        caller_spec,
-                        cs.RelationshipType.CALLS,
-                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
-                    )
+                return True
+            inner = current
+            current = current.parent
+        return False
+
+    @staticmethod
+    def _python_attribute_is_write_target(node: Node) -> bool:
+        # Only the attribute that IS the target, or one element of a
+        # destructuring target, is written. Anything else under the left side
+        # (a receiver, a subscript index or slice bound) is evaluated as a read.
+        current = node
+        while (parent := current.parent) is not None:
+            if parent.type == cs.TS_PY_ASSIGNMENT:
+                return parent.child_by_field_name(cs.TS_FIELD_LEFT) == current
+            if parent.type not in _PY_DESTRUCTURING_TARGET_TYPES:
+                return False
+            current = parent
+        return False
 
     @_site_scoped
     def _ingest_dart_getter_reads(

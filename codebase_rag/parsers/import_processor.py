@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from loguru import logger
-from tree_sitter import Node, Parser
+from tree_sitter import Language, Node, Parser
 
 from .. import constants as cs
 from .. import logs as ls
@@ -63,12 +63,17 @@ from .dart import (
     discover_dart_packages,
 )
 from .go import discover_go_module_paths, resolve_go_import_path
-from .js_ts.commonjs_exports import commonjs_export_bindings, is_commonjs_module
+from .js_ts.commonjs_exports import (
+    LocalBindings,
+    commonjs_export_bindings,
+    is_commonjs_module,
+)
 from .js_ts.module_paths import (
     discover_js_workspace_packages,
     resolve_js_workspace_import,
 )
 from .js_ts.reexports import JsExport, follow_js_reexports, js_ts_module_qn
+from .js_ts.utils import get_js_ts_language_obj
 from .lua import utils as lua_utils
 from .php.namespaces import declared_namespace
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
@@ -96,6 +101,7 @@ from .stdlib_extractor import (
 from .utils import (
     PythonStarRules,
     follow_reexports,
+    get_cached_query,
     get_query_cursor,
     node_site_properties,
     safe_decode_text,
@@ -473,6 +479,90 @@ def _names_js_module(site: PropertyDict | None) -> bool:
     return imported is None or imported == cs.IMPORTED_NAME_WILDCARD
 
 
+def _is_js_side_effect_import(site: PropertyDict | None) -> bool:
+    # `import "./x"` and `require("./x");` bind no name and import none: the
+    # only import sites with neither an alias nor an imported name. The
+    # target is then the whole module, never `module.name` (issue #3267).
+    return (
+        site is not None
+        and cs.KEY_ALIAS not in site
+        and cs.KEY_IMPORTED_NAME not in site
+    )
+
+
+def _js_clause_binds(clause: Node) -> bool:
+    # Whether an import clause binds a name: a default, a namespace or a
+    # specifier. `import {} from "./x"` binds none and, like `import "./x"`,
+    # imports the module for its side effects (issue #3267).
+    return any(
+        child.type in (cs.TS_IDENTIFIER, cs.TS_NAMESPACE_IMPORT)
+        or (
+            child.type == cs.TS_NAMED_IMPORTS
+            and any(
+                spec.type == cs.TS_IMPORT_SPECIFIER for spec in child.named_children
+            )
+        )
+        for child in clause.named_children
+    )
+
+
+def _js_side_effect_call(statement: Node) -> tuple[str, Node | None] | None:
+    # (specifier, the `require` callee or None for `import()`) of a statement
+    # that is only `require("./db")` or `import("./cache")`, awaited or not;
+    # None for anything else.
+    if statement.type != cs.TS_EXPRESSION_STATEMENT:
+        return None
+    call = statement.named_child(0)
+    if (
+        call is not None
+        and call.type == cs.TS_JS_UNARY_EXPRESSION
+        and _js_unary_operator(call) == cs.JS_VOID_OPERATOR
+    ):
+        call = call.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+    if call is not None and call.type == cs.TS_AWAIT_EXPRESSION:
+        call = call.named_child(0)
+    if call is None or call.type != cs.TS_CALL_EXPRESSION:
+        return None
+    func = call.child_by_field_name(cs.FIELD_FUNCTION)
+    args = call.child_by_field_name(cs.FIELD_ARGUMENTS)
+    if func is None or args is None:
+        return None
+    is_require = (
+        func.type == cs.TS_IDENTIFIER and safe_decode_text(func) == cs.IMPORT_REQUIRE
+    )
+    if not is_require and func.type != cs.TS_JS_DYNAMIC_IMPORT:
+        return None
+    # The loader reads its first argument; `require(name, "./db")` loads
+    # `name`, whatever string follows (CodeRabbit, PR #3284).
+    arg = next((a for a in args.named_children if a.type != cs.TS_COMMENT), None)
+    if arg is None or arg.type != cs.TS_STRING:
+        return None
+    return safe_decode_with_fallback(arg).strip("'\""), func if is_require else None
+
+
+def _rebased_js_specifier(specifier: str, base: str) -> str:
+    # A relative specifier a loader resolves from `base`, a directory
+    # relative to the importer's own, respelled relative to the importer:
+    # `require("./setup")` from a loader for `../plugins/entry.js` is
+    # `../plugins/./setup`. A package resolves the same from anywhere.
+    if base == cs.PATH_CURRENT_DIR or not specifier.startswith(cs.PATH_CURRENT_DIR):
+        return specifier
+    return f"{base}{cs.SEPARATOR_SLASH}{specifier}"
+
+
+def _js_unary_operator(expression: Node) -> str | None:
+    operator = expression.child_by_field_name(cs.FIELD_OPERATOR)
+    return safe_decode_text(operator) if operator is not None else None
+
+
+def _is_js_whole_module_import(entry: DeferredImportEdge) -> bool:
+    # A JS/TS star re-export, namespace import or side-effect import targets
+    # the module itself.
+    return entry.language in cs.JS_TS_LANGUAGES and (
+        _names_js_module(entry.site) or _is_js_side_effect_import(entry.site)
+    )
+
+
 def _load_jsonc(path: Path) -> dict | None:
     # tsconfig.json is JSONC (comments, trailing commas, a BOM), read the way
     # TypeScript reads it. A config that still is not JSON, or that cannot be
@@ -636,6 +726,46 @@ def _load_ts_base_urls(repo_path: Path) -> tuple[tuple[str, str | None], ...]:
         )
         if dotted not in governing:
             governing[dotted] = _tsconfig_base_url(cfg, repo_path)
+    return tuple(sorted(governing.items(), key=lambda item: -len(item[0])))
+
+
+def _tsconfig_custom_conditions(
+    cfg: Path, repo_path: Path, seen: frozenset[Path] = frozenset()
+) -> frozenset[str] | None:
+    # `cfg`'s effective `customConditions`: its own list, or one inherited
+    # through `extends`. An array option is replaced, not merged, by the
+    # config that sets it. None when no config in the chain declares one.
+    data = _load_jsonc(cfg) if cfg not in seen else None
+    if not data:
+        return None
+    options = data.get(cs.TS_COMPILER_OPTIONS_KEY)
+    if isinstance(options, dict) and isinstance(
+        declared := options.get(cs.TS_CUSTOM_CONDITIONS_KEY), list
+    ):
+        return frozenset(c for c in declared if isinstance(c, str))
+    for parent in _tsconfig_extends(data, cfg, repo_path):
+        inherited = _tsconfig_custom_conditions(parent, repo_path, seen | {cfg})
+        if inherited is not None:
+            return inherited
+    return None
+
+
+def _load_ts_custom_conditions(
+    repo_path: Path,
+) -> tuple[tuple[str, frozenset[str]], ...]:
+    # (config directory as a repo-relative path prefix, its effective
+    # `customConditions`), deepest directory first, governed like `baseUrl`
+    # above: the nearest config holding a file decides which `exports`
+    # conditions that file's imports select (issue #2935). The prefix keeps
+    # its slashes so it matches whole segments: joined with dots,
+    # `packages/mylib/` would also claim the sibling `packages/mylib.extra/`.
+    governing: dict[str, frozenset[str]] = {}
+    for cfg in _find_tsconfig_files(repo_path):
+        directory = _tsconfig_dir_prefix(cfg, repo_path)
+        if directory not in governing:
+            governing[directory] = _tsconfig_custom_conditions(cfg, repo_path) or (
+                frozenset()
+            )
     return tuple(sorted(governing.items(), key=lambda item: -len(item[0])))
 
 
@@ -861,6 +991,24 @@ def _js_binds_whole_module(site: PropertyDict | None) -> bool:
     if site is None:
         return True
     return site.get(cs.KEY_IMPORTED_NAME) in (None, cs.IMPORTED_NAME_WILDCARD)
+
+
+def _js_binding_source(
+    full_name: str, site: PropertyDict | None
+) -> tuple[str, str | None]:
+    """A JS/TS binding's source module and the member it takes from it.
+
+    The member is `""` for a whole-module binding and None where the site
+    does not say, which leaves the split to the modules the name crosses.
+    """
+    if site is None:
+        return full_name, None
+    if _js_binds_whole_module(site):
+        return full_name, ""
+    member = f"{cs.SEPARATOR_DOT}{site.get(cs.KEY_IMPORTED_NAME)}"
+    if full_name.endswith(member):
+        return full_name[: -len(member)], member
+    return full_name, None
 
 
 def _is_known_js_module(qn: str, known_module_paths: Mapping[str, str]) -> bool:
@@ -1417,6 +1565,7 @@ class ImportProcessor:
         "js_ts_package_imports",
         "js_path_aliases",
         "js_base_urls",
+        "js_custom_conditions",
         "stdlib_extractor",
         "_is_local_module_cached",
         "_is_local_java_import_cached",
@@ -1444,6 +1593,7 @@ class ImportProcessor:
         "_csharp_module_identifiers",
         "_cpp_declaration_mappings",
         "_cpp_shadowed_include_targets",
+        "_js_side_effect_imports",
         "_dart_packages",
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
@@ -1833,6 +1983,10 @@ class ImportProcessor:
         # survived (issue #1758). The binding can hold one name, but the file
         # really does include both headers, so the edge is kept here.
         self._cpp_shadowed_include_targets: set[tuple[str, str]] = set()
+        # Per JS/TS module, the modules it imports for side effects only
+        # (`import "./instrument"`, `require("./db");`), with each statement's
+        # site. They bind no name, so the map cannot carry them (#3267).
+        self._js_side_effect_imports: dict[str, list[tuple[str, PropertyDict]]] = {}
         # The repo's own Dart packages, pubspec `name:` -> qn of its `lib/`,
         # found on the first `package:` import so a project with no Dart
         # pays no extra walk (issue #3278).
@@ -1874,6 +2028,9 @@ class ImportProcessor:
         )
         self.js_base_urls: tuple[tuple[str, str | None], ...] = _load_ts_base_urls(
             repo_path
+        )
+        self.js_custom_conditions: tuple[tuple[str, frozenset[str]], ...] = (
+            _load_ts_custom_conditions(repo_path)
         )
         self.stdlib_extractor = StdlibExtractor(
             function_registry, repo_path, project_name
@@ -1925,10 +2082,12 @@ class ImportProcessor:
 
         @lru_cache(maxsize=4096)
         def _map_js_workspace_import_cached(
-            import_path: str, require: bool = False
+            import_path: str,
+            require: bool = False,
+            conditions: frozenset[str] = frozenset(),
         ) -> str | None:
             return resolve_js_workspace_import(
-                js_workspace_packages, import_path, repo_path, require
+                js_workspace_packages, import_path, repo_path, require, conditions
             )
 
         self._map_js_workspace_import = _map_js_workspace_import_cached
@@ -2019,6 +2178,7 @@ class ImportProcessor:
         nothing the edited file no longer says.
         """
         self.import_mapping[module_qn] = {}
+        self._js_side_effect_imports.pop(module_qn, None)
         # Re-recorded once the Scala parse completes; a parse that fails
         # midway must not leave the previous imports to be restored.
         self._scala_imports.pop(module_qn, None)
@@ -2122,6 +2282,16 @@ class ImportProcessor:
                         site=sites.get(local_name),
                     )
                 )
+        # Side-effect imports bind no name, so the map above never lists them.
+        for target, site in self._js_side_effect_imports.get(module_qn, ()):
+            self._deferred_import_edges.append(
+                DeferredImportEdge(
+                    module_qn=module_qn,
+                    full_name=target,
+                    language=language,
+                    site=site,
+                )
+            )
         # Includes whose local binding a later include took over: the
         # file includes them, so they keep their edge even though the
         # map no longer names them (issue #1758). No site: the binding
@@ -2220,6 +2390,9 @@ class ImportProcessor:
                     | cs.SupportedLanguage.TSX
                 ):
                     self._parse_js_ts_imports(captures, module_qn, root_node)
+                    self._parse_js_side_effect_calls(
+                        root_node, module_qn, get_js_ts_language_obj(language, queries)
+                    )
                 case cs.SupportedLanguage.JAVA:
                     self._parse_java_imports(captures, module_qn)
                 case cs.SupportedLanguage.RUST:
@@ -2826,7 +2999,7 @@ class ImportProcessor:
         self,
         entry: DeferredImportEdge,
         known_module_paths: dict[str, str],
-        module_aliases: dict[str, str],
+        module_aliases: dict[str, list[str]],
         siblings: StemSiblingModules,
     ) -> int:
         # A crate::/super::/self:: use path was rewritten to a project
@@ -2867,9 +3040,11 @@ class ImportProcessor:
         self,
         entry: DeferredImportEdge,
         known_module_paths: dict[str, str],
-        module_aliases: dict[str, str],
+        module_aliases: dict[str, list[str]],
         siblings: StemSiblingModules,
     ) -> int:
+        if self._flush_js_whole_package_import(entry):
+            return 1
         module_path = self._resolve_module_path(
             entry.full_name, entry.language, known_module_paths, entry.site
         )
@@ -2907,7 +3082,7 @@ class ImportProcessor:
                 self.note_unresolved(entry.module_qn, entry.full_name)
                 return 0
             module_path = verified
-        if entry.language in cs.JS_TS_LANGUAGES and _names_js_module(entry.site):
+        if _is_js_whole_module_import(entry):
             # `export * from "./add"` in `math/index.ts` stores the module
             # `math.add`, which the resolution above reads as the name `add`
             # of the `math` barrel: the barrel itself (issue #2464). A
@@ -2936,6 +3111,21 @@ class ImportProcessor:
             full_name=entry.full_name,
         )
         return 1
+
+    def _flush_js_whole_package_import(self, entry: DeferredImportEdge) -> bool:
+        if not (
+            _is_js_whole_module_import(entry)
+            and self._module_label(entry.full_name) == cs.NodeLabel.EXTERNAL_MODULE
+        ):
+            return False
+        # `import "@scope/pkg"`, `export * from "zone.js"`: the package
+        # itself, every segment of its name. The resolution in
+        # `_flush_resolved_import` reads the last one as an imported name
+        # (`@scope`, `zone`), where `import x from` the same specifier
+        # reaches the package.
+        self._ensure_external_module_node(entry.full_name, entry.full_name)
+        self._emit_import_edge(entry, cs.NodeLabel.EXTERNAL_MODULE, entry.full_name)
+        return True
 
     def stem_sibling_modules(
         self, module_paths: Mapping[str, Path | str]
@@ -2978,26 +3168,80 @@ class ImportProcessor:
         family: LanguageFamily,
         module_paths: Mapping[str, Path | str],
         siblings: StemSiblingModules,
+        *,
+        names_module: bool = False,
     ) -> str:
         """`name` re-rooted on its stem's module of the importer's family.
 
-        The longest prefix that names a module decides: one the importer can
-        reach keeps the name as written, and a stem whose module is missing or
-        in another family is swapped for the family's own sibling. A name
-        under a real submodule (`proj.util.sub.f`) therefore stays put.
+        The longest prefix that names a module the importer can reach decides,
+        and keeps the name as written: a name under a real submodule
+        (`proj.util.sub.f`) therefore stays put. A stem whose module is missing
+        or in another family is swapped for the family's own sibling, or for
+        its own directory index (`pkg/index.js` beside `pkg.py`). A name that
+        only modules of other families hold reaches nothing (issue #2756).
+
+        `names_module` says the name is an import's source, never a member of
+        one: `./util/helper` is then the directory, whatever `util.js` exports.
         """
         parts = name.split(cs.SEPARATOR_DOT)
+        blocked = False
+        through_index: str | None = None
         for end in range(len(parts), 1, -1):
             prefix = cs.SEPARATOR_DOT.join(parts[:end])
             holder = module_paths.get(prefix)
             if holder is not None and self._reachable_module(holder, family):
-                return name
-            own = siblings.get(prefix, {}).get(family)
-            if own is not None:
-                return f"{own}{name[len(prefix) :]}"
-            if holder is not None:
-                return name
-        return name
+                # A directory with an index, met on the way here, is the
+                # target of an import's source. Any other name may be what
+                # this module exports or re-exports: `helper` of `util.js`
+                # beside `util/helper/index.js`.
+                return (names_module and through_index) or name
+            rest = name[len(prefix) :]
+            if own := siblings.get(prefix, {}).get(family):
+                return f"{own}{rest}"
+            # Not final: `util/helper.py` beside a `util.js` that exports
+            # `helper` holds the full name, and the shorter prefix reaches.
+            blocked = blocked or holder is not None
+            # Held back for the same reason: the shorter prefix may be a
+            # module that defines this very name.
+            if through_index is None and (
+                index := self._own_language_index(
+                    prefix, family, module_paths, siblings, bare=blocked
+                )
+            ):
+                through_index = f"{index}{rest}"
+        if through_index is not None:
+            return through_index
+        return cs.IMPORT_TARGET_UNREACHABLE if blocked else name
+
+    def _own_language_index(
+        self,
+        directory_qn: str,
+        family: LanguageFamily,
+        module_paths: Mapping[str, Path | str],
+        siblings: StemSiblingModules,
+        *,
+        bare: bool,
+    ) -> str | None:
+        """The index module of the importer's family in `directory_qn`.
+
+        An index whose stem is shared across families carries its extension
+        (`pkg/index.js` beside `pkg/index.py`) and no alias names it. A `bare`
+        one is only asked for where a module of another family holds the name
+        as written; everywhere else the alias map already leads to it.
+        """
+        for stem in sorted(cs.MODULE_INDEX_FILE_STEMS):
+            index = f"{directory_qn}{cs.SEPARATOR_DOT}{stem}"
+            own = siblings.get(index, {}).get(family) or (index if bare else None)
+            path = module_paths.get(own) if own else None
+            if (
+                path
+                and self._reachable_module(path, family)
+                # `pkg/init.js` is no entry point of `pkg`: each language
+                # has its own index stem.
+                and cs.DIRECTORY_MODULE_STEM_BY_EXT.get(Path(path).suffix, stem) == stem
+            ):
+                return own
+        return None
 
     @staticmethod
     def _reachable_module(path: Path | str, family: LanguageFamily) -> bool:
@@ -3020,8 +3264,6 @@ class ImportProcessor:
         reach, so CALLS and the edges resolved through the map follow it.
         """
         siblings = self.stem_sibling_modules(module_paths)
-        if not siblings:
-            return
         for importer in self.import_mapping:
             self.point_module_imports_at_own_language_siblings(
                 importer, module_paths, siblings
@@ -3036,16 +3278,31 @@ class ImportProcessor:
         """`point_imports_at_own_language_siblings` for one importer's map."""
         mapping = self.import_mapping.get(importer)
         importer_path = module_paths.get(importer)
-        if not mapping or not siblings or importer_path is None:
+        if not mapping or importer_path is None:
             return
         language = get_language_for_extension(importer_path.suffix)
         if language is None:
             return
         family = language_family(language)
+        sites = self._import_sites.get(importer, {})
         for local_name, full_name in mapping.items():
-            target = self._own_language_target(
-                full_name, family, module_paths, siblings
-            )
+            source, member = full_name, None
+            if language in cs.JS_TS_LANGUAGES:
+                source, member = _js_binding_source(full_name, sites.get(local_name))
+            if member is None:
+                target = self._own_language_target(
+                    full_name, family, module_paths, siblings
+                )
+            else:
+                # The site says where the source module ends, so a member is
+                # never read as a directory, nor a directory as a member.
+                target = self._own_language_target(
+                    source, family, module_paths, siblings, names_module=True
+                )
+                if target not in (source, cs.IMPORT_TARGET_UNREACHABLE):
+                    target = f"{target}{member}"
+                elif target == source:
+                    target = full_name
             if target != full_name:
                 mapping[local_name] = target
 
@@ -3354,15 +3611,17 @@ class ImportProcessor:
                     found[qn] = self.repo_path / rel
         return found
 
-    def _module_alias_map(self, known_module_qns: set[str]) -> dict[str, str]:
+    def _module_alias_map(self, known_module_qns: set[str]) -> dict[str, list[str]]:
         # A module reached through its container's name: pkg/__init__.py,
         # shared/index.js, utils/mod.rs. Importers write the container qn; the real
-        # Module node lives at the index-file leaf.
-        aliases: dict[str, str] = {}
-        for qn in known_module_qns:
+        # Module node lives at the index-file leaf. One directory can hold an
+        # index per language (pkg/__init__.py beside pkg/index.js), and each
+        # importer takes the one it can reach.
+        aliases: dict[str, list[str]] = {}
+        for qn in sorted(known_module_qns):
             base, _, leaf = qn.rpartition(cs.SEPARATOR_DOT)
             if base and leaf in cs.MODULE_INDEX_FILE_STEMS:
-                aliases[base] = qn
+                aliases.setdefault(base, []).append(qn)
         return aliases
 
     def _python_absolute_fallback(self, module_path: str, module_qn: str) -> str | None:
@@ -3385,18 +3644,22 @@ class ImportProcessor:
         self,
         module_path: str,
         known_module_paths: dict[str, str],
-        module_aliases: dict[str, str],
+        module_aliases: dict[str, list[str]],
         language: cs.SupportedLanguage,
         siblings: StemSiblingModules | None = None,
     ) -> str | None:
-        if siblings:
-            module_path = self._own_language_target(
-                module_path, language_family(language), known_module_paths, siblings
-            )
+        family = language_family(language)
+
+        def reachable(qn: str) -> bool:
+            return self._reachable_module(known_module_paths.get(qn, ""), family)
+
+        module_path = self._own_language_target(
+            module_path, family, known_module_paths, siblings or {}, names_module=True
+        )
         if module_path in known_module_paths:
-            return module_path
-        if alias := module_aliases.get(module_path):
-            return alias
+            return module_path if reachable(module_path) else None
+        if aliases := module_aliases.get(module_path):
+            return next(filter(reachable, aliases), None)
         # A path resolved from the wrong root (`use crate::utils` written outside
         # src/) still names a unique real module; a whole-segment suffix match
         # recovers it. Ambiguity means no edge, not a guess.
@@ -3407,9 +3670,15 @@ class ImportProcessor:
         if not tail:
             return None
         suffix = f"{cs.SEPARATOR_DOT}{tail}"
-        matches = {qn for qn in known_module_paths if qn.endswith(suffix)}
+        matches = {
+            qn for qn in known_module_paths if qn.endswith(suffix) and reachable(qn)
+        }
         matches.update(
-            real for base, real in module_aliases.items() if base.endswith(suffix)
+            real
+            for base, aliases in module_aliases.items()
+            if base.endswith(suffix)
+            for real in aliases
+            if reachable(real)
         )
         if len(matches) > 1:
             # A polyglot repo can hold same-named modules in several
@@ -5254,6 +5523,56 @@ class ImportProcessor:
 
         return cs.SEPARATOR_DOT.join(target_parts)
 
+    def _record_js_side_effect_import(
+        self, module_qn: str, target: str, statement: Node
+    ) -> None:
+        self._js_side_effect_imports.setdefault(module_qn, []).append(
+            (target, _import_site_props(statement, cs.IMPORTED_NAME_WILDCARD, None))
+        )
+
+    def _parse_js_side_effect_calls(
+        self, root_node: Node, module_qn: str, language_obj: Language | None
+    ) -> None:
+        # A statement that is only `require("./db")` or `import("./cache")`
+        # (awaited or not), at any depth: the call's value is dropped, so it
+        # is imported for its side effects (issue #3267). One under
+        # `if (flag)` or in a function body loads the module as surely as a
+        # bound `require` there, which the imports query already reads.
+        # Statements binding the result are `_parse_js_require`'s.
+        statements = (
+            sorted_captures(
+                get_query_cursor(
+                    get_cached_query(language_obj, cs.JS_CALL_STATEMENT_QUERY)
+                ),
+                root_node,
+            ).get(cs.CAPTURE_JS_CALL_STATEMENT, [])
+            if language_obj is not None
+            else root_node.named_children
+        )
+        bindings: LocalBindings | None = None
+        for statement in statements:
+            if (call := _js_side_effect_call(statement)) is None:
+                continue
+            specifier, require = call
+            if require is not None:
+                # The global loader, or one Node's `createRequire` makes for
+                # a file the module names, imports from where it resolves;
+                # any other binding of `require` (a parameter, a local
+                # helper, a replaced loader) is whatever it holds (Greptile
+                # and CodeRabbit, PR #3284).
+                bindings = bindings or LocalBindings(root_node)
+                if (base := bindings.loader_base(require)) is None:
+                    continue
+                specifier = _rebased_js_specifier(specifier, base)
+            target = self._resolve_js_import_target(
+                specifier, module_qn, require is not None
+            )
+            self._note_unresolved_js_specifier(module_qn, specifier)
+            if target.module_qn:
+                self._record_js_side_effect_import(
+                    module_qn, target.module_qn, statement
+                )
+
     def _parse_js_ts_imports(
         self, captures: dict, module_qn: str, root_node: Node
     ) -> None:
@@ -5379,6 +5698,25 @@ class ImportProcessor:
             None,
         )
 
+    def _js_governing_custom_conditions(self, current_module: str) -> frozenset[str]:
+        # The `customConditions` of the nearest tsconfig whose directory
+        # holds the module, read the way `_js_governing_base_url` reads its
+        # `baseUrl`. The importer's DIRECTORY is matched, as a path, not its
+        # qualified name: `packages/app.test.ts` is `packages.app.test`, which
+        # reads as though it sat inside `packages/app/`.
+        importer_dir = "".join(
+            f"{part}{cs.SEPARATOR_SLASH}"
+            for part in self._js_module_directory_parts(current_module)[1:]
+        )
+        return next(
+            (
+                conditions
+                for directory, conditions in self.js_custom_conditions
+                if importer_dir.startswith(directory)
+            ),
+            frozenset(),
+        )
+
     def _js_module_rel_on_disk(self, normalized: str) -> str | None:
         """The repo-relative module this path names on disk, or None.
 
@@ -5484,7 +5822,11 @@ class ImportProcessor:
         # which the workspace mapping stands in for.
         if based := self._js_base_url_module_qn(import_path, current_module):
             return JsImportTarget(based, False)
-        if workspace := self._map_js_workspace_import(import_path, require):
+        if workspace := self._map_js_workspace_import(
+            import_path,
+            require,
+            self._js_governing_custom_conditions(current_module),
+        ):
             dotted = workspace.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
             return JsImportTarget(
                 f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}", False
@@ -5699,6 +6041,14 @@ class ImportProcessor:
         if not target.module_qn:
             return
         is_aliased_scheme = _has_aliased_scheme(source_text)
+        if not any(
+            child.type == cs.TS_IMPORT_CLAUSE and _js_clause_binds(child)
+            for child in import_node.children
+        ):
+            # `import "./instrument"` or `import {} from "./instrument"`:
+            # still an import of the module.
+            self._record_js_side_effect_import(module_qn, target.module_qn, import_node)
+            return
         for child in import_node.children:
             if child.type == cs.TS_IMPORT_CLAUSE:
                 self._parse_js_import_clause(
@@ -5760,6 +6110,24 @@ class ImportProcessor:
             module=source_module,
             original=original_name,
         )
+
+    def binds_js_whole_module(self, module_qn: str, local_name: str) -> bool:
+        """Whether `local_name` in `module_qn` is a JS/TS whole-module binding.
+
+        A bare `require` or a namespace import maps the local to the module's
+        own qn, not to an export of the module that qn's prefix names.
+        """
+        site = self._import_sites.get(module_qn, {}).get(local_name)
+        return site is not None and _js_binds_whole_module(site)
+
+    @staticmethod
+    def names_js_aliased_scheme(qn: str) -> bool:
+        """Whether a JS/TS import's target qn is a non-standard scheme's.
+
+        `ext:alias/util.ts` keeps its scheme in the qn it maps to
+        (`ext:alias.util.ts`), and names first-party code no file path does.
+        """
+        return _has_aliased_scheme(qn)
 
     def follow_js_reexports(
         self,
@@ -6337,9 +6705,15 @@ class ImportProcessor:
         path = rs_utils.use_visibility_path(use_node)
         if path is None:
             return None
+        return self.rust_visibility_root(path, effective_qn)
+
+    def rust_visibility_root(self, path: str, scope_qn: str) -> str | None:
+        """The module whose subtree alone sees an item declared in `scope_qn`
+        with its visibility restricted to `path` (`self`, `crate`, `super`,
+        an `in` path); None for a path that leaves the project."""
         if path == cs.KEYWORD_SELF:
-            return effective_qn
-        root = self._rewrite_rust_local_use_path(path, effective_qn)
+            return scope_qn
+        root = self._rewrite_rust_local_use_path(path, scope_qn)
         project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
         if root == self.project_name or root.startswith(project_prefix):
             return root

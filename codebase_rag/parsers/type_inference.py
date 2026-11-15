@@ -100,6 +100,8 @@ class TypeInferenceEngine:
         "csharp_call_shapes",
         "csharp_class_generic_arity",
         "csharp_class_owner_module",
+        "class_owner_module",
+        "rehydrated_definition_paths",
         "csharp_class_namespaced",
         "csharp_namespaced_qns",
         "csharp_method_return_types",
@@ -157,6 +159,8 @@ class TypeInferenceEngine:
         csharp_call_shapes: dict[str, CSharpCallShape] | None = None,
         csharp_class_generic_arity: dict[str, int] | None = None,
         csharp_class_owner_module: dict[str, str] | None = None,
+        class_owner_module: dict[str, str] | None = None,
+        rehydrated_definition_paths: dict[str, str] | None = None,
         csharp_class_namespaced: dict[str, str] | None = None,
         csharp_namespaced_qns: dict[str, set[str]] | None = None,
         csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
@@ -262,6 +266,20 @@ class TypeInferenceEngine:
         # exception was SWALLOWED -- the arity map is populated earlier, so a
         # probe checking only that map still looked correct (#1769 review).
         self.csharp_class_owner_module = _shared(csharp_class_owner_module, dict)
+        # Shared reference (as with class_field_types): {class qn: module
+        # qn of the file that declared it}, written at class ingest
+        # (issue #1772) and read by the Java variable analyzer to tell
+        # the file that declares a nested class from a same-named file
+        # in a subpackage (Greptile P1 on #3525). Forwarded to the Java
+        # engine below.
+        self.class_owner_module = _shared(class_owner_module, dict)
+        # Shared reference (as with class_owner_module): {class qn: the
+        # repo-relative path its definition was rehydrated from}, written
+        # when a row is read back from the graph and read by the Java
+        # variable analyzer for rehydrated classes, which have no
+        # `class_owner_module` entry (Greptile P1 on #3525). Forwarded
+        # to the Java engine below, and nowhere else.
+        self.rehydrated_definition_paths = _shared(rehydrated_definition_paths, dict)
         self.csharp_class_namespaced = _shared(csharp_class_namespaced, dict)
         self.csharp_namespaced_qns = _shared(csharp_namespaced_qns, dict)
         self.csharp_method_return_types = _shared(csharp_method_return_types, dict)
@@ -324,6 +342,8 @@ class TypeInferenceEngine:
                 module_qn_to_file_path=self.module_qn_to_file_path,
                 class_inheritance=self.class_inheritance,
                 simple_name_lookup=self.simple_name_lookup,
+                class_owner_module=self.class_owner_module,
+                rehydrated_definition_paths=self.rehydrated_definition_paths,
                 java_call_sites=self.java_call_sites,
                 java_external_sites=self.java_external_sites,
                 function_locations=self.function_locations,
@@ -858,6 +878,20 @@ class TypeInferenceEngine:
         if body is None:
             return False, None
         return self.js_type_inference.static_member(body, member_name)
+
+    def js_member_sides(
+        self, class_qn: str, member_name: str
+    ) -> tuple[bool, bool] | None:
+        """Whether a JS/TS class body declares `member_name` for instances
+        and statically (see `JsTypeInferenceEngine.member_sides`), or None
+        when the qn names no class body this can read."""
+        located = self._js_qn_path(class_qn)
+        body = (
+            js_ts_utils.find_class_body_at(located[0], located[3]) if located else None
+        )
+        if body is None:
+            return None
+        return self.js_type_inference.member_sides(body, member_name)
 
     def _js_qn_path(
         self, qualified_name: str
