@@ -2270,6 +2270,40 @@ def _js_param_names(scope: Node) -> list[str]:
     return list(names)
 
 
+_JS_BINDING_NAME_TYPES = frozenset(
+    {cs.TS_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN}
+)
+# The one field of each wrapper that holds its binding. A default (`a = f`,
+# a TS parameter's `value`) and a pair's key read the enclosing scope: a TS
+# parameter wraps its binding in `pattern` and keeps its default beside it, so
+# `run(cb = pad)` binds `cb`, not `pad` (#3252 review).
+_JS_BINDING_FIELDS = {
+    cs.TS_ASSIGNMENT_PATTERN: cs.FIELD_LEFT,
+    cs.TS_OBJECT_ASSIGNMENT_PATTERN: cs.FIELD_LEFT,
+    cs.TS_PAIR_PATTERN: cs.FIELD_VALUE,
+    cs.TS_REQUIRED_PARAMETER: cs.TS_FIELD_PATTERN,
+    cs.TS_OPTIONAL_PARAMETER: cs.TS_FIELD_PATTERN,
+}
+_JS_BINDING_CONTAINERS = frozenset(
+    {
+        cs.TS_OBJECT_PATTERN,
+        cs.TS_ARRAY_PATTERN,
+        cs.TS_REST_PATTERN,
+        cs.TS_JS_FORMAL_PARAMETERS,
+    }
+)
+
+
+def _js_binding_parts(node: Node) -> list[Node]:
+    """The children of `node` in a binding position."""
+    if (field := _JS_BINDING_FIELDS.get(node.type)) is not None:
+        child = node.child_by_field_name(field)
+        return [] if child is None else [child]
+    if node.type in _JS_BINDING_CONTAINERS:
+        return list(node.named_children)
+    return []
+
+
 def _js_binding_names(target: Node) -> list[str]:
     """Each name `target` binds, once, in the order the walk meets them.
 
@@ -2280,35 +2314,10 @@ def _js_binding_names(target: Node) -> list[str]:
     stack: list[Node] = [target]
     while stack:
         node = stack.pop()
-        node_type = node.type
-        if node_type in (
-            cs.TS_IDENTIFIER,
-            cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
-        ):
-            if name := safe_decode_text(node):
-                names[name] = None
-        elif node_type in (
-            cs.TS_ASSIGNMENT_PATTERN,
-            cs.TS_OBJECT_ASSIGNMENT_PATTERN,
-        ):
-            if (left := node.child_by_field_name(cs.FIELD_LEFT)) is not None:
-                stack.append(left)
-        elif node_type == cs.TS_PAIR_PATTERN:
-            if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
-                stack.append(value)
-        elif node_type in (cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER):
-            # A TS parameter wraps its binding in the `pattern` field; its
-            # default sits beside it as `value` and reads the enclosing scope:
-            # `run(cb = pad)` binds `cb`, not `pad` (#3252 review).
-            if (pattern := node.child_by_field_name(cs.TS_FIELD_PATTERN)) is not None:
-                stack.append(pattern)
-        elif node_type in (
-            cs.TS_OBJECT_PATTERN,
-            cs.TS_ARRAY_PATTERN,
-            cs.TS_REST_PATTERN,
-            cs.TS_JS_FORMAL_PARAMETERS,
-        ):
-            stack.extend(node.named_children)
+        if node.type not in _JS_BINDING_NAME_TYPES:
+            stack.extend(_js_binding_parts(node))
+        elif name := safe_decode_text(node):
+            names[name] = None
     return list(names)
 
 

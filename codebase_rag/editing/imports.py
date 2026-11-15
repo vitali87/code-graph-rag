@@ -417,28 +417,54 @@ def _js_destructure_rewrite(
     patterns = _js_object_patterns(source, importer_path)
     if not patterns:
         return None
-    edits: list[tuple[Node, str]] = []
-    for pattern in patterns:
-        for key, local, shorthand in _js_destructured_keys(pattern):
-            local_name = _node_text(local)
-            if _node_text(key) != move.symbol or (
-                bound is not None and local_name not in bound
-            ):
-                continue
-            new_key = move.new_name
-            if shorthand and not move.rebind:
-                new_key += cs.PATCH_SHORTHAND_KEY_SEPARATOR + move.symbol
-            edits.append((key, new_key))
-            if not shorthand and move.rebind and local_name == move.symbol:
-                edits.append((local, move.new_name))
-    rewritten = source
-    for node, text in sorted(edits, key=lambda e: e[0].start_byte, reverse=True):
-        rewritten = (
-            rewritten[: node.start_byte]
-            + text.encode(cs.ENCODING_UTF8)
-            + rewritten[node.end_byte :]
+    edits = [
+        edit
+        for pattern in patterns
+        for key, local, shorthand in _js_destructured_keys(pattern)
+        for edit in _js_destructure_key_edits(
+            key, local, shorthand, move, move.new_name, bound
         )
-    return rewritten.decode(cs.ENCODING_UTF8)
+    ]
+    return _splice(source, edits).decode(cs.ENCODING_UTF8)
+
+
+def _js_destructure_key_edits(
+    key: Node,
+    local: Node,
+    shorthand: bool,
+    move: SymbolMove,
+    new_name: str,
+    bound: frozenset[str] | None,
+) -> list[tuple[Node, str]]:
+    """The edits one destructured entry takes, or none when it is not the
+    renamed symbol's or binds a local outside `bound`."""
+    local_name = _node_text(local)
+    if _node_text(key) != move.symbol or (
+        bound is not None and local_name not in bound
+    ):
+        return []
+    if shorthand:
+        # `{ pad }` rebinds with its uses, or keeps its local by spelling the
+        # key out (`{ padLeft: pad }`).
+        if move.rebind:
+            return [(key, new_name)]
+        return [(key, new_name + cs.PATCH_SHORTHAND_KEY_SEPARATOR + move.symbol)]
+    edits = [(key, new_name)]
+    if move.rebind and local_name == move.symbol:
+        edits.append((local, new_name))
+    return edits
+
+
+def _splice(source: bytes, edits: list[tuple[Node, str]]) -> bytes:
+    """`source` with each edit's node replaced by its text, back to front so
+    the earlier offsets stay valid."""
+    for node, text in sorted(edits, key=lambda e: e[0].start_byte, reverse=True):
+        source = (
+            source[: node.start_byte]
+            + text.encode(cs.ENCODING_UTF8)
+            + source[node.end_byte :]
+        )
+    return source
 
 
 def _js_rewrite(
