@@ -259,3 +259,57 @@ internal class App
 
     assert _callees(mock_ingestor, ".App.CallOne") == {"Exts.Ext(Calc, T)"}
     assert _callees(mock_ingestor, ".App.CallTwo") == {"Exts.Ext(Calc, U)"}
+
+
+_CHAIN_SOURCE = """\
+namespace Demo;
+internal class Calc { }
+internal class IntResult { internal int Run() { return 0; } }
+internal class StringResult { internal int Run() { return 0; } }
+internal static class Exts
+{
+    internal static IntResult Ext(this Calc c, int a) { return new IntResult(); }
+    internal static %s Ext(this Calc c, string a) { return new %s(); }
+}
+internal class App
+{
+    internal int Chain(Calc c) { return c.Ext("s").Run(); }
+}
+"""
+
+
+def test_a_chained_call_on_an_overload_set_with_mixed_returns_is_not_typed(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `c.Ext("s")` binds one overload of the set but may run either, and they
+    # return different types, so neither type may decide `.Run()`: binding
+    # it to the int overload's `IntResult.Run` missed `StringResult.Run`.
+    (project / "Ext.cs").write_text(
+        _CHAIN_SOURCE % ("StringResult", "StringResult"), encoding="utf-8"
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    runs = {
+        callee.split("(", 1)[0]
+        for callee in _callees(mock_ingestor, ".App.Chain")
+        if ".Run" in callee
+    }
+    assert runs != {"IntResult.Run"}
+
+
+def test_a_chained_call_on_an_overload_set_with_one_return_type_is_typed(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: when every overload returns the same type, it still types
+    # the next hop.
+    (project / "Ext.cs").write_text(
+        _CHAIN_SOURCE % ("IntResult", "IntResult"), encoding="utf-8"
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    runs = {
+        callee.split("(", 1)[0]
+        for callee in _callees(mock_ingestor, ".App.Chain")
+        if ".Run" in callee
+    }
+    assert runs == {"IntResult.Run"}

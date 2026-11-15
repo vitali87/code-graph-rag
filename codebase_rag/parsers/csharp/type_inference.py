@@ -1896,10 +1896,20 @@ class CSharpTypeInferenceEngine:
         )
         if inner is None:
             return None
-        if entry := self.csharp_method_return_types.get(inner[1]):
-            rtype, rarity = entry
-            return self._type_name_to_qn(rtype, module_qn, rarity)
-        return None
+        entry = self.csharp_method_return_types.get(inner[1])
+        if entry is None:
+            return None
+        # An extension call bound to one of an overload set may run any of
+        # them (issue #2839), so its return type types the next hop only when
+        # every overload returns the same type. A Roslyn fact pinning the
+        # site is the compiler's own choice and stands.
+        if not self.semantic_fact_resolved(receiver, module_qn) and any(
+            self.csharp_method_return_types.get(qn) != entry
+            for qn in self.csharp_extension_overloads(inner[1], receiver)
+        ):
+            return None
+        rtype, rarity = entry
+        return self._type_name_to_qn(rtype, module_qn, rarity)
 
     def _member_access_receiver_qn(
         self,
