@@ -45,7 +45,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -138,7 +138,7 @@ def _props(raw: object) -> PropertyDict | None:
     scalars), but it is the graph's own property set read back, so it is
     written back as it was read.
     """
-    return cast(PropertyDict, dict(raw)) if isinstance(raw, dict) else None
+    return dict(raw) if isinstance(raw, dict) else None
 
 
 def _discard_pending(store: GraphStore) -> None:

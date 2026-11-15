@@ -1184,6 +1184,7 @@ REAL_ROLLUP_ALL_CONCLUDED = [
         "name": "Sonar Zero Issues Gate",
         "conclusion": "SUCCESS",
     },
+    {"__typename": "CheckRun", "name": "Greptile 5/5 Gate", "conclusion": "SUCCESS"},
     {"__typename": "CheckRun", "name": "CodeQL", "conclusion": "SKIPPED"},
     {"__typename": "CheckRun", "name": "Analyze (actions)", "conclusion": "SUCCESS"},
 ]
@@ -1828,6 +1829,7 @@ class TestAggregatedJobsCoversEveryDeclaredDependency:
         "Wheel Smoke (unlocked resolution)",
         "Go Frontend",
         "Sonar Zero Issues Gate",
+        "Greptile 5/5 Gate",
     )
 
     def test_every_declared_dependency_is_aggregated(self) -> None:
