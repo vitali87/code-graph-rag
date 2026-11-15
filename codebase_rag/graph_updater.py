@@ -90,7 +90,11 @@ from .parsers.endpoints import (
     parse_route_decorator,
 )
 from .parsers.factory import ProcessorFactory
-from .parsers.field_nodes import PendingFieldType
+from .parsers.field_nodes import (
+    PendingFieldType,
+    add_callable_fields,
+    drop_callable_fields,
+)
 from .parsers.frontends import (
     EMITTING_FRONTENDS,
     FRONTENDS,
@@ -121,7 +125,11 @@ from .parsers.parameter_nodes import PendingParameterType
 from .parsers.py.ast_analyzer import clear_scope_facts
 from .parsers.rs import utils as rs_utils
 from .parsers.structure_processor import StructureProcessor
-from .parsers.utils import mark_js_ts_module_private, sorted_captures
+from .parsers.utils import (
+    mark_js_ts_module_private,
+    mark_rust_visibility,
+    sorted_captures,
+)
 from .path_filters import matches_test_path
 from .services import (
     FilteringIngestor,
@@ -1532,6 +1540,14 @@ def _drop_class_keyed_entry(
     """Drop one removed class's rows from the class-keyed maps."""
     processor.class_inheritance.pop(qn, None)
     processor.class_field_types.pop(qn, None)
+    drop_callable_fields(processor.cpp_callable_fields, qn)
+    # A Rust struct's guard-inner and element maps go with its field types:
+    # the re-parse records them only for fields that still have one, and a
+    # field retyped from `Mutex<State>` to a lock of its own kept unwrapping
+    # to State at `.lock()` (a scoped re-ingest reads the old map back from
+    # the graph before it re-parses).
+    processor.class_field_guard_inner.pop(qn, None)
+    processor.class_field_element_types.pop(qn, None)
     # A partial part leaves its group too. The group list is the
     # very list `_csharp_partial_index` holds under the syntactic
     # key, so removing the part there keeps both views in step;
@@ -1668,6 +1684,31 @@ def _advance_past_settled(progress: Progress, task: TaskID, scan: _FileScan) -> 
         progress.advance(task, scan.skipped_count + scan.unreadable_count)
 
 
+def _without_stale_targets(
+    fact: PendingTypeFact, stale_modules: set[str]
+) -> PendingTypeFact:
+    # A target defined in a file this re-parse deletes loses its inbound
+    # edges with it, so the name that reached it must be resolved again
+    # rather than counted as bound (issue #3007 meets #1527).
+    if not fact.resolved_returns and not fact.resolved_accepts:
+        return fact
+
+    def kept(targets: frozenset[str]) -> frozenset[str]:
+        return frozenset(
+            target
+            for target in targets
+            if not any(
+                target.startswith(f"{module}{cs.SEPARATOR_DOT}")
+                for module in stale_modules
+            )
+        )
+
+    return fact._replace(
+        resolved_returns=kept(fact.resolved_returns),
+        resolved_accepts=kept(fact.resolved_accepts),
+    )
+
+
 def _package_modules(module_files: Mapping[str, Path]) -> frozenset[str]:
     # The module qns that are a package's `__init__.py`: a relative import
     # there resolves against the package itself (issue #3192).
@@ -1722,6 +1763,9 @@ class GraphUpdater:
         # path -> module qualified name as the graph records it, read once
         # per rehydration for the requeues (issue #1935).
         self._module_qns_by_path: dict[str, str] | None = None
+        # qn -> relationship type -> the types its RETURNS / ACCEPTS reach,
+        # read once per incremental rehydration (issue #3007).
+        self._resolved_type_targets: dict[str, dict[str, set[str]]] = {}
         if repo_path.is_file():
             resolved = repo_path.resolve()
             self._single_file = resolved
@@ -2523,6 +2567,9 @@ class GraphUpdater:
         if rehydrate:
             self._rehydrate_registry_from_graph()
 
+        # After rehydration, which reads the impl methods back, and before
+        # the walk below, which then follows what the restored maps reach.
+        self._restore_unparsed_rust_impl_self_paths()
         # After rehydration, which tells a re-export from a definition, and
         # before every stage below that resolves through the import maps.
         self._restore_reached_import_state()
@@ -2633,7 +2680,9 @@ class GraphUpdater:
         self._ungroup_rehydrated_non_partials()
         # Return/parameter annotations resolve against the complete registry
         # (issue #1527), so a type defined in a later file still gets its edge.
-        typed = self.factory.definition_processor.emit_type_edges()
+        typed = self.factory.definition_processor.emit_type_edges(
+            self._restore_requeued_imports
+        )
         if typed:
             logger.info(ls.TYPE_EDGES_EMITTED, count=typed)
         return known_module_paths
@@ -2712,6 +2761,116 @@ class GraphUpdater:
                     )
                 pending.append(holder)
         return restored
+
+    def _restore_unparsed_rust_impl_self_paths(self) -> None:
+        """Re-read the self path of each unparsed Rust impl block away from
+        its type.
+
+        A call written with its type's path (`crate::model::Foo::run()`)
+        binds such a block only when the block's own self path names that
+        type, and parsing records the path only for the files it reads. An
+        incremental run that re-parsed only the caller lost the edge into an
+        unchanged `impl crate::model::Foo { fn run() }` that a clean index
+        emits (PR #2993 review).
+
+        The path is read the way the block's module reads it, so the maps
+        that reading follows come back too: the block's file's, where a bare
+        `impl Foo` finds its `use`, and the module a written path names,
+        whose `pub use` may re-export the type. The import walk after this
+        follows each of those maps on to the next re-export.
+        """
+        modules = self._unparsed_rust_impl_modules()
+        if not modules:
+            return
+        # Read only now: the view loads a grammar on first access, and a
+        # project with no Rust must not pay for one.
+        lang_queries = self.queries.get(cs.SupportedLanguage.RUST)
+        if lang_queries is None:
+            return
+        dp = self.factory.definition_processor
+        for module_qn in sorted(modules):
+            path = dp.module_qn_to_file_path.get(module_qn)
+            if path is None:
+                continue
+            # First: restoring a Rust file's imports drops the impl paths it
+            # recorded.
+            self._restore_unheld_imports(module_qn)
+            entry = self.ast_cache.load(path)
+            if entry is None:
+                continue
+            for written in dp.restore_rust_impl_self_paths(
+                entry[0], module_qn, lang_queries
+            ):
+                self._restore_rust_path_module_imports(written.path, written.module_qn)
+
+    def _restore_rust_path_module_imports(self, path: str, module_qn: str) -> None:
+        # `impl crate::facade::Foo` reads `Foo` in `facade`'s map. A head the
+        # file imports instead (`impl facade::Foo`) leads there through that
+        # import, which the walk follows.
+        if cs.SEPARATOR_DOUBLE_COLON not in path:
+            return
+        module_paths = self.factory.definition_processor.module_qn_to_file_path
+        target = self._rust_written_path_qn(path, module_qn, module_paths)
+        if target is None:
+            return
+        holder = _file_module_holding(target, module_paths)
+        if holder is not None:
+            self._restore_unheld_imports(holder)
+
+    def _rust_written_path_qn(
+        self, path: str, module_qn: str, module_paths: Mapping[str, Path]
+    ) -> str | None:
+        # Rewritten as the resolver reads it: `crate::`, `self::`, `super::`
+        # and a workspace crate head the way a `use` is, and a head naming a
+        # module beside the block (`impl inner::Foo` under `mod inner;`)
+        # from that module.
+        import_processor = self.factory.import_processor
+        target = import_processor._rewrite_rust_local_use_path(path, module_qn)
+        if target == cs.RUST_UNRESOLVABLE_QN:
+            return None
+        if cs.SEPARATOR_DOUBLE_COLON not in target:
+            return target
+        segments = path.split(cs.SEPARATOR_DOUBLE_COLON)
+        head_qn = import_processor._rust_resolve_relative(
+            module_qn, segments[:1], module_qn
+        )
+        if head_qn not in module_paths:
+            return None
+        return import_processor._rust_resolve_relative(module_qn, segments, module_qn)
+
+    def _restore_unheld_imports(self, module_qn: str) -> None:
+        if module_qn not in self.factory.import_processor.import_mapping:
+            self._restore_requeued_imports(module_qn)
+
+    def _unparsed_rust_impl_modules(self) -> set[str]:
+        # The files of the Rust methods read back from the graph whose impl
+        # block sits away from its type: only such a block's owner is
+        # unregistered, and only its written path says which type it is on.
+        modules: set[str] = set()
+        rehydrated = self.factory.definition_processor.rehydrated_definition_paths
+        for qn, path in rehydrated.items():
+            if (
+                path.endswith(cs.EXT_RS)
+                and self.function_registry.get(qn) == NodeType.METHOD
+                and _natural_qn(qn).rpartition(cs.SEPARATOR_DOT)[0]
+                not in self.function_registry
+            ):
+                modules.add(self._recorded_module_qn(path))
+        return modules
+
+    def _restore_requeued_imports(self, module_qn: str) -> None:
+        """Parse the imports of an unchanged module for its requeued
+        annotations, which resolve through them as a fresh index's do: no
+        re-parsed file need reach it (#3007 review)."""
+        module_paths = self.factory.definition_processor.module_qn_to_file_path
+        path = module_paths.get(module_qn)
+        if path is None or not self._restore_module_imports(module_qn, path):
+            return
+        import_processor = self.factory.import_processor
+        # Re-pointed as the closure walk re-points what it restores (#2586).
+        import_processor.point_module_imports_at_own_language_siblings(
+            module_qn, module_paths, import_processor.stem_sibling_modules(module_paths)
+        )
 
     def _restore_module_imports(self, module_qn: str, path: Path) -> bool:
         """Parse one unchanged module's imports; False when Pass 2 would not."""
@@ -3858,8 +4017,38 @@ class GraphUpdater:
                 if isinstance(param_types, list)
                 else None,
                 path,
+                *self._resolved_targets_of(qn),
             )
         )
+
+    def _resolved_targets_of(self, qn: str) -> tuple[frozenset[str], frozenset[str]]:
+        # (RETURNS targets, ACCEPTS targets), as PendingTypeFact takes them.
+        by_rel = self._resolved_type_targets.get(qn, {})
+        return (
+            frozenset(by_rel.get(cs.RelationshipType.RETURNS.value, ())),
+            frozenset(by_rel.get(cs.RelationshipType.ACCEPTS.value, ())),
+        )
+
+    def _read_resolved_type_targets(self, project_params: PropertyParams) -> None:
+        # What each unchanged definition's annotations already resolved to,
+        # when its file was last parsed with its imports. Requeuing re-resolves
+        # without them, so a bound name is left alone (issue #3007).
+        self._resolved_type_targets = {}
+        if self._is_full_build or not isinstance(self.ingestor, QueryProtocol):
+            return
+        rows = self._owned_rows(
+            self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_TYPE_EDGE_TARGETS, project_params
+            ),
+            cs.KEY_QUALIFIED_NAME,
+        )
+        for row in rows:
+            qn, target = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_TARGET_QN)
+            rel = row.get(cs.KEY_REL_TYPE)
+            if isinstance(qn, str) and isinstance(target, str) and isinstance(rel, str):
+                self._resolved_type_targets.setdefault(qn, {}).setdefault(
+                    rel, set()
+                ).add(target)
 
     def _requeue_member_types[P: (PendingParameterType, PendingFieldType)](
         self,
@@ -3997,6 +4186,7 @@ class GraphUpdater:
                 self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params),
                 cs.KEY_QUALIFIED_NAME,
             )
+            self._read_resolved_type_targets(project_params)
         except Exception:
             # Rehydration completes cross-file resolution for files this run
             # did not re-parse: a FULL build parsed them all, so it degrades
@@ -4015,6 +4205,7 @@ class GraphUpdater:
         # After the loop: whether a method's owner is a trait needs the whole
         # registry, and its rows arrive in no particular order.
         self._rehydrate_rust_return_types(restored)
+        self._rehydrate_go_return_types(restored)
         self._rehydrate_go_method_sets(restored)
         # Module qns from unchanged files: deferred import verification and
         # C++20 module-impl resolution must count them as real targets, or
@@ -4176,6 +4367,11 @@ class GraphUpdater:
                 self.factory.definition_processor.cpp_module_interfaces.add(qn)
             else:
                 self._rehydrated_module_qns.add(qn)
+            # An unchanged Go file's package clause, which same-package
+            # visibility compares a re-parsed requester against (#3272).
+            # setdefault: a file this run re-parsed recorded its own.
+            if isinstance(package := row.get(cs.KEY_GO_PACKAGE), str) and package:
+                dp.go_package_names.setdefault(qn, package)
             # An unchanged PHP file's declared namespace, which a
             # `use function App\\Util\\slug` is matched against (issue #3277).
             if (
@@ -4258,6 +4454,13 @@ class GraphUpdater:
             self.function_registry.set_non_method_members(
                 qn, [name for name in names if isinstance(name, str)]
             )
+        # And an unchanged C++ type's callable data members (`int (*cb)()`),
+        # or a re-parsed file's `o->cb()` loses the free `cb` it reaches.
+        add_callable_fields(
+            self.factory.definition_processor.cpp_callable_fields,
+            qn,
+            _stored_strings(row.get(cs.KEY_CALLABLE_FIELDS)),
+        )
         # Restore the macro-namespace set for unchanged files: the Rust
         # macro/fn gate consults it, so a re-parsed file's invocation of a
         # macro defined elsewhere would otherwise drop.
@@ -4281,12 +4484,67 @@ class GraphUpdater:
                 namespace if isinstance(namespace, str) else "",
                 arity if isinstance(arity, int) else 0,
             )
+        # Restore an unchanged class's field types: only parsing records them,
+        # and a re-parsed file's field-hop receiver (`args.mode.update()`)
+        # types through them (issue #3004).
+        if isinstance(fields := row.get(cs.KEY_FIELD_TYPES), list):
+            self._rehydrate_class_field_types(qn, fields)
         # Record the defining file so _is_cpp_defined can language-check
         # rehydrated candidates (deferred C++ INHERITS resolution runs
         # after this and must reach bases in UNCHANGED headers).
         if isinstance(path := row.get(cs.KEY_PATH), str):
             self._rehydrate_definition_path(node_type, qn, path, row)
         return True
+
+    def _rehydrate_class_field_types(self, qn: str, fields: Sequence[object]) -> None:
+        field_types: dict[str, str] = {}
+        guard_inner: dict[str, str] = {}
+        for entry in fields:
+            # `name<TAB>type`, plus `<TAB>inner` for a Rust guard field.
+            name, _, rest = str(entry).partition(cs.FIELD_TYPE_SEPARATOR)
+            type_name, _, inner = rest.partition(cs.FIELD_TYPE_SEPARATOR)
+            if name and type_name:
+                field_types[name] = type_name
+                if inner:
+                    guard_inner[name] = inner
+        dp = self.factory.definition_processor
+        # A re-parsed class's fresh maps win, its guard inner types included.
+        if not field_types or qn in dp.class_field_types:
+            return
+        dp.class_field_types[qn] = field_types
+        if guard_inner:
+            dp.class_field_guard_inner[qn] = guard_inner
+
+    def _rehydrate_go_return_types(self, rows: list[ResultRow]) -> None:
+        # The result type names ingest records only while parsing the
+        # definition's own file: a re-parsed Go caller of an unchanged
+        # `NewBox` typed `b, _ := NewBox(2)` from nothing, and `b.Size()`
+        # bound by name to another type's `Size` (issue #3272). Only rows
+        # this run did not parse reach here (the caller skips registered
+        # qns), so a re-parsed definition keeps what it recorded itself.
+        type_inference = self.factory.type_inference
+        methods: dict[str, str] = {}
+        for row in sorted(rows, key=_registration_order):
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            if not isinstance(qn, str):
+                continue
+            first = row.get(cs.KEY_FIRST_RETURN_TYPE)
+            if isinstance(first, str) and first:
+                type_inference.go_function_return_types[qn] = first
+            chain = row.get(cs.KEY_CHAIN_RETURN_TYPE)
+            if not isinstance(chain, str) or not chain:
+                continue
+            if row.get(cs.KEY_LABEL) != cs.NodeLabel.METHOD.value:
+                type_inference.method_return_types[qn] = chain
+                continue
+            # Parsing keys a method's result by its natural qn, which each
+            # build file declaring it again (`Self`, `Self@5`) shares, and
+            # writes each over the last in registration order: replayed in
+            # that order, the last one stands, as a clean index has it.
+            methods[_natural_qn(qn)] = chain
+        for natural, chain in methods.items():
+            # A re-parsed build file's own record is current; keep it.
+            type_inference.method_return_types.setdefault(natural, chain)
 
     def _rehydrate_go_method_sets(self, rows: list[ResultRow]) -> None:
         # An unchanged Go file's methods and interfaces still count toward
@@ -4430,6 +4688,11 @@ class GraphUpdater:
             # star lookup then counts it, as it did before.
             row.get(cs.KEY_IS_EXPORTED) is not False,
             get_language_for_extension(Path(path).suffix),
+        )
+        # An unchanged Rust function's declared visibility, or a re-parsed
+        # caller's glob call binds it exactly where a clean index does not.
+        mark_rust_visibility(
+            self.function_registry, qn, row.get(cs.KEY_RUST_VISIBILITY)
         )
         # The C# declared-form index (issue #1629) is filled only by
         # parsing; an unchanged type must stay reachable by `N.Widget`
@@ -6734,8 +6997,8 @@ class GraphUpdater:
         self, module_qn_prefixes: set[str], file_path: Path
     ) -> None:
         """Drop a removed file's entries from `class_inheritance`,
-        `class_field_types`, the C# partial groups and the parsed implementer
-        pairs.
+        `class_field_types` (with the Rust guard-inner and element maps), the
+        C# partial groups and the parsed implementer pairs.
 
         All three are keyed by a CLASS qn; the first two were never mentioned
         in `remove_file_from_state`, so a deleted file's rows outlived it on a
@@ -9441,7 +9704,7 @@ class GraphUpdater:
         } | {qn for qn, path in qn_to_path.items() if path in stale_paths}
         pending = self.factory.definition_processor.pending_type_facts
         pending[:] = [
-            fact
+            _without_stale_targets(fact, stale_modules)
             for fact in pending
             if (
                 fact.path not in stale_keys

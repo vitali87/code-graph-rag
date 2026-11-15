@@ -37,6 +37,9 @@ KEY_MEMBER_ALIASES = "member_aliases"
 # The member names a Python class body binds to a value that is no method
 # (`run = None`), which hide a base class's `run` (issue #2620).
 KEY_NON_METHOD_MEMBERS = "non_method_members"
+# The C++ data members a call can invoke (`int (*cb)()`, `std::function`), so
+# `o->cb()` may reach a free `cb` that member syntax otherwise rules out.
+KEY_CALLABLE_FIELDS = "callable_fields"
 # The types a Go interface embeds, as written (`Reader`, `io.Writer`): its
 # method set includes theirs, so satisfying it needs them too (issue #2483).
 KEY_EMBEDS = "embeds"
@@ -48,6 +51,11 @@ KEY_IMPLEMENTERS_UNKNOWN = "implementers_unknown"
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
 KEY_IS_MACRO = "is_macro"
+# The path a Rust function's visibility is restricted to, as declared:
+# `self` for a private one, `crate`, `super` or the `in` path of a
+# `pub(...)`; absent for a plain `pub` one (PR #3242 review). A
+# `macro_rules!` macro reads `self`: no glob of its module imports it.
+KEY_RUST_VISIBILITY = "rust_visibility"
 KEY_IS_BODY_SCOPED_NAME = "is_body_scoped_name"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
@@ -124,6 +132,7 @@ class RenameTargetKind(StrEnum):
 KEY_UNMAPPED = "unmapped"
 KEY_VERDICT = "verdict"
 KEY_STRUCTURAL_DELTA = "structural_delta"
+KEY_CYCLE = "cycle"
 KEY_DISPATCH_LITERAL = "dispatch_literal"
 
 
@@ -858,6 +867,16 @@ GRAPH_MAX_SOURCE_LINE = 2**31 - 1
 # languages the extractor does not read (the positional_params rule).
 KEY_RETURN_TYPE = "return_type"
 KEY_PARAM_TYPES = "param_types"
+# The type names a Go definition's result binds, as the call pass reads them:
+# the FIRST result's (`b, err := NewBox()` types `b`) and the single result's
+# that a chained call dispatches on (`MakeBox().Size()`). Stored so a re-parsed
+# caller in an incremental run still reads them from unchanged files, which
+# would otherwise have to be parsed again to give them (issue #3272).
+KEY_FIRST_RETURN_TYPE = "first_return_type"
+KEY_CHAIN_RETURN_TYPE = "chain_return_type"
+# A Go file's `package` clause, on its Module: same-package visibility reads
+# it for both ends, and an unchanged file is not parsed to give it (#3272).
+KEY_GO_PACKAGE = "go_package"
 # A `main` the language's launcher starts, judged by the parser because the
 # graph cannot say it otherwise (issue #2527). For Java, the method the JVM
 # launch protocol would pick from its class body (JLS 12.1.4, JEP 512);
@@ -923,6 +942,11 @@ KEY_CALL_QUALIFIER = "call_qualifier"
 # file module win over another target's gate (src/lib.rs gating what
 # src/main.rs compiles for real).
 KEY_RUST_CFG_TEST_MODS = "rust_cfg_test_mods"
+# A type's field types (`mode\tMode`; a Rust guard field adds its inner type,
+# `state\tMutex\tState`), read back on an incremental run so a re-parsed
+# file's `args.mode.update()` still types the field (issue #3004).
+KEY_FIELD_TYPES = "field_types"
+FIELD_TYPE_SEPARATOR = "\t"
 KEY_RUST_UNGATED_MODS = "rust_ungated_mods"
 KEY_MODIFIERS = "modifiers"
 # The namespace a C# type is declared in, kept apart from the qualified
@@ -1231,6 +1255,16 @@ CYPHER_PROJECT_CONSTANT_TYPES = (
     "RETURN c.qualified_name AS qualified_name, c.type_name AS type_name, "
     "c.path AS path"
 )
+# The type edges each definition already has, for an incremental run's
+# requeued annotations: a name one of them reaches stays as resolved (#3007).
+# By relationship, so a parameter's target never settles the return type.
+CYPHER_PROJECT_TYPE_EDGE_TARGETS = (
+    "MATCH (f)-[r:RETURNS|ACCEPTS]->(t) WHERE (f:Function OR f:Method) "
+    "AND f.qualified_name STARTS WITH $project_prefix "
+    "RETURN f.qualified_name AS qualified_name, type(r) AS rel_type, "
+    "t.qualified_name AS target_qn"
+)
+
 CYPHER_ALL_DEFINITION_QNS = (
     "MATCH (n) WHERE (n:Function OR n:Method OR n:Class OR n:Interface "
     "OR n:Enum OR n:Type OR n:Union) "
@@ -1242,16 +1276,20 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.member_aliases AS member_aliases, "
     "n.non_method_members AS non_method_members, "
+    "n.callable_fields AS callable_fields, "
     "n.modifiers AS modifiers, n.decorators AS decorators, "
     "n.return_type AS return_type, n.param_types AS param_types, "
+    "n.first_return_type AS first_return_type, "
+    "n.chain_return_type AS chain_return_type, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "
     "n.signature AS signature, n.declared_in_class AS declared_in_class, "
     "n.generic_arity AS generic_arity, "
-    "n.is_exported AS is_exported, "
+    "n.is_exported AS is_exported, n.rust_visibility AS rust_visibility, "
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
     "n.extension_receiver_arity AS extension_receiver_arity, "
-    "n.embeds AS embeds"
+    "n.embeds AS embeds, "
+    "n.field_types AS field_types"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
@@ -1261,7 +1299,7 @@ CYPHER_ALL_MODULE_QNS = (
     "MATCH (n) WHERE (n:Module OR n:ModuleInterface) "
     "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
-    "n.php_namespace AS php_namespace"
+    "n.go_package AS go_package, n.php_namespace AS php_namespace"
 )
 
 # Inbound reference edges (from unchanged files) into symbols defined in one

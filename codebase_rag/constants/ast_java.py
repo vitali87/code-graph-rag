@@ -71,6 +71,11 @@ TS_TRY_WITH_RESOURCES_STATEMENT = "try_with_resources_statement"
 # One declaration inside a try-with-resources header; binds via `name`/`value`
 # fields exactly like a variable_declarator.
 TS_JAVA_RESOURCE = "resource"
+# A catch clause's parameter: its type lives in a `catch_type` child (a
+# `catch_type` holds one type, or several `|`-separated types for a
+# multi-catch), never in a `type` field.
+TS_CATCH_FORMAL_PARAMETER = "catch_formal_parameter"
+TS_JAVA_CATCH_TYPE = "catch_type"
 TS_RECORD_DECLARATION = "record_declaration"
 TS_TRUE = "true"
 TS_FALSE = "false"
@@ -160,6 +165,7 @@ JAVA_HEURISTIC_ORDER = "Order"
 TS_PACKAGE_DECLARATION = "package_declaration"
 TS_ANNOTATION_TYPE_DECLARATION = "annotation_type_declaration"
 TS_CONSTRUCTOR_DECLARATION = "constructor_declaration"
+TS_EXPLICIT_CONSTRUCTOR_INVOCATION = "explicit_constructor_invocation"
 TS_ANNOTATION = "annotation"
 TS_MARKER_ANNOTATION = "marker_annotation"
 TS_GENERIC_TYPE = "generic_type"

@@ -84,11 +84,21 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # graph round-tripped through protobuf has no stored fingerprint to
     # compare against, so a sync re-parses every dependent caller, as it did
     # before the property existed, and the re-parse writes it back.
+    # `go_package` (issue #3272) is the Go package clause, read back only by
+    # an incremental run's rehydration; absent reads as "not rehydrated",
+    # which is how every run behaved before #3272, and the next parse of the
+    # file rewrites it.
     # `php_namespace` (issue #3277) is read back only by an incremental run's
     # rehydration; absent reads as "no namespace recorded", as every run did
     # before #3277, until the file is next parsed.
     "Module": frozenset(
-        {"absolute_path", "broken_links", "interface_fingerprint", "php_namespace"}
+        {
+            "absolute_path",
+            "broken_links",
+            "go_package",
+            "interface_fingerprint",
+            "php_namespace",
+        }
     ),
     # `decorated_start_line` (issue #2428): a graph round-tripped through
     # protobuf answers `definition` with the span below the decorators,
@@ -104,9 +114,16 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # round-tripped through protobuf reads as "not marked", so those stubs
     # are reported again exactly as before the property existed, and the
     # next parse writes the mark back.
+    # `callable_fields` (issue #3176) lets an incremental run re-register the
+    # function-pointer and `std::function` members of a C++ type in a header
+    # it does not re-parse. A graph round-tripped through protobuf loses them,
+    # so until that header is parsed again a re-parsed `o->cb()` reaches no
+    # free `cb`, the method-only reading every other member call gets; the
+    # same holds for a C++ `Union`. Exporting it needs protoc (#1490).
     "Class": frozenset(
         {
             "absolute_path",
+            "callable_fields",
             "decorated_start_line",
             "non_method_members",
             "type_checking_only",
@@ -116,7 +133,17 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "EnumVariant": frozenset({"absolute_path"}),
     "Constant": frozenset({"absolute_path"}),
     # `decorated_start_line`: as on Class (issue #2428).
-    "Function": frozenset({"absolute_path", "decorated_start_line"}),
+    # `first_return_type` and `chain_return_type` (issue #3272) are a Go
+    # function's result type names, read back the same way and degrading the
+    # same way as `go_package` on Module.
+    "Function": frozenset(
+        {
+            "absolute_path",
+            "chain_return_type",
+            "decorated_start_line",
+            "first_return_type",
+        }
+    ),
     # `member_aliases` (issue #2620) lets an incremental run re-register the
     # class-body aliases (`run = _plain`) of a file it does not re-parse. A
     # graph round-tripped through protobuf loses them, so until that file is
@@ -127,9 +154,11 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # index entry, read back only by an incremental run's rehydration;
     # absent reads as "not an extension", as every run did before #3275,
     # until the declaring file is next parsed.
+    # `chain_return_type` (issue #3272): as on Function, for a Go method.
     "Method": frozenset(
         {
             "absolute_path",
+            "chain_return_type",
             "decorated_start_line",
             "extension_namespace",
             "extension_receiver",
@@ -145,7 +174,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Interface": frozenset({"decorated_start_line", "embeds"}),
     "Enum": frozenset({"decorated_start_line"}),
     "Type": frozenset({"absolute_path", "decorated_start_line"}),
-    "Union": frozenset({"absolute_path", "decorated_start_line"}),
+    "Union": frozenset({"absolute_path", "callable_fields", "decorated_start_line"}),
     "ModuleInterface": frozenset({"absolute_path"}),
     "ModuleImplementation": frozenset({"absolute_path"}),
 }

@@ -266,6 +266,9 @@ TS_COMPILER_OPTIONS_KEY = "compilerOptions"
 TS_PATHS_KEY = "paths"
 TS_BASE_URL_KEY = "baseUrl"
 TS_EXTENDS_KEY = "extends"
+# TypeScript 5 conditions a tsconfig adds to the `exports` keys it selects
+# (issue #2935).
+TS_CUSTOM_CONDITIONS_KEY = "customConditions"
 TSCONFIG_EXTENSION = EXT_JSON
 PATH_RELATIVE_PREFIX = "./"
 PATH_PARENT_PREFIX = "../"
@@ -466,6 +469,10 @@ INDEX_LUA_INIT = "init"
 MODULE_INDEX_FILE_STEMS = frozenset(
     {INDEX_INIT, INDEX_INDEX, INDEX_MOD, INDEX_LUA_INIT}
 )
+# What an import is pointed at when only modules of another language family
+# hold its name (`require("./util")` beside a lone `util.py`): nothing the
+# importer can load, so no module or definition answers to it (issue #2756).
+IMPORT_TARGET_UNREACHABLE = "unresolved"
 # A Rust library crate's root, where its `pub use` facade lives.
 INDEX_RS_LIB = "lib"
 # Stems of the files a package exposes its internals through (issue #2573):
