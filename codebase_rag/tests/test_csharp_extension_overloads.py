@@ -313,3 +313,38 @@ def test_a_chained_call_on_an_overload_set_with_one_return_type_is_typed(
         if ".Run" in callee
     }
     assert runs == {"IntResult.Run"}
+
+
+def test_a_chained_call_on_mixed_returns_does_not_switch_to_an_extension(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `IntResult` has an instance `Run()` and there is also an extension
+    # `Run(this IntResult)`. The mixed-return set leaves `c.Ext(5)` untyped,
+    # and that must hold on the extension path too: reading `IntResult` there
+    # bound the extension, which C# never calls while the instance method
+    # exists, and lost the instance call.
+    (project / "Ext.cs").write_text(
+        """\
+namespace Demo;
+internal class Calc { }
+internal class IntResult { internal int Run() { return 0; } }
+internal class StringResult { }
+internal static class Exts
+{
+    internal static IntResult Ext(this Calc c, int a) { return new IntResult(); }
+    internal static StringResult Ext(this Calc c, string a) { return new StringResult(); }
+}
+internal static class RunExts
+{
+    internal static int Run(this IntResult r) { return 1; }
+}
+internal class App
+{
+    internal int Chain(Calc c) { return c.Ext(5).Run(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    assert "RunExts.Run(IntResult)" not in _callees(mock_ingestor, ".App.Chain")

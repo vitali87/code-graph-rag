@@ -1569,15 +1569,44 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None,
     ) -> str | None:
-        inner = self.resolve_csharp_method_call(
+        if entry := self._invocation_return_entry(
             receiver, local_var_types, module_qn, caller_qn
-        )
-        if inner is None:
-            return None
-        if entry := self.csharp_method_return_types.get(inner[1]):
+        ):
             rname, rarity = entry
             return f"{rname}`{rarity}" if rarity else rname
         return None
+
+    def _invocation_return_entry(
+        self,
+        invocation: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> tuple[str, int] | None:
+        """The recorded return type of the call `invocation` resolves to.
+
+        An extension call bound to one of an overload set may run any of them
+        (issue #2839), so its return type types the next hop only when every
+        overload returns the same type. Every lookup typing a chained call
+        goes through here: refusing the type on one path while another still
+        read it let `c.Ext(5).Run()` skip `IntResult`'s instance `Run` and
+        bind an extension `Run(this IntResult)` instead. A Roslyn fact
+        pinning the site is the compiler's own choice and stands.
+        """
+        inner = self.resolve_csharp_method_call(
+            invocation, local_var_types, module_qn, caller_qn
+        )
+        if inner is None:
+            return None
+        entry = self.csharp_method_return_types.get(inner[1])
+        if entry is None:
+            return None
+        if not self.semantic_fact_resolved(invocation, module_qn) and any(
+            self.csharp_method_return_types.get(qn) != entry
+            for qn in self.csharp_extension_overloads(inner[1], invocation)
+        ):
+            return None
+        return entry
 
     def _unwrap_receiver(self, receiver: Node) -> Node | None:
         # Peel interleaved parens and null-forgiving postfix wrappers
@@ -1677,11 +1706,8 @@ class CSharpTypeInferenceEngine:
     ) -> int | None:
         # Full caller context: locals and imports participate in the inner
         # resolution exactly as they did for the instance path.
-        inner = self.resolve_csharp_method_call(
+        if entry := self._invocation_return_entry(
             invocation, local_var_types, module_qn, caller_qn
-        )
-        if inner is not None and (
-            entry := self.csharp_method_return_types.get(inner[1])
         ):
             return entry[1]
         return None
@@ -1891,22 +1917,10 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None,
     ) -> str | None:
-        inner = self.resolve_csharp_method_call(
+        entry = self._invocation_return_entry(
             receiver, local_var_types, module_qn, caller_qn
         )
-        if inner is None:
-            return None
-        entry = self.csharp_method_return_types.get(inner[1])
         if entry is None:
-            return None
-        # An extension call bound to one of an overload set may run any of
-        # them (issue #2839), so its return type types the next hop only when
-        # every overload returns the same type. A Roslyn fact pinning the
-        # site is the compiler's own choice and stands.
-        if not self.semantic_fact_resolved(receiver, module_qn) and any(
-            self.csharp_method_return_types.get(qn) != entry
-            for qn in self.csharp_extension_overloads(inner[1], receiver)
-        ):
             return None
         rtype, rarity = entry
         return self._type_name_to_qn(rtype, module_qn, rarity)
