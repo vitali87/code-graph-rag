@@ -230,3 +230,32 @@ internal class App
         "Exts.Ext(Calc, T)",
         "Exts.Ext(Calc, object)",
     }
+
+
+def test_explicit_type_arguments_need_as_many_type_parameters(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `c.Ext<int>(5)` passes one type argument, so `Ext<T, U>` cannot receive
+    # it, and `c.Ext<int, string>("")` is the reverse: each call reaches only
+    # the overload declaring as many type parameters as it passes.
+    (project / "Ext.cs").write_text(
+        """\
+namespace Demo;
+internal class Calc { }
+internal static class Exts
+{
+    internal static int Ext<T>(this Calc c, T a) { return 0; }
+    internal static int Ext<T, U>(this Calc c, U a) { return 0; }
+}
+internal class App
+{
+    internal int CallOne(Calc c) { return c.Ext<int>(5); }
+    internal int CallTwo(Calc c) { return c.Ext<int, string>(""); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    assert _callees(mock_ingestor, ".App.CallOne") == {"Exts.Ext(Calc, T)"}
+    assert _callees(mock_ingestor, ".App.CallTwo") == {"Exts.Ext(Calc, U)"}

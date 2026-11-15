@@ -56,13 +56,20 @@ def _method_base(method_qn: str) -> str:
     return method_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
 
 
-def _member_call_has_type_arguments(call_node: Node) -> bool:
-    """`c.Ext<int>(5)`, whose member name is a generic_name, not `c.Ext(5)`."""
+def _member_call_type_argument_count(call_node: Node) -> int:
+    """How many type arguments a member call spells: `c.Ext<int, string>(5)`
+    -> 2, `c.Ext(5)` -> 0."""
     func = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
     if func is None or func.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
-        return False
+        return 0
     name = func.child_by_field_name(cs.FIELD_NAME)
-    return name is not None and name.type == cs.TS_CSHARP_GENERIC_NAME
+    if name is None or name.type != cs.TS_CSHARP_GENERIC_NAME:
+        return 0
+    type_args = next(
+        (c for c in name.named_children if c.type == cs.TS_CSHARP_TYPE_ARGUMENT_LIST),
+        None,
+    )
+    return len(type_args.named_children) if type_args is not None else 0
 
 
 def _arity(leaf: str) -> int:
@@ -852,7 +859,7 @@ class CSharpTypeInferenceEngine:
             caller_qn,
             method_name,
             arg_count,
-            _member_call_has_type_arguments(call_node),
+            _member_call_type_argument_count(call_node),
         ):
             return cs.NodeLabel.METHOD.value, ext
         if receiver_class_qn is not None and (
@@ -1493,7 +1500,7 @@ class CSharpTypeInferenceEngine:
         caller_qn: str | None,
         method_name: str,
         arg_count: int,
-        generic_call: bool,
+        type_arg_count: int,
     ) -> str | None:
         if not self.csharp_extension_methods:
             return None
@@ -1507,7 +1514,7 @@ class CSharpTypeInferenceEngine:
             method_name,
             arg_count,
             self._receiver_type_arity(receiver, local_var_types, module_qn, caller_qn),
-            generic_call,
+            type_arg_count,
         )
 
     def _receiver_type_name(
@@ -1698,7 +1705,7 @@ class CSharpTypeInferenceEngine:
         method_name: str,
         arg_count: int,
         receiver_arity: int | None = None,
-        generic_call: bool = False,
+        type_arg_count: int = 0,
     ) -> str | None:
         candidates = self.csharp_extension_methods.get(method_name)
         if not candidates:
@@ -1730,12 +1737,15 @@ class CSharpTypeInferenceEngine:
                 receiver_type_name, recv_type, ext_namespace, ambiguous_unqualified
             ):
                 matches.append(qn)
-        # A type argument (`c.Ext<int>(5)`) cannot bind a non-generic method.
-        # With no known generic match the matches stand, as for a bare call
-        # (_find_bare_call_matches): genericness is only recorded for parsed
-        # methods.
-        if generic_call and (
-            generic := [qn for qn in matches if qn in self.csharp_generic_methods]
+        # A type argument (`c.Ext<int>(5)`) cannot bind a non-generic method,
+        # nor one declaring a different number of type parameters
+        # (`Ext<T, U>`). With no known generic match the matches stand, as for
+        # a bare call (_find_bare_call_matches): genericness is only recorded
+        # for parsed methods.
+        if type_arg_count and (
+            generic := [
+                qn for qn in matches if self._takes_type_args(qn, type_arg_count)
+            ]
         ):
             matches = generic
         # Matches from different static classes are a name colliding across
@@ -1750,15 +1760,14 @@ class CSharpTypeInferenceEngine:
     def csharp_extension_overloads(self, ext_qn: str, call_node: Node) -> list[str]:
         """The other overloads call `call_node`, bound to extension `ext_qn`, may run.
 
-        Same static class, same `this` receiver type and same arity, and
-        generic when the call carries type arguments: the set
+        Same static class, same `this` receiver type and same arity, and,
+        when the call carries type arguments, declaring that many type
+        parameters: the set
         `_find_extension_method` chose one of. An overload extending another
         type is not one a receiver of this type can bind.
         """
-        generic_only = (
-            ext_qn in self.csharp_generic_methods
-            and _member_call_has_type_arguments(call_node)
-        )
+        type_arg_count = _member_call_type_argument_count(call_node)
+        generic_only = ext_qn in self.csharp_generic_methods and type_arg_count > 0
         base = _method_base(ext_qn)
         candidates = self.csharp_extension_methods.get(
             base.rsplit(cs.SEPARATOR_DOT, 1)[-1], []
@@ -1779,8 +1788,17 @@ class CSharpTypeInferenceEngine:
             and _namespaced_receiver(recv_type, namespace) == receiver
             and _method_base(qn) == base
             and _arity(qn) == arity
-            and (not generic_only or qn in self.csharp_generic_methods)
+            and (not generic_only or self._takes_type_args(qn, type_arg_count))
         ]
+
+    def _takes_type_args(self, qn: str, type_arg_count: int) -> bool:
+        """Whether generic method `qn` can take `type_arg_count` explicit type
+        arguments: it must declare exactly that many type parameters. A method
+        whose shape was not recorded keeps the old test, genericness alone."""
+        if qn not in self.csharp_generic_methods:
+            return False
+        shape = self.csharp_call_shapes.get(qn)
+        return shape is None or shape.type_params == type_arg_count
 
     def _count_arguments(self, call_node: Node) -> int:
         arg_list = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
