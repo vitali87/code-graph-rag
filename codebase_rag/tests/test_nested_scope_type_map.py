@@ -31,12 +31,16 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
 from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
+
+# Every case holds on the Rust scope walks and on their Python twins.
+pytestmark = pytest.mark.usefixtures("both_scope_walks")
 
 PROJECT = "proj"
 
