@@ -105,3 +105,25 @@ def test_a_method_of_a_redefined_class_resolves_by_name(tmp_path: Path) -> None:
     assert resolved is not None
     assert resolved.qualified_name == run.qualified_name
     assert stats.total == 0
+
+
+def test_a_function_named_in_compatibility_characters_resolves(
+    tmp_path: Path,
+) -> None:
+    # `def 𝐊():` is indexed as written, but Python compiles identifiers
+    # NFKC-normalized, so the frame's co_qualname is `K`. Only the line
+    # fallback used to bind it; a genuinely missing `J` still does not.
+    bold = CallableNode(
+        label=cs.NodeLabel.FUNCTION,
+        qualified_name=f"{_PROJECT}.m.\U0001d40a",
+        path="m.py",
+        start_line=1,
+        end_line=2,
+    )
+    stats = ResolutionStats()
+    resolver = FrameResolver(tmp_path, [bold])
+    resolved = resolver.resolve(_frame(tmp_path, "K", 1), stats)
+    assert resolved is not None
+    assert resolved.qualified_name == bold.qualified_name
+    assert resolver.resolve(_frame(tmp_path, "J", 1), stats) is None
+    assert stats.unresolved == {cs.TraceUnresolvedReason.NO_MATCH.value: 1}

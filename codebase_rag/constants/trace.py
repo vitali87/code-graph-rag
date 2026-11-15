@@ -50,6 +50,9 @@ TRACE_DEFAULT_OUTPUT = "cgr-trace.jsonl"
 
 # Python runtime qualname markers.
 TRACE_QUALNAME_LOCALS = "<locals>"
+# Python compiles every identifier NFKC-normalized (PEP 3131): `def 𝐊()` runs
+# with the co_qualname `K`.
+TRACE_IDENTIFIER_NORMAL_FORM = "NFKC"
 TRACE_QUALNAME_MODULE = "<module>"
 TRACE_SYNTHETIC_PREFIX = "<"
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import posixpath
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -387,14 +388,22 @@ def _runtime_name_parts(qualname: str) -> list[str]:
     ]
 
 
+def _identifier_form(name: str) -> str:
+    """`name` as Python compiles it: the index keeps `def 𝐊()` as written,
+    the frame records `K`, so both sides compare normalized."""
+    return unicodedata.normalize(cs.TRACE_IDENTIFIER_NORMAL_FORM, name)
+
+
 def _named_by(candidates: list[CallableNode], parts: list[str]) -> list[CallableNode]:
-    suffix = cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
+    suffix = _identifier_form(cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts))
     # Every marker goes, not only the last: a method of a redefined class is
     # indexed as `C@6.run`, and co_qualname marks no segment.
     return [
         n
         for n in candidates
-        if qn_markers.strip_all_markers(n.qualified_name).endswith(suffix)
+        if _identifier_form(qn_markers.strip_all_markers(n.qualified_name)).endswith(
+            suffix
+        )
     ]
 
 
