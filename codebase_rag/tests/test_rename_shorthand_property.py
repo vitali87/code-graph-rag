@@ -556,3 +556,35 @@ def test_every_parameter_form_shadows_a_destructured_name(
         if str(c.args[2][2]).endswith(".u.pad")
     }
     assert callers == set()
+
+
+@pytest.mark.parametrize(
+    ("entry", "body"),
+    [
+        ("main.ts", 'function run(cb: any = pad) { return pad("x"); }'),
+        ("main.ts", 'function run(cb?: any) { return pad("x"); }'),
+        ("main.js", 'function run(cb = pad) { return pad("x"); }'),
+    ],
+    ids=["ts-default", "ts-optional", "js-default"],
+)
+def test_a_parameter_default_naming_the_import_does_not_shadow_it(
+    temp_repo: Path, mock_ingestor: MagicMock, entry: str, body: str
+) -> None:
+    # Negative: a default value READS `pad`, it binds only `cb`, so the body's
+    # `pad("x")` is still the module's destructured `pad` (#3252 review).
+    files = {
+        "package.json": '{"type": "module"}\n',
+        "u.js": 'export function pad(s) { return " " + s; }\n',
+        entry: 'import * as U from "./u.js";\nconst { pad } = U;\n' + body + "\n",
+    }
+    for rel, text in files.items():
+        _write(temp_repo, rel, text)
+
+    run_updater(temp_repo, mock_ingestor)
+
+    callers = {
+        str(c.args[0][2]).rsplit(".", 1)[-1]
+        for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
+        if str(c.args[2][2]).endswith(".u.pad")
+    }
+    assert callers == {"run"}

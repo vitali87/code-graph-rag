@@ -2296,13 +2296,17 @@ def _js_binding_names(target: Node) -> list[str]:
         elif node_type == cs.TS_PAIR_PATTERN:
             if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
                 stack.append(value)
+        elif node_type in (cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER):
+            # A TS parameter wraps its binding in the `pattern` field; its
+            # default sits beside it as `value` and reads the enclosing scope:
+            # `run(cb = pad)` binds `cb`, not `pad` (#3252 review).
+            if (pattern := node.child_by_field_name(cs.TS_FIELD_PATTERN)) is not None:
+                stack.append(pattern)
         elif node_type in (
             cs.TS_OBJECT_PATTERN,
             cs.TS_ARRAY_PATTERN,
             cs.TS_REST_PATTERN,
             cs.TS_JS_FORMAL_PARAMETERS,
-            cs.TS_REQUIRED_PARAMETER,
-            cs.TS_OPTIONAL_PARAMETER,
         ):
             stack.extend(node.named_children)
     return list(names)
