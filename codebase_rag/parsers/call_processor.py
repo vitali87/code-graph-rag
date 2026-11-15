@@ -2270,6 +2270,40 @@ def _js_param_names(scope: Node) -> list[str]:
     return list(names)
 
 
+_JS_BINDING_NAME_TYPES = frozenset(
+    {cs.TS_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN}
+)
+# The one field of each wrapper that holds its binding. A default (`a = f`,
+# a TS parameter's `value`) and a pair's key read the enclosing scope: a TS
+# parameter wraps its binding in `pattern` and keeps its default beside it, so
+# `run(cb = pad)` binds `cb`, not `pad` (#3252 review).
+_JS_BINDING_FIELDS = {
+    cs.TS_ASSIGNMENT_PATTERN: cs.FIELD_LEFT,
+    cs.TS_OBJECT_ASSIGNMENT_PATTERN: cs.FIELD_LEFT,
+    cs.TS_PAIR_PATTERN: cs.FIELD_VALUE,
+    cs.TS_REQUIRED_PARAMETER: cs.TS_FIELD_PATTERN,
+    cs.TS_OPTIONAL_PARAMETER: cs.TS_FIELD_PATTERN,
+}
+_JS_BINDING_CONTAINERS = frozenset(
+    {
+        cs.TS_OBJECT_PATTERN,
+        cs.TS_ARRAY_PATTERN,
+        cs.TS_REST_PATTERN,
+        cs.TS_JS_FORMAL_PARAMETERS,
+    }
+)
+
+
+def _js_binding_parts(node: Node) -> list[Node]:
+    """The children of `node` in a binding position."""
+    if (field := _JS_BINDING_FIELDS.get(node.type)) is not None:
+        child = node.child_by_field_name(field)
+        return [] if child is None else [child]
+    if node.type in _JS_BINDING_CONTAINERS:
+        return list(node.named_children)
+    return []
+
+
 def _js_binding_names(target: Node) -> list[str]:
     """Each name `target` binds, once, in the order the walk meets them.
 
@@ -2280,31 +2314,10 @@ def _js_binding_names(target: Node) -> list[str]:
     stack: list[Node] = [target]
     while stack:
         node = stack.pop()
-        node_type = node.type
-        if node_type in (
-            cs.TS_IDENTIFIER,
-            cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
-        ):
-            if name := safe_decode_text(node):
-                names[name] = None
-        elif node_type in (
-            cs.TS_ASSIGNMENT_PATTERN,
-            cs.TS_OBJECT_ASSIGNMENT_PATTERN,
-        ):
-            if (left := node.child_by_field_name(cs.FIELD_LEFT)) is not None:
-                stack.append(left)
-        elif node_type == cs.TS_PAIR_PATTERN:
-            if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
-                stack.append(value)
-        elif node_type in (
-            cs.TS_OBJECT_PATTERN,
-            cs.TS_ARRAY_PATTERN,
-            cs.TS_REST_PATTERN,
-            cs.TS_JS_FORMAL_PARAMETERS,
-            cs.TS_REQUIRED_PARAMETER,
-            cs.TS_OPTIONAL_PARAMETER,
-        ):
-            stack.extend(node.named_children)
+        if node.type not in _JS_BINDING_NAME_TYPES:
+            stack.extend(_js_binding_parts(node))
+        elif name := safe_decode_text(node):
+            names[name] = None
     return list(names)
 
 
@@ -5689,6 +5702,8 @@ class CallProcessor:
             self._record_python_shadowed_imports(caller_node, caller_qn, module_qn)
         elif language == cs.SupportedLanguage.GO:
             self._record_go_local_names(caller_node, caller_qn, caller_type)
+        elif language in _JS_TS_LANGUAGES:
+            self._record_js_parameter_names(caller_node, caller_qn)
 
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
 
@@ -5949,6 +5964,25 @@ class CallProcessor:
             self._resolver.python_name_typed_params[caller_qn] = frozenset(guessed)
         else:
             self._resolver.python_name_typed_params.pop(caller_qn, None)
+
+    def _record_js_parameter_names(self, caller_node: Node, caller_qn: str) -> None:
+        # A parameter hides the file-wide import or module function of its
+        # name for the whole body, so `function run(pad) { pad("x") }` calls
+        # the argument, not the `pad` the file imports (#3252 review). Every
+        # name a parameter binds counts (`{ pad }`, `pad = f`, `...pad`), and
+        # so does an enclosing function's parameter, which a nested function
+        # captures: `function run(pad) { function go() { pad() } }`.
+        names: set[str] = set()
+        scope: Node | None = caller_node
+        while scope is not None:
+            if scope.type in cs.JS_TS_FUNCTION_NODES:
+                names.update(_js_param_names(scope))
+            scope = scope.parent
+        params = frozenset(names)
+        if params:
+            self._resolver.js_parameter_names[caller_qn] = params
+        else:
+            self._resolver.js_parameter_names.pop(caller_qn, None)
 
     def _record_go_local_names(
         self, caller_node: Node, caller_qn: str, caller_type: str
