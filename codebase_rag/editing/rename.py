@@ -181,6 +181,39 @@ class RenameReport(NamedTuple):
 # --- site collection -----------------------------------------------------------
 
 
+def renamed_qualified_name(member: str, new_name: str) -> str:
+    # Java and C# method names end in their parameter types, `greet(String)`,
+    # and a type may be dotted itself (`put(Map.Entry)`). Only the name before
+    # the signature changes; dropping the signature made the contract expect a
+    # name the graph never has, so every such rename was undone.
+    start = _signature_start(member)
+    head, signature = (member[:start], member[start:]) if start >= 0 else (member, "")
+    owner = head.rsplit(cs.SEPARATOR_DOT, 1)[0]
+    return f"{owner}{cs.SEPARATOR_DOT}{new_name}{signature}"
+
+
+def _signature_start(member: str) -> int:
+    """Where `member`'s trailing parameter signature opens, or -1 if it has none.
+
+    The signature is the group closing the name, and it is glued to that
+    name. A Next.js route-group directory, `p.app.(auth).page.helper`, also
+    puts parentheses in the path, but as a dotted segment of its own, so the
+    first `(` is not where a signature starts."""
+    if not member.endswith(cs.CHAR_PAREN_CLOSE):
+        return -1
+    depth = 0
+    for index in range(len(member) - 1, -1, -1):
+        char = member[index]
+        if char == cs.CHAR_PAREN_CLOSE:
+            depth += 1
+        elif char == cs.CHAR_PAREN_OPEN:
+            depth -= 1
+            if depth == 0:
+                glued = index > 0 and member[index - 1] != cs.SEPARATOR_DOT
+                return index if glued else -1
+    return -1
+
+
 def _hierarchy(
     fetch_all: QueryFn, project: str, qn: str, repo_root: Path | None = None
 ) -> Hierarchy:
@@ -2222,10 +2255,7 @@ class Renamer:
         self, report: RenameReport, new_name: str
     ) -> list[tuple[str, str]]:
         parents = [
-            (
-                member,
-                member.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT + new_name,
-            )
+            (member, renamed_qualified_name(member, new_name))
             for member in (*report.hierarchy, *report.companions)
         ]
         pairs = list(parents)
