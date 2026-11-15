@@ -271,3 +271,44 @@ def test_a_prototype_twin_with_a_duplicate_marker_stays_paired(
         caller + "// touched\n", encoding="utf-8"
     )
     assert sync(store, force=False) == expected
+
+
+def test_a_free_function_below_the_prototype_method_is_not_its_twin(
+    temp_repo: Path,
+) -> None:
+    # The reverse order: the prototype fn-expr comes first and takes the
+    # natural `below.lookup`, so the free `function lookup` written after it
+    # is `below.lookup@6`, a duplicate of the twin's name. The member call
+    # edges the method's two names and never the free function (#3174 review).
+    parsers, queries = load_parsers()
+    if "javascript" not in parsers:
+        pytest.skip("javascript parser not available")
+    (temp_repo / "src").mkdir(parents=True, exist_ok=True)
+    (temp_repo / "src/below.js").write_text(
+        "function View(name) { this.name = name }\n"
+        "View.prototype.lookup = function lookup(name) {\n"
+        "  return name\n"
+        "}\n"
+        "\n"
+        'function lookup(name) { return "free " + name }\n'
+        "module.exports = { View, lookup }\n",
+        encoding="utf-8",
+    )
+    (temp_repo / "src/belowuse.js").write_text(
+        'const { View } = require("./below");\n'
+        "function make() { return new View('y').lookup('z'); }\n"
+        "module.exports = { make };\n",
+        encoding="utf-8",
+    )
+    store = _StatefulIngestor()
+    GraphUpdater(
+        ingestor=store, repo_path=temp_repo, parsers=parsers, queries=queries
+    ).run(force=True)
+    targets = {
+        _short(str(target))
+        for _, source, rel, _, target in store.edges
+        if rel == cs.RelationshipType.CALLS.value
+        and _short(str(source)) == "belowuse.make"
+        and "lookup" in str(target)
+    }
+    assert targets == {"below.View.lookup", "below.lookup"}

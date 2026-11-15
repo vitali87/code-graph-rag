@@ -9479,15 +9479,18 @@ class CallProcessor:
         # prototype method (`this.lookup()` -> module-flat `view.lookup`,
         # leaving `View.lookup` dead) edges the same-module same-name
         # member twin too (duplicate-QN keep-both design; revive-only).
+        # A twin is the exact name its definition registered under, so it is
+        # edged alone: the duplicate-QN variants of that name are other
+        # definitions (a free `function lookup` below the prototype is
+        # `view.lookup@6`), not this method (#3174 review).
         for twin_type, twin_qn in sorted(
             self._resolver.js_member_twin_targets(callee_qn)
         ):
-            for variant in self._resolver.function_registry.variants(twin_qn):
-                ctx.ensure_rel(
-                    ctx.caller_spec,
-                    cs.RelationshipType.CALLS,
-                    (twin_type, cs.KEY_QUALIFIED_NAME, variant),
-                )
+            ctx.ensure_rel(
+                ctx.caller_spec,
+                cs.RelationshipType.CALLS,
+                (twin_type, cs.KEY_QUALIFIED_NAME, twin_qn),
+            )
 
     def _emit_conditional_import_twin(
         self, ctx: _CallScanContext, call_name: str, callee_qn: str
