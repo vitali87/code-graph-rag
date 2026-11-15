@@ -5689,6 +5689,8 @@ class CallProcessor:
             self._record_python_shadowed_imports(caller_node, caller_qn, module_qn)
         elif language == cs.SupportedLanguage.GO:
             self._record_go_local_names(caller_node, caller_qn, caller_type)
+        elif language in _JS_TS_LANGUAGES:
+            self._record_js_parameter_names(caller_node, caller_qn)
 
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
 
@@ -5949,6 +5951,16 @@ class CallProcessor:
             self._resolver.python_name_typed_params[caller_qn] = frozenset(guessed)
         else:
             self._resolver.python_name_typed_params.pop(caller_qn, None)
+
+    def _record_js_parameter_names(self, caller_node: Node, caller_qn: str) -> None:
+        # A parameter hides the file-wide import or module function of its
+        # name for the whole body, so `function run(pad) { pad("x") }` calls
+        # the argument, not the `pad` the file imports (#3252 review).
+        params = frozenset(js_ts_parameter_names(caller_node))
+        if params:
+            self._resolver.js_parameter_names[caller_qn] = params
+        else:
+            self._resolver.js_parameter_names.pop(caller_qn, None)
 
     def _record_go_local_names(
         self, caller_node: Node, caller_qn: str, caller_type: str

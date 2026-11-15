@@ -333,10 +333,11 @@ _JS_KEYWORD = re.compile(r"\s*(?:import|export)\s+(?:type\s+)?")
 _JS_DECLARATIONS = frozenset({cs.TS_LEXICAL_DECLARATION, cs.TS_VARIABLE_DECLARATION})
 
 
-def _js_destructured_keys(pattern: Node) -> Iterator[tuple[Node, str, bool]]:
+def _js_destructured_keys(pattern: Node) -> Iterator[tuple[Node, Node, bool]]:
     """Each key an object pattern reads, with the local it binds and whether
     it is a shorthand, in the shapes the index binds: `{ pad }`, `{ pad: p }`
-    and either with a default (`{ pad = d }`, `{ pad: p = d }`)."""
+    and either with a default (`{ pad = d }`, `{ pad: p = d }`). A shorthand's
+    key is its local."""
     for entry in pattern.named_children:
         node = (
             entry.child_by_field_name(cs.FIELD_LEFT)
@@ -346,13 +347,13 @@ def _js_destructured_keys(pattern: Node) -> Iterator[tuple[Node, str, bool]]:
         if node is None:
             continue
         if node.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
-            yield node, _node_text(node), True
+            yield node, node, True
         elif node.type == cs.TS_PAIR_PATTERN and (pair := _js_pair_key(node)):
             key, local = pair
             yield key, local, False
 
 
-def _js_pair_key(pair: Node) -> tuple[Node, str] | None:
+def _js_pair_key(pair: Node) -> tuple[Node, Node] | None:
     """The key of `{ pad: p }` or `{ pad: p = d }` and the local `p` it binds;
     any other value shape (a nested pattern) binds no local the index tracks."""
     key = pair.child_by_field_name(cs.FIELD_KEY)
@@ -361,7 +362,7 @@ def _js_pair_key(pair: Node) -> tuple[Node, str] | None:
         value = value.child_by_field_name(cs.FIELD_LEFT)
     if key is None or value is None or value.type != cs.TS_IDENTIFIER:
         return None
-    return key, _node_text(value)
+    return key, value
 
 
 def _node_text(node: Node) -> str:
@@ -401,7 +402,9 @@ def _js_destructure_rewrite(
 
     `{ pad: p }` keeps its local `p`; a shorthand `{ pad }` rebinds with
     its uses, as a bare `import { pad }` does, or keeps its local by
-    spelling the key out (`{ padLeft: pad }`). Only the entries binding a
+    spelling the key out (`{ padLeft: pad }`). `{ pad: pad }` binds the
+    symbol's own name too, so a rebinding rename renames that local with
+    the uses it has just renamed. Only the entries binding a
     local of `bound` are the import's: one declaration can destructure
     another object too (`const { pad: p } = other, { pad: q } = U`). The
     statement is parsed, so a comment or a default beside a key is kept. A
@@ -414,18 +417,26 @@ def _js_destructure_rewrite(
     patterns = _js_object_patterns(source, importer_path)
     if not patterns:
         return None
+    edits: list[tuple[Node, str]] = []
+    for pattern in patterns:
+        for key, local, shorthand in _js_destructured_keys(pattern):
+            local_name = _node_text(local)
+            if _node_text(key) != move.symbol or (
+                bound is not None and local_name not in bound
+            ):
+                continue
+            new_key = move.new_name
+            if shorthand and not move.rebind:
+                new_key += cs.PATCH_SHORTHAND_KEY_SEPARATOR + move.symbol
+            edits.append((key, new_key))
+            if not shorthand and move.rebind and local_name == move.symbol:
+                edits.append((local, move.new_name))
     rewritten = source
-    keys = [entry for pattern in patterns for entry in _js_destructured_keys(pattern)]
-    for key, local, shorthand in reversed(keys):
-        if _node_text(key) != move.symbol or (bound is not None and local not in bound):
-            continue
-        new_key = move.new_name
-        if shorthand and not move.rebind:
-            new_key += cs.PATCH_SHORTHAND_KEY_SEPARATOR + move.symbol
+    for node, text in sorted(edits, key=lambda e: e[0].start_byte, reverse=True):
         rewritten = (
-            rewritten[: key.start_byte]
-            + new_key.encode(cs.ENCODING_UTF8)
-            + rewritten[key.end_byte :]
+            rewritten[: node.start_byte]
+            + text.encode(cs.ENCODING_UTF8)
+            + rewritten[node.end_byte :]
         )
     return rewritten.decode(cs.ENCODING_UTF8)
 

@@ -462,3 +462,61 @@ def test_the_rename_passes_its_postcondition(
     assert report.applied, report.message
     assert report.verdict is not None
     assert report.verdict.ok, report.verdict.failures
+
+
+@needs_node
+def test_a_pair_binding_the_key_name_renames_its_local_with_its_uses(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `{ pad: pad }` binds the local `pad`, which the rename rebinds with its
+    # uses, so the local follows the key: `{ padLeft: pad }` beside
+    # `padLeft("y")` would throw ReferenceError.
+    files = {
+        "package.json": '{"type": "module"}\n',
+        "u.js": 'export function pad(s) { return " " + s; }\n',
+        "main.js": (
+            'import * as U from "./u.js";\nconst { pad: pad } = U;\n'
+            'console.log(pad("y"));\n'
+        ),
+    }
+    for rel, text in files.items():
+        _write(temp_repo, rel, text)
+    before = _node(temp_repo, "main.js")
+
+    _rename_pad(temp_repo, mock_ingestor, "u")
+
+    assert (temp_repo / "main.js").read_text() == (
+        'import * as U from "./u.js";\nconst { padLeft: padLeft } = U;\n'
+        'console.log(padLeft("y"));\n'
+    )
+    assert _node(temp_repo, "main.js") == before
+
+
+@needs_node
+def test_a_parameter_shadowing_a_destructured_name_keeps_its_calls(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: inside `run(pad)` the name `pad` is the parameter, not the
+    # module's destructured `pad`, so its call is the caller's function and
+    # keeps its name while the module-level use is renamed.
+    files = {
+        "package.json": '{"type": "module"}\n',
+        "u.js": 'export function pad(s) { return " " + s; }\n',
+        "main.js": (
+            'import * as U from "./u.js";\nconst { pad } = U;\n'
+            'function run(pad) { return pad("x"); }\n'
+            'console.log(run((s) => "caller:" + s) + pad("y"));\n'
+        ),
+    }
+    for rel, text in files.items():
+        _write(temp_repo, rel, text)
+    before = _node(temp_repo, "main.js")
+
+    _rename_pad(temp_repo, mock_ingestor, "u")
+
+    assert (temp_repo / "main.js").read_text() == (
+        'import * as U from "./u.js";\nconst { padLeft } = U;\n'
+        'function run(pad) { return pad("x"); }\n'
+        'console.log(run((s) => "caller:" + s) + padLeft("y"));\n'
+    )
+    assert _node(temp_repo, "main.js") == before

@@ -311,6 +311,7 @@ class CallResolver:
         "python_shadowed_imports",
         "go_local_scopes",
         "python_local_names",
+        "js_parameter_names",
         "function_registry",
         "import_processor",
         "type_inference",
@@ -387,6 +388,10 @@ class CallResolver:
         # caller qn -> every name that Python function binds itself (#2666);
         # filled alongside python_shadowed_imports.
         self.python_local_names: dict[str, frozenset[str]] = {}
+        # JS/TS caller qn -> the names its own parameters bind: a bare call to
+        # one calls the argument, never the import or module function of the
+        # name (`function run(pad) { pad("x") }`), filled the same way.
+        self.js_parameter_names: dict[str, frozenset[str]] = {}
         # Every inline `mod` qn the class pass ingested (shared ref). A Rust
         # enclosing scope is an inline mod IFF it is in here: an impl target is
         # not, and neither is registered under a type label when it is a
@@ -776,6 +781,12 @@ class CallResolver:
             return False
         local = self.python_local_names.get(call.caller_qn)
         return local is not None and call.call_name in local
+
+    def _is_js_parameter_name(self, call: _CallSite) -> bool:
+        if not call.caller_qn or cs.SEPARATOR_DOT in call.call_name:
+            return False
+        params = self.js_parameter_names.get(call.caller_qn)
+        return params is not None and call.call_name in params
 
     def _receiver_is_untyped_shadow(
         self,
@@ -2070,7 +2081,7 @@ class CallResolver:
         # same-module, class, import and trie stages below would bind it to
         # the definition it shadows (issue #2666). Before the cache, whose
         # answers are caller-independent.
-        if self._is_python_local_name(call):
+        if self._is_python_local_name(call) or self._is_js_parameter_name(call):
             return None
 
         cache_key = self._resolution_cache_key(call)
