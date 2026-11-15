@@ -44,6 +44,11 @@ dependencies = [
     # Server constructor, which 1.x lacks, and every documented install
     # resolves this range rather than uv.lock (#2519).
     "mcp>=2.3.0,<3",
+    # mcp's server extracts W3C trace context from every request's `_meta`,
+    # and before 1.45.2 a traceparent there parses in quadratic time
+    # (GHSA-mf5v-w3w3-f6cg). Declared so an upgrade over an older install
+    # moves it too, as mcp and pydantic-ai-slim still accept the old one.
+    "opentelemetry-api>=1.45.2",
     # The MCP server checks tool arguments against their input schemas, which
     # the 1.x SDK did for it.
     "jsonschema>=4.20.0",

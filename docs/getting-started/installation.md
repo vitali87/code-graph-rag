@@ -296,6 +296,7 @@ This checks that all required dependencies and services are available.
 <!-- SECTION:dependencies -->
 - **loguru**: Python logging made (stupidly) simple
 - **mcp**: Model Context Protocol SDK
+- **opentelemetry-api**: OpenTelemetry Python API
 - **jsonschema**: An implementation of JSON Schema validation for Python
 - **pydantic-ai-slim**: AI Agent Framework, the Pydantic way, slim package
 - **pydantic-settings**: Settings management using Pydantic
