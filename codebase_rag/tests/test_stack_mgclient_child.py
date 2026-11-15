@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes.util
+import gc
 import io
 import itertools
 import json
@@ -423,6 +424,10 @@ class _ChildRun:
 
 @pytest.fixture
 def debug_records() -> Iterator[list[tuple[str, str]]]:
+    # An ImportProcessor an earlier test left in a reference cycle saves the
+    # stdlib cache from its finalizer, logging at DEBUG whenever the collector
+    # gets to it; collected now, so it cannot land in this test's records.
+    gc.collect()
     records: list[tuple[str, str]] = []
     sink_id = logger.add(
         lambda message: records.append(

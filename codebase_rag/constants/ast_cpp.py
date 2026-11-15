@@ -150,6 +150,12 @@ CPP_KEYWORD_STRUCT = "struct"
 # `static` storage on a declaration: internal linkage, TU-local symbol.
 CPP_KEYWORD_STATIC = "static"
 TS_CPP_STORAGE_CLASS_SPECIFIER = "storage_class_specifier"
+# A class member's access when no `access_specifier` precedes it: a `class`
+# starts private, a `struct` or `union` public (issue #2707).
+CPP_PRIVATE_BY_DEFAULT = frozenset({"class_specifier"})
+CPP_ACCESS_PRIVATE = "private"
+CPP_ACCESS_PUBLIC = "public"
+TS_FIELD_DECLARATION_LIST = "field_declaration_list"
 TS_CPP_TYPE_QUALIFIER = "type_qualifier"
 CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
 
@@ -266,6 +272,9 @@ TS_CPP_TRANSLATION_UNIT = "translation_unit"
 TS_CPP_LINKAGE_SPECIFICATION = "linkage_specification"
 # The body of a namespace or an `extern "C++" { }` block.
 TS_CPP_DECLARATION_LIST = "declaration_list"
+CPP_NAMESPACE_SCOPE_TYPES = frozenset(
+    {TS_CPP_TRANSLATION_UNIT, TS_CPP_DECLARATION_LIST, TS_CPP_LINKAGE_SPECIFICATION}
+)
 TS_CPP_CALL_EXPRESSION = "call_expression"
 TS_CPP_FIELD_EXPRESSION = "field_expression"
 TS_CPP_SUBSCRIPT_EXPRESSION = "subscript_expression"
@@ -518,6 +527,49 @@ TS_CPP_POINTER_EXPRESSION = "pointer_expression"
 TS_CPP_CAST_EXPRESSION = "cast_expression"
 TS_CPP_CONDITIONAL_EXPRESSION = "conditional_expression"
 CPP_OP_ADDRESS_OF = "&"
+# Preprocessor conditionals: they wrap declarations without opening a scope,
+# so what they hold belongs to the scope around them (PR #2952).
+CPP_PREPROC_CONDITIONAL_TYPES = frozenset(
+    {"preproc_if", "preproc_ifdef", "preproc_else", "preproc_elif", "preproc_elifdef"}
+)
+# The head of an `#if` chain; its `#elif` / `#else` branches hang off it as
+# the `alternative` field, and only an `#else` makes some branch certain.
+CPP_PREPROC_IF_TYPES = frozenset({"preproc_if", "preproc_ifdef"})
+TS_CPP_PREPROC_ELSE = "preproc_else"
+TS_CPP_PREPROC_DEFINED = "preproc_defined"
+# `#ifndef X` and `#elifndef X` hold when `X` is not defined.
+CPP_PREPROC_NEGATED_DIRECTIVES = frozenset({"#ifndef", "#elifndef"})
+CPP_OP_NOT = "!"
+# Up to this many distinct conditions before a member, in the classes and
+# `#if` blocks around it, every build is tried, so two blocks testing the
+# same flag agree; past it each branch is taken or not on its own, which can
+# only make a member look public.
+CPP_MAX_CORRELATED_CONDITIONS = 6
+# `#define X` and `#define X(a)` give `X` a definition, `#undef X` (a
+# generic `preproc_call`) takes it away; either may change a flag between
+# two blocks that test it.
+CPP_PREPROC_DEFINE_TYPES = frozenset({"preproc_def", "preproc_function_def"})
+TS_CPP_PREPROC_CALL = "preproc_call"
+CPP_FIELD_DIRECTIVE = "directive"
+CPP_PREPROC_UNDEF = "#undef"
+# What can stand for a qualifier besides a namespace or class definition:
+# `namespace A = N;`, `using namespace Q;` (a `using_declaration` holding
+# the `namespace` keyword), `using N::Box;`, and the type aliases `using T =
+# Box;` and `typedef Box T;` (PR #2952).
+TS_CPP_NAMESPACE_ALIAS_DEFINITION = "namespace_alias_definition"
+TS_CPP_USING_DECLARATION = "using_declaration"
+CPP_KEYWORD_NAMESPACE = "namespace"
+# `namespace a::b` and `namespace A = ::N`: a namespace name with parts.
+TS_CPP_NESTED_NAMESPACE_SPECIFIER = "nested_namespace_specifier"
+# `inline namespace v1 {}`: its members are found as members of the
+# namespace around it too.
+CPP_KEYWORD_INLINE = "inline"
+# The path part an unnamed namespace adds: each namespace has one, and what
+# has it in its path is file-private (PR #2952).
+CPP_UNNAMED_NAMESPACE = ""
+CPP_TYPE_ALIAS_TYPES = frozenset({"alias_declaration", "type_definition"})
+# Aliases of aliases are followed this far, so a cycle in broken code ends.
+CPP_MAX_ALIAS_HOPS = 8
 # Nodes that hold file-scope declarations without opening a scope of their
 # own: preprocessor conditionals and an `extern "C" { ... }` block.
 C_FILE_SCOPE_CONTAINER_TYPES = frozenset(
