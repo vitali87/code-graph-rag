@@ -32,6 +32,7 @@ from .constants import (
     PY_SCOPE_BOUNDARIES,
     SQL_READ_KEYWORDS,
     SQL_WRITE_KEYWORDS,
+    WRITABLE_MEMBER_KINDS,
     IODirection,
     ResourceKind,
 )
@@ -154,6 +155,13 @@ def _dart_index_key(following: Node | None) -> str:
             )
         stack.extend(node.named_children)
     return DYNAMIC_TARGET
+
+
+# Dart nodes that wrap a binding's value chain one level deep without changing
+# which handle it yields (`await Socket.connect(...)`).
+_DART_VALUE_WRAPPERS = frozenset(
+    {cs.TS_DART_UNARY_EXPRESSION, cs.TS_DART_AWAIT_EXPRESSION}
+)
 
 
 class _LeanHandles(NamedTuple):
@@ -1150,6 +1158,11 @@ class IOAccessProcessor:
                 return
             identity = self._member_identity(node, descriptor)
             for direction in self._member_directions(node, descriptor):
+                # Assigning `$_GET["q"]` rewrites a local copy of the request;
+                # only an environment entry outlives the assignment (children
+                # inherit it), so only that is a write of the resource.
+                if direction == IODirection.WRITE and kind not in WRITABLE_MEMBER_KINDS:
+                    continue
                 self._emit(caller_spec, direction, kind, identity)
             return
 
@@ -1919,6 +1932,12 @@ class IOAccessProcessor:
         name, rhs = dart_binding_name_and_rhs(node)
         if name is None:
             return
+        # `var s = await Socket.connect(...)` wraps the chain in a unary and an
+        # await node, and the awaited value is the handle: unwrap them as the
+        # flow walk's `_dart_rhs` does, or the flow reaches a socket nothing
+        # writes.
+        while len(rhs) == 1 and rhs[0].type in _DART_VALUE_WRAPPERS:
+            rhs = [c for c in rhs[0].named_children if c.type != cs.TS_COMMENT]
         # `var g = f;` copies f's handle, as the flow walk does (#2761 review).
         alias = (
             lean_handles.bindings.get(safe_decode_text(rhs[0]) or "")

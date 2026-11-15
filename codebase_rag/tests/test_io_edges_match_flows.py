@@ -288,6 +288,16 @@ void copied() {
 void posted(String endpoint) {
   http.post(Uri.parse(endpoint), body: 'payload');
 }
+
+Future<void> awaitedSocket() async {
+  var s = await Socket.connect('example.com', 80);
+  s.write(Platform.environment['K']!);
+}
+
+Future<void> awaitedFile() async {
+  var f = await File('awaited.txt');
+  f.writeAsStringSync(Platform.environment['K']!);
+}
 """
 
 
@@ -323,3 +333,70 @@ def test_only_the_first_argument_names_a_dart_target(dart_handles: _Edges) -> No
     assert _io(dart_handles, "posted") == {
         ("WRITES_TO", "resource::NETWORK::<dynamic>")
     }, dart_handles
+
+
+@pytest.mark.parametrize(
+    ("caller", "target"),
+    [
+        # `await` wraps the handle's constructor one node deep; the flow walk
+        # unwraps it, so the I/O walk must too or the socket write that the
+        # flow reaches has no WRITES_TO (#2761 review).
+        ("awaitedSocket", "resource::SOCKET::example.com"),
+        ("awaitedFile", "resource::FILE::awaited.txt"),
+    ],
+)
+def test_an_awaited_dart_handle_is_bound(
+    dart_handles: _Edges, caller: str, target: str
+) -> None:
+    assert _io(dart_handles, caller) == {
+        ("READS_FROM", _ENV_K),
+        ("WRITES_TO", target),
+    }, dart_handles
+    assert (_ENV_K, "FLOWS_TO", target) in dart_handles, dart_handles
+
+
+_PHP_SUPERGLOBAL_WRITES = """\
+<?php
+function setEnv() {
+    $_ENV["K"] = "value";
+}
+
+function appendEnv() {
+    $_ENV["K"] .= "more";
+}
+
+function bumpEnv() {
+    $_ENV["K"] += 1;
+}
+
+function setQuery() {
+    $_GET["q"] = "x";
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def php_writes(tmp_path_factory: pytest.TempPathFactory) -> _Edges:
+    if "php" not in load_parsers()[0]:
+        pytest.skip("php parser not available")
+    root = tmp_path_factory.mktemp("io2761w") / "app"
+    return _index(root, {"writes.php": _PHP_SUPERGLOBAL_WRITES})
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        # Assigning a superglobal entry overwrites it and reads nothing, as
+        # `process.env.K = v` and `os.environ['K'] = v` do; `.=` and `+=`
+        # read the old value and write the new one (#2761 review).
+        ("setEnv", {("WRITES_TO", _ENV_K)}),
+        ("appendEnv", {("READS_FROM", _ENV_K), ("WRITES_TO", _ENV_K)}),
+        ("bumpEnv", {("READS_FROM", _ENV_K), ("WRITES_TO", _ENV_K)}),
+        # Overwriting the request array sends nothing over the network.
+        ("setQuery", set()),
+    ],
+)
+def test_a_php_superglobal_assignment_is_not_a_read(
+    php_writes: _Edges, caller: str, expected: set[tuple[str, str]]
+) -> None:
+    assert _io(php_writes, caller) == expected, php_writes
