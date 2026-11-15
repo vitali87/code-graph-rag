@@ -784,11 +784,14 @@ class JavaMethodReferenceParts(NamedTuple):
 class CSharpCallShape(NamedTuple):
     """How a C# method may be called: the arguments every call must pass
     (parameters with neither a default nor `params`), whether a `params`
-    tail takes extra arguments, and whether it is static."""
+    tail takes extra arguments, whether it is static, and how many type
+    parameters it declares (`M<T, U>` -> 2), which a call's explicit type
+    arguments must match."""
 
     required: int
     variadic: bool
     is_static: bool
+    type_params: int = 0
 
 
 class JavaStaticImport(NamedTuple):
