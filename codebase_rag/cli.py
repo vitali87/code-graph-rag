@@ -10,7 +10,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Coroutine, Generator, Iterable
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from fnmatch import fnmatch
 from functools import partial, wraps
 from importlib.metadata import version as get_version
@@ -1820,7 +1820,10 @@ def diff_index_command(
         # --json-out file (issue #2662).
         typer.echo(rendered)
     if diff_is_empty(diff):
-        _info(style(cs.CLI_MSG_DIFF_EMPTY, cs.Color.GREEN))
+        # Without --json-out, stdout is the JSON and nothing else: a status
+        # line after it would stop `json.loads(stdout)` from parsing it.
+        with _console_on_stderr() if json_out is None else nullcontext():
+            _info(style(cs.CLI_MSG_DIFF_EMPTY, cs.Color.GREEN))
 
 
 @app.command(

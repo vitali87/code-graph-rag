@@ -197,6 +197,21 @@ class TestDiffIndexStdout:
 
         assert "\x1b[" not in result.stdout
 
+    def test_an_empty_diff_leaves_stdout_parseable(self) -> None:
+        # Identical snapshots still print their status line, but stdout is
+        # the JSON alone, so the line goes to stderr instead of after it.
+        empty = {
+            "nodes": {"added": [], "removed": [], "changed": {}},
+            "relationships": {},
+            "coverage": {"flow_covered_flips": {}, "per_language": {}},
+        }
+        with patch("codebase_rag.cli.diff_indexes", return_value=empty):
+            result = CliRunner().invoke(app, ["diff-index", "--old", "a", "--new", "b"])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == empty
+        assert cs.CLI_MSG_DIFF_EMPTY in result.stderr
+
 
 # Negative: what must not change.
 
