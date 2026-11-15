@@ -17,6 +17,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.editing.rename import RenameRefused, rename
+from codebase_rag.tests.conftest import get_relationships, run_updater
 from codebase_rag.tests.test_edit_contract import PROJECT, _real_project
 from codebase_rag.tests.test_rename_op import _index, _write
 
@@ -520,3 +521,38 @@ def test_a_parameter_shadowing_a_destructured_name_keeps_its_calls(
         'console.log(run((s) => "caller:" + s) + padLeft("y"));\n'
     )
     assert _node(temp_repo, "main.js") == before
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        'function run({ pad }) { return pad("x"); }',
+        'function run(pad = null) { return pad("x"); }',
+        'function run(...pad) { return pad("x"); }',
+        'function run([pad]) { return pad("x"); }',
+        'function run(pad) { function go() { return pad("x"); } return go(); }',
+    ],
+    ids=["object-pattern", "default", "rest", "array-pattern", "captured"],
+)
+def test_every_parameter_form_shadows_a_destructured_name(
+    temp_repo: Path, mock_ingestor: MagicMock, body: str
+) -> None:
+    # A destructured, defaulted or rest parameter binds `pad` as surely as a
+    # plain one, and a nested function sees its enclosing function's `pad`:
+    # none of these calls is the module's destructured `pad` (#3252 review).
+    files = {
+        "package.json": '{"type": "module"}\n',
+        "u.js": 'export function pad(s) { return " " + s; }\n',
+        "main.js": 'import * as U from "./u.js";\nconst { pad } = U;\n' + body + "\n",
+    }
+    for rel, text in files.items():
+        _write(temp_repo, rel, text)
+
+    run_updater(temp_repo, mock_ingestor)
+
+    callers = {
+        str(c.args[0][2])
+        for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
+        if str(c.args[2][2]).endswith(".u.pad")
+    }
+    assert callers == set()

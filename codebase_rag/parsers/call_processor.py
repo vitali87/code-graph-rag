@@ -5955,8 +5955,17 @@ class CallProcessor:
     def _record_js_parameter_names(self, caller_node: Node, caller_qn: str) -> None:
         # A parameter hides the file-wide import or module function of its
         # name for the whole body, so `function run(pad) { pad("x") }` calls
-        # the argument, not the `pad` the file imports (#3252 review).
-        params = frozenset(js_ts_parameter_names(caller_node))
+        # the argument, not the `pad` the file imports (#3252 review). Every
+        # name a parameter binds counts (`{ pad }`, `pad = f`, `...pad`), and
+        # so does an enclosing function's parameter, which a nested function
+        # captures: `function run(pad) { function go() { pad() } }`.
+        names: set[str] = set()
+        scope: Node | None = caller_node
+        while scope is not None:
+            if scope.type in cs.JS_TS_FUNCTION_NODES:
+                names.update(_js_param_names(scope))
+            scope = scope.parent
+        params = frozenset(names)
         if params:
             self._resolver.js_parameter_names[caller_qn] = params
         else:
