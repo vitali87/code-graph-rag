@@ -171,6 +171,12 @@ def test_a_method_with_a_signature_is_renamed_and_kept(
             "p.Box.assign(java.util.List<a.B>, int)",
             id="qualified-generic-params",
         ),
+        pytest.param(
+            "p.app.(auth).Greeter.greet(String)",
+            "welcome",
+            "p.app.(auth).Greeter.welcome(String)",
+            id="route-group-and-sig",
+        ),
     ],
 )
 def test_the_expected_name_keeps_the_signature(
@@ -188,6 +194,14 @@ def test_the_expected_name_keeps_the_signature(
         ("p.pkg.util.helper", "assist", "p.pkg.util.assist"),
         ("p.pkg.greeter.Greeter.greet", "welcome", "p.pkg.greeter.Greeter.welcome"),
         ("p.Greeter", "Hello", "p.Hello"),
+        # A Next.js route-group directory `(auth)` is a path segment of its
+        # own, not a signature: only the last name changes.
+        ("p.app.(auth).page.helper", "assist", "p.app.(auth).page.assist"),
+        (
+            "p.app.(shop).page.Widget.render",
+            "draw",
+            "p.app.(shop).page.Widget.draw",
+        ),
     ],
 )
 def test_a_name_without_a_signature_is_renamed_as_before(
