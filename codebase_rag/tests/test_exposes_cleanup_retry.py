@@ -190,20 +190,22 @@ def test_an_owed_cleanup_costs_no_rescan_while_exposes_is_off(tmp_path: Path) ->
     )
 
 
-def test_an_unwritable_marker_leaves_no_cache_to_trust(
+def test_an_unwritable_marker_leaves_no_snapshot_to_trust(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Without the marker nothing on disk owed the cleanup, and a run that
-    # published its cache let the next unchanged run take the in-sync path.
+    # committed its caches let the next unchanged run take the in-sync path.
     root = tmp_path / "proj"
-    root.mkdir()
-    api = root / "api.py"
+    (root / "pkg").mkdir(parents=True)
+    api = root / "pkg" / "api.py"
     api.write_text(ROUTES, encoding="utf-8")
     store = _Recording()
     _updater(root, store).run(force=True)
     cache = state_file(root, cs.HASH_CACHE_FILENAME)
+    snapshot = state_file(root, cs.DIR_MTIMES_FILENAME)
     marker = state_file(root, cs.EXPOSES_CLEANUP_PENDING_FILENAME)
     assert cache.is_file()
+    assert snapshot.is_file()
 
     real_touch = Path.touch
 
@@ -223,23 +225,14 @@ def test_an_unwritable_marker_leaves_no_cache_to_trust(
         blind.run()
     assert blind._exposes_cleanup_skipped, "the run must have skipped a cleanup"
     assert not marker.exists()
-    assert not cache.exists(), "a published cache would hide the owed cleanup"
+    assert not snapshot.exists(), "a committed map would hide the owed cleanup"
     assert _updater(root, store)._is_already_in_sync() is False
+    # The hash cache stays: a single-file run finds its project root by it,
+    # and without it `pkg/api.py` would root at `pkg` (Greptile, PR #3625).
+    assert cache.is_file()
+    assert gu._project_root_for_single_file(api.resolve()) == root.resolve()
 
     store.writes.clear()
     _updater(root, store).run()
     assert gu.CYPHER_DELETE_HANDLER_EXPOSES in store.writes
-    assert cache.is_file()
-
-
-def test_a_scoped_pass_keeps_a_cache_it_could_not_drop(tmp_path: Path) -> None:
-    root = tmp_path / "proj"
-    root.mkdir()
-    cache = state_file(root, cs.HASH_CACHE_FILENAME)
-    gu._save_hash_cache(cache, {"api.py": "old"})
-    updater = _updater(root, _StatefulIngestor())
-    updater._exposes_cleanup_unrecorded = True
-    updater._reingest_update_hashes(
-        cache, {"api.py": "old"}, {"api.py": root / "api.py"}, {"api.py": b"new"}, {}
-    )
-    assert gu._load_hash_cache(cache) == {"api.py": "old"}
+    assert snapshot.is_file()

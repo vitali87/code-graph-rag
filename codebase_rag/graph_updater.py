@@ -1904,8 +1904,8 @@ class GraphUpdater:
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
         # A skipped cleanup whose marker could not be written: this run then
-        # leaves no hash cache, the only other thing that keeps the next run
-        # off the in-sync path.
+        # leaves no directory-mtime map, which keeps the next run off the
+        # in-sync path just as the marker would.
         self._exposes_cleanup_unrecorded = False
         self._prune_settled = False
 
@@ -3418,17 +3418,19 @@ class GraphUpdater:
             # Updating an existing one stays correct: such a run is rooted
             # at the ancestor that owns that cache, so the entries it writes
             # are keyed against the same root every other run uses.
-            if self._exposes_cleanup_unrecorded:
-                # The missing cache is what owes the skipped cleanup now.
-                hash_cache_published = False
-            elif self._single_file is not None and not cache_path.is_file():
+            if self._single_file is not None and not cache_path.is_file():
                 logger.info(ls.HASH_CACHE_SKIPPED_SINGLE_FILE, path=cache_path)
             else:
                 hash_cache_published = _publish_hash_cache(
                     cache_path, new_hashes, observed_at
                 )
             self._pending_hash_cache = None
-        if self._pending_dir_mtimes is not None and hash_cache_published:
+        # The missing map is what owes an unrecorded EXPOSES cleanup.
+        if (
+            self._pending_dir_mtimes is not None
+            and hash_cache_published
+            and not self._exposes_cleanup_unrecorded
+        ):
             _save_dir_mtimes(*self._pending_dir_mtimes)
         self._pending_dir_mtimes = None
         self._pending_cache_observed_at = None
@@ -3645,27 +3647,24 @@ class GraphUpdater:
     def _owe_exposes_cleanup_without_marker(self, marker: Path, error: OSError) -> None:
         """Keep a skipped cleanup owed when its marker cannot be written.
 
-        A run that finds no hash cache cannot take the in-sync path, so the
-        previous cache goes now and this run writes none of its own
-        (`_commit_run_state`, `_reingest_update_hashes`). The next run then
-        re-indexes the project, and its endpoint passes cover every module.
-        Removed now rather than at the commit, so a run that stops before
-        committing cannot leave the old cache trusted either.
+        A run with no directory-mtime map cannot take the in-sync path, and
+        nothing but that check reads the map, so dropping it costs the next
+        run its shortcut and nothing else: it hashes as usual and its
+        endpoint passes cover every module. The hash cache stays, because a
+        single-file run finds its project root by it (Greptile, PR #3625).
+        Dropped now rather than at the commit, so a run that stops before
+        committing cannot leave the old map trusted either; the commit then
+        writes none (`_commit_run_state`).
         """
         self._exposes_cleanup_unrecorded = True
         logger.warning(ls.EXPOSES_CLEANUP_NOT_RECORDED.format(path=marker, error=error))
-        # Either file missing refuses the in-sync path on its own, so each is
-        # worth removing even when the other cannot be.
-        for stale in (
-            self.state_dir / cs.HASH_CACHE_FILENAME,
-            self.state_dir / cs.DIR_MTIMES_FILENAME,
-        ):
-            try:
-                stale.unlink(missing_ok=True)
-            except OSError as e:
-                logger.warning(
-                    ls.EXPOSES_CLEANUP_CACHE_KEPT.format(path=stale, error=e)
-                )
+        snapshot = self.state_dir / cs.DIR_MTIMES_FILENAME
+        try:
+            snapshot.unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning(
+                ls.EXPOSES_CLEANUP_SNAPSHOT_KEPT.format(path=snapshot, error=e)
+            )
 
     def _emit_route_call_endpoints(self, only: set[str] | None = None) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
@@ -9963,10 +9962,8 @@ class GraphUpdater:
         gone: dict[str, Path],
     ) -> None:
         # Keep the hash cache honest so the next update_repository does not
-        # re-parse what this call already applied. Not when a skipped EXPOSES
-        # cleanup could not be recorded: the cache was dropped to owe it, and
-        # one that failed to drop must not be brought up to date.
-        if self._exposes_cleanup_unrecorded or not cache_path.is_file():
+        # re-parse what this call already applied.
+        if not cache_path.is_file():
             return
         try:
             observed_at = cache_path.stat().st_mtime

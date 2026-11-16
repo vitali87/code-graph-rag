@@ -1478,10 +1478,10 @@ PRUNE_PENDING_NOT_UPDATED = "Orphan-prune pending marker not updated"
 EXPOSES_CLEANUP_MARKER_NOT_UPDATED = "EXPOSES cleanup marker not updated"
 EXPOSES_CLEANUP_NOT_RECORDED = (
     "Could not record a skipped EXPOSES cleanup in {path} ({error}). This run "
-    "keeps no hash cache, so the next run re-indexes the project and retries "
-    "the cleanup."
+    "keeps no directory-mtime map instead, so the next run cannot treat the "
+    "project as in sync and retries the cleanup."
 )
-EXPOSES_CLEANUP_CACHE_KEPT = (
+EXPOSES_CLEANUP_SNAPSHOT_KEPT = (
     "Could not remove {path} ({error}). The next run may treat the project as "
     "in sync and keep stale EXPOSES edges: delete the file by hand, or re-run "
     "once the path is writable."
