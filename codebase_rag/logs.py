@@ -1475,6 +1475,17 @@ PRUNE_SKIPPED_REGISTRY_UNREAD = (
     "run prunes them."
 )
 PRUNE_PENDING_NOT_UPDATED = "Orphan-prune pending marker not updated"
+EXPOSES_CLEANUP_MARKER_NOT_UPDATED = "EXPOSES cleanup marker not updated"
+EXPOSES_CLEANUP_NOT_RECORDED = (
+    "Could not record a skipped EXPOSES cleanup in {path} ({error}). This run "
+    "keeps no hash cache, so the next run re-indexes the project and retries "
+    "the cleanup."
+)
+EXPOSES_CLEANUP_CACHE_KEPT = (
+    "Could not remove {path} ({error}). The next run may treat the project as "
+    "in sync and keep stale EXPOSES edges: delete the file by hand, or re-run "
+    "once the path is writable."
+)
 PRUNE_QUERY_FAILED = "Could not read {label} paths from the graph; skipping its prune."
 PRUNE_FOUND = "Found {count} orphan {label} nodes to remove"
 PRUNE_DELETING = "Pruning orphan {label}: {path}"

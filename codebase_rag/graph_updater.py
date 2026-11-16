@@ -1903,6 +1903,10 @@ class GraphUpdater:
         # which cannot tell a nested project's rows from this one's.
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        # A skipped cleanup whose marker could not be written: this run then
+        # leaves no hash cache, the only other thing that keeps the next run
+        # off the in-sync path.
+        self._exposes_cleanup_unrecorded = False
         self._prune_settled = False
 
         self.factory = ProcessorFactory(
@@ -3037,6 +3041,7 @@ class GraphUpdater:
         self._registered_projects = None
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        self._exposes_cleanup_unrecorded = False
         self._prune_settled = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost(previous_root)
@@ -3413,7 +3418,10 @@ class GraphUpdater:
             # Updating an existing one stays correct: such a run is rooted
             # at the ancestor that owns that cache, so the entries it writes
             # are keyed against the same root every other run uses.
-            if self._single_file is not None and not cache_path.is_file():
+            if self._exposes_cleanup_unrecorded:
+                # The missing cache is what owes the skipped cleanup now.
+                hash_cache_published = False
+            elif self._single_file is not None and not cache_path.is_file():
                 logger.info(ls.HASH_CACHE_SKIPPED_SINGLE_FILE, path=cache_path)
             else:
                 hash_cache_published = _publish_hash_cache(
@@ -3611,15 +3619,53 @@ class GraphUpdater:
         skipped one leaves the marker for the next (issue #2193).
         """
         marker = self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME
-        try:
-            if self._exposes_cleanup_skipped:
+        if self._exposes_cleanup_skipped:
+            try:
                 marker.touch()
-            elif cleared_by_this_run:
-                marker.unlink(missing_ok=True)
+            except OSError as e:
+                self._owe_exposes_cleanup_without_marker(marker, e)
+            return
+        # Only a run that could delete settles the debt. With EXPOSES capture
+        # off both passes return before their cleanups, and a sink that cannot
+        # query deletes nothing; settling there would let the next run take
+        # the in-sync path past edges nobody removed.
+        if not (cleared_by_this_run and self._can_clean_exposes()):
+            return
+        try:
+            marker.unlink(missing_ok=True)
         except OSError:
-            # Best effort, as every other state file here: a read-only tree
-            # must not lose the run to a marker it could not write.
-            logger.debug("EXPOSES cleanup marker not updated")
+            # A marker left in place only costs the next run a rescan.
+            logger.debug(ls.EXPOSES_CLEANUP_MARKER_NOT_UPDATED)
+
+    def _can_clean_exposes(self) -> bool:
+        return self.capture.rel_enabled(cs.RelationshipType.EXPOSES) and isinstance(
+            self.ingestor, QueryProtocol
+        )
+
+    def _owe_exposes_cleanup_without_marker(self, marker: Path, error: OSError) -> None:
+        """Keep a skipped cleanup owed when its marker cannot be written.
+
+        A run that finds no hash cache cannot take the in-sync path, so the
+        previous cache goes now and this run writes none of its own
+        (`_commit_run_state`, `_reingest_update_hashes`). The next run then
+        re-indexes the project, and its endpoint passes cover every module.
+        Removed now rather than at the commit, so a run that stops before
+        committing cannot leave the old cache trusted either.
+        """
+        self._exposes_cleanup_unrecorded = True
+        logger.warning(ls.EXPOSES_CLEANUP_NOT_RECORDED.format(path=marker, error=error))
+        # Either file missing refuses the in-sync path on its own, so each is
+        # worth removing even when the other cannot be.
+        for stale in (
+            self.state_dir / cs.HASH_CACHE_FILENAME,
+            self.state_dir / cs.DIR_MTIMES_FILENAME,
+        ):
+            try:
+                stale.unlink(missing_ok=True)
+            except OSError as e:
+                logger.warning(
+                    ls.EXPOSES_CLEANUP_CACHE_KEPT.format(path=stale, error=e)
+                )
 
     def _emit_route_call_endpoints(self, only: set[str] | None = None) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
@@ -7572,8 +7618,15 @@ class GraphUpdater:
             return True
         # A skipped EXPOSES cleanup is owed: nothing on disk changed, so no
         # hash below would send the run into the endpoint passes that owe it
-        # (issue #2193).
-        if (self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
+        # (issue #2193). Only a run that can do the cleanup is sent: with
+        # EXPOSES capture off, or a sink that cannot query, it would delete
+        # nothing and settle nothing, so every run would rescan for it.
+        # Turning capture back on changes the parser fingerprint, and that run
+        # re-parses and pays the debt.
+        if (
+            self._can_clean_exposes()
+            and (self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists()
+        ):
             return True
         if (self.state_dir / cs.PRUNE_PENDING_FILENAME).exists():
             return True
@@ -9910,8 +9963,10 @@ class GraphUpdater:
         gone: dict[str, Path],
     ) -> None:
         # Keep the hash cache honest so the next update_repository does not
-        # re-parse what this call already applied.
-        if not cache_path.is_file():
+        # re-parse what this call already applied. Not when a skipped EXPOSES
+        # cleanup could not be recorded: the cache was dropped to owe it, and
+        # one that failed to drop must not be brought up to date.
+        if self._exposes_cleanup_unrecorded or not cache_path.is_file():
             return
         try:
             observed_at = cache_path.stat().st_mtime
@@ -10040,6 +10095,7 @@ class GraphUpdater:
         self._registered_projects = None
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        self._exposes_cleanup_unrecorded = False
         self._prune_settled = False
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
