@@ -1525,7 +1525,8 @@ def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
             continue
         # A class body reads a name from the scopes around it until it binds
         # it, so a mutation there can change the module's list before the
-        # class's own `__all__` exists (CodeRabbit, PR #3624).
+        # class's own `__all__` exists (CodeRabbit, PR #3624). One after a
+        # plain class-body assignment of `__all__` changes the class's list.
         seen = uses.get(scope.id, set())
         if (
             use is _NameUse.MUTATE
@@ -1533,8 +1534,46 @@ def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
             and _NameUse.BIND in seen
             and _NameUse.GLOBAL not in seen
             and _python_module_owns(_python_name_scope(scope), uses)
+            and not any(
+                bound_scope.id == scope.id
+                and bound.end_byte <= name.start_byte
+                and _python_class_assigns(bound, scope)
+                for bound, bound_use, bound_scope in found
+                if bound_use is _NameUse.BIND
+            )
         ):
             yield name
+
+
+def _python_class_assigns(name: Node, klass: Node) -> bool:
+    """Whether `name` is the target of a plain assignment that is a
+    statement of `klass`'s body, so it binds a fresh class-local value each
+    time the body runs (`__all__ = []` or `x = __all__ = []`). An augmented
+    assignment or one in a block or expression may not rebind it first."""
+    child, current = name, name.parent
+    if (
+        current is None
+        or current.type != cs.TS_PY_ASSIGNMENT
+        or not _is_field(current, cs.FIELD_LEFT, child)
+        or current.child_by_field_name(cs.FIELD_RIGHT) is None
+    ):
+        return False
+    while current is not None and current.type == cs.TS_PY_ASSIGNMENT:
+        child, current = current, current.parent
+        if (
+            current is not None
+            and current.type == cs.TS_PY_ASSIGNMENT
+            and not _is_field(current, cs.FIELD_RIGHT, child)
+        ):
+            return False
+    if current is None or current.type != cs.TS_PY_EXPRESSION_STATEMENT:
+        return False
+    block = current.parent
+    return (
+        block is not None
+        and block.type == cs.TS_PY_BLOCK
+        and _is_field(klass, cs.FIELD_BODY, block)
+    )
 
 
 def _python_dunder_all_change(statement: Node) -> list[str] | None:

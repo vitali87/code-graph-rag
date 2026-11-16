@@ -529,6 +529,18 @@ ALL_FORMS = {
         "        pass\n\n"
         "    __all__ = []\n"
     ),
+    # Once the class body assigns its own `__all__`, a mutation after it
+    # changes the class's list and the module's stays readable, while one
+    # after an assignment in a block may still reach the module's
+    # (CodeRabbit, PR #3624).
+    "class_body_bound_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = []\n'
+        '    __all__.append("Client")\n'
+    ),
+    "class_body_bound_in_a_branch_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    if False:\n'
+        '        __all__ = []\n    __all__.append("Client")\n'
+    ),
 }
 # The packages whose `Spare` is checked, and whether their star binds it.
 SPARE_BOUND = {
@@ -695,6 +707,14 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         ("via_nested_default_appended", "nested_default_appended._a.Client.send"),
         ("via_skipped_branch_default", "skipped_branch_default._a.Client.send"),
         ("via_class_body_default", "class_body_default._a.Client.send"),
+        (
+            "via_class_body_bound_then_appended",
+            "class_body_bound_then_appended._b.Client.send",
+        ),
+        (
+            "via_class_body_bound_in_a_branch_then_appended",
+            "class_body_bound_in_a_branch_then_appended._a.Client.send",
+        ),
         ("via_later_named", "later_named._impl.Client.send"),
         (
             "via_bare_with",
@@ -764,6 +784,8 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         "a-nested-defs-default-falls-back",
         "a-default-in-a-skipped-branch-falls-back",
         "a-class-body-default-falls-back",
+        "a-class-body-append-after-its-own-binding-keeps-it-readable",
+        "a-class-body-append-after-a-branch-binding-falls-back",
         "a-later-by-name-import-of-another-name-keeps-the-star",
         "with-on-a-bare-name-imported-through-a-star",
     ],
