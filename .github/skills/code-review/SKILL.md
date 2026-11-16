@@ -16,7 +16,8 @@ Weight the review accordingly.
 ### Graph-edge correctness
 - Does a new or changed construct produce every edge it should, and no edge it
   should not? A constructor call is the recurring example: it should record
-  `INSTANTIATES` on the class *and* `CALLS` on the constructor.
+  `INSTANTIATES` on the class *and* `CALLS` on the constructor when it has a
+  graph node.
 - Check the qualified name the edge is attached to. Name-mangling bugs recur
   here: duplicate-suffixed classes, verbatim identifiers (`@class` in C#),
   named constructors, generics (`Box<int>()`) and marker-stripping passes have
