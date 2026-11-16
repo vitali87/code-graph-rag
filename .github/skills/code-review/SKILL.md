@@ -30,8 +30,8 @@ Weight the review accordingly.
 - A fix in one language's parser usually applies to its siblings. If the change
   touches `dart/`, ask whether `csharp/`, `cpp/`, and the rest share the shape
   and need the same fix — or say explicitly why they do not.
-- Grammars are optional at install time. Code and tests must not assume a
-  grammar is present; tests for one language should skip cleanly without it.
+- Code and tests must not assume a grammar is present; tests for one language
+  should skip cleanly without it.
 
 ### Tests
 - Every behavioral fix needs a fixture reproducing the exact construct, and the
