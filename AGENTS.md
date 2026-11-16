@@ -48,9 +48,6 @@ To move them:
 5. Run `codebase_rag/tests/test_native_trees.py` and
    `cargo test --manifest-path rust/cgr_graph_rs/Cargo.toml`.
 
-If only one side moves, nothing breaks for users: the bridge sees a
-py-tree-sitter it was not checked against, turns itself off, and the Python
-code runs, only slower. `test_native_trees.py` fails in that case, and when
-the pins disagree with the checked pair, so the slowdown cannot slip in
-unnoticed. Dependabot bumps the `pyproject.toml` pin on its own; such a pull
+`test_native_trees.py` fails when the pins disagree with the checked pair.
+Dependabot bumps the `pyproject.toml` pin on its own; such a pull
 request fails those tests until steps 1 to 5 are done.
