@@ -339,3 +339,33 @@ def test_a_marker_already_owing_needs_no_fallback(
     assert marker.exists()
     assert snapshot.is_file()
     assert not updater._exposes_cleanup_unrecorded
+
+
+def test_a_later_scoped_pass_confirms_only_what_it_reparsed(tmp_path: Path) -> None:
+    # A later reingest, with EXPOSES off even, re-parses the mounting module
+    # alone: it confirms that file, and the handlers' module it never touched
+    # stays unconfirmed, so the next run is still sent to do the cleanup
+    # (CodeRabbit, PR #3625).
+    root = tmp_path / "proj"
+    root.mkdir()
+    main = root / "main.py"
+    main.write_text("import routes\n", encoding="utf-8")
+    (root / "routes.py").write_text(ROUTES, encoding="utf-8")
+    store = _StatefulIngestor()
+    _updater(root, store).run(force=True)
+    cache = state_file(root, cs.HASH_CACHE_FILENAME)
+    # What the fallback leaves when neither the marker nor the map would go.
+    gu._save_hash_cache(cache, gu._unconfirmed(gu._load_hash_cache(cache)))
+
+    later = _updater(root, store, resolve_capture([]))
+    later._reingest_update_hashes(
+        cache,
+        gu._load_hash_cache(cache),
+        {"main.py": main},
+        {"main.py": main.read_bytes()},
+        {},
+    )
+    hashes = gu._load_hash_cache(cache)
+    assert hashes["main.py"] != cs.HASH_CACHE_UNREADABLE
+    assert hashes["routes.py"] == cs.HASH_CACHE_UNREADABLE
+    assert _updater(root, store)._is_already_in_sync() is False
