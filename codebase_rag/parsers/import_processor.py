@@ -1518,7 +1518,22 @@ def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
         uses.setdefault(scope.id, set()).add(use)
         found.append((name, use, scope))
     for name, use, scope in found:
-        if use in (_NameUse.BIND, _NameUse.MUTATE) and _python_module_owns(scope, uses):
+        if use not in (_NameUse.BIND, _NameUse.MUTATE):
+            continue
+        if _python_module_owns(scope, uses):
+            yield name
+            continue
+        # A class body reads a name from the scopes around it until it binds
+        # it, so a mutation there can change the module's list before the
+        # class's own `__all__` exists (CodeRabbit, PR #3624).
+        seen = uses.get(scope.id, set())
+        if (
+            use is _NameUse.MUTATE
+            and scope.type == cs.TS_PY_CLASS_DEFINITION
+            and _NameUse.BIND in seen
+            and _NameUse.GLOBAL not in seen
+            and _python_module_owns(_python_name_scope(scope), uses)
+        ):
             yield name
 
 
@@ -1538,17 +1553,41 @@ def _python_dunder_all_change(statement: Node) -> list[str] | None:
     if not writes:
         return None
     # `def f(x=__all__.append("A"))` changes the module's list as the def
-    # runs; any other change here is one the literals do not spell.
+    # runs, and only when that def runs as this statement does; any other
+    # change here is one the literals do not spell.
     names: list[str] = []
     for write in sorted(writes, key=lambda w: w.start_byte):
-        names += _python_dunder_all_default_part(write)
+        names += _python_dunder_all_default_part(write, statement)
     return names
 
 
-def _python_dunder_all_default_part(write: Node) -> list[str]:
+def _python_dunder_all_default_runs(defined: Node, statement: Node) -> bool:
+    """Whether `defined`, the def or lambda a parameter default belongs to,
+    runs exactly once, unconditionally, as `statement` runs."""
+    if defined.type == cs.TS_PY_FUNCTION_DEFINITION:
+        parent = defined.parent
+        return defined.id == statement.id or (
+            parent is not None
+            and parent.type == cs.TS_PY_DECORATED_DEFINITION
+            and parent.id == statement.id
+        )
+    if defined.type != cs.TS_PY_LAMBDA:
+        return False
+    # `name = lambda x=__all__.append("A"): ...`, the statement's expression.
+    assignment = next(iter(statement.named_children), None)
+    return (
+        statement.type == cs.TS_PY_EXPRESSION_STATEMENT
+        and assignment is not None
+        and assignment.type == cs.TS_PY_ASSIGNMENT
+        and _is_field(assignment, cs.TS_FIELD_RIGHT, defined)
+    )
+
+
+def _python_dunder_all_default_part(write: Node, statement: Node) -> list[str]:
     """What a parameter default that is exactly an `__all__.append("x")` or
-    `__all__.extend([...])` call adds; raises _UnreadableDunderAll for any
-    other write of the module's `__all__`."""
+    `__all__.extend([...])` call adds, when its def or lambda runs exactly
+    once as `statement` does; raises _UnreadableDunderAll for any other
+    write of the module's `__all__`."""
     call = write.parent.parent if write.parent is not None else None
     if call is None or call.type != cs.TS_PY_CALL:
         raise _UnreadableDunderAll
@@ -1563,6 +1602,20 @@ def _python_dunder_all_default_part(write: Node) -> list[str]:
         parameter is None
         or parameter.type not in cs.PY_NAMED_PARAMETER_TYPES
         or not _is_field(parameter, cs.FIELD_VALUE, value)
+    ):
+        raise _UnreadableDunderAll
+    # A default runs when its def or lambda is defined. The parameter's
+    # parent is the parameters node, and that node's parent is the callable;
+    # it counts only when that callable runs as the statement does. A def in
+    # a branch, class body or another callable's default does not (Greptile
+    # and CodeRabbit, PR #3624).
+    parameters = parameter.parent
+    defined = parameters.parent if parameters is not None else None
+    if (
+        parameters is None
+        or defined is None
+        or parameters.type not in (cs.TS_PY_PARAMETERS, cs.TS_PY_LAMBDA_PARAMETERS)
+        or not _python_dunder_all_default_runs(defined, statement)
     ):
         raise _UnreadableDunderAll
     return _readable(_python_dunder_all_call_part(call))
