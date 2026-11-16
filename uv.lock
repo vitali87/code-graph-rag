@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -598,7 +598,7 @@ docs = [{ name = "zensical", specifier = "==0.0.73" }]
 fuzz = [{ name = "atheris", specifier = ">=2.3.0" }]
 rust-wheels = [
     { name = "maturin", specifier = "==1.16.0" },
-    { name = "ziglang", marker = "sys_platform == 'linux'", specifier = "==0.17.0" },
+    { name = "ziglang", marker = "sys_platform == 'linux'", specifier = "==0.17.1" },
 ]
 
 [[package]]
@@ -3831,11 +3831,14 @@ wheels = [
 
 [[package]]
 name = "ziglang"
-version = "0.17.0"
+version = "0.17.1"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/78/e6/130dd7c78d7556a7d2a8975cf9e50417a31c1e789428d3f8571ef71aa636/ziglang-0.17.0-py3-none-manylinux_2_12_i686.manylinux2010_i686.musllinux_1_1_i686.whl", hash = "sha256:81e3057db80fb459d1ab13c3db13dbcb1e99e91c36281661831d1916eba924de", size = 104572026, upload-time = "2026-10-08T01:00:33.633Z" },
-    { url = "https://files.pythonhosted.org/packages/fe/6f/e1c380fe61db36cb464d5d4d18c557338812500986885373e2550d4ebf6b/ziglang-0.17.0-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.musllinux_1_1_x86_64.whl", hash = "sha256:97079827064a7492cce5541ceb438ae8003ce1e54e399676da2d62fb7a5dc08b", size = 101011302, upload-time = "2026-10-08T01:00:41.179Z" },
-    { url = "https://files.pythonhosted.org/packages/02/21/abee2f0524f54fe3e8783748b9df79bb07d4b955e6b465677d1cfbda335c/ziglang-0.17.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl", hash = "sha256:d2804f94f54f7fcf8169f4b212a619ad688a4e2e6592e976f0cf2e58e2cd8af3", size = 97992724, upload-time = "2026-10-08T01:00:48.517Z" },
-    { url = "https://files.pythonhosted.org/packages/2a/75/de0d1cbe3b6fc6c878f55c42039e8e5a0f7bca1055d6d584c71be1469bd5/ziglang-0.17.0-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.musllinux_1_1_armv7l.whl", hash = "sha256:2f1506fbd4080ae55c7f3c5abe99cce226e563827f50e8f143e36decc615310f", size = 99031647, upload-time = "2026-10-08T01:00:55.786Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/db/1f9ae88f9399801f49e2ca297998a9e8602c23c724616e5d770b4f808b8e/ziglang-0.17.1-py3-none-manylinux_2_12_i686.manylinux2010_i686.musllinux_1_1_i686.whl", hash = "sha256:d0549d5db63961ad9ed83ef628a45e3309542410dbcb6010116f4f2a3274d966", size = 104647428, upload-time = "2026-11-05T12:12:13.784Z" },
+    { url = "https://files.pythonhosted.org/packages/59/e3/2a34676370a11c36b7cd04ffb2439c1089c0530cf4b01408c77cf7f8d9c3/ziglang-0.17.1-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.musllinux_1_1_x86_64.whl", hash = "sha256:ea6cc5d87b033cf0aedfbc8f9549a908cae6c50ac31f1698188fa48a74524b54", size = 101083562, upload-time = "2026-11-05T12:12:21.302Z" },
+    { url = "https://files.pythonhosted.org/packages/91/72/bb7c4f098ba3e535fa2ebefd9f26327ba63fb0672562959255cb5dd37aff/ziglang-0.17.1-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl", hash = "sha256:b7c5f02fccd40f89b999ee16a1f5ddced56e6182370f8affe494bcf8a28cf07e", size = 98063064, upload-time = "2026-11-05T12:12:28.786Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/c8/c7c2cc2da982743373a87ea115b9a5c8509396766fe1e29e49cbc19fd6b1/ziglang-0.17.1-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.musllinux_1_1_armv7l.whl", hash = "sha256:7ec229ead4a08f3bc537ed33fa8c0f811739b81a0d05afbea89db30afb4df1cc", size = 99097266, upload-time = "2026-11-05T12:12:43.789Z" },
+    { url = "https://files.pythonhosted.org/packages/04/af/b1fdcbe505ebbdc49dcc0ccd119d09d224694bdfdf112abd09a1b7d2b703/ziglang-0.17.1-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.musllinux_1_1_ppc64le.whl", hash = "sha256:d3bf27478d4593f2df7daf5c59b616a543b8f9e2cc9235bef84d8e54862a4334", size = 107462392, upload-time = "2026-11-05T12:12:54.4Z" },
+    { url = "https://files.pythonhosted.org/packages/de/da/c3e542f85d324cf7b785bbbd5c0c7b955d0e3fb6e78a0b1a33a0590b611f/ziglang-0.17.1-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.musllinux_1_1_s390x.whl", hash = "sha256:87f24e5cdca55f5d47c1e20570eebb61a53957fafe4c35c69740e13affe407ba", size = 107081281, upload-time = "2026-11-05T12:13:04.825Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/47/03065971cc3300b6b470bda327e4871f4751cdc593c36b12d6bf367b2749/ziglang-0.17.1-py3-none-manylinux_2_31_riscv64.musllinux_1_1_riscv64.whl", hash = "sha256:d65ae4223b0c351cb3b4596262b8d9773acc9ca94ef8ea9b5fe3ddfa07dd204f", size = 101457615, upload-time = "2026-11-05T12:13:14.73Z" },
 ]

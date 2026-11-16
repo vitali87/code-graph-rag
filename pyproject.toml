@@ -356,7 +356,7 @@ fuzz = [
 rust-wheels = [
     "maturin==1.16.0",
     # Only the Linux wheels are linked with zig, and it ships no Windows build.
-    "ziglang==0.17.0; sys_platform == 'linux'",
+    "ziglang==0.17.1; sys_platform == 'linux'",
 ]
 
 [tool.bandit]
