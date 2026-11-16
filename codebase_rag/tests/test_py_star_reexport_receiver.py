@@ -330,6 +330,9 @@ def test_a_private_name_is_not_taken_through_a_star(graph: RecordedGraph) -> Non
 # falls back to binding every public name, and statements that do not touch
 # `__all__` leave it readable.
 OTHER = "class Other:\n    pass\n\n\n"
+# Public in every `_a`, listed in no `__all__` but one: bound only when a
+# star falls back to every public name, so it tells a read list from that.
+SPARE = "\n\nclass Spare:\n    def send(self, request):\n        return request\n"
 ALL_FORMS = {
     "appended": '__all__ = ["Other"]\n__all__.append("Client")\n',
     "extended": '__all__ = ["Other"]\n__all__.extend(["Client"])\n',
@@ -477,6 +480,50 @@ ALL_FORMS = {
     "walrus_in_a_comprehension": (
         '__all__ = ["Other"]\n[(__all__ := ["Other", "Client"]) for _ in (1,)]\n'
     ),
+    # A parameter default runs as its def or lambda is defined, in the
+    # enclosing scope, so its append or extend is the module's (#3578).
+    "default_appended": (
+        '__all__ = ["Other"]\n\n\ndef _helper(__all__=__all__.append("Client")):\n'
+        "    pass\n"
+    ),
+    "default_extended": (
+        '__all__ = ["Other"]\n\n\ndef _helper(flag=(__all__.extend(["Client"]))):\n'
+        "    pass\n"
+    ),
+    "lambda_default_appended": (
+        '__all__ = ["Other"]\n_helper = lambda __all__=__all__.append("Client"): None\n'
+    ),
+    "two_defaults_appended": (
+        "__all__ = []\n\n\n"
+        'def _helper(a=__all__.append("Client"), *, b=__all__.append("Spare")):\n'
+        "    pass\n"
+    ),
+    "default_appended_name": (
+        'NAME = "Client"\n__all__ = ["Other"]\n\n\n'
+        "def _helper(__all__=__all__.append(NAME)):\n    pass\n"
+    ),
+    "default_walrus": (
+        '__all__ = ["Other"]\n\n\n'
+        'def _helper(flag=(__all__ := ["Other", "Client"])):\n    pass\n'
+    ),
+    "default_concatenated": (
+        '__all__ = ["Other"]\n\n\ndef _helper(flag=(__all__ + ["Client"])):\n    pass\n'
+    ),
+    "nested_default_appended": (
+        '__all__ = ["Other"]\n\n\ndef _outer():\n'
+        '    def _inner(flag=__all__.append("Client")):\n        pass\n'
+    ),
+}
+# The packages whose `Spare` is checked, and whether their star binds it.
+SPARE_BOUND = {
+    "default_appended": False,
+    "default_extended": False,
+    "lambda_default_appended": False,
+    "two_defaults_appended": True,
+    "default_appended_name": True,
+    "default_walrus": True,
+    "default_concatenated": False,
+    "nested_default_appended": True,
 }
 
 # `Pool.__enter__` hands back a `Connection`, so typing `with Pool() as c`
@@ -522,6 +569,11 @@ ALL_APP = (
         "    client.send(1)\n"
         for package in (*ALL_FORMS, "later_named")
     )
+    + "".join(
+        f"\n\ndef via_{package}_spare():\n    spare = {package}.Spare()\n"
+        "    spare.send(1)\n"
+        for package in SPARE_BOUND
+    )
     + """
 
 def via_bare_with():
@@ -535,7 +587,7 @@ def via_bare_with():
 def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     root = tmp_path_factory.mktemp("starall") / "starall"
     for package, dunder_all in ALL_FORMS.items():
-        _write(root, f"{package}/_a.py", f"{dunder_all}\n\n{OTHER}{KLASS}")
+        _write(root, f"{package}/_a.py", f"{dunder_all}\n\n{OTHER}{KLASS}{SPARE}")
         _write(root, f"{package}/_b.py", KLASS)
         _write(root, f"{package}/__init__.py", "from ._b import *\nfrom ._a import *\n")
     _write(root, "imported_all/_base.py", '__all__ = ["Client"]\n')
@@ -615,6 +667,14 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
             "via_walrus_in_a_comprehension",
             "walrus_in_a_comprehension._a.Client.send",
         ),
+        ("via_default_appended", "default_appended._a.Client.send"),
+        ("via_default_extended", "default_extended._a.Client.send"),
+        ("via_lambda_default_appended", "lambda_default_appended._a.Client.send"),
+        ("via_two_defaults_appended", "two_defaults_appended._a.Client.send"),
+        ("via_default_appended_name", "default_appended_name._a.Client.send"),
+        ("via_default_walrus", "default_walrus._a.Client.send"),
+        ("via_default_concatenated", "default_concatenated._b.Client.send"),
+        ("via_nested_default_appended", "nested_default_appended._a.Client.send"),
         ("via_later_named", "later_named._impl.Client.send"),
         (
             "via_bare_with",
@@ -674,6 +734,14 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         "a-global-in-a-class-body-falls-back",
         "an-item-assignment-in-a-def-falls-back",
         "a-walrus-in-a-comprehension-falls-back",
+        "a-defaults-append-is-the-modules",
+        "a-defaults-extend-is-the-modules",
+        "a-lambda-defaults-append-is-the-modules",
+        "two-defaults-both-append",
+        "a-defaults-append-of-a-non-literal-falls-back",
+        "a-walrus-in-a-default-falls-back",
+        "a-default-that-only-reads-it-keeps-it-readable",
+        "a-nested-defs-default-falls-back",
         "a-later-by-name-import-of-another-name-keeps-the-star",
         "with-on-a-bare-name-imported-through-a-star",
     ],
@@ -684,4 +752,15 @@ def test_the_all_a_module_builds_decides_what_its_star_binds(
     # A `with` statement also calls its manager's `__enter__` and `__exit__`.
     expected = {callee} if isinstance(callee, str) else set(callee)
     callees = _callees(all_graph, caller)
+    assert callees == expected, callees
+
+
+@pytest.mark.parametrize("package", list(SPARE_BOUND))
+def test_a_default_that_changes_all_binds_exactly_what_it_lists(
+    all_graph: RecordedGraph, package: str
+) -> None:
+    # `Spare` is public but listed only where a default appends it, so a
+    # star binds it only then or when it falls back to every public name.
+    expected = {f"{package}._a.Spare.send"} if SPARE_BOUND[package] else set()
+    callees = _callees(all_graph, f"via_{package}_spare")
     assert callees == expected, callees

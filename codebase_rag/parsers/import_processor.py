@@ -1283,8 +1283,7 @@ def _python_dunder_all_part(statement: Node) -> list[str] | None:
     if expression is None:
         return None
     if expression.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT):
-        left = expression.child_by_field_name(cs.TS_FIELD_LEFT)
-        if left is None or left.text != cs.PY_DUNDER_ALL.encode():
+        if not _is_dunder_all_target(expression):
             return None
         return _readable(
             _python_literal_names(expression.child_by_field_name(cs.TS_FIELD_RIGHT))
@@ -1322,6 +1321,11 @@ class _UnreadableDunderAll(Exception):
 class _LateDunderAll(_UnreadableDunderAll):
     """`__all__` is changed in a def or lambda body, which can run after any
     later statement, so no later literal settles what it holds."""
+
+
+def _is_dunder_all_target(assignment: Node) -> bool:
+    left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+    return left is not None and left.text == cs.PY_DUNDER_ALL.encode()
 
 
 def _readable(names: list[str] | None) -> list[str]:
@@ -1422,11 +1426,20 @@ def _python_binding_use(node: Node, child: Node) -> _NameUse:
 def _python_name_scope(node: Node, walrus: bool = False) -> Node:
     """The def, class body, lambda or comprehension whose names `node` is
     one of, else the module. A def's or class's own name, decorators and
-    bases are the enclosing scope's, and a walrus target is the scope's
-    around its comprehension, as Python binds them."""
+    bases are the enclosing scope's, as is a parameter default, which runs
+    when the def or lambda is defined; a walrus target is the scope's around
+    its comprehension, as Python binds them."""
     child, current = node, node.parent
+    in_default = False
     while current is not None and current.parent is not None:
-        if (
+        if current.type in cs.PY_NAMED_PARAMETER_TYPES and _is_field(
+            current, cs.FIELD_VALUE, child
+        ):
+            in_default = True
+        elif in_default and current.type in cs.PY_CALLABLE_CLOSURE_TYPES:
+            # The def or lambda that owns the default is passed over.
+            in_default = False
+        elif (
             current.type == cs.TS_PY_LAMBDA
             or (current.type in cs.PY_COMPREHENSION_TYPES and not walrus)
             or (
@@ -1466,9 +1479,8 @@ def _runs_later(node: Node, statement: Node) -> bool:
     runs whenever it is called rather than where it is written."""
     child, current = node, node.parent
     while current is not None and child.id != statement.id:
-        if current.type == cs.TS_PY_LAMBDA or (
-            current.type == cs.TS_PY_FUNCTION_DEFINITION
-            and _is_field(current, cs.FIELD_BODY, child)
+        if current.type in cs.PY_CALLABLE_CLOSURE_TYPES and _is_field(
+            current, cs.FIELD_BODY, child
         ):
             return True
         child, current = current, current.parent
@@ -1523,9 +1535,37 @@ def _python_dunder_all_change(statement: Node) -> list[str] | None:
     writes = list(_python_dunder_all_writes(statement))
     if any(_runs_later(write, statement) for write in writes):
         raise _LateDunderAll
-    if writes:
+    if not writes:
+        return None
+    # `def f(x=__all__.append("A"))` changes the module's list as the def
+    # runs; any other change here is one the literals do not spell.
+    names: list[str] = []
+    for write in sorted(writes, key=lambda w: w.start_byte):
+        names += _python_dunder_all_default_part(write)
+    return names
+
+
+def _python_dunder_all_default_part(write: Node) -> list[str]:
+    """What a parameter default that is exactly an `__all__.append("x")` or
+    `__all__.extend([...])` call adds; raises _UnreadableDunderAll for any
+    other write of the module's `__all__`."""
+    call = write.parent.parent if write.parent is not None else None
+    if call is None or call.type != cs.TS_PY_CALL:
         raise _UnreadableDunderAll
-    return None
+    value = call
+    while (
+        value.parent is not None
+        and value.parent.type == cs.TS_PY_PARENTHESIZED_EXPRESSION
+    ):
+        value = value.parent
+    parameter = value.parent
+    if (
+        parameter is None
+        or parameter.type not in cs.PY_NAMED_PARAMETER_TYPES
+        or not _is_field(parameter, cs.FIELD_VALUE, value)
+    ):
+        raise _UnreadableDunderAll
+    return _readable(_python_dunder_all_call_part(call))
 
 
 def _python_dunder_all(root: Node) -> frozenset[str] | None:
@@ -1552,7 +1592,8 @@ def _python_dunder_all(root: Node) -> frozenset[str] | None:
         defined = True
         # A plain assignment replaces what earlier statements listed; only
         # `+=`, `.append` and `.extend` add to it (Greptile, PR #2989).
-        if statement.named_children[0].type == cs.TS_PY_ASSIGNMENT:
+        first = statement.named_children[0]
+        if first.type == cs.TS_PY_ASSIGNMENT and _is_dunder_all_target(first):
             names = list(part)
         elif names is not None:
             names += part
