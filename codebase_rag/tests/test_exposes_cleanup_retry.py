@@ -35,9 +35,9 @@ class _Recording(_StatefulIngestor):
         super().__init__()
         self.writes: list[str] = []
 
-    def execute_write(self, query, params=None):  # type: ignore[override]
+    def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
         self.writes.append(query)
-        return super().execute_write(query, params)
+        super().execute_write(query, params)
 
 
 class _RegistryDown(_StatefulIngestor):
@@ -207,10 +207,10 @@ def test_an_unwritable_marker_leaves_no_cache_to_trust(
 
     real_touch = Path.touch
 
-    def refuse_marker(self: Path, *args: object, **kwargs: object) -> None:
+    def refuse_marker(self: Path, mode: int = 0o666, exist_ok: bool = True) -> None:
         if self == marker:
             raise PermissionError("read-only")
-        real_touch(self, *args, **kwargs)  # type: ignore[arg-type]
+        real_touch(self, mode, exist_ok)
 
     # A context, not `monkeypatch.undo()`: that would also undo the isolated
     # CGR_HOME the suite's own fixtures set through the same monkeypatch.
