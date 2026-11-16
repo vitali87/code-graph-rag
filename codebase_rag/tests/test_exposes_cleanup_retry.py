@@ -9,6 +9,7 @@ file now refuses that path until a batch run has done it.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -190,6 +191,28 @@ def test_an_owed_cleanup_costs_no_rescan_while_exposes_is_off(tmp_path: Path) ->
     )
 
 
+_REAL_TOUCH = Path.touch
+_REAL_UNLINK = Path.unlink
+
+
+def _touch_refusing(target: Path) -> Callable[[Path, int, bool], None]:
+    def touch(self: Path, mode: int = 0o666, exist_ok: bool = True) -> None:
+        if self == target:
+            raise PermissionError("read-only")
+        _REAL_TOUCH(self, mode, exist_ok)
+
+    return touch
+
+
+def _unlink_refusing(target: Path) -> Callable[[Path, bool], None]:
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        if self == target:
+            raise PermissionError("read-only")
+        _REAL_UNLINK(self, missing_ok)
+
+    return unlink
+
+
 def test_an_unwritable_marker_leaves_no_snapshot_to_trust(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -207,17 +230,10 @@ def test_an_unwritable_marker_leaves_no_snapshot_to_trust(
     assert cache.is_file()
     assert snapshot.is_file()
 
-    real_touch = Path.touch
-
-    def refuse_marker(self: Path, mode: int = 0o666, exist_ok: bool = True) -> None:
-        if self == marker:
-            raise PermissionError("read-only")
-        real_touch(self, mode, exist_ok)
-
     # A context, not `monkeypatch.undo()`: that would also undo the isolated
     # CGR_HOME the suite's own fixtures set through the same monkeypatch.
     with monkeypatch.context() as patch:
-        patch.setattr(Path, "touch", refuse_marker)
+        patch.setattr(Path, "touch", _touch_refusing(marker))
         api.write_text(ROUTES + "\n", encoding="utf-8")
         down = _RegistryDown()
         down.__dict__.update(store.__dict__)
@@ -236,3 +252,46 @@ def test_an_unwritable_marker_leaves_no_snapshot_to_trust(
     _updater(root, store).run()
     assert gu.CYPHER_DELETE_HANDLER_EXPOSES in store.writes
     assert snapshot.is_file()
+
+
+def test_a_kept_map_holds_the_hash_cache_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With the marker unwritten and the old map kept, a fresh cache made the
+    # files this run indexed read as unchanged against that map, and the next
+    # run took the in-sync path past the owed cleanup.
+    root = tmp_path / "proj"
+    (root / "pkg").mkdir(parents=True)
+    api = root / "pkg" / "api.py"
+    api.write_text(ROUTES, encoding="utf-8")
+    store = _Recording()
+    _updater(root, store).run(force=True)
+    cache = state_file(root, cs.HASH_CACHE_FILENAME)
+    snapshot = state_file(root, cs.DIR_MTIMES_FILENAME)
+    marker = state_file(root, cs.EXPOSES_CLEANUP_PENDING_FILENAME)
+    indexed = cache.read_text(encoding="utf-8")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "touch", _touch_refusing(marker))
+        patch.setattr(Path, "unlink", _unlink_refusing(snapshot))
+        api.write_text(ROUTES + "\n", encoding="utf-8")
+        down = _RegistryDown()
+        down.__dict__.update(store.__dict__)
+        blind = _updater(root, down)
+        blind.run()
+    assert blind._exposes_cleanup_skipped, "the run must have skipped a cleanup"
+    assert snapshot.is_file()
+    assert cache.read_text(encoding="utf-8") == indexed
+    assert _updater(root, store)._is_already_in_sync() is False
+
+    # A scoped pass holds its hash update back the same way.
+    scoped = _updater(root, store)
+    scoped._exposes_map_kept = True
+    scoped._reingest_update_hashes(
+        cache,
+        gu._load_hash_cache(cache),
+        {"pkg/api.py": api},
+        {"pkg/api.py": api.read_bytes()},
+        {},
+    )
+    assert cache.read_text(encoding="utf-8") == indexed

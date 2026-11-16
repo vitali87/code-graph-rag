@@ -1905,8 +1905,10 @@ class GraphUpdater:
         self._exposes_cleanup_skipped = False
         # A skipped cleanup whose marker could not be written: this run then
         # leaves no directory-mtime map, which keeps the next run off the
-        # in-sync path just as the marker would.
+        # in-sync path just as the marker would. When the old map could not
+        # be dropped either, the hash cache is held back as well.
         self._exposes_cleanup_unrecorded = False
+        self._exposes_map_kept = False
         self._prune_settled = False
 
         self.factory = ProcessorFactory(
@@ -3042,6 +3044,7 @@ class GraphUpdater:
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
         self._exposes_cleanup_unrecorded = False
+        self._exposes_map_kept = False
         self._prune_settled = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost(previous_root)
@@ -3420,6 +3423,11 @@ class GraphUpdater:
             # are keyed against the same root every other run uses.
             if self._single_file is not None and not cache_path.is_file():
                 logger.info(ls.HASH_CACHE_SKIPPED_SINGLE_FILE, path=cache_path)
+            elif self._exposes_map_kept:
+                # Neither the marker nor a dropped map owes the cleanup, so
+                # the cache stays one run behind: the files this run indexed
+                # still read as changed, and the next run is not in sync.
+                hash_cache_published = False
             else:
                 hash_cache_published = _publish_hash_cache(
                     cache_path, new_hashes, observed_at
@@ -3662,6 +3670,7 @@ class GraphUpdater:
         try:
             snapshot.unlink(missing_ok=True)
         except OSError as e:
+            self._exposes_map_kept = True
             logger.warning(
                 ls.EXPOSES_CLEANUP_SNAPSHOT_KEPT.format(path=snapshot, error=e)
             )
@@ -9962,8 +9971,11 @@ class GraphUpdater:
         gone: dict[str, Path],
     ) -> None:
         # Keep the hash cache honest so the next update_repository does not
-        # re-parse what this call already applied.
-        if not cache_path.is_file():
+        # re-parse what this call already applied. Not when a skipped EXPOSES
+        # cleanup is owed by nothing else: with the marker unwritten and the
+        # map kept, stale hashes are what keep the next run off the in-sync
+        # path.
+        if self._exposes_map_kept or not cache_path.is_file():
             return
         try:
             observed_at = cache_path.stat().st_mtime
@@ -10093,6 +10105,7 @@ class GraphUpdater:
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
         self._exposes_cleanup_unrecorded = False
+        self._exposes_map_kept = False
         self._prune_settled = False
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
