@@ -1549,13 +1549,22 @@ def _python_class_assigns(name: Node, klass: Node) -> bool:
     """Whether `name` is the target of a plain assignment that is a
     statement of `klass`'s body, so it binds a fresh class-local value each
     time the body runs (`__all__ = []` or `x = __all__ = []`). An augmented
-    assignment or one in a block or expression may not rebind it first."""
+    assignment or one in a block or expression may not rebind it first, and
+    one whose value is not a new list (`__all__ = __all__`) may still hold
+    the module's (CodeRabbit, PR #3624)."""
     child, current = name, name.parent
     if (
         current is None
         or current.type != cs.TS_PY_ASSIGNMENT
         or not _is_field(current, cs.FIELD_LEFT, child)
-        or current.child_by_field_name(cs.FIELD_RIGHT) is None
+    ):
+        return False
+    value = current.child_by_field_name(cs.FIELD_RIGHT)
+    while value is not None and value.type == cs.TS_PY_ASSIGNMENT:
+        value = value.child_by_field_name(cs.FIELD_RIGHT)
+    if value is None or value.type not in (
+        cs.TS_PY_LIST,
+        cs.TS_PY_LIST_COMPREHENSION,
     ):
         return False
     while current is not None and current.type == cs.TS_PY_ASSIGNMENT:

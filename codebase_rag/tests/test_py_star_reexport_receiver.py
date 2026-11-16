@@ -541,6 +541,12 @@ ALL_FORMS = {
         '__all__ = ["Other"]\n\n\nclass _Registry:\n    if False:\n'
         '        __all__ = []\n    __all__.append("Client")\n'
     ),
+    # `__all__ = __all__` binds the class name to the module's own list, so
+    # the append after it still changes the module's (CodeRabbit, PR #3624).
+    "class_body_aliased_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = __all__\n'
+        '    __all__.append("Client")\n'
+    ),
 }
 # The packages whose `Spare` is checked, and whether their star binds it.
 SPARE_BOUND = {
@@ -715,6 +721,10 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
             "via_class_body_bound_in_a_branch_then_appended",
             "class_body_bound_in_a_branch_then_appended._a.Client.send",
         ),
+        (
+            "via_class_body_aliased_then_appended",
+            "class_body_aliased_then_appended._a.Client.send",
+        ),
         ("via_later_named", "later_named._impl.Client.send"),
         (
             "via_bare_with",
@@ -786,6 +796,7 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         "a-class-body-default-falls-back",
         "a-class-body-append-after-its-own-binding-keeps-it-readable",
         "a-class-body-append-after-a-branch-binding-falls-back",
+        "a-class-body-append-after-an-alias-binding-falls-back",
         "a-later-by-name-import-of-another-name-keeps-the-star",
         "with-on-a-bare-name-imported-through-a-star",
     ],
