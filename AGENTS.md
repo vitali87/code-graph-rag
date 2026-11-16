@@ -6,8 +6,7 @@ alone cannot explain.
 
 Codex, Cursor, Windsurf and Copilot's coding agent read this file directly;
 Claude Code reads it through `CLAUDE.md`, and Copilot chat and code review
-through `.github/copilot-instructions.md`. Those files only point here, so
-edit this one.
+through `.github/copilot-instructions.md`.
 
 ## Bumping tree-sitter
 
