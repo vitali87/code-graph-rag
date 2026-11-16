@@ -1482,11 +1482,11 @@ EXPOSES_CLEANUP_NOT_RECORDED = (
     "project as in sync and retries the cleanup."
 )
 EXPOSES_CLEANUP_SNAPSHOT_KEPT = (
-    "Could not remove {path} ({error}). This run also leaves the hash cache as "
-    "it was, so the files it indexed read as changed next time. A run that "
-    "indexed nothing new can still be treated as in sync and keep stale "
-    "EXPOSES edges: delete the file by hand, or re-run once the path is "
-    "writable."
+    "Could not remove {path} ({error}). The hash cache marks every file "
+    "unconfirmed instead, so the next run re-parses the project and retries "
+    "the cleanup. If the cache cannot be written either, that run may treat "
+    "the project as in sync: delete the file by hand, or re-run once the path "
+    "is writable."
 )
 PRUNE_QUERY_FAILED = "Could not read {label} paths from the graph; skipping its prune."
 PRUNE_FOUND = "Found {count} orphan {label} nodes to remove"

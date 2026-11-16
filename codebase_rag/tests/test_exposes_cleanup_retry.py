@@ -254,44 +254,66 @@ def test_an_unwritable_marker_leaves_no_snapshot_to_trust(
     assert snapshot.is_file()
 
 
-def test_a_kept_map_holds_the_hash_cache_back(
+def test_a_kept_map_marks_every_file_unconfirmed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # With the marker unwritten and the old map kept, a fresh cache made the
     # files this run indexed read as unchanged against that map, and the next
-    # run took the in-sync path past the owed cleanup.
+    # run took the in-sync path past the owed cleanup. Holding the cache back
+    # instead left a file this run added out of it, so the watcher could not
+    # find it under a deleted directory (Greptile, PR #3625).
     root = tmp_path / "proj"
-    (root / "pkg").mkdir(parents=True)
-    api = root / "pkg" / "api.py"
+    pkg = root / "pkg"
+    pkg.mkdir(parents=True)
+    api = pkg / "api.py"
     api.write_text(ROUTES, encoding="utf-8")
     store = _Recording()
     _updater(root, store).run(force=True)
     cache = state_file(root, cs.HASH_CACHE_FILENAME)
     snapshot = state_file(root, cs.DIR_MTIMES_FILENAME)
     marker = state_file(root, cs.EXPOSES_CLEANUP_PENDING_FILENAME)
-    indexed = cache.read_text(encoding="utf-8")
+    added = pkg / "extra.py"
+    unconfirmed = cs.HASH_CACHE_UNREADABLE
 
     with monkeypatch.context() as patch:
         patch.setattr(Path, "touch", _touch_refusing(marker))
         patch.setattr(Path, "unlink", _unlink_refusing(snapshot))
         api.write_text(ROUTES + "\n", encoding="utf-8")
+        added.write_text("def extra():\n    return 2\n", encoding="utf-8")
         down = _RegistryDown()
         down.__dict__.update(store.__dict__)
         blind = _updater(root, down)
         blind.run()
     assert blind._exposes_cleanup_skipped, "the run must have skipped a cleanup"
     assert snapshot.is_file()
-    assert cache.read_text(encoding="utf-8") == indexed
+    assert gu._load_hash_cache(cache) == {
+        "pkg/api.py": unconfirmed,
+        "pkg/extra.py": unconfirmed,
+    }
+    assert _updater(root, store).indexed_files_under(pkg) == [api, added]
     assert _updater(root, store)._is_already_in_sync() is False
 
-    # A scoped pass holds its hash update back the same way.
+    # A scoped pass records what it re-ingested the same way, and still drops
+    # what it removed.
+    added.unlink()
+    newest = pkg / "newest.py"
+    newest.write_text("def newest():\n    return 3\n", encoding="utf-8")
     scoped = _updater(root, store)
     scoped._exposes_map_kept = True
     scoped._reingest_update_hashes(
         cache,
-        gu._load_hash_cache(cache),
-        {"pkg/api.py": api},
-        {"pkg/api.py": api.read_bytes()},
-        {},
+        {"pkg/api.py": "a", "pkg/extra.py": "b"},
+        {"pkg/newest.py": newest},
+        {"pkg/newest.py": newest.read_bytes()},
+        {"pkg/extra.py": added},
     )
-    assert cache.read_text(encoding="utf-8") == indexed
+    assert gu._load_hash_cache(cache) == {
+        "pkg/api.py": unconfirmed,
+        "pkg/newest.py": unconfirmed,
+    }
+
+    # The next healthy run re-parses, does the cleanup and confirms the files.
+    store.writes.clear()
+    _updater(root, store).run()
+    assert gu.CYPHER_DELETE_HANDLER_EXPOSES in store.writes
+    assert unconfirmed not in gu._load_hash_cache(cache).values()

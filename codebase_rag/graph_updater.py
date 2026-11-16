@@ -400,6 +400,20 @@ def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes] | None:
     return hashlib.md5(data, usedforsecurity=False).hexdigest(), data
 
 
+def _unconfirmed(hashes: FileHashCache) -> FileHashCache:
+    """Every file `hashes` records, none of them as current.
+
+    For a skipped EXPOSES cleanup that neither its marker nor a dropped
+    directory-mtime map could owe. The unreadable mark is used for what it
+    does, not what it says: it is not a digest, so the next pass re-hashes
+    each file whatever its mtime and re-parses it as a known one (#1983),
+    and that run's endpoint passes retry the cleanup. Every path stays
+    listed, so the watcher still finds the files under a deleted directory
+    and a single-file run still finds its project root (Greptile, PR #3625).
+    """
+    return dict.fromkeys(hashes, cs.HASH_CACHE_UNREADABLE)
+
+
 def _load_hash_cache(cache_path: Path) -> FileHashCache:
     if not cache_path.is_file():
         return {}
@@ -1906,7 +1920,7 @@ class GraphUpdater:
         # A skipped cleanup whose marker could not be written: this run then
         # leaves no directory-mtime map, which keeps the next run off the
         # in-sync path just as the marker would. When the old map could not
-        # be dropped either, the hash cache is held back as well.
+        # be dropped either, the hash cache records every file unconfirmed.
         self._exposes_cleanup_unrecorded = False
         self._exposes_map_kept = False
         self._prune_settled = False
@@ -3425,9 +3439,10 @@ class GraphUpdater:
                 logger.info(ls.HASH_CACHE_SKIPPED_SINGLE_FILE, path=cache_path)
             elif self._exposes_map_kept:
                 # Neither the marker nor a dropped map owes the cleanup, so
-                # the cache stays one run behind: the files this run indexed
-                # still read as changed, and the next run is not in sync.
-                hash_cache_published = False
+                # the cache does: every file unconfirmed, none left out.
+                hash_cache_published = _publish_hash_cache(
+                    cache_path, _unconfirmed(new_hashes), observed_at
+                )
             else:
                 hash_cache_published = _publish_hash_cache(
                     cache_path, new_hashes, observed_at
@@ -9971,11 +9986,8 @@ class GraphUpdater:
         gone: dict[str, Path],
     ) -> None:
         # Keep the hash cache honest so the next update_repository does not
-        # re-parse what this call already applied. Not when a skipped EXPOSES
-        # cleanup is owed by nothing else: with the marker unwritten and the
-        # map kept, stale hashes are what keep the next run off the in-sync
-        # path.
-        if self._exposes_map_kept or not cache_path.is_file():
+        # re-parse what this call already applied.
+        if not cache_path.is_file():
             return
         try:
             observed_at = cache_path.stat().st_mtime
@@ -9989,6 +10001,9 @@ class GraphUpdater:
                 hashes[key] = hashlib.md5(data, usedforsecurity=False).hexdigest()
         for key in gone:
             hashes.pop(key, None)
+        if self._exposes_map_kept:
+            # As at the batch commit: the cache owes the skipped cleanup.
+            hashes = _unconfirmed(hashes)
         _save_hash_cache(cache_path, hashes)
         # The cache's mtime is the instant every file NOT in it was last
         # judged (`_is_already_in_sync` and the walk skip files no newer
