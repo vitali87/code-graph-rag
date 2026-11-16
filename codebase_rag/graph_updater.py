@@ -400,6 +400,20 @@ def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes] | None:
     return hashlib.md5(data, usedforsecurity=False).hexdigest(), data
 
 
+def _unconfirmed(hashes: FileHashCache) -> FileHashCache:
+    """Every file `hashes` records, none of them as current.
+
+    For a skipped EXPOSES cleanup that neither its marker nor a dropped
+    directory-mtime map could owe. The unreadable mark is used for what it
+    does, not what it says: it is not a digest, so the next pass re-hashes
+    each file whatever its mtime and re-parses it as a known one (#1983),
+    and that run's endpoint passes retry the cleanup. Every path stays
+    listed, so the watcher still finds the files under a deleted directory
+    and a single-file run still finds its project root (Greptile, PR #3625).
+    """
+    return dict.fromkeys(hashes, cs.HASH_CACHE_UNREADABLE)
+
+
 def _load_hash_cache(cache_path: Path) -> FileHashCache:
     if not cache_path.is_file():
         return {}
@@ -1903,6 +1917,12 @@ class GraphUpdater:
         # which cannot tell a nested project's rows from this one's.
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        # A skipped cleanup whose marker could not be written: this run then
+        # leaves no directory-mtime map, which keeps the next run off the
+        # in-sync path just as the marker would. When the old map could not
+        # be dropped either, the hash cache records every file unconfirmed.
+        self._exposes_cleanup_unrecorded = False
+        self._exposes_map_kept = False
         self._prune_settled = False
 
         self.factory = ProcessorFactory(
@@ -3037,6 +3057,8 @@ class GraphUpdater:
         self._registered_projects = None
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        self._exposes_cleanup_unrecorded = False
+        self._exposes_map_kept = False
         self._prune_settled = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost(previous_root)
@@ -3415,12 +3437,23 @@ class GraphUpdater:
             # are keyed against the same root every other run uses.
             if self._single_file is not None and not cache_path.is_file():
                 logger.info(ls.HASH_CACHE_SKIPPED_SINGLE_FILE, path=cache_path)
+            elif self._exposes_map_kept:
+                # Neither the marker nor a dropped map owes the cleanup, so
+                # the cache does: every file unconfirmed, none left out.
+                hash_cache_published = _publish_hash_cache(
+                    cache_path, _unconfirmed(new_hashes), observed_at
+                )
             else:
                 hash_cache_published = _publish_hash_cache(
                     cache_path, new_hashes, observed_at
                 )
             self._pending_hash_cache = None
-        if self._pending_dir_mtimes is not None and hash_cache_published:
+        # The missing map is what owes an unrecorded EXPOSES cleanup.
+        if (
+            self._pending_dir_mtimes is not None
+            and hash_cache_published
+            and not self._exposes_cleanup_unrecorded
+        ):
             _save_dir_mtimes(*self._pending_dir_mtimes)
         self._pending_dir_mtimes = None
         self._pending_cache_observed_at = None
@@ -3611,15 +3644,55 @@ class GraphUpdater:
         skipped one leaves the marker for the next (issue #2193).
         """
         marker = self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME
-        try:
-            if self._exposes_cleanup_skipped:
+        if self._exposes_cleanup_skipped:
+            try:
                 marker.touch()
-            elif cleared_by_this_run:
-                marker.unlink(missing_ok=True)
+            except OSError as e:
+                # A marker an earlier run left still owes the cleanup, even
+                # when its mtime cannot be refreshed: only a missing one needs
+                # the fallback, which costs the next run a full re-parse.
+                if not marker.exists():
+                    self._owe_exposes_cleanup_without_marker(marker, e)
+            return
+        # Only a run that could delete settles the debt. With EXPOSES capture
+        # off both passes return before their cleanups, and a sink that cannot
+        # query deletes nothing; settling there would let the next run take
+        # the in-sync path past edges nobody removed.
+        if not (cleared_by_this_run and self._can_clean_exposes()):
+            return
+        try:
+            marker.unlink(missing_ok=True)
         except OSError:
-            # Best effort, as every other state file here: a read-only tree
-            # must not lose the run to a marker it could not write.
-            logger.debug("EXPOSES cleanup marker not updated")
+            # A marker left in place only costs the next run a rescan.
+            logger.debug(ls.EXPOSES_CLEANUP_MARKER_NOT_UPDATED)
+
+    def _can_clean_exposes(self) -> bool:
+        return self.capture.rel_enabled(cs.RelationshipType.EXPOSES) and isinstance(
+            self.ingestor, QueryProtocol
+        )
+
+    def _owe_exposes_cleanup_without_marker(self, marker: Path, error: OSError) -> None:
+        """Keep a skipped cleanup owed when its marker cannot be written.
+
+        A run with no directory-mtime map cannot take the in-sync path, and
+        nothing but that check reads the map, so dropping it costs the next
+        run its shortcut and nothing else: it hashes as usual and its
+        endpoint passes cover every module. The hash cache stays, because a
+        single-file run finds its project root by it (Greptile, PR #3625).
+        Dropped now rather than at the commit, so a run that stops before
+        committing cannot leave the old map trusted either; the commit then
+        writes none (`_commit_run_state`).
+        """
+        self._exposes_cleanup_unrecorded = True
+        logger.warning(ls.EXPOSES_CLEANUP_NOT_RECORDED.format(path=marker, error=error))
+        snapshot = self.state_dir / cs.DIR_MTIMES_FILENAME
+        try:
+            snapshot.unlink(missing_ok=True)
+        except OSError as e:
+            self._exposes_map_kept = True
+            logger.warning(
+                ls.EXPOSES_CLEANUP_SNAPSHOT_KEPT.format(path=snapshot, error=e)
+            )
 
     def _emit_route_call_endpoints(self, only: set[str] | None = None) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
@@ -7572,8 +7645,15 @@ class GraphUpdater:
             return True
         # A skipped EXPOSES cleanup is owed: nothing on disk changed, so no
         # hash below would send the run into the endpoint passes that owe it
-        # (issue #2193).
-        if (self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
+        # (issue #2193). Only a run that can do the cleanup is sent: with
+        # EXPOSES capture off, or a sink that cannot query, it would delete
+        # nothing and settle nothing, so every run would rescan for it.
+        # Turning capture back on changes the parser fingerprint, and that run
+        # re-parses and pays the debt.
+        if (
+            self._can_clean_exposes()
+            and (self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists()
+        ):
             return True
         if (self.state_dir / cs.PRUNE_PENDING_FILENAME).exists():
             return True
@@ -9925,6 +10005,9 @@ class GraphUpdater:
                 hashes[key] = hashlib.md5(data, usedforsecurity=False).hexdigest()
         for key in gone:
             hashes.pop(key, None)
+        if self._exposes_map_kept:
+            # As at the batch commit: the cache owes the skipped cleanup.
+            hashes = _unconfirmed(hashes)
         _save_hash_cache(cache_path, hashes)
         # The cache's mtime is the instant every file NOT in it was last
         # judged (`_is_already_in_sync` and the walk skip files no newer
@@ -10040,6 +10123,8 @@ class GraphUpdater:
         self._registered_projects = None
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        self._exposes_cleanup_unrecorded = False
+        self._exposes_map_kept = False
         self._prune_settled = False
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
