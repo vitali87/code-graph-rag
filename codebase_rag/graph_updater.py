@@ -3648,7 +3648,11 @@ class GraphUpdater:
             try:
                 marker.touch()
             except OSError as e:
-                self._owe_exposes_cleanup_without_marker(marker, e)
+                # A marker an earlier run left still owes the cleanup, even
+                # when its mtime cannot be refreshed: only a missing one needs
+                # the fallback, which costs the next run a full re-parse.
+                if not marker.exists():
+                    self._owe_exposes_cleanup_without_marker(marker, e)
             return
         # Only a run that could delete settles the debt. With EXPOSES capture
         # off both passes return before their cleanups, and a sink that cannot

@@ -317,3 +317,25 @@ def test_a_kept_map_marks_every_file_unconfirmed(
     _updater(root, store).run()
     assert gu.CYPHER_DELETE_HANDLER_EXPOSES in store.writes
     assert unconfirmed not in gu._load_hash_cache(cache).values()
+
+
+def test_a_marker_already_owing_needs_no_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A marker that exists still refuses the in-sync path when its mtime
+    # cannot be refreshed, so dropping the map as well would only cost the
+    # next run its shortcut.
+    root = tmp_path / "proj"
+    root.mkdir()
+    marker = state_file(root, cs.EXPOSES_CLEANUP_PENDING_FILENAME)
+    marker.touch()
+    snapshot = state_file(root, cs.DIR_MTIMES_FILENAME)
+    gu._save_dir_mtimes(snapshot, {cs.ROOT_DIR_KEY: 1.0})
+    updater = _updater(root, _StatefulIngestor())
+    updater._exposes_cleanup_skipped = True
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "touch", _touch_refusing(marker))
+        updater._record_exposes_cleanup(cleared_by_this_run=True)
+    assert marker.exists()
+    assert snapshot.is_file()
+    assert not updater._exposes_cleanup_unrecorded
