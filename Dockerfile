@@ -7,7 +7,7 @@ FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b98
 # build proves the crate with on every pull request.
 FROM rust:1.99.1-slim-trixie@sha256:b8e062b1c3a80183df83d9ba187cadd2b5ab84bc78d453dbfeb2fccd5f982247 AS rust
 
-FROM python:3.15-slim@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913 AS builder
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS builder
 
 COPY --from=uv /uv /uvx /bin/
 COPY --chmod=755 scripts/distrust_ca_roots.sh /usr/local/sbin/
@@ -55,7 +55,7 @@ RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-inst
 COPY . .
 RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-binary-package pymgclient
 
-FROM python:3.15-slim@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 COPY --chmod=755 scripts/distrust_ca_roots.sh /usr/local/sbin/
 
