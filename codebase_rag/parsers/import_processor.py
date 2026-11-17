@@ -1527,7 +1527,8 @@ def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
         # it, so a mutation there can change the module's list before the
         # class's own `__all__` exists (CodeRabbit, PR #3624). One after a
         # plain class-body assignment of `__all__` changes the class's list;
-        # one inside that assignment's value runs before the target binds.
+        # one inside that assignment's value runs before the target binds,
+        # and a `del` of it between them sends the lookup back out.
         seen = uses.get(scope.id, set())
         if (
             use is _NameUse.MUTATE
@@ -1539,11 +1540,27 @@ def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
                 bound_scope.id == scope.id
                 and _python_class_assigns(bound, scope)
                 and _python_statement_end(bound) <= name.start_byte
+                and not any(
+                    gone_scope.id == scope.id
+                    and _python_deletes(gone)
+                    and _python_statement_end(bound) <= gone.start_byte
+                    and gone.start_byte < name.start_byte
+                    for gone, _, gone_scope in found
+                )
                 for bound, bound_use, bound_scope in found
                 if bound_use is _NameUse.BIND
             )
         ):
             yield name
+
+
+def _python_deletes(name: Node) -> bool:
+    """Whether `name` is a target of a `del`, which unbinds it so a later
+    read looks it up in the scopes around (CodeRabbit, PR #3624)."""
+    current = name.parent
+    while current is not None and current.type in _PY_TARGET_SHAPES:
+        current = current.parent
+    return current is not None and current.type == cs.TS_PY_DELETE_STATEMENT
 
 
 def _python_statement_end(node: Node) -> int:
