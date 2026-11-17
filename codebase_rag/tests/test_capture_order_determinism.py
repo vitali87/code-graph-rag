@@ -146,9 +146,11 @@ def runs(tmp_path_factory: pytest.TempPathFactory) -> dict[bool, _Calls]:
     }
 
 
-# The first assignment, return and declarator in document order decide.
+# The first return and declarator in document order decide. A local
+# assigned twice before the call reaches it holds the later assignment's
+# type, as Python local typing now reads assignments in flow order.
 DOCUMENT_ORDER = [
-    ("m.use", "m.Lines.first"),
+    ("m.use", "m.Other.first"),
     ("m.use_pick", "m.Lines.first"),
     # A def or class nested in the function returns for itself, not for it.
     ("m.use_nested", "m.Other.first"),
