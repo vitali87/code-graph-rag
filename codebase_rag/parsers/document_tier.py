@@ -1380,7 +1380,11 @@ def _load_parser() -> Parser | None:
     except ImportError:
         return None
     try:
-        return Parser(Language(tree_sitter_markdown.language()))
+        # The grammar's stub names `CapsuleType` without importing it, so a
+        # checker reads the call as Unknown and matches Language's deprecated
+        # int overload; the binding returns a PyCapsule, which is an object.
+        grammar: object = tree_sitter_markdown.language()
+        return Parser(Language(grammar))
     except Exception as exc:  # noqa: BLE001
         logger.warning("markdown grammar unavailable, document tier disabled: {}", exc)
         return None
@@ -1400,7 +1404,9 @@ def _load_inline_parser() -> Parser | None:
     except ImportError:
         return None
     try:
-        return Parser(Language(tree_sitter_markdown.inline_language()))
+        # Typed `object` for the stub gap described in `_load_parser`.
+        grammar: object = tree_sitter_markdown.inline_language()
+        return Parser(Language(grammar))
     except Exception as exc:  # noqa: BLE001
         logger.warning("markdown inline grammar unavailable, no link edges: {}", exc)
         return None

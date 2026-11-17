@@ -92,6 +92,7 @@ TS_PHP_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
 TS_PHP_ASSIGNMENT_EXPRESSION = "assignment_expression"
 TS_PHP_REFERENCE_ASSIGNMENT_EXPRESSION = "reference_assignment_expression"
 TS_PHP_AUGMENTED_ASSIGNMENT_EXPRESSION = "augmented_assignment_expression"
+TS_PHP_UPDATE_EXPRESSION = "update_expression"
 TS_PHP_ANONYMOUS_FUNCTION_USE_CLAUSE = "anonymous_function_use_clause"
 PHP_NAMESPACE_SEPARATOR = "\\"
 # Names `new` accepts that are not classes: the enclosing class, its late

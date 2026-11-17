@@ -48,10 +48,10 @@ repos:
   - repo: local
     hooks:
       - id: validate-labels
-        name: validate labels.yml
+        name: validate labels.yml and issue form labels
         entry: uv run --frozen --no-sync python scripts/validate_labels.py
         language: system
-        files: ^\.github/labels\.yml$
+        files: ^(\.github/(labels\.yml|ISSUE_TEMPLATE/.*)|scripts/validate_labels\.py)$
         pass_filenames: false
   - repo: local
     hooks:
@@ -76,6 +76,17 @@ repos:
         args: ["-c", "pyproject.toml", "--severity-level", "high"]
         additional_dependencies: ["bandit[toml]"]
         exclude: ^(codebase_rag/tests/|scripts/|benchmarks/|optimize/)
+  # Security audit of the workflows. It runs offline, so the audits that
+  # query GitHub (impostor commits, known-vulnerable actions) are left out.
+  # zizmor goes online whenever a GitHub token is in the environment, so
+  # --offline is explicit; args set here replace the hook's own, so its
+  # --no-progress is repeated.
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.31.1
+    hooks:
+      - id: zizmor
+        args: [--no-progress, --offline]
+        files: ^\.github/workflows/[^/]+\.ya?ml$
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.4.0
     hooks:
