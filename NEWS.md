@@ -11,11 +11,13 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **Security Fix**: Addressed a potential issue with parameter defaults.
+- **Stack Handling**: Improved stack management for Qdrant and Memgraph.
+<!-- latest-release-end -->
 - **Copilot Feedback**: Improved handling of review expectations and editing feedback from Copilot.
 - **Minor Fixes**: Resolved a parameter default mutation and improved stack handling for Qdrant and Memgraph.
 - **Infrastructure Improvements**: Updated several actions and tools used in the CI/CD pipeline.
 - **Cleanup**: Ensured proper EXPOSES cleanup in incremental runs.
-<!-- latest-release-end -->
 - **Import Resolution**: Enhanced resolution of imports, particularly for CommonJS renamed properties and path-qualified functions.
 - **Incremental Builds**: Ensured unchanged classes retain their field types across incremental syncs.
 - **Python Property Access**: Scoped Python property reads to their respective receivers.
