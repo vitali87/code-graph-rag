@@ -330,6 +330,9 @@ def test_a_private_name_is_not_taken_through_a_star(graph: RecordedGraph) -> Non
 # falls back to binding every public name, and statements that do not touch
 # `__all__` leave it readable.
 OTHER = "class Other:\n    pass\n\n\n"
+# Public in every `_a`, listed in no `__all__` but one: bound only when a
+# star falls back to every public name, so it tells a read list from that.
+SPARE = "\n\nclass Spare:\n    def send(self, request):\n        return request\n"
 ALL_FORMS = {
     "appended": '__all__ = ["Other"]\n__all__.append("Client")\n',
     "extended": '__all__ = ["Other"]\n__all__.extend(["Client"])\n',
@@ -477,6 +480,143 @@ ALL_FORMS = {
     "walrus_in_a_comprehension": (
         '__all__ = ["Other"]\n[(__all__ := ["Other", "Client"]) for _ in (1,)]\n'
     ),
+    # A parameter default runs as its def or lambda is defined, in the
+    # enclosing scope, so its append or extend is the module's (#3578).
+    "default_appended": (
+        '__all__ = ["Other"]\n\n\ndef _helper(__all__=__all__.append("Client")):\n'
+        "    pass\n"
+    ),
+    "default_extended": (
+        '__all__ = ["Other"]\n\n\ndef _helper(flag=(__all__.extend(["Client"]))):\n'
+        "    pass\n"
+    ),
+    "lambda_default_appended": (
+        '__all__ = ["Other"]\n_helper = lambda __all__=__all__.append("Client"): None\n'
+    ),
+    "two_defaults_appended": (
+        "__all__ = []\n\n\n"
+        'def _helper(a=__all__.append("Client"), *, b=__all__.append("Spare")):\n'
+        "    pass\n"
+    ),
+    "default_appended_name": (
+        'NAME = "Client"\n__all__ = ["Other"]\n\n\n'
+        "def _helper(__all__=__all__.append(NAME)):\n    pass\n"
+    ),
+    "default_walrus": (
+        '__all__ = ["Other"]\n\n\n'
+        'def _helper(flag=(__all__ := ["Other", "Client"])):\n    pass\n'
+    ),
+    "default_concatenated": (
+        '__all__ = ["Other"]\n\n\ndef _helper(flag=(__all__ + ["Client"])):\n    pass\n'
+    ),
+    "nested_default_appended": (
+        '__all__ = ["Other"]\n\n\ndef _outer():\n'
+        '    def _inner(flag=__all__.append("Client")):\n        pass\n'
+    ),
+    # A def in a branch never runs, so its default does not spell the list
+    # (Greptile and CodeRabbit, PR #3624).
+    "skipped_branch_default": (
+        '__all__ = ["Other"]\nif False:\n'
+        '    def _helper(flag=__all__.append("Client")):\n'
+        "        pass\n"
+    ),
+    # A class body reads a name from the scopes around it until it binds it,
+    # so this default changes the module's `__all__` before the class binds
+    # its own (CodeRabbit, PR #3624).
+    "class_body_default": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n'
+        '    def add(self, flag=__all__.append("Client")):\n'
+        "        pass\n\n"
+        "    __all__ = []\n"
+    ),
+    # Once the class body assigns its own `__all__`, a mutation after it
+    # changes the class's list and the module's stays readable, while one
+    # after an assignment in a block may still reach the module's
+    # (CodeRabbit, PR #3624).
+    "class_body_bound_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = []\n'
+        '    __all__.append("Client")\n'
+    ),
+    # A parenthesized list and a `list()` call are fresh class lists too
+    # (Greptile, PR #3624).
+    "class_body_paren_bound_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = ([])\n'
+        '    __all__.append("Client")\n'
+    ),
+    "class_body_list_call_bound_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = list()\n'
+        '    __all__.append("Client")\n'
+    ),
+    "class_body_bound_in_a_branch_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    if False:\n'
+        '        __all__ = []\n    __all__.append("Client")\n'
+    ),
+    # `__all__ = __all__` binds the class name to the module's own list, so
+    # the append after it still changes the module's (CodeRabbit, PR #3624).
+    "class_body_aliased_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = __all__\n'
+        '    __all__.append("Client")\n'
+    ),
+    # The value runs before the class binds its own `__all__`, so a mutation
+    # inside it changes the module's list (CodeRabbit, PR #3624).
+    "class_body_append_in_assigned_list": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n'
+        '    __all__ = [__all__.append("Client")]\n'
+    ),
+    "class_body_append_as_assigned_value": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n'
+        '    __all__ = __all__.append("Client")\n'
+    ),
+    # `del` unbinds the class's own `__all__`, so the append after it reads
+    # the module's list again (CodeRabbit, PR #3624).
+    "class_body_bound_deleted_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = []\n'
+        '    del __all__\n    __all__.append("Client")\n'
+    ),
+    # A `del` under `if False:` never runs, so the class keeps its own list
+    # (Greptile, PR #3624).
+    "class_body_bound_skipped_delete_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = []\n'
+        '    if False:\n        del __all__\n    __all__.append("Client")\n'
+    ),
+    # A `list` the module or class rebinds may hand back the module's own
+    # list, so `list()` is a fresh one only while it names the builtin
+    # (Greptile, PR #3624).
+    "class_body_rebound_list_call_then_appended": (
+        '__all__ = ["Other"]\nlist = lambda: __all__\n\n\nclass _Registry:\n'
+        '    __all__ = list()\n    __all__.append("Client")\n'
+    ),
+    "class_body_class_rebound_list_call_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n'
+        "    list = lambda: __all__\n"
+        '    __all__ = list()\n    __all__.append("Client")\n'
+    ),
+    # A `list` bound only after the class body runs cannot reach its call,
+    # but one bound later in the same loop can (Greptile, PR #3624).
+    "class_body_later_rebound_list_call_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n'
+        '    __all__ = list()\n    __all__.append("Client")\n\n\n'
+        "list = lambda: __all__\n"
+    ),
+    "class_body_loop_rebound_list_call_then_appended": (
+        '__all__ = ["Other"]\nfor _ in range(2):\n'
+        "    class _Registry:\n        __all__ = list()\n"
+        '        __all__.append("Client")\n'
+        "    list = lambda: __all__\n"
+    ),
+}
+# The packages whose `Spare` is checked, and whether their star binds it.
+SPARE_BOUND = {
+    "default_appended": False,
+    "default_extended": False,
+    "lambda_default_appended": False,
+    "two_defaults_appended": True,
+    "default_appended_name": True,
+    "default_walrus": True,
+    "default_concatenated": False,
+    "nested_default_appended": True,
+    "skipped_branch_default": True,
+    "class_body_default": True,
 }
 
 # `Pool.__enter__` hands back a `Connection`, so typing `with Pool() as c`
@@ -522,6 +662,11 @@ ALL_APP = (
         "    client.send(1)\n"
         for package in (*ALL_FORMS, "later_named")
     )
+    + "".join(
+        f"\n\ndef via_{package}_spare():\n    spare = {package}.Spare()\n"
+        "    spare.send(1)\n"
+        for package in SPARE_BOUND
+    )
     + """
 
 def via_bare_with():
@@ -535,7 +680,7 @@ def via_bare_with():
 def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     root = tmp_path_factory.mktemp("starall") / "starall"
     for package, dunder_all in ALL_FORMS.items():
-        _write(root, f"{package}/_a.py", f"{dunder_all}\n\n{OTHER}{KLASS}")
+        _write(root, f"{package}/_a.py", f"{dunder_all}\n\n{OTHER}{KLASS}{SPARE}")
         _write(root, f"{package}/_b.py", KLASS)
         _write(root, f"{package}/__init__.py", "from ._b import *\nfrom ._a import *\n")
     _write(root, "imported_all/_base.py", '__all__ = ["Client"]\n')
@@ -615,6 +760,68 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
             "via_walrus_in_a_comprehension",
             "walrus_in_a_comprehension._a.Client.send",
         ),
+        ("via_default_appended", "default_appended._a.Client.send"),
+        ("via_default_extended", "default_extended._a.Client.send"),
+        ("via_lambda_default_appended", "lambda_default_appended._a.Client.send"),
+        ("via_two_defaults_appended", "two_defaults_appended._a.Client.send"),
+        ("via_default_appended_name", "default_appended_name._a.Client.send"),
+        ("via_default_walrus", "default_walrus._a.Client.send"),
+        ("via_default_concatenated", "default_concatenated._b.Client.send"),
+        ("via_nested_default_appended", "nested_default_appended._a.Client.send"),
+        ("via_skipped_branch_default", "skipped_branch_default._a.Client.send"),
+        ("via_class_body_default", "class_body_default._a.Client.send"),
+        (
+            "via_class_body_bound_then_appended",
+            "class_body_bound_then_appended._b.Client.send",
+        ),
+        (
+            "via_class_body_paren_bound_then_appended",
+            "class_body_paren_bound_then_appended._b.Client.send",
+        ),
+        (
+            "via_class_body_list_call_bound_then_appended",
+            "class_body_list_call_bound_then_appended._b.Client.send",
+        ),
+        (
+            "via_class_body_bound_in_a_branch_then_appended",
+            "class_body_bound_in_a_branch_then_appended._a.Client.send",
+        ),
+        (
+            "via_class_body_aliased_then_appended",
+            "class_body_aliased_then_appended._a.Client.send",
+        ),
+        (
+            "via_class_body_append_in_assigned_list",
+            "class_body_append_in_assigned_list._a.Client.send",
+        ),
+        (
+            "via_class_body_append_as_assigned_value",
+            "class_body_append_as_assigned_value._a.Client.send",
+        ),
+        (
+            "via_class_body_bound_deleted_then_appended",
+            "class_body_bound_deleted_then_appended._a.Client.send",
+        ),
+        (
+            "via_class_body_bound_skipped_delete_then_appended",
+            "class_body_bound_skipped_delete_then_appended._b.Client.send",
+        ),
+        (
+            "via_class_body_rebound_list_call_then_appended",
+            "class_body_rebound_list_call_then_appended._a.Client.send",
+        ),
+        (
+            "via_class_body_class_rebound_list_call_then_appended",
+            "class_body_class_rebound_list_call_then_appended._a.Client.send",
+        ),
+        (
+            "via_class_body_later_rebound_list_call_then_appended",
+            "class_body_later_rebound_list_call_then_appended._b.Client.send",
+        ),
+        (
+            "via_class_body_loop_rebound_list_call_then_appended",
+            "class_body_loop_rebound_list_call_then_appended._a.Client.send",
+        ),
         ("via_later_named", "later_named._impl.Client.send"),
         (
             "via_bare_with",
@@ -674,6 +881,29 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         "a-global-in-a-class-body-falls-back",
         "an-item-assignment-in-a-def-falls-back",
         "a-walrus-in-a-comprehension-falls-back",
+        "a-defaults-append-is-the-modules",
+        "a-defaults-extend-is-the-modules",
+        "a-lambda-defaults-append-is-the-modules",
+        "two-defaults-both-append",
+        "a-defaults-append-of-a-non-literal-falls-back",
+        "a-walrus-in-a-default-falls-back",
+        "a-default-that-only-reads-it-keeps-it-readable",
+        "a-nested-defs-default-falls-back",
+        "a-default-in-a-skipped-branch-falls-back",
+        "a-class-body-default-falls-back",
+        "a-class-body-append-after-its-own-binding-keeps-it-readable",
+        "a-class-body-append-after-a-parenthesized-binding-keeps-it-readable",
+        "a-class-body-append-after-a-list-call-binding-keeps-it-readable",
+        "a-class-body-append-after-a-branch-binding-falls-back",
+        "a-class-body-append-after-an-alias-binding-falls-back",
+        "a-class-body-append-inside-its-assigned-list-falls-back",
+        "a-class-body-append-as-its-assigned-value-falls-back",
+        "a-class-body-append-after-its-binding-is-deleted-falls-back",
+        "a-class-body-append-after-a-skipped-delete-keeps-it-readable",
+        "a-class-body-append-after-a-module-rebound-list-call-falls-back",
+        "a-class-body-append-after-a-class-rebound-list-call-falls-back",
+        "a-class-body-append-before-a-later-list-rebinding-keeps-it-readable",
+        "a-class-body-append-before-a-loop-list-rebinding-falls-back",
         "a-later-by-name-import-of-another-name-keeps-the-star",
         "with-on-a-bare-name-imported-through-a-star",
     ],
@@ -684,4 +914,15 @@ def test_the_all_a_module_builds_decides_what_its_star_binds(
     # A `with` statement also calls its manager's `__enter__` and `__exit__`.
     expected = {callee} if isinstance(callee, str) else set(callee)
     callees = _callees(all_graph, caller)
+    assert callees == expected, callees
+
+
+@pytest.mark.parametrize("package", list(SPARE_BOUND))
+def test_a_default_that_changes_all_binds_exactly_what_it_lists(
+    all_graph: RecordedGraph, package: str
+) -> None:
+    # `Spare` is public but listed only where a default appends it, so a
+    # star binds it only then or when it falls back to every public name.
+    expected = {f"{package}._a.Spare.send"} if SPARE_BOUND[package] else set()
+    callees = _callees(all_graph, f"via_{package}_spare")
     assert callees == expected, callees

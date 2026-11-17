@@ -1283,8 +1283,7 @@ def _python_dunder_all_part(statement: Node) -> list[str] | None:
     if expression is None:
         return None
     if expression.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT):
-        left = expression.child_by_field_name(cs.TS_FIELD_LEFT)
-        if left is None or left.text != cs.PY_DUNDER_ALL.encode():
+        if not _is_dunder_all_target(expression):
             return None
         return _readable(
             _python_literal_names(expression.child_by_field_name(cs.TS_FIELD_RIGHT))
@@ -1322,6 +1321,11 @@ class _UnreadableDunderAll(Exception):
 class _LateDunderAll(_UnreadableDunderAll):
     """`__all__` is changed in a def or lambda body, which can run after any
     later statement, so no later literal settles what it holds."""
+
+
+def _is_dunder_all_target(assignment: Node) -> bool:
+    left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+    return left is not None and left.text == cs.PY_DUNDER_ALL.encode()
 
 
 def _readable(names: list[str] | None) -> list[str]:
@@ -1422,11 +1426,20 @@ def _python_binding_use(node: Node, child: Node) -> _NameUse:
 def _python_name_scope(node: Node, walrus: bool = False) -> Node:
     """The def, class body, lambda or comprehension whose names `node` is
     one of, else the module. A def's or class's own name, decorators and
-    bases are the enclosing scope's, and a walrus target is the scope's
-    around its comprehension, as Python binds them."""
+    bases are the enclosing scope's, as is a parameter default, which runs
+    when the def or lambda is defined; a walrus target is the scope's around
+    its comprehension, as Python binds them."""
     child, current = node, node.parent
+    in_default = False
     while current is not None and current.parent is not None:
-        if (
+        if current.type in cs.PY_NAMED_PARAMETER_TYPES and _is_field(
+            current, cs.FIELD_VALUE, child
+        ):
+            in_default = True
+        elif in_default and current.type in cs.PY_CALLABLE_CLOSURE_TYPES:
+            # The def or lambda that owns the default is passed over.
+            in_default = False
+        elif (
             current.type == cs.TS_PY_LAMBDA
             or (current.type in cs.PY_COMPREHENSION_TYPES and not walrus)
             or (
@@ -1466,9 +1479,8 @@ def _runs_later(node: Node, statement: Node) -> bool:
     runs whenever it is called rather than where it is written."""
     child, current = node, node.parent
     while current is not None and child.id != statement.id:
-        if current.type == cs.TS_PY_LAMBDA or (
-            current.type == cs.TS_PY_FUNCTION_DEFINITION
-            and _is_field(current, cs.FIELD_BODY, child)
+        if current.type in cs.PY_CALLABLE_CLOSURE_TYPES and _is_field(
+            current, cs.FIELD_BODY, child
         ):
             return True
         child, current = current, current.parent
@@ -1478,13 +1490,20 @@ def _runs_later(node: Node, statement: Node) -> bool:
 def _python_dunder_all_names(statement: Node) -> Iterator[Node]:
     """Each `__all__` name the statement holds, at any depth; another
     object's `__all__` (`ns.__all__ = ...`) is not one."""
-    if statement.text is None or cs.PY_DUNDER_ALL.encode() not in statement.text:
+    return _python_names(statement, cs.PY_DUNDER_ALL)
+
+
+def _python_names(statement: Node, name: str) -> Iterator[Node]:
+    """Each occurrence of the bare name `name` the statement holds, at any
+    depth; an attribute of that name (`ns.name`) is not one."""
+    text = name.encode()
+    if statement.text is None or text not in statement.text:
         return
     stack = [statement]
     while stack:
         node = stack.pop()
         stack.extend(node.children)
-        if node.type != cs.TS_PY_IDENTIFIER or node.text != cs.PY_DUNDER_ALL.encode():
+        if node.type != cs.TS_PY_IDENTIFIER or node.text != text:
             continue
         owner = node.parent
         if owner is None or not _is_field(owner, cs.TS_PY_FIELD_ATTRIBUTE, node):
@@ -1506,8 +1525,204 @@ def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
         uses.setdefault(scope.id, set()).add(use)
         found.append((name, use, scope))
     for name, use, scope in found:
-        if use in (_NameUse.BIND, _NameUse.MUTATE) and _python_module_owns(scope, uses):
+        if use not in (_NameUse.BIND, _NameUse.MUTATE):
+            continue
+        if _python_module_owns(scope, uses):
             yield name
+            continue
+        # A class body reads a name from the scopes around it until it binds
+        # it, so a mutation there can change the module's list before the
+        # class's own `__all__` exists (CodeRabbit, PR #3624). One after a
+        # plain class-body assignment of `__all__` changes the class's list;
+        # one inside that assignment's value runs before the target binds,
+        # and a `del` of it between them sends the lookup back out.
+        seen = uses.get(scope.id, set())
+        if (
+            use is _NameUse.MUTATE
+            and scope.type == cs.TS_PY_CLASS_DEFINITION
+            and _NameUse.BIND in seen
+            and _NameUse.GLOBAL not in seen
+            and _python_module_owns(_python_name_scope(scope), uses)
+            and not any(
+                bound_scope.id == scope.id
+                and _python_class_assigns(bound, scope)
+                and _python_statement_end(bound) <= name.start_byte
+                and not any(
+                    gone_scope.id == scope.id
+                    and _python_deletes(gone)
+                    and not _python_never_runs(gone, scope)
+                    and _python_statement_end(bound) <= gone.start_byte
+                    and gone.start_byte < name.start_byte
+                    for gone, _, gone_scope in found
+                )
+                for bound, bound_use, bound_scope in found
+                if bound_use is _NameUse.BIND
+            )
+        ):
+            yield name
+
+
+def _python_deletes(name: Node) -> bool:
+    """Whether `name` is a target of a `del`, which unbinds it so a later
+    read looks it up in the scopes around (CodeRabbit, PR #3624)."""
+    current = name.parent
+    while current is not None and current.type in _PY_TARGET_SHAPES:
+        current = current.parent
+    return current is not None and current.type == cs.TS_PY_DELETE_STATEMENT
+
+
+def _python_never_runs(node: Node, scope: Node) -> bool:
+    """Whether `node` sits, inside `scope`, in the body of an `if` whose
+    condition is a literal false constant (`if False:` or `if 0:`), so it
+    cannot run. Any other condition may hold (Greptile, PR #3624)."""
+    child, current = node, node.parent
+    while current is not None and current.id != scope.id:
+        if current.type == cs.TS_PY_IF_STATEMENT and _is_field(
+            current, cs.TS_FIELD_CONSEQUENCE, child
+        ):
+            condition = current.child_by_field_name(cs.TS_FIELD_CONDITION)
+            if condition is not None and (
+                condition.type == cs.TS_PY_FALSE
+                or (condition.type == cs.TS_PY_INTEGER and condition.text == b"0")
+            ):
+                return True
+        child, current = current, current.parent
+    return False
+
+
+def _python_statement_end(node: Node) -> int:
+    """Where the statement holding `node` ends, so a use inside an
+    assignment's value counts as running before its target binds
+    (CodeRabbit, PR #3624)."""
+    current = node
+    while current.parent is not None and current.type != cs.TS_PY_EXPRESSION_STATEMENT:
+        current = current.parent
+    return current.end_byte
+
+
+def _python_class_assigns(name: Node, klass: Node) -> bool:
+    """Whether `name` is the target of a plain assignment that is a
+    statement of `klass`'s body, so it binds a fresh class-local value each
+    time the body runs (`__all__ = []` or `x = __all__ = []`). An augmented
+    assignment or one in a block or expression may not rebind it first, and
+    one whose value is not a new list (`__all__ = __all__`) may still hold
+    the module's (CodeRabbit, PR #3624)."""
+    child, current = name, name.parent
+    if (
+        current is None
+        or current.type != cs.TS_PY_ASSIGNMENT
+        or not _is_field(current, cs.FIELD_LEFT, child)
+    ):
+        return False
+    value = current.child_by_field_name(cs.FIELD_RIGHT)
+    while value is not None and value.type == cs.TS_PY_ASSIGNMENT:
+        value = value.child_by_field_name(cs.FIELD_RIGHT)
+    if value is None or not _python_fresh_list(value):
+        return False
+    while current is not None and current.type == cs.TS_PY_ASSIGNMENT:
+        child, current = current, current.parent
+        if (
+            current is not None
+            and current.type == cs.TS_PY_ASSIGNMENT
+            and not _is_field(current, cs.FIELD_RIGHT, child)
+        ):
+            return False
+    if current is None or current.type != cs.TS_PY_EXPRESSION_STATEMENT:
+        return False
+    block = current.parent
+    return (
+        block is not None
+        and block.type == cs.TS_PY_BLOCK
+        and _is_field(klass, cs.FIELD_BODY, block)
+    )
+
+
+def _python_fresh_list(value: Node) -> bool:
+    """Whether `value` builds a new list each time it runs: a list display
+    or comprehension, in parentheses or not (`([])`), or a call of the
+    builtin `list` (Greptile, PR #3624)."""
+    while value.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
+        inner = next(iter(value.named_children), None)
+        if inner is None:
+            return False
+        value = inner
+    if value.type in (cs.TS_PY_LIST, cs.TS_PY_LIST_COMPREHENSION):
+        return True
+    func = value.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    return (
+        value.type == cs.TS_PY_CALL
+        and func is not None
+        and func.type == cs.TS_PY_IDENTIFIER
+        and func.text == cs.PY_BUILTIN_LIST.encode()
+        and _python_names_builtin(func)
+    )
+
+
+def _python_names_builtin(name: Node) -> bool:
+    """Whether the bare name `name` reads the builtin of that name: no scope
+    its lookup passes through binds it or declares it `global`, and no
+    scope rebinds the module's (`list = lambda: __all__` makes `list()` hand
+    back the module's list, Greptile, PR #3624). A binding that can only run
+    after the read does not count."""
+    root = name
+    while root.parent is not None:
+        root = root.parent
+    uses: dict[int, set[_NameUse]] = {}
+    for found in _python_names(root, (name.text or b"").decode()):
+        use = _python_name_use(found)
+        walrus = (
+            found.parent is not None and found.parent.type == cs.TS_PY_NAMED_EXPRESSION
+        )
+        scope = _python_name_scope(found, walrus=walrus and use is _NameUse.BIND)
+        if use is _NameUse.BIND and _python_binds_after(found, name, scope):
+            continue
+        uses.setdefault(scope.id, set()).add(use)
+    if any({_NameUse.GLOBAL, _NameUse.BIND} <= seen for seen in uses.values()):
+        return False
+    scope = _python_name_scope(name)
+    from_inner = False
+    while True:
+        if not (from_inner and scope.type == cs.TS_PY_CLASS_DEFINITION):
+            seen = uses.get(scope.id, set())
+            if _NameUse.BIND in seen or _NameUse.GLOBAL in seen:
+                return False
+        if scope.parent is None:
+            return True
+        from_inner = from_inner or scope.type != cs.TS_PY_CLASS_DEFINITION
+        scope = _python_name_scope(scope)
+
+
+def _python_binds_after(bound: Node, read: Node, scope: Node) -> bool:
+    """Whether `bound`, a binding in the module or class body `scope`, sits
+    in a later statement of that body than the one holding `read`, which
+    reads the name as its statement runs, so the binding runs only after the
+    read (Greptile, PR #3624). A read in a def or lambda body runs whenever
+    it is called, and a binding in the same statement (a loop) may run
+    before it, so neither counts as after."""
+    if scope.parent is not None and scope.type != cs.TS_PY_CLASS_DEFINITION:
+        return False
+    reading = _python_body_statement(read, scope)
+    binding = _python_body_statement(bound, scope)
+    return (
+        reading is not None
+        and binding is not None
+        and not _runs_later(read, reading)
+        and binding.start_byte >= reading.end_byte
+    )
+
+
+def _python_body_statement(node: Node, scope: Node) -> Node | None:
+    """The statement of the module or class body `scope` that holds `node`,
+    or None when `node` is not inside it."""
+    body = scope if scope.parent is None else scope.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return None
+    child, current = node, node.parent
+    while current is not None:
+        if current.id == body.id:
+            return child
+        child, current = current, current.parent
+    return None
 
 
 def _python_dunder_all_change(statement: Node) -> list[str] | None:
@@ -1523,9 +1738,75 @@ def _python_dunder_all_change(statement: Node) -> list[str] | None:
     writes = list(_python_dunder_all_writes(statement))
     if any(_runs_later(write, statement) for write in writes):
         raise _LateDunderAll
-    if writes:
+    if not writes:
+        return None
+    # `def f(x=__all__.append("A"))` changes the module's list as the def
+    # runs, and only when that def runs as this statement does; any other
+    # change here is one the literals do not spell.
+    names: list[str] = []
+    for write in sorted(writes, key=lambda w: w.start_byte):
+        names += _python_dunder_all_default_part(write, statement)
+    return names
+
+
+def _python_dunder_all_default_runs(defined: Node, statement: Node) -> bool:
+    """Whether `defined`, the def or lambda a parameter default belongs to,
+    runs exactly once, unconditionally, as `statement` runs."""
+    if defined.type == cs.TS_PY_FUNCTION_DEFINITION:
+        parent = defined.parent
+        return defined.id == statement.id or (
+            parent is not None
+            and parent.type == cs.TS_PY_DECORATED_DEFINITION
+            and parent.id == statement.id
+        )
+    if defined.type != cs.TS_PY_LAMBDA:
+        return False
+    # `name = lambda x=__all__.append("A"): ...`, the statement's expression.
+    assignment = next(iter(statement.named_children), None)
+    return (
+        statement.type == cs.TS_PY_EXPRESSION_STATEMENT
+        and assignment is not None
+        and assignment.type == cs.TS_PY_ASSIGNMENT
+        and _is_field(assignment, cs.TS_FIELD_RIGHT, defined)
+    )
+
+
+def _python_dunder_all_default_part(write: Node, statement: Node) -> list[str]:
+    """What a parameter default that is exactly an `__all__.append("x")` or
+    `__all__.extend([...])` call adds, when its def or lambda runs exactly
+    once as `statement` does; raises _UnreadableDunderAll for any other
+    write of the module's `__all__`."""
+    call = write.parent.parent if write.parent is not None else None
+    if call is None or call.type != cs.TS_PY_CALL:
         raise _UnreadableDunderAll
-    return None
+    value = call
+    while (
+        value.parent is not None
+        and value.parent.type == cs.TS_PY_PARENTHESIZED_EXPRESSION
+    ):
+        value = value.parent
+    parameter = value.parent
+    if (
+        parameter is None
+        or parameter.type not in cs.PY_NAMED_PARAMETER_TYPES
+        or not _is_field(parameter, cs.FIELD_VALUE, value)
+    ):
+        raise _UnreadableDunderAll
+    # A default runs when its def or lambda is defined. The parameter's
+    # parent is the parameters node, and that node's parent is the callable;
+    # it counts only when that callable runs as the statement does. A def in
+    # a branch, class body or another callable's default does not (Greptile
+    # and CodeRabbit, PR #3624).
+    parameters = parameter.parent
+    defined = parameters.parent if parameters is not None else None
+    if (
+        parameters is None
+        or defined is None
+        or parameters.type not in (cs.TS_PY_PARAMETERS, cs.TS_PY_LAMBDA_PARAMETERS)
+        or not _python_dunder_all_default_runs(defined, statement)
+    ):
+        raise _UnreadableDunderAll
+    return _readable(_python_dunder_all_call_part(call))
 
 
 def _python_dunder_all(root: Node) -> frozenset[str] | None:
@@ -1552,7 +1833,8 @@ def _python_dunder_all(root: Node) -> frozenset[str] | None:
         defined = True
         # A plain assignment replaces what earlier statements listed; only
         # `+=`, `.append` and `.extend` add to it (Greptile, PR #2989).
-        if statement.named_children[0].type == cs.TS_PY_ASSIGNMENT:
+        first = statement.named_children[0]
+        if first.type == cs.TS_PY_ASSIGNMENT and _is_dunder_all_target(first):
             names = list(part)
         elif names is not None:
             names += part
