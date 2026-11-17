@@ -11,12 +11,16 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **Copilot Feedback**: Improved handling of review expectations and editing feedback from Copilot.
+- **Minor Fixes**: Resolved a parameter default mutation and improved stack handling for Qdrant and Memgraph.
+- **Infrastructure Improvements**: Updated several actions and tools used in the CI/CD pipeline.
+- **Cleanup**: Ensured proper EXPOSES cleanup in incremental runs.
+<!-- latest-release-end -->
 - **Import Resolution**: Enhanced resolution of imports, particularly for CommonJS renamed properties and path-qualified functions.
 - **Incremental Builds**: Ensured unchanged classes retain their field types across incremental syncs.
 - **Python Property Access**: Scoped Python property reads to their respective receivers.
 - **Cross-Language Imports**: Rejected cross-language internal import targets to improve clarity.
 - **Constructor Initialisation**: Correctly handled attribute field initializers in TS/JS, Java and C# constructors.
-<!-- latest-release-end -->
 - **Type Handling**: Improved handling of type context managers, walrus operators, and match binding targets in both Python and TypeScript.
 - **Rename Refinement**: Prevented Go renames from unexporting names used by other packages.
 - **Profile Naming**: Corrected the naming of pprof profiles to avoid "malformed" errors when no samples are present.

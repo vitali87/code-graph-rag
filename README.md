@@ -61,11 +61,10 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Import Resolution**: Enhanced resolution of imports, particularly for CommonJS renamed properties and path-qualified functions.
-- **Incremental Builds**: Ensured unchanged classes retain their field types across incremental syncs.
-- **Python Property Access**: Scoped Python property reads to their respective receivers.
-- **Cross-Language Imports**: Rejected cross-language internal import targets to improve clarity.
-- **Constructor Initialisation**: Correctly handled attribute field initializers in TS/JS, Java and C# constructors.
+- **Copilot Feedback**: Improved handling of review expectations and editing feedback from Copilot.
+- **Minor Fixes**: Resolved a parameter default mutation and improved stack handling for Qdrant and Memgraph.
+- **Infrastructure Improvements**: Updated several actions and tools used in the CI/CD pipeline.
+- **Cleanup**: Ensured proper EXPOSES cleanup in incremental runs.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
