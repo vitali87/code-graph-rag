@@ -1662,7 +1662,8 @@ def _python_names_builtin(name: Node) -> bool:
     """Whether the bare name `name` reads the builtin of that name: no scope
     its lookup passes through binds it or declares it `global`, and no
     scope rebinds the module's (`list = lambda: __all__` makes `list()` hand
-    back the module's list, Greptile, PR #3624)."""
+    back the module's list, Greptile, PR #3624). A binding that can only run
+    after the read does not count."""
     root = name
     while root.parent is not None:
         root = root.parent
@@ -1673,6 +1674,8 @@ def _python_names_builtin(name: Node) -> bool:
             found.parent is not None and found.parent.type == cs.TS_PY_NAMED_EXPRESSION
         )
         scope = _python_name_scope(found, walrus=walrus and use is _NameUse.BIND)
+        if use is _NameUse.BIND and _python_binds_after(found, name, scope):
+            continue
         uses.setdefault(scope.id, set()).add(use)
     if any({_NameUse.GLOBAL, _NameUse.BIND} <= seen for seen in uses.values()):
         return False
@@ -1687,6 +1690,39 @@ def _python_names_builtin(name: Node) -> bool:
             return True
         from_inner = from_inner or scope.type != cs.TS_PY_CLASS_DEFINITION
         scope = _python_name_scope(scope)
+
+
+def _python_binds_after(bound: Node, read: Node, scope: Node) -> bool:
+    """Whether `bound`, a binding in the module or class body `scope`, sits
+    in a later statement of that body than the one holding `read`, which
+    reads the name as its statement runs, so the binding runs only after the
+    read (Greptile, PR #3624). A read in a def or lambda body runs whenever
+    it is called, and a binding in the same statement (a loop) may run
+    before it, so neither counts as after."""
+    if scope.parent is not None and scope.type != cs.TS_PY_CLASS_DEFINITION:
+        return False
+    reading = _python_body_statement(read, scope)
+    binding = _python_body_statement(bound, scope)
+    return (
+        reading is not None
+        and binding is not None
+        and not _runs_later(read, reading)
+        and binding.start_byte >= reading.end_byte
+    )
+
+
+def _python_body_statement(node: Node, scope: Node) -> Node | None:
+    """The statement of the module or class body `scope` that holds `node`,
+    or None when `node` is not inside it."""
+    body = scope if scope.parent is None else scope.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return None
+    child, current = node, node.parent
+    while current is not None:
+        if current.id == body.id:
+            return child
+        child, current = current, current.parent
+    return None
 
 
 def _python_dunder_all_change(statement: Node) -> list[str] | None:

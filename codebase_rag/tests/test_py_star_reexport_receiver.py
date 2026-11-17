@@ -591,6 +591,19 @@ ALL_FORMS = {
         "    list = lambda: __all__\n"
         '    __all__ = list()\n    __all__.append("Client")\n'
     ),
+    # A `list` bound only after the class body runs cannot reach its call,
+    # but one bound later in the same loop can (Greptile, PR #3624).
+    "class_body_later_rebound_list_call_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n'
+        '    __all__ = list()\n    __all__.append("Client")\n\n\n'
+        "list = lambda: __all__\n"
+    ),
+    "class_body_loop_rebound_list_call_then_appended": (
+        '__all__ = ["Other"]\nfor _ in range(2):\n'
+        "    class _Registry:\n        __all__ = list()\n"
+        '        __all__.append("Client")\n'
+        "    list = lambda: __all__\n"
+    ),
 }
 # The packages whose `Spare` is checked, and whether their star binds it.
 SPARE_BOUND = {
@@ -801,6 +814,14 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
             "via_class_body_class_rebound_list_call_then_appended",
             "class_body_class_rebound_list_call_then_appended._a.Client.send",
         ),
+        (
+            "via_class_body_later_rebound_list_call_then_appended",
+            "class_body_later_rebound_list_call_then_appended._b.Client.send",
+        ),
+        (
+            "via_class_body_loop_rebound_list_call_then_appended",
+            "class_body_loop_rebound_list_call_then_appended._a.Client.send",
+        ),
         ("via_later_named", "later_named._impl.Client.send"),
         (
             "via_bare_with",
@@ -881,6 +902,8 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         "a-class-body-append-after-a-skipped-delete-keeps-it-readable",
         "a-class-body-append-after-a-module-rebound-list-call-falls-back",
         "a-class-body-append-after-a-class-rebound-list-call-falls-back",
+        "a-class-body-append-before-a-later-list-rebinding-keeps-it-readable",
+        "a-class-body-append-before-a-loop-list-rebinding-falls-back",
         "a-later-by-name-import-of-another-name-keeps-the-star",
         "with-on-a-bare-name-imported-through-a-star",
     ],
