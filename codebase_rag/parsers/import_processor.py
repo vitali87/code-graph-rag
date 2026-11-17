@@ -1526,7 +1526,8 @@ def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
         # A class body reads a name from the scopes around it until it binds
         # it, so a mutation there can change the module's list before the
         # class's own `__all__` exists (CodeRabbit, PR #3624). One after a
-        # plain class-body assignment of `__all__` changes the class's list.
+        # plain class-body assignment of `__all__` changes the class's list;
+        # one inside that assignment's value runs before the target binds.
         seen = uses.get(scope.id, set())
         if (
             use is _NameUse.MUTATE
@@ -1536,13 +1537,23 @@ def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
             and _python_module_owns(_python_name_scope(scope), uses)
             and not any(
                 bound_scope.id == scope.id
-                and bound.end_byte <= name.start_byte
                 and _python_class_assigns(bound, scope)
+                and _python_statement_end(bound) <= name.start_byte
                 for bound, bound_use, bound_scope in found
                 if bound_use is _NameUse.BIND
             )
         ):
             yield name
+
+
+def _python_statement_end(node: Node) -> int:
+    """Where the statement holding `node` ends, so a use inside an
+    assignment's value counts as running before its target binds
+    (CodeRabbit, PR #3624)."""
+    current = node
+    while current.parent is not None and current.type != cs.TS_PY_EXPRESSION_STATEMENT:
+        current = current.parent
+    return current.end_byte
 
 
 def _python_class_assigns(name: Node, klass: Node) -> bool:
