@@ -1490,13 +1490,20 @@ def _runs_later(node: Node, statement: Node) -> bool:
 def _python_dunder_all_names(statement: Node) -> Iterator[Node]:
     """Each `__all__` name the statement holds, at any depth; another
     object's `__all__` (`ns.__all__ = ...`) is not one."""
-    if statement.text is None or cs.PY_DUNDER_ALL.encode() not in statement.text:
+    return _python_names(statement, cs.PY_DUNDER_ALL)
+
+
+def _python_names(statement: Node, name: str) -> Iterator[Node]:
+    """Each occurrence of the bare name `name` the statement holds, at any
+    depth; an attribute of that name (`ns.name`) is not one."""
+    text = name.encode()
+    if statement.text is None or text not in statement.text:
         return
     stack = [statement]
     while stack:
         node = stack.pop()
         stack.extend(node.children)
-        if node.type != cs.TS_PY_IDENTIFIER or node.text != cs.PY_DUNDER_ALL.encode():
+        if node.type != cs.TS_PY_IDENTIFIER or node.text != text:
             continue
         owner = node.parent
         if owner is None or not _is_field(owner, cs.TS_PY_FIELD_ATTRIBUTE, node):
@@ -1543,6 +1550,7 @@ def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
                 and not any(
                     gone_scope.id == scope.id
                     and _python_deletes(gone)
+                    and not _python_never_runs(gone, scope)
                     and _python_statement_end(bound) <= gone.start_byte
                     and gone.start_byte < name.start_byte
                     for gone, _, gone_scope in found
@@ -1561,6 +1569,25 @@ def _python_deletes(name: Node) -> bool:
     while current is not None and current.type in _PY_TARGET_SHAPES:
         current = current.parent
     return current is not None and current.type == cs.TS_PY_DELETE_STATEMENT
+
+
+def _python_never_runs(node: Node, scope: Node) -> bool:
+    """Whether `node` sits, inside `scope`, in the body of an `if` whose
+    condition is a literal false constant (`if False:` or `if 0:`), so it
+    cannot run. Any other condition may hold (Greptile, PR #3624)."""
+    child, current = node, node.parent
+    while current is not None and current.id != scope.id:
+        if current.type == cs.TS_PY_IF_STATEMENT and _is_field(
+            current, cs.TS_FIELD_CONSEQUENCE, child
+        ):
+            condition = current.child_by_field_name(cs.TS_FIELD_CONDITION)
+            if condition is not None and (
+                condition.type == cs.TS_PY_FALSE
+                or (condition.type == cs.TS_PY_INTEGER and condition.text == b"0")
+            ):
+                return True
+        child, current = current, current.parent
+    return False
 
 
 def _python_statement_end(node: Node) -> int:
@@ -1612,8 +1639,8 @@ def _python_class_assigns(name: Node, klass: Node) -> bool:
 
 def _python_fresh_list(value: Node) -> bool:
     """Whether `value` builds a new list each time it runs: a list display
-    or comprehension, in parentheses or not (`([])`), or a `list(...)` call
-    (Greptile, PR #3624)."""
+    or comprehension, in parentheses or not (`([])`), or a call of the
+    builtin `list` (Greptile, PR #3624)."""
     while value.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
         inner = next(iter(value.named_children), None)
         if inner is None:
@@ -1627,7 +1654,39 @@ def _python_fresh_list(value: Node) -> bool:
         and func is not None
         and func.type == cs.TS_PY_IDENTIFIER
         and func.text == cs.PY_BUILTIN_LIST.encode()
+        and _python_names_builtin(func)
     )
+
+
+def _python_names_builtin(name: Node) -> bool:
+    """Whether the bare name `name` reads the builtin of that name: no scope
+    its lookup passes through binds it or declares it `global`, and no
+    scope rebinds the module's (`list = lambda: __all__` makes `list()` hand
+    back the module's list, Greptile, PR #3624)."""
+    root = name
+    while root.parent is not None:
+        root = root.parent
+    uses: dict[int, set[_NameUse]] = {}
+    for found in _python_names(root, (name.text or b"").decode()):
+        use = _python_name_use(found)
+        walrus = (
+            found.parent is not None and found.parent.type == cs.TS_PY_NAMED_EXPRESSION
+        )
+        scope = _python_name_scope(found, walrus=walrus and use is _NameUse.BIND)
+        uses.setdefault(scope.id, set()).add(use)
+    if any({_NameUse.GLOBAL, _NameUse.BIND} <= seen for seen in uses.values()):
+        return False
+    scope = _python_name_scope(name)
+    from_inner = False
+    while True:
+        if not (from_inner and scope.type == cs.TS_PY_CLASS_DEFINITION):
+            seen = uses.get(scope.id, set())
+            if _NameUse.BIND in seen or _NameUse.GLOBAL in seen:
+                return False
+        if scope.parent is None:
+            return True
+        from_inner = from_inner or scope.type != cs.TS_PY_CLASS_DEFINITION
+        scope = _python_name_scope(scope)
 
 
 def _python_dunder_all_change(statement: Node) -> list[str] | None:

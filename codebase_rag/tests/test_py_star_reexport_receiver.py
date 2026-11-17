@@ -573,6 +573,24 @@ ALL_FORMS = {
         '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = []\n'
         '    del __all__\n    __all__.append("Client")\n'
     ),
+    # A `del` under `if False:` never runs, so the class keeps its own list
+    # (Greptile, PR #3624).
+    "class_body_bound_skipped_delete_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = []\n'
+        '    if False:\n        del __all__\n    __all__.append("Client")\n'
+    ),
+    # A `list` the module or class rebinds may hand back the module's own
+    # list, so `list()` is a fresh one only while it names the builtin
+    # (Greptile, PR #3624).
+    "class_body_rebound_list_call_then_appended": (
+        '__all__ = ["Other"]\nlist = lambda: __all__\n\n\nclass _Registry:\n'
+        '    __all__ = list()\n    __all__.append("Client")\n'
+    ),
+    "class_body_class_rebound_list_call_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n'
+        "    list = lambda: __all__\n"
+        '    __all__ = list()\n    __all__.append("Client")\n'
+    ),
 }
 # The packages whose `Spare` is checked, and whether their star binds it.
 SPARE_BOUND = {
@@ -771,6 +789,18 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
             "via_class_body_bound_deleted_then_appended",
             "class_body_bound_deleted_then_appended._a.Client.send",
         ),
+        (
+            "via_class_body_bound_skipped_delete_then_appended",
+            "class_body_bound_skipped_delete_then_appended._b.Client.send",
+        ),
+        (
+            "via_class_body_rebound_list_call_then_appended",
+            "class_body_rebound_list_call_then_appended._a.Client.send",
+        ),
+        (
+            "via_class_body_class_rebound_list_call_then_appended",
+            "class_body_class_rebound_list_call_then_appended._a.Client.send",
+        ),
         ("via_later_named", "later_named._impl.Client.send"),
         (
             "via_bare_with",
@@ -848,6 +878,9 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         "a-class-body-append-inside-its-assigned-list-falls-back",
         "a-class-body-append-as-its-assigned-value-falls-back",
         "a-class-body-append-after-its-binding-is-deleted-falls-back",
+        "a-class-body-append-after-a-skipped-delete-keeps-it-readable",
+        "a-class-body-append-after-a-module-rebound-list-call-falls-back",
+        "a-class-body-append-after-a-class-rebound-list-call-falls-back",
         "a-later-by-name-import-of-another-name-keeps-the-star",
         "with-on-a-bare-name-imported-through-a-star",
     ],
