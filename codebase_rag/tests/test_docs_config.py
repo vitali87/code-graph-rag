@@ -196,7 +196,8 @@ def test_both_schemes_keep_text_readable() -> None:
         ("--cgr-dark-brand", "--cgr-dark-surface"),
     ]
     for fg, bg in pairs:
-        assert fg in t and bg in t, (fg, bg)
+        assert fg in t, fg
+        assert bg in t, bg
         assert _contrast(t[fg], t[bg]) >= 4.5, (fg, bg)
 
 
