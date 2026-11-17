@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import yaml
 
@@ -144,7 +144,19 @@ def _contrast(a: str, b: str) -> float:
     return (hi + 0.05) / (lo + 0.05)
 
 
-def _schemes() -> list[dict[str, Any]]:
+class _PaletteToggle(TypedDict):
+    icon: str
+    name: str
+
+
+class _PaletteScheme(TypedDict):
+    scheme: str
+    primary: str
+    accent: str
+    toggle: _PaletteToggle
+
+
+def _schemes() -> list[_PaletteScheme]:
     palette = _mkdocs_config()["theme"]["palette"]
     return palette if isinstance(palette, list) else [palette]
 
