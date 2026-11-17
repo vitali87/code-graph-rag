@@ -1590,10 +1590,7 @@ def _python_class_assigns(name: Node, klass: Node) -> bool:
     value = current.child_by_field_name(cs.FIELD_RIGHT)
     while value is not None and value.type == cs.TS_PY_ASSIGNMENT:
         value = value.child_by_field_name(cs.FIELD_RIGHT)
-    if value is None or value.type not in (
-        cs.TS_PY_LIST,
-        cs.TS_PY_LIST_COMPREHENSION,
-    ):
+    if value is None or not _python_fresh_list(value):
         return False
     while current is not None and current.type == cs.TS_PY_ASSIGNMENT:
         child, current = current, current.parent
@@ -1610,6 +1607,26 @@ def _python_class_assigns(name: Node, klass: Node) -> bool:
         block is not None
         and block.type == cs.TS_PY_BLOCK
         and _is_field(klass, cs.FIELD_BODY, block)
+    )
+
+
+def _python_fresh_list(value: Node) -> bool:
+    """Whether `value` builds a new list each time it runs: a list display
+    or comprehension, in parentheses or not (`([])`), or a `list(...)` call
+    (Greptile, PR #3624)."""
+    while value.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
+        inner = next(iter(value.named_children), None)
+        if inner is None:
+            return False
+        value = inner
+    if value.type in (cs.TS_PY_LIST, cs.TS_PY_LIST_COMPREHENSION):
+        return True
+    func = value.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    return (
+        value.type == cs.TS_PY_CALL
+        and func is not None
+        and func.type == cs.TS_PY_IDENTIFIER
+        and func.text == cs.PY_BUILTIN_LIST.encode()
     )
 
 

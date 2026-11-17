@@ -537,6 +537,16 @@ ALL_FORMS = {
         '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = []\n'
         '    __all__.append("Client")\n'
     ),
+    # A parenthesized list and a `list()` call are fresh class lists too
+    # (Greptile, PR #3624).
+    "class_body_paren_bound_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = ([])\n'
+        '    __all__.append("Client")\n'
+    ),
+    "class_body_list_call_bound_then_appended": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = list()\n'
+        '    __all__.append("Client")\n'
+    ),
     "class_body_bound_in_a_branch_then_appended": (
         '__all__ = ["Other"]\n\n\nclass _Registry:\n    if False:\n'
         '        __all__ = []\n    __all__.append("Client")\n'
@@ -734,6 +744,14 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
             "class_body_bound_then_appended._b.Client.send",
         ),
         (
+            "via_class_body_paren_bound_then_appended",
+            "class_body_paren_bound_then_appended._b.Client.send",
+        ),
+        (
+            "via_class_body_list_call_bound_then_appended",
+            "class_body_list_call_bound_then_appended._b.Client.send",
+        ),
+        (
             "via_class_body_bound_in_a_branch_then_appended",
             "class_body_bound_in_a_branch_then_appended._a.Client.send",
         ),
@@ -823,6 +841,8 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         "a-default-in-a-skipped-branch-falls-back",
         "a-class-body-default-falls-back",
         "a-class-body-append-after-its-own-binding-keeps-it-readable",
+        "a-class-body-append-after-a-parenthesized-binding-keeps-it-readable",
+        "a-class-body-append-after-a-list-call-binding-keeps-it-readable",
         "a-class-body-append-after-a-branch-binding-falls-back",
         "a-class-body-append-after-an-alias-binding-falls-back",
         "a-class-body-append-inside-its-assigned-list-falls-back",
