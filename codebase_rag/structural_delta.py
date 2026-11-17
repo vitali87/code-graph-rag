@@ -2883,8 +2883,16 @@ def _calls_into(
             drawn.append(current)
     # One site per position: a call the edit left alone is drawn before and
     # after it, and a Python property read as a call and a reference both;
-    # the call edge is the one judged.
-    drawn.sort(key=lambda site: site.rel != cs.RelationshipType.CALLS.value)
+    # the call edge is the one judged. Of the two drawings of a call, the
+    # definite binding is judged: the edit can cost the re-bound edge its
+    # `exact` (`this.scale(2)` once `scale` turns static, issue #3628), and
+    # the call reached `qn` as surely as before.
+    drawn.sort(
+        key=lambda site: (
+            site.rel != cs.RelationshipType.CALLS.value,
+            site.resolution not in _DEFINITE_RESOLUTIONS,
+        )
+    )
     sites: dict[tuple[str, str, int | None, int | None], CallSite] = {}
     for site in drawn:
         sites.setdefault((site.caller, site.caller_path, site.line, site.col), site)

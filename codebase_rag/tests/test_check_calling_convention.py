@@ -900,11 +900,9 @@ def test_typescript_static_added_breaks_instance_calls(temp_repo: Path) -> None:
     assert "TS2576" in _tsc(temp_repo)
 
 
-@needs_tsc
-def test_this_in_an_unchanged_subclass_is_judged(temp_repo: Path) -> None:
-    # Bot review on PR #3311: what `this` is in `Sub.viaScale` is read from
-    # its definition, which the edit of cart.ts leaves out of the files the
-    # delta re-reads.
+def _scale_made_static_under_a_subclass(temp_repo: Path) -> StructuralDelta:
+    # `Sub.viaScale` calls `this.scale(2)` in shop.ts, which the edit of
+    # cart.ts (making `scale` static) leaves alone.
     shop = SHOP_TS.replace(
         "    return this.shared();\n  }\n",
         "    return this.shared();\n  }\n\n"
@@ -914,14 +912,33 @@ def test_this_in_an_unchanged_subclass_is_judged(temp_repo: Path) -> None:
         "  scale(x: number): number {\n    return x * this.total();",
         "  static scale(x: number): number {\n    return x * 2;",
     )
+    return _edit(temp_repo, {"cart.ts": CART_TS, "shop.ts": shop}, "cart.ts", edited)
 
-    delta = _edit(temp_repo, {"cart.ts": CART_TS, "shop.ts": shop}, "cart.ts", edited)
+
+@needs_tsc
+def test_this_in_an_unchanged_subclass_is_judged(temp_repo: Path) -> None:
+    # Bot review on PR #3311: what `this` is in `Sub.viaScale` is read from
+    # its definition, which the edit of cart.ts leaves out of the files the
+    # delta re-reads.
+    delta = _scale_made_static_under_a_subclass(temp_repo)
 
     assert _verdicts(delta, "scale") == {
         "scaled": cs.DELTA_CONVENTION_NEEDS_CLASS,
         "viaScale": cs.DELTA_CONVENTION_NEEDS_CLASS,
     }
     assert "TS2576" in _tsc(temp_repo)
+
+
+def test_a_call_the_edit_left_guessed_is_judged_by_its_binding_before(
+    temp_repo: Path,
+) -> None:
+    # Issue #3628: once `scale` is static, the re-bound `this.scale(2)` is a
+    # heuristic edge, and a heuristic site is never judged. The call bound
+    # `scale` exactly before the edit, so that binding decides. Needs no
+    # `tsc`, so it runs where the test above is skipped.
+    delta = _scale_made_static_under_a_subclass(temp_repo)
+
+    assert _verdicts(delta, "scale")["viaScale"] == cs.DELTA_CONVENTION_NEEDS_CLASS
 
 
 @needs_tsc
