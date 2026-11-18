@@ -20,6 +20,11 @@ if ((EUID != 0)); then
   echo "Run this as root: sudo $0" >&2
   exit 1
 fi
+# The job image, the runner and the workflows' labels are all x86-64.
+if [[ $(uname -m) != x86_64 ]]; then
+  echo "The runner pool needs an x86-64 server; this one is $(uname -m)." >&2
+  exit 1
+fi
 if ! command -v apt-get >/dev/null || ! command -v systemctl >/dev/null; then
   echo "This installer expects Ubuntu or Debian with systemd." >&2
   exit 1

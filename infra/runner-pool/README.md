@@ -29,8 +29,9 @@ room. They start as soon as a slot frees up.
 
 ## Set up a server
 
-You need a server running Ubuntu 22.04 or later (or Debian 12), with root
-access. Docker is installed for you if it is missing.
+You need an x86-64 (Intel or AMD) server running Ubuntu 22.04 or later (or
+Debian 12), with root access. Arm servers are not supported yet. Docker is
+installed for you if it is missing.
 
 1. **Create a token** at
    [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new):
