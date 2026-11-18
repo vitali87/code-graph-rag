@@ -267,8 +267,11 @@ class JavaVariableAnalyzerMixin:
         scope_node: ASTNode,
         found: dict[str, list[tuple[int, int, ASTNode]]],
     ) -> None:
-        # (the node the flat map's pass types, its name, the end of its scope)
-        bound: list[tuple[ASTNode, ASTNode | None, int]] = []
+        # (the node the flat map's pass types, its name, its scope). A local
+        # is in scope from its own declarator on, an enhanced-for variable
+        # only in the loop body: `for (Item s : s.items())` iterates another
+        # `s`.
+        bound: list[tuple[ASTNode, ASTNode | None, int | None, int]] = []
         match node.type:
             case cs.TS_LOCAL_VARIABLE_DECLARATION:
                 scope_end = _local_scope(node, scope_node).end_byte
@@ -276,27 +279,45 @@ class JavaVariableAnalyzerMixin:
                     (
                         declarator,
                         declarator.child_by_field_name(cs.FIELD_NAME),
+                        None,
                         scope_end,
                     )
                     for declarator in node.children_by_field_name(cs.FIELD_DECLARATOR)
                 ]
             case cs.TS_ENHANCED_FOR_STATEMENT:
-                bound = [(node, node.child_by_field_name(cs.FIELD_NAME), node.end_byte)]
+                body = node.child_by_field_name(cs.FIELD_BODY)
+                bound = [
+                    (
+                        node,
+                        node.child_by_field_name(cs.FIELD_NAME),
+                        (body or node).start_byte,
+                        node.end_byte,
+                    )
+                ]
             case cs.TS_CATCH_FORMAL_PARAMETER if (clause := node.parent) is not None:
                 bound = [
-                    (node, node.child_by_field_name(cs.FIELD_NAME), clause.end_byte)
+                    (
+                        node,
+                        node.child_by_field_name(cs.FIELD_NAME),
+                        None,
+                        clause.end_byte,
+                    )
                 ]
             case cs.TS_JAVA_RESOURCE if node.child_by_field_name(cs.FIELD_TYPE):
                 # In scope over the later resources and the try block, not the
                 # catch or finally clauses after it.
                 bound = [
-                    (node, node.child_by_field_name(cs.FIELD_NAME), _try_body_end(node))
+                    (
+                        node,
+                        node.child_by_field_name(cs.FIELD_NAME),
+                        None,
+                        _try_body_end(node),
+                    )
                 ]
-        for typed, name_node, scope_end in bound:
+        for typed, name_node, scope_start, scope_end in bound:
             if name_node is not None and (name := safe_decode_text(name_node)):
-                found.setdefault(name, []).append(
-                    (name_node.end_byte, scope_end, typed)
-                )
+                start = name_node.end_byte if scope_start is None else scope_start
+                found.setdefault(name, []).append((start, scope_end, typed))
 
     def _scoped_declaration_type(
         self,

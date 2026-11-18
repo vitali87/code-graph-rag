@@ -21,7 +21,10 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from tree_sitter import Node
+
 from codebase_rag import constants as cs
+from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 
 OPS_TS = """\
@@ -115,7 +118,14 @@ rows = []
 for c in mock.ensure_relationship_batch.call_args_list:
     if c.args[1] == cs.RelationshipType.CALLS:
         props = c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {})
-        rows.append([c.args[2][2], props[cs.KEY_LINE], str(props[cs.KEY_RESOLUTION])])
+        rows.append(
+            [
+                c.args[0][2],
+                c.args[2][2],
+                props[cs.KEY_LINE],
+                str(props[cs.KEY_RESOLUTION]),
+            ]
+        )
 print(json.dumps(rows))
 """
 
@@ -124,17 +134,18 @@ _HASH_SEEDS = ("1", "2")
 _CHILD_TIMEOUT_SECONDS = 300
 
 
-# A CALLS edge as (callee qn, line, resolution).
-_CallRow = tuple[str, int, str]
+# A CALLS edge as (caller qn, callee qn, line, resolution).
+_CallRow = tuple[str, str, int, str]
 
 
-def _by_line(rows: list[_CallRow]) -> dict[int, list[str]]:
-    """Each CALLS edge's line, with its callee's class and method and the
-    edge's resolution."""
-    found: dict[int, list[str]] = {}
-    for callee_qn, line, resolution in rows:
-        callee = callee_qn.split(cs.SEPARATOR_DOT)
-        found[line] = [cs.SEPARATOR_DOT.join(callee[-2:]), resolution]
+def _by_line(rows: list[_CallRow]) -> dict[int, set[tuple[str, str]]]:
+    """Every CALLS edge on each line, as its callee's class and method and
+    the edge's resolution: a call bound to the right method and also to a
+    wrong one must not pass for right."""
+    found: dict[int, set[tuple[str, str]]] = {}
+    for _caller, callee_qn, line, resolution in rows:
+        callee = cs.SEPARATOR_DOT.join(callee_qn.split(cs.SEPARATOR_DOT)[-2:])
+        found.setdefault(line, set()).add((callee, resolution))
     return found
 
 
@@ -142,21 +153,34 @@ def _call_rows(mock: MagicMock) -> list[_CallRow]:
     rows: list[_CallRow] = []
     for c in get_relationships(mock, cs.RelationshipType.CALLS):
         props = c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {})
-        rows.append((c.args[2][2], props[cs.KEY_LINE], str(props[cs.KEY_RESOLUTION])))
+        rows.append(
+            (
+                c.args[0][2],
+                c.args[2][2],
+                props[cs.KEY_LINE],
+                str(props[cs.KEY_RESOLUTION]),
+            )
+        )
     return rows
 
 
-def _index(root: Path, files: dict[str, str], mock: MagicMock) -> dict[int, list[str]]:
+def _write(root: Path, files: dict[str, str]) -> None:
     for rel, source in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source, encoding="utf-8")
+
+
+def _index(
+    root: Path, files: dict[str, str], mock: MagicMock
+) -> dict[int, set[tuple[str, str]]]:
+    _write(root, files)
     create_and_run_updater(root, mock)
     return _by_line(_call_rows(mock))
 
 
-def _exact(callee: str) -> list[str]:
-    return [callee, cs.EdgeResolution.EXACT.value]
+def _exact(callee: str) -> set[tuple[str, str]]:
+    return {(callee, cs.EdgeResolution.EXACT.value)}
 
 
 def test_each_switch_case_calls_through_its_own_const(
@@ -176,7 +200,9 @@ def test_the_ts_edges_are_the_same_in_every_process(
     # returned the declarators in, which differs between processes; four
     # identical runs bound all three calls to Select twice and to SetValue
     # twice.
-    expected = _index(temp_repo, {"ops.ts": OPS_TS}, mock_ingestor)
+    _write(temp_repo, {"ops.ts": OPS_TS})
+    create_and_run_updater(temp_repo, mock_ingestor)
+    expected = sorted(_call_rows(mock_ingestor))
 
     for seed in _HASH_SEEDS:
         env = {
@@ -194,7 +220,7 @@ def test_the_ts_edges_are_the_same_in_every_process(
             env=env,
         )
         rows = json.loads(result.stdout.strip().splitlines()[-1])
-        assert _by_line([(qn, line, how) for qn, line, how in rows]) == expected, seed
+        assert sorted(tuple(row) for row in rows) == expected, seed
 
 
 def test_a_shadowing_go_local_owns_its_block(
@@ -430,15 +456,159 @@ def test_a_go_reassignment_keeps_the_declared_interface(
     )
 
     edges = _index(temp_repo, {"shapes.go": source}, mock_ingestor)
-    # The interface call fans out to the implementations as well.
-    at_line_18 = {
-        (cs.SEPARATOR_DOT.join(qn.split(cs.SEPARATOR_DOT)[-2:]), how)
-        for qn, line, how in _call_rows(mock_ingestor)
-        if line == 18
-    }
 
-    assert ("Shape.Area", cs.EdgeResolution.EXACT.value) in at_line_18
+    # The interface's method, and its implementations as the possible
+    # targets of a call through it.
+    assert edges[18] == {
+        ("Shape.Area", cs.EdgeResolution.EXACT.value),
+        ("Circle.Area", cs.EdgeResolution.HEURISTIC.value),
+        ("Square.Area", cs.EdgeResolution.HEURISTIC.value),
+    }
     assert edges[22] == _exact("Circle.Area")
+
+
+def test_a_for_of_loop_walks_the_container_declared_where_it_is(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The loop's `x` is an element of the `items` in scope at the loop, an
+    # A[], not the B[] the other branch declares under the same name.
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class B { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "\n"
+        "export function run(flag: boolean): number {\n"
+        "  let sum = 0;\n"
+        "  if (flag) {\n"
+        "    const items: A[] = [new A()];\n"
+        "    for (const x of items) {\n"
+        "      sum += x.m();\n"
+        "    }\n"
+        "  } else {\n"
+        "    const items: B[] = [new B()];\n"
+        "    const x = new C();\n"
+        "    sum += x.m();\n"
+        "    sum += items.length;\n"
+        "  }\n"
+        "  return sum;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"loop.ts": source}, mock_ingestor)
+
+    assert edges[10] == _exact("A.m")
+    assert edges[15] == _exact("C.m")
+
+
+def test_a_go_call_initializer_reads_its_receiver_in_scope(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `x := src.Make()` calls the A `src` declared in its block, so `x` is
+    # what A.Make returns, whatever the other block's `src` is.
+    source = (
+        "package main\n"
+        "\n"
+        "type X struct{}\n"
+        "\n"
+        "func (X) Run() int { return 1 }\n"
+        "\n"
+        "type Z struct{}\n"
+        "\n"
+        "func (Z) Run() int { return 2 }\n"
+        "\n"
+        "type Y struct{}\n"
+        "\n"
+        "func (Y) Run() int { return 3 }\n"
+        "\n"
+        "type A struct{}\n"
+        "\n"
+        "func (A) Make() X { return X{} }\n"
+        "\n"
+        "type B struct{}\n"
+        "\n"
+        "func (B) Make() Z { return Z{} }\n"
+        "\n"
+        "func F() int {\n"
+        "\tsum := 0\n"
+        "\t{\n"
+        "\t\tsrc := A{}\n"
+        "\t\tx := src.Make()\n"
+        "\t\tsum += x.Run()\n"
+        "\t}\n"
+        "\t{\n"
+        "\t\tsrc := B{}\n"
+        "\t\t_ = src\n"
+        "\t\tx := Y{}\n"
+        "\t\tsum += x.Run()\n"
+        "\t}\n"
+        "\treturn sum\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"recv.go": source}, mock_ingestor)
+
+    assert edges[27] == _exact("A.Make")
+    assert edges[28] == _exact("X.Run")
+    assert edges[34] == _exact("Y.Run")
+
+
+def test_an_enhanced_for_variable_is_not_in_scope_in_its_iterable(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `for (Item s : s.items())` iterates another `s` (the field): the loop
+    # variable is in scope in the loop body alone.
+    source = (
+        "package app;\n"
+        "\n"
+        "import java.util.List;\n"
+        "\n"
+        "class Item { int size() { return 1; } }\n"
+        "class Source { List<Item> items() { return null; } }\n"
+        "class Other { int size() { return 2; } }\n"
+        "\n"
+        "public class Main {\n"
+        "  Source s;\n"
+        "\n"
+        "  int total() {\n"
+        "    int sum = 0;\n"
+        "    for (Item s : s.items()) {\n"
+        "      sum += s.size();\n"
+        "    }\n"
+        "    {\n"
+        "      Other s = new Other();\n"
+        "      sum += s.size();\n"
+        "    }\n"
+        "    return sum;\n"
+        "  }\n"
+        "}\n"
+    )
+    _write(temp_repo, {_JAVA_MAIN_PATH: source})
+    updater = create_and_run_updater(temp_repo, mock_ingestor)
+    parsers, _queries = load_parsers()
+    tree = parsers[cs.SupportedLanguage.JAVA].parse(source.encode())
+    method = next(
+        node
+        for node in _descendants(tree.root_node)
+        if node.type == cs.TS_METHOD_DECLARATION
+    )
+    iterable = source.encode().index(b"s.items()")
+    engine = updater.factory.type_inference.java_type_inference
+
+    spans = engine.collect_scoped_declarations(method, updater.project_name, {})
+
+    assert {name for _start, _end, name, _type in spans} == {"s"}
+    assert not any(start <= iterable < end for start, end, _name, _type in spans)
+    assert _by_line(_call_rows(mock_ingestor))[15] == _exact("Item.size()")
+
+
+def _descendants(node: Node) -> list[Node]:
+    found: list[Node] = []
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        found.append(current)
+        pending.extend(current.children)
+    return found
 
 
 # Negative: what must not change.

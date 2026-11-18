@@ -151,6 +151,32 @@ def redeclared_span_bindings(
     return spans
 
 
+def declared_type_at(
+    bindings: go_utils.GoLocalBindings,
+    name: str,
+    point: int,
+    value_type: Callable[[Node], str | None],
+) -> str | None:
+    """The type the declaration of local `name` in scope at byte `point`
+    gives it, when the function declares `name` more than once: a receiver
+    `src` in `x := src.Make()` is the `src` declared there, not whichever
+    one the flat map kept. None where the name is declared once, or the
+    declaration in scope has no type to read."""
+    declarations = _declarations(bindings.get(name, ()))
+    if len(declarations) < 2:
+        return None
+    in_scope = [
+        (span[0], declaration)
+        for span, declaration in declarations
+        if span[0] <= point < span[1]
+    ]
+    if not in_scope:
+        return None
+    # Go's scopes nest, so the innermost declaration starts last.
+    declaration = max(in_scope, key=lambda entry: entry[0])[1]
+    return _declared_type(declaration, name, value_type)
+
+
 def _declarations(
     found: Sequence[tuple[tuple[int, int], Node]],
 ) -> list[tuple[tuple[int, int], Node]]:

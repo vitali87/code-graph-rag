@@ -20,6 +20,7 @@ from .csharp_frontend import CallSiteKey
 from .dart.type_inference import DartTypeInferenceEngine
 from .frontends.protocol import ResolvedCallSite
 from .go import GoTypeInferenceEngine
+from .go import type_inference as go_ti
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
 from .java import JavaTypeInferenceEngine
@@ -500,6 +501,7 @@ class TypeInferenceEngine:
         bare name would bind whatever this package calls Shape, and dropping it
         would let an outer declaration of the name answer for it."""
         engine = self.go_type_inference
+        bindings = go_utils.local_bindings(caller_node)
 
         def value_type(value: ASTNode) -> str | None:
             if (typed := engine.infer_value_type(value)) is not None:
@@ -509,11 +511,19 @@ class TypeInferenceEngine:
                 if value.type == cs.TS_GO_CALL_EXPRESSION
                 else None
             )
-            return (
-                self._infer_go_call_return_type(segments, module_qn, var_types or {})
-                if segments
-                else None
-            )
+            if not segments:
+                return None
+            receiver_types = dict(var_types or {})
+            # `x := src.Make()` calls the `src` declared where the call is;
+            # the flat map may hold another block's `src`.
+            if len(segments) > 1 and (
+                declared := go_ti.declared_type_at(
+                    bindings, segments[0], value.start_byte, value_type
+                )
+            ):
+                if in_scope := self._go_span_type(declared, module_qn):
+                    receiver_types[segments[0]] = in_scope
+            return self._infer_go_call_return_type(segments, module_qn, receiver_types)
 
         def span_type(type_name: str) -> str:
             return self._go_span_type(type_name, module_qn)

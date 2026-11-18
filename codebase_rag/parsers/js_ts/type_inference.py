@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from functools import cache, lru_cache, partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -79,6 +81,21 @@ _OVERLOAD_SIGNATURE_TYPES = {
 _CtorDecls = dict[str, list[tuple[int, int, "ASTNode | None"]]]
 _CtorAssigns = dict[str, list[tuple[int, "ASTNode"]]]
 _CtorBindingIndex = tuple[_CtorDecls, _CtorAssigns]
+
+
+@dataclass(slots=True)
+class _ScopedNames:
+    # One caller's declarations and assignments of each name, and the span
+    # bindings worked out so far; `busy` holds the names being worked out, so
+    # `for (const items of items)` reads the flat map rather than itself.
+    found: dict[str, list[tuple[int, int, ASTNode]]]
+    assigned: dict[str, list[ASTNode]]
+    module_qn: str
+    language: cs.SupportedLanguage | None
+    local_var_types: Mapping[str, str]
+    spans: dict[str, list[SpanBinding]] = dataclass_field(default_factory=dict)
+    busy: set[str] = dataclass_field(default_factory=set)
+
 
 if TYPE_CHECKING:
     from ...types_defs import LanguageQueries
@@ -452,33 +469,84 @@ class JsTypeInferenceEngine:
             else:
                 self._scoped_binding(node, owner, found)
             stack.extend((child, owner) for child in reversed(node.children))
+        names = _ScopedNames(found, assigned, module_qn, language, local_var_types)
         return [
             binding
             for name, declarations in found.items()
             if len(declarations) > 1
-            for binding in conflicting_declaration_spans(
-                name,
-                [
-                    (
-                        start,
-                        end,
-                        self._scoped_declaration_type(
-                            node, name, module_qn, language, local_var_types
-                        ),
-                    )
-                    for start, end, node in declarations
-                ],
-                [
-                    (
-                        assignment.end_byte,
-                        self._scoped_declaration_type(
-                            assignment, name, module_qn, language, local_var_types
-                        ),
-                    )
-                    for assignment in assigned.get(name, ())
-                ],
-            )
+            for binding in self._scoped_spans(name, names)
         ]
+
+    def _scoped_spans(self, name: str, names: _ScopedNames) -> list[SpanBinding]:
+        if (spans := names.spans.get(name)) is not None:
+            return spans
+        names.busy.add(name)
+        spans = conflicting_declaration_spans(
+            name,
+            [
+                (
+                    start,
+                    end,
+                    self._scoped_declaration_type(
+                        node,
+                        name,
+                        names.module_qn,
+                        names.language,
+                        self._scoped_view(node, names),
+                    ),
+                )
+                for start, end, node in names.found[name]
+            ],
+            [
+                (
+                    assignment.end_byte,
+                    self._scoped_declaration_type(
+                        assignment,
+                        name,
+                        names.module_qn,
+                        names.language,
+                        names.local_var_types,
+                    ),
+                )
+                for assignment in names.assigned.get(name, ())
+            ],
+        )
+        names.busy.discard(name)
+        names.spans[name] = spans
+        return spans
+
+    def _scoped_view(self, node: ASTNode, names: _ScopedNames) -> Mapping[str, str]:
+        # `for (const x of items)` walks the `items` declared where the loop
+        # is, not whichever one the flat map kept.
+        right = (
+            node.child_by_field_name(cs.FIELD_RIGHT)
+            if node.type == cs.TS_JS_FOR_IN_STATEMENT
+            else None
+        )
+        iterable = (
+            safe_decode_text(right)
+            if right is not None and right.type == cs.TS_IDENTIFIER
+            else None
+        )
+        if (
+            right is None
+            or not iterable
+            or iterable in names.busy
+            or len(names.found.get(iterable, ())) < 2
+        ):
+            return names.local_var_types
+        held = [
+            (end - start, type_name)
+            for start, end, _name, type_name in self._scoped_spans(iterable, names)
+            if start <= right.start_byte < end
+        ]
+        if not held:
+            return names.local_var_types
+        type_name = min(held)[1]
+        view = {k: v for k, v in names.local_var_types.items() if k != iterable}
+        if type_name:
+            view[iterable] = type_name
+        return view
 
     def _scoped_parameters(
         self,
