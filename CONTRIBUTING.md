@@ -121,6 +121,8 @@ All pull requests are automatically validated by our CI workflow, which runs in 
 
 5. **PR Title Validation** - Conventional Commits format check
 
+6. **Greptile 5/5 Gate** - Greptile reviews every push, and the check fails when it scores the PR's latest commit below 5/5. If Greptile doesn't score that commit (out of credits, paused), the check passes with a warning
+
 All checks run in parallel and must pass before a PR can be merged. A summary job verifies all checks succeeded.
 
 **Run checks locally before pushing:**
@@ -159,7 +161,7 @@ This project uses automated code review bots (**Greptile** and **Gemini Code Ass
 2. **Accept or push back**: For each bot suggestion, either:
    - **Accept**: Implement the suggestion and resolve the comment
    - **Push back**: Reply inline with a clear justification for why the suggestion doesn't apply
-3. **Iterate as needed**: Continue addressing new bot comments through multiple review rounds until all are resolved
+3. **Iterate as needed**: Continue addressing new bot comments through multiple review rounds until all are resolved. When Greptile scores the PR's latest commit, the score must be 5/5, or the **Greptile 5/5 Gate** check fails and blocks the merge. It reviews each push on its own; to ask it again without pushing (after answering a finding it got wrong), comment `@greptile review`, then re-run the check once the **Greptile Review** check has started
 4. **Then request human review**: Only after all bot comments are cleared, assign the PR to core maintainers for human review
 
 This process ensures that human reviewers focus on high-level design and logic rather than style and common issues that bots can catch.
@@ -249,6 +251,25 @@ either way.
 When fuzzing finds a crash: add a regression test under `codebase_rag/tests/`
 that fails without the fix, commit the reproducer into the harness' corpus
 directory, and only then fix the bug.
+
+The Rust extension has cargo-fuzz targets of its own, in
+`rust/cgr_graph_rs/fuzz/fuzz_targets/`, and both workflows run them in a
+separate `rust` job with the same budgets. Each target's header says what it
+drives and checks:
+
+| Target | What it drives |
+| --- | --- |
+| `cypher_parse` | the Cypher lexer and parser on any query text |
+| `json_string` | `json_text::push_string`, against Python's `json.dumps` |
+| `graph_algorithms` | the graph procedures and `run` on a graph and arguments the input chooses |
+| `sqlite_graph` | the bulk writer, the variable-length walk and `Graph::load`, against a model of the graph |
+| `xml_elements` | the XML project-file reader (`formats::xml`) on any bytes |
+
+To run one locally, with a nightly toolchain and `cargo install cargo-fuzz`:
+
+```bash
+cd rust/cgr_graph_rs && cargo +nightly fuzz run cypher_parse -- -max_total_time=60
+```
 
 ## Coding Standards
 
