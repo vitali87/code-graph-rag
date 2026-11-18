@@ -232,6 +232,39 @@ public class Panel extends Widgets {
     }
 }
 """
+# A type parameter is the type variable, not an inherited member type of
+# the same name: `Helper field` in Holder reads the type parameter, which
+# resolves through the import as before scoping. A method's own type
+# parameter shadows the class's member type the same way (Greptile, PR
+# #2973).
+HOLDER = """\
+package demo;
+
+import api.Helper;
+
+class GenBase {
+    static class Helper { boolean check() { return false; } }
+}
+
+public class Holder<Helper extends api.Helper> extends GenBase {
+    Helper field;
+
+    static class Own {
+        static class Helper { boolean check() { return false; } }
+
+        <Helper extends api.Helper> boolean viaMethod(Helper h) {
+            return h.check();
+        }
+    }
+}
+
+class HolderUser {
+    boolean use(Holder holder) {
+        var x = holder.field;
+        return x.check();
+    }
+}
+"""
 
 PREFIX = "src.main.java.demo"
 
@@ -252,6 +285,7 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     _write(root, f"{PREFIX.replace('.', '/')}/Consumer.java", CONSUMER)
     _write(root, f"{PREFIX.replace('.', '/')}/Widgets.java", WIDGETS)
     _write(root, f"{PREFIX.replace('.', '/')}/Panel.java", PANEL)
+    _write(root, f"{PREFIX.replace('.', '/')}/Holder.java", HOLDER)
     return _index(root, MagicMock())
 
 
@@ -340,12 +374,16 @@ _API_CHECK = "api.Helper.Helper.check()"
         ),
         ("Consumer.Consumer.use(Factory)", _API_CHECK),
         ("Panel.Panel.press()", "demo.Widgets.Widgets.Button.click()"),
+        ("Holder.HolderUser.use(Holder)", _API_CHECK),
+        ("Holder.Holder.Own.viaMethod(Helper)", _API_CHECK),
     ],
     ids=[
         "private-member-not-inherited",
         "protected-member-shadows-the-import",
         "return-type-named-where-declared",
         "field-type-named-where-declared",
+        "class-type-parameter-over-inherited-member",
+        "method-type-parameter-over-own-member",
     ],
 )
 def test_an_uninherited_member_or_a_return_type_keeps_the_import(

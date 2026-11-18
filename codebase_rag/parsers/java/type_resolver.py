@@ -41,6 +41,21 @@ _JAVA_TYPE_DECL_AST_TYPES = frozenset(
     }
 )
 
+# Members that can declare their own type parameters (`<T> void m(T t)`).
+_JAVA_GENERIC_MEMBER_DECL_AST_TYPES = frozenset(
+    {cs.TS_METHOD_DECLARATION, cs.TS_CONSTRUCTOR_DECLARATION}
+)
+
+
+def _declares_type_parameter(declaration: ASTNode, type_name: str) -> bool:
+    params = declaration.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+    return params is not None and any(
+        child.type == cs.TS_TYPE_IDENTIFIER and safe_decode_text(child) == type_name
+        for param in params.children
+        if param.type == cs.TS_TYPE_PARAMETER
+        for child in param.children
+    )
+
 
 class JavaClassHeaders(NamedTuple):
     """What one file's type declarations name in their headers.
@@ -269,15 +284,39 @@ class JavaTypeResolverMixin:
         # not make it ambiguous (Greptile, PR #2973).
         # Each enclosing type's members include those it inherits, ahead of
         # the next type out (JLS 8.5; CodeRabbit, PR #2973).
-        for enclosing in self._enclosing_type_qns(scope, module_qn):
-            for owner in self._type_and_supertypes(enclosing):
-                member = f"{owner}{cs.SEPARATOR_DOT}{type_name}"
-                if (
-                    member in self.function_registry
-                    and self.function_registry[member] in JAVA_TYPE_DECL_NODE_TYPES
-                    and (owner == enclosing or not self._is_private_member(member))
-                ):
+        # A type parameter named the same is the type variable instead, in
+        # javac's order: a method's ahead of every member type around it, a
+        # class's after the members it declares but ahead of those it
+        # inherits (Greptile, PR #2973). None then hands the name back to
+        # the import and same-file lookups, as before scoping.
+        enclosing_qns = iter(self._enclosing_type_qns(scope, module_qn))
+        current = scope.parent
+        while current is not None:
+            if current.type in _JAVA_GENERIC_MEMBER_DECL_AST_TYPES and (
+                _declares_type_parameter(current, type_name)
+            ):
+                return None
+            if current.type in _JAVA_TYPE_DECL_AST_TYPES:
+                if (enclosing := next(enclosing_qns, None)) is None:
+                    return None
+                if member := self._member_type(enclosing, enclosing, type_name):
                     return member
+                if _declares_type_parameter(current, type_name):
+                    return None
+                for owner in self._type_and_supertypes(enclosing)[1:]:
+                    if member := self._member_type(owner, enclosing, type_name):
+                        return member
+            current = current.parent
+        return None
+
+    def _member_type(self, owner: str, enclosing: str, type_name: str) -> str | None:
+        member = f"{owner}{cs.SEPARATOR_DOT}{type_name}"
+        if (
+            member in self.function_registry
+            and self.function_registry[member] in JAVA_TYPE_DECL_NODE_TYPES
+            and (owner == enclosing or not self._is_private_member(member))
+        ):
+            return member
         return None
 
     def _is_private_member(self, member_qn: str) -> bool:
