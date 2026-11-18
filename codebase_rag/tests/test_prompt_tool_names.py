@@ -249,4 +249,4 @@ def test_project_instructions_defer_to_the_rules_heading() -> None:
     )
 
     assert "**Rules:**" in prompt
-    assert "the rules above win" in prompt
+    assert "override the rules above" in prompt
