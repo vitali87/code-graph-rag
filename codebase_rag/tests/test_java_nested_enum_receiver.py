@@ -152,6 +152,65 @@ public class Outer3 {
 }
 """
 
+# A supertype's private member type is not inherited (JLS 8.5), so the
+# imported `api.Helper` is the one ViaPrivate reads. A protected one is
+# inherited and shadows the import (Greptile, PR #2973).
+API_HELPER = """\
+package api;
+
+public class Helper {
+    public boolean check() { return true; }
+}
+"""
+API_FACTORY = """\
+package api;
+
+public class Factory {
+    public Helper make() { return new Helper(); }
+}
+"""
+INHERIT = """\
+package demo;
+
+import api.Helper;
+
+public class Inherit {
+    static class PrivateBase {
+        private static class Helper { boolean check() { return false; } }
+    }
+
+    static class ProtectedBase {
+        protected static class Helper { boolean check() { return false; } }
+    }
+
+    static class ViaPrivate extends PrivateBase {
+        boolean use(Helper h) { return h.check(); }
+    }
+
+    static class ViaProtected extends ProtectedBase {
+        boolean use(Helper h) { return h.check(); }
+    }
+}
+"""
+# A method's return type is named where the method is declared: `make()`
+# returns `api.Helper`, not the `Helper` the caller nests (Greptile, PR
+# #2973).
+CONSUMER = """\
+package demo;
+
+import api.Factory;
+import api.Helper;
+
+public class Consumer {
+    static class Helper { boolean check() { return false; } }
+
+    boolean use(Factory factory) {
+        var x = factory.make();
+        return x.check();
+    }
+}
+"""
+
 PREFIX = "src.main.java.demo"
 
 
@@ -165,6 +224,10 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     _write(root, f"{PREFIX.replace('.', '/')}/Outer2.java", OUTER2)
     _write(root, f"{PREFIX.replace('.', '/')}/Iface.java", IFACE)
     _write(root, f"{PREFIX.replace('.', '/')}/Outer3.java", OUTER3)
+    _write(root, "src/main/java/api/Helper.java", API_HELPER)
+    _write(root, "src/main/java/api/Factory.java", API_FACTORY)
+    _write(root, f"{PREFIX.replace('.', '/')}/Inherit.java", INHERIT)
+    _write(root, f"{PREFIX.replace('.', '/')}/Consumer.java", CONSUMER)
     return _index(root, MagicMock())
 
 
@@ -238,6 +301,39 @@ def test_a_same_named_type_resolves_in_the_callers_scope(
     graph: RecordedGraph, caller: str, callee: str
 ) -> None:
     assert _calls_from(graph, caller) == {callee: "exact"}
+
+
+_API_CHECK = "api.Helper.Helper.check()"
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("Inherit.Inherit.ViaPrivate.use(Helper)", _API_CHECK),
+        (
+            "Inherit.Inherit.ViaProtected.use(Helper)",
+            "demo.Inherit.Inherit.ProtectedBase.Helper.check()",
+        ),
+        ("Consumer.Consumer.use(Factory)", _API_CHECK),
+    ],
+    ids=[
+        "private-member-not-inherited",
+        "protected-member-shadows-the-import",
+        "return-type-named-where-declared",
+    ],
+)
+def test_an_uninherited_member_or_a_return_type_keeps_the_import(
+    graph: RecordedGraph, caller: str, callee: str
+) -> None:
+    prefix = f"{graph.project}.src.main.java."
+    calls = {
+        dst.removeprefix(prefix): str(props.get("resolution"))
+        for src, rel, dst, props in graph.edges
+        if rel == "CALLS" and src == f"{prefix}demo.{caller}"
+    }
+    # `make()` itself is called too; only the receiver's method is in question.
+    calls.pop("api.Factory.Factory.make()", None)
+    assert calls == {callee: "exact"}, calls
 
 
 # Negative: what must not change.

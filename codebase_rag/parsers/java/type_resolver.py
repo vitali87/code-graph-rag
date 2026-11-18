@@ -5,7 +5,12 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from ... import constants as cs
 from ...types_defs import ASTNode, NodeType
-from .utils import find_package_start_index, safe_decode_text
+from ..utils import module_qn_for_entity
+from .utils import (
+    find_package_start_index,
+    is_private_java_declaration,
+    safe_decode_text,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -138,7 +143,8 @@ class JavaTypeResolverMixin:
     _supertype_walks: dict[str, tuple[str, ...]]
     # Annotation only, never a def: this mixin precedes JavaMethodResolverMixin
     # in the MRO, so a stub here would shadow the real implementation.
-    _java_direct_supertypes: Callable[[str], tuple[list[str], bool]]
+    _java_direct_supertypes: Callable[..., tuple[list[str], bool]]
+    _java_type_declaration: Callable[..., ASTNode | None]
 
     def _module_qn_to_java_fqn(self, module_qn: str) -> str | None:
         parts = module_qn.split(cs.SEPARATOR_DOT)
@@ -269,9 +275,20 @@ class JavaTypeResolverMixin:
                 if (
                     member in self.function_registry
                     and self.function_registry[member] in JAVA_TYPE_DECL_NODE_TYPES
+                    and (owner == enclosing or not self._is_private_member(member))
                 ):
                     return member
         return None
+
+    def _is_private_member(self, member_qn: str) -> bool:
+        # A supertype's private member type is not inherited (JLS 8.5), so it
+        # must not shadow an import the way an inherited one does (Greptile,
+        # PR #2973). The registry holds private nested types too.
+        owner = module_qn_for_entity(member_qn, self.module_qn_to_file_path)
+        if owner is None:
+            return False
+        declaration = self._java_type_declaration(member_qn, owner)
+        return declaration is not None and is_private_java_declaration(declaration)
 
     def _type_and_supertypes(self, class_qn: str) -> tuple[str, ...]:
         """`class_qn`, then its superclasses and superinterfaces, nearest

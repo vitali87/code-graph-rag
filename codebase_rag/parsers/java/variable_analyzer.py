@@ -92,6 +92,25 @@ def _java_type_field_text(expr_node: ASTNode) -> str | None:
     return None
 
 
+# The initializers whose inferred type is the one they write out.
+_JAVA_TYPE_NAMING_INITIALIZERS = frozenset(
+    {
+        cs.TS_OBJECT_CREATION_EXPRESSION,
+        cs.TS_JAVA_CAST_EXPRESSION,
+        cs.TS_ARRAY_CREATION_EXPRESSION,
+    }
+)
+
+
+def _initializer_names_its_type(value_node: ASTNode) -> bool:
+    node: ASTNode | None = value_node
+    while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        node = next(
+            (c for c in node.children if c.type not in cs.DELIMITER_TOKENS), None
+        )
+    return node is not None and node.type in _JAVA_TYPE_NAMING_INITIALIZERS
+
+
 def _java_array_creation_type(expr_node: ASTNode) -> str | None:
     if base_type := _java_type_field_text(expr_node):
         return f"{base_type}{cs.JAVA_ARRAY_SUFFIX}"
@@ -277,8 +296,16 @@ class JavaVariableAnalyzerMixin:
             if inferred_type := self._infer_java_type_from_expression(
                 value_node, module_qn, local_var_types
             ):
+                # Only a type the initializer writes (`new Box()`, a cast) is
+                # read in this scope. One inferred from a call was named where
+                # the method is declared, so a type the caller nests must not
+                # take it over (Greptile, PR #2973).
                 resolved_type = self._resolve_java_type_name(
-                    inferred_type, module_qn, declarator_node
+                    inferred_type,
+                    module_qn,
+                    declarator_node
+                    if _initializer_names_its_type(value_node)
+                    else None,
                 )
                 local_var_types[var_name] = resolved_type
                 logger.debug(
