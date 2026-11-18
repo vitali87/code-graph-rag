@@ -1190,6 +1190,9 @@ class FlowProcessor:
         self._walked: set[str] = set()
         self._prior_flows: dict[str, set[PriorResourceFlow]] = defaultdict(set)
         self._composed: dict[tuple[str, str, str], _ComposedFlow] = {}
+        # Per pass-through call token, the pending callees its argument
+        # carries, for the run's finalize (issue #1168).
+        self._token_pending: dict[str, set[str]] = {}
         self._pending_captures: dict[str, _PendingCapture] = {}
         # Per-function positional parameter slots so a call site's arg:<index>
         # resolves to the right callee parameter. The Python path truncates at
@@ -4834,6 +4837,7 @@ class FlowProcessor:
         # callee's return resolves through to the argument's origins.
         return_params = self._resolve_return_params()
         extra_origins, extra_pending = self._pass_through_extras(return_params)
+        self._token_pending = extra_pending
         resolved, is_tainted = self._resolve_summaries(extra_origins, extra_pending)
         for callee_type, callee_qn, caller_spec in self._return_edge_candidates:
             if is_tainted.get(callee_qn):
@@ -4853,6 +4857,7 @@ class FlowProcessor:
         self._walked.clear()
         self._prior_flows.clear()
         self._composed.clear()
+        self._token_pending = {}
         self._return_edge_candidates.clear()
         self._deferred_resource_flows.clear()
         self._deferred_arg_edges.clear()
@@ -4942,15 +4947,27 @@ class FlowProcessor:
         return chain
 
     def _return_chain(self, pending: frozenset[str]) -> set[str]:
-        """The pending callees and every callee whose return they forward."""
-        chain = set(pending)
+        """The pending callees and every callee whose return they forward.
+
+        A pass-through call's token (`identity(fetch())`) is no function: it
+        stands for its argument, so the chain follows what the argument is
+        pending on (`fetch`) instead, and the token, whose byte offset any
+        edit above it shifts, is left out.
+        """
+        chain: set[str] = set()
+        seen: set[str] = set()
         stack = list(pending)
         while stack:
-            summary = self._summaries.get(stack.pop())
-            for callee in summary.pending if summary is not None else ():
-                if callee not in chain:
-                    chain.add(callee)
-                    stack.append(callee)
+            item = stack.pop()
+            if item in seen:
+                continue
+            seen.add(item)
+            if item.startswith(_PASSTHROUGH_TOKEN_PREFIX):
+                stack.extend(self._token_pending.get(item, ()))
+                continue
+            chain.add(item)
+            summary = self._summaries.get(item)
+            stack.extend(summary.pending if summary is not None else ())
         return chain
 
     def _compose_flow(

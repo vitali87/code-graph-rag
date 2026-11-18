@@ -325,3 +325,25 @@ def test_a_fixed_direct_leak_stays_gone_beside_a_call_to_an_unchanged_file(
     _write(root, {"app.py": DIRECT_AND_HANDOFF.replace("    print(token)\n", "")})
     _index(ingestor, root, "billing")
     assert _token_flows(ingestor) == []
+
+
+PASSES_THROUGH = (
+    "from source import fetch\n\n\ndef identity(value):\n    return value\n\n\n"
+    "def main():\n    print(identity(fetch()))\n"
+)
+
+
+def test_an_edit_above_a_pass_through_call_keeps_its_flow(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # `identity(fetch())` hands the unchanged `fetch`'s return through a
+    # function of app.py; a comment above main shifts the call but keeps it.
+    root = _write(
+        tmp_path / "billing", {"app.py": PASSES_THROUGH, "source.py": RETURNER}
+    )
+    _index(ingestor, root, "billing", force=True)
+    assert _token_flows(ingestor) == [(STDOUT, "billing.app.main")]
+
+    _write(root, {"app.py": "# a comment\n" + PASSES_THROUGH})
+    _index(ingestor, root, "billing")
+    assert _token_flows(ingestor) == [(STDOUT, "billing.app.main")]
