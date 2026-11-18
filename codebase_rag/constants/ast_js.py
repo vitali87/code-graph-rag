@@ -354,7 +354,6 @@ TS_JS_CATCH_CLAUSE = "catch_clause"
 # `(a, b)`: the comma operator; its value is the LAST operand.
 TS_JS_SEQUENCE_EXPRESSION = "sequence_expression"
 TS_JS_SWITCH_BODY = "switch_body"
-TS_JS_ENUM_DECLARATION = "enum_declaration"
 # `for (var x of xs)` hoists x to the function; only this `kind` widens the
 # loop binding's scope past the for statement itself.
 TS_JS_VAR_KIND = "var"

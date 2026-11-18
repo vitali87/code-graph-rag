@@ -524,12 +524,12 @@ def test_an_assignment_in_a_callback_does_not_retype_the_outer_local(
     assert edges[24] == _exact("C.m")
 
 
-def test_a_js_reassignment_from_an_untyped_call_keeps_the_type(
+def test_a_js_reassignment_from_a_call_keeps_the_type(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # `x = make()` with `make(): B` makes `x` a B; `x = other()`, a call with
-    # no type to read, then changes nothing rather than typing `x` by the
-    # name `other` (bot review).
+    # A call's value is not typed, whatever the callee is declared to return
+    # (`make(): B`) or not (`other()`): `x` keeps its A, as on main, until a
+    # `new` gives it a type it surely has.
     source = (
         "class A { m(): number { return 1; } }\n"
         "class B extends A { m(): number { return 2; } }\n"
@@ -542,82 +542,13 @@ def test_a_js_reassignment_from_an_untyped_call_keeps_the_type(
         "  let sum = 0;\n"
         "  {\n"
         "    let x: A = new A();\n"
-        "    sum += x.m();\n"
         "    x = make();\n"
         "    sum += x.m();\n"
         "    x = other();\n"
         "    sum += x.m();\n"
-        "  }\n"
-        "  {\n"
-        "    const x = new C();\n"
+        "    x = new B();\n"
         "    sum += x.m();\n"
         "  }\n"
-        "  return sum;\n"
-        "}\n"
-    )
-
-    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
-
-    assert edges[12] == _exact("A.m")
-    assert edges[14] == _exact("B.m")
-    assert edges[16] == _exact("B.m")
-    assert edges[20] == _exact("C.m")
-
-
-def test_a_js_reassignment_from_a_shadowed_factory_keeps_the_type(
-    temp_repo: Path, mock_ingestor: MagicMock
-) -> None:
-    # `make()` here calls the parameter `make`, not the file's `make(): B`,
-    # so it says nothing about `x`, which stays the A (bot review).
-    source = (
-        "class A { m(): number { return 1; } }\n"
-        "class B { m(): number { return 2; } }\n"
-        "class C { m(): number { return 3; } }\n"
-        "\n"
-        "function make(): B { return new B(); }\n"
-        "\n"
-        "export function run(make: () => A): number {\n"
-        "  let sum = 0;\n"
-        "  {\n"
-        "    let x = new A();\n"
-        "    x = make();\n"
-        "    sum += x.m();\n"
-        "  }\n"
-        "  {\n"
-        "    const x = new C();\n"
-        "    sum += x.m();\n"
-        "  }\n"
-        "  return sum;\n"
-        "}\n"
-    )
-
-    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
-
-    assert edges[12] == _exact("A.m")
-    assert edges[16] == _exact("C.m")
-
-
-def test_a_js_reassignment_from_a_hoisted_var_factory_keeps_the_type(
-    temp_repo: Path, mock_ingestor: MagicMock
-) -> None:
-    # `var make` is the function's from its first line, so `make()` calls it
-    # even before the declaration, not the file's `make(): B` (bot review).
-    source = (
-        "class A { m(): number { return 1; } }\n"
-        "class B { m(): number { return 2; } }\n"
-        "class C { m(): number { return 3; } }\n"
-        "\n"
-        "function make(): B { return new B(); }\n"
-        "\n"
-        "export function run(): number {\n"
-        "  let sum = 0;\n"
-        "  make = () => new A();\n"
-        "  {\n"
-        "    let x = new A();\n"
-        "    x = make();\n"
-        "    sum += x.m();\n"
-        "  }\n"
-        "  var make: () => A;\n"
         "  {\n"
         "    const x = new C();\n"
         "    sum += x.m();\n"
@@ -629,74 +560,16 @@ def test_a_js_reassignment_from_a_hoisted_var_factory_keeps_the_type(
     edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
 
     assert edges[13] == _exact("A.m")
-    assert edges[18] == _exact("C.m")
+    assert edges[15] == _exact("A.m")
+    assert edges[17] == _exact("B.m")
+    assert edges[21] == _exact("C.m")
 
 
-def test_an_unannotated_local_factory_keeps_the_type(
+def test_a_js_reassignment_from_a_local_factory_keeps_the_type(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # The `make` called is the function's own arrow, with no written return
-    # type: its body is not read, so `x` keeps the A it had.
-    source = (
-        "class A { m(): number { return 1; } }\n"
-        "class B extends A { m(): number { return 2; } }\n"
-        "class C { m(): number { return 3; } }\n"
-        "\n"
-        "export function run(): number {\n"
-        "  const make = () => new B();\n"
-        "  let sum = 0;\n"
-        "  {\n"
-        "    let x: A = new A();\n"
-        "    x = make();\n"
-        "    sum += x.m();\n"
-        "  }\n"
-        "  {\n"
-        "    const x = new C();\n"
-        "    sum += x.m();\n"
-        "  }\n"
-        "  return sum;\n"
-        "}\n"
-    )
-
-    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
-
-    assert edges[11] == _exact("A.m")
-    assert edges[15] == _exact("C.m")
-
-
-def test_a_write_to_another_make_does_not_hide_the_module_factory(
-    temp_repo: Path, mock_ingestor: MagicMock
-) -> None:
-    # The writes are to the inner block's own `make`; the call still reaches
-    # the module-level `make(): B` (bot review).
-    source = (
-        "class A { m(): number { return 1; } }\n"
-        "class B extends A { m(): number { return 2; } }\n"
-        "class C { m(): number { return 3; } }\n"
-        "\n"
-        "function make(): B { return new B(); }\n"
-        "\n"
-        "export function run(): number {\n"
-        "  let x: A = new A();\n"
-        "  x = make();\n"
-        "  const result = x.m();\n"
-        "  { let x = new C(); }\n"
-        "  { let make = 1; make = 2; }\n"
-        "  return result;\n"
-        "}\n"
-    )
-
-    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
-
-    assert edges[10] == _exact("B.m")
-
-
-def test_an_annotated_const_factory_types_the_reassignment(
-    temp_repo: Path, mock_ingestor: MagicMock
-) -> None:
-    # The bot review's example: the call reaches the function's own `const
-    # make`, which nothing can replace, and its written return type says B;
-    # the other block's writes are to another `make`.
+    # A call through the function's own `const make`, annotated or not, is
+    # not typed either: `x` keeps its A, as on main.
     source = (
         "class A { m(): number { return 1; } }\n"
         "class B extends A { m(): number { return 2; } }\n"
@@ -715,215 +588,15 @@ def test_an_annotated_const_factory_types_the_reassignment(
 
     edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
 
-    assert edges[9] == _exact("B.m")
+    assert edges[9] == _exact("A.m")
 
 
-def test_an_unannotated_module_factory_never_types_by_the_module(
+def test_a_js_reassignment_from_a_method_call_keeps_the_type(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # The bot review's example: reading `function make() { return new B(); }`
-    # names the module rather than B, which would leave `x` with no type.
-    # Only a type the project defines counts, so `x` keeps the type it had:
-    # B in `run`, A in `run2`.
-    source = (
-        "class A { m() { return 1; } }\n"
-        "class B { m() { return 2; } }\n"
-        "class C { m() { return 3; } }\n"
-        "\n"
-        "function make() { return new B(); }\n"
-        "\n"
-        "export function run() {\n"
-        "  let x = new B();\n"
-        "  x = make();\n"
-        "  const result = x.m();\n"
-        "  { const x = new C(); x.m(); }\n"
-        "  return result;\n"
-        "}\n"
-        "\n"
-        "export function run2() {\n"
-        "  let x = new A();\n"
-        "  x = make();\n"
-        "  const result = x.m();\n"
-        "  { const x = new C(); x.m(); }\n"
-        "  return result;\n"
-        "}\n"
-    )
-
-    edges = _index(temp_repo, {"run.js": source}, mock_ingestor)
-
-    assert edges[10] == _exact("B.m")
-    assert edges[18] == _exact("A.m")
-
-
-def test_a_js_reassignment_from_a_local_generator_keeps_the_type(
-    temp_repo: Path, mock_ingestor: MagicMock
-) -> None:
-    # Calling a generator gives a generator object, not what its body
-    # returns (bot review); a local one says nothing about `x` either way.
-    source = (
-        "class A { m(): number { return 1; } }\n"
-        "class B { m(): number { return 2; } }\n"
-        "class C { m(): number { return 3; } }\n"
-        "\n"
-        "export function run(): number {\n"
-        "  const make = function* () { return new B(); };\n"
-        "  let sum = 0;\n"
-        "  {\n"
-        "    let x: any = new A();\n"
-        "    x = make();\n"
-        "    sum += x.m();\n"
-        "  }\n"
-        "  {\n"
-        "    const x = new C();\n"
-        "    sum += x.m();\n"
-        "  }\n"
-        "  return sum;\n"
-        "}\n"
-    )
-
-    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
-
-    assert edges[11] == _exact("A.m")
-    assert edges[15] == _exact("C.m")
-
-
-def test_a_js_reassignment_from_an_imported_factory_keeps_the_type(
-    temp_repo: Path, mock_ingestor: MagicMock
-) -> None:
-    # `make()` after the inner block calls the import: the arrow named `make`
-    # in that closed block is not in scope there and must not stand in for
-    # it (bot review).
-    source = (
-        'import { make } from "./factory";\n'
-        "\n"
-        "class A { m(): number { return 1; } }\n"
-        "class B { m(): number { return 2; } }\n"
-        "class C { m(): number { return 3; } }\n"
-        "\n"
-        "export function run(): number {\n"
-        "  let sum = 0;\n"
-        "  {\n"
-        "    const make = (): B => new B();\n"
-        "    sum += make().m();\n"
-        "  }\n"
-        "  {\n"
-        "    let x = new A();\n"
-        "    x = make();\n"
-        "    sum += x.m();\n"
-        "  }\n"
-        "  {\n"
-        "    const x = new C();\n"
-        "    sum += x.m();\n"
-        "  }\n"
-        "  return sum;\n"
-        "}\n"
-    )
-
-    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
-
-    assert edges[16] == _exact("A.m")
-    assert edges[20] == _exact("C.m")
-
-
-def test_a_js_reassignment_from_a_replaced_factory_keeps_the_type(
-    temp_repo: Path, mock_ingestor: MagicMock
-) -> None:
-    # The bot review's repro: `make` is a `let` given another arrow before
-    # the call, so its first arrow's B says nothing; `x` keeps its C.
-    source = (
-        "class A { m(): number { return 1; } }\n"
-        "class B { m(): number { return 2; } }\n"
-        "class C { m(): number { return 3; } }\n"
-        "\n"
-        "export function run(): number {\n"
-        "  let make = (): B => new B();\n"
-        "  make = (): C => new C();\n"
-        "  let x = new C();\n"
-        "  x = make();\n"
-        "  const result = x.m();\n"
-        "  { let x = new A(); }\n"
-        "  return result;\n"
-        "}\n"
-    )
-
-    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
-
-    assert edges[10] == _exact("C.m")
-
-
-def test_a_js_reassignment_from_a_shadowed_class_s_method_keeps_the_type(
-    temp_repo: Path, mock_ingestor: MagicMock
-) -> None:
-    # `Factory.one()` calls the parameter `Factory`, not the class whose
-    # `one()` returns B, so `x` stays the A (bot review).
-    source = (
-        "class A { m(): number { return 1; } }\n"
-        "class B { m(): number { return 2; } }\n"
-        "class C { m(): number { return 3; } }\n"
-        "class Factory { static one(): B { return new B(); } }\n"
-        "interface Maker { one(): A; }\n"
-        "\n"
-        "export function run(Factory: Maker): number {\n"
-        "  let sum = 0;\n"
-        "  {\n"
-        "    let x = new A();\n"
-        "    x = Factory.one();\n"
-        "    sum += x.m();\n"
-        "  }\n"
-        "  {\n"
-        "    const x = new C();\n"
-        "    sum += x.m();\n"
-        "  }\n"
-        "  return sum;\n"
-        "}\n"
-    )
-
-    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
-
-    assert edges[12] == _exact("A.m")
-    assert edges[16] == _exact("C.m")
-
-
-def test_a_js_reassignment_from_a_local_class_s_method_keeps_the_type(
-    temp_repo: Path, mock_ingestor: MagicMock
-) -> None:
-    # The bot review's example: the function's own `class Factory` hides the
-    # module's, whose `one()` returns B, so `x` keeps the A it had.
-    source = (
-        "class A { m(): number { return 1; } }\n"
-        "class B { m(): number { return 2; } }\n"
-        "class C { m(): number { return 3; } }\n"
-        "class Factory { static one(): B { return new B(); } }\n"
-        "\n"
-        "export function run(): number {\n"
-        "  class Factory { static one(): A { return new A(); } }\n"
-        "  let sum = 0;\n"
-        "  {\n"
-        "    let x = new A();\n"
-        "    x = Factory.one();\n"
-        "    sum += x.m();\n"
-        "  }\n"
-        "  {\n"
-        "    const x = new C();\n"
-        "    sum += x.m();\n"
-        "  }\n"
-        "  return sum;\n"
-        "}\n"
-    )
-
-    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
-
-    assert edges[12] == _exact("A.m")
-    assert edges[16] == _exact("C.m")
-
-
-def test_a_js_reassignment_types_its_variable_as_a_declarator_would(
-    temp_repo: Path, mock_ingestor: MagicMock
-) -> None:
-    # The bot review's repro: `items = Factory.make()` with `make(): B[]`
-    # makes `items` a B[], so the loop over it calls B's (line 15). A bare
-    # call's array return counts the same way (line 19), and a method's
-    # class return types a receiver (line 21).
+    # Method and function calls returning arrays (`Factory.make(): B[]`,
+    # `makeAll(): B[]`) or a class (`Factory.one(): B`) leave the variable
+    # as it was: the loops and the call still read A, as on main.
     source = (
         "class A { m(): number { return 1; } }\n"
         "class B { m(): number { return 2; } }\n"
@@ -960,9 +633,9 @@ def test_a_js_reassignment_types_its_variable_as_a_declarator_would(
 
     edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
 
-    assert edges[15] == _exact("B.m")
-    assert edges[19] == _exact("B.m")
-    assert edges[21] == _exact("B.m")
+    assert edges[15] == _exact("A.m")
+    assert edges[19] == _exact("A.m")
+    assert edges[21] == _exact("A.m")
     assert edges[28] == {("C.m", cs.EdgeResolution.EXACT.value)}
 
 
