@@ -2529,6 +2529,11 @@ class ImportProcessor:
         self.dart_exposed_libraries.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
+    def declares_cpp_module(self, module_qn: str, target: str) -> bool:
+        """Whether the file's binding to `target` is its own `module X;`
+        declaration, which includes nothing."""
+        return (module_qn, target) in self._cpp_declaration_mappings
+
     def displaced_include_targets(self) -> dict[str, frozenset[str]]:
         """The headers each file includes under a local name a later include
         took over (#1758), by including module.

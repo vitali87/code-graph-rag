@@ -394,3 +394,23 @@ def test_an_incremental_sync_of_a_header_keeps_its_includers_statics(
     _write(root, {edited: _INCLUDER[edited] + "\n"})
     after = _sync(root, store, force=False)
     assert after == fresh, (after, fresh)
+
+
+# a.cpp declares module `foo`, which binds the name `foo` to foo.cpp's module
+# without including it: foo.cpp's `helper()` is z.cpp's, never a.cpp's static.
+_MODULE_DECLARATION = {
+    "foo.cpp": "int helper();\nint use() { return helper(); }\n",
+    "z.cpp": "int helper() { return 42; }\n",
+    "a.cpp": (
+        "export module foo;\n"
+        "static int helper() { return 1; }\n"
+        "int a() { return helper(); }\n"
+    ),
+}
+
+
+def test_a_module_declaration_is_no_include(tmp_path: Path) -> None:
+    calls = _calls(tmp_path / "moddecl", _MODULE_DECLARATION, "cpp")
+    assert ("foo.use", "z.helper") in calls, calls
+    assert ("foo.use", "a.helper") not in calls, calls
+    assert ("a.a", "a.helper") in calls, calls

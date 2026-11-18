@@ -5436,7 +5436,10 @@ class CallResolver:
                 *(import_mapping.get(current) or {}).values(),
                 *displaced.get(current, ()),
             ):
-                if target not in seen:
+                # `export module foo;` binds the name `foo` but includes nothing.
+                if target not in seen and not imports.declares_cpp_module(
+                    current, target
+                ):
                     seen.add(target)
                     pending.append(target)
         return seen
@@ -5467,7 +5470,8 @@ class CallResolver:
             displaced = imports.displaced_include_targets()
             for module_qn, mapping in imports.import_mapping.items():
                 for target in (*mapping.values(), *displaced.get(module_qn, ())):
-                    includers.setdefault(target, set()).add(module_qn)
+                    if not imports.declares_cpp_module(module_qn, target):
+                        includers.setdefault(target, set()).add(module_qn)
             self._c_includers_cache = includers
         return self._c_includers_cache
 
