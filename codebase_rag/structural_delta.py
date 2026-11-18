@@ -2856,30 +2856,27 @@ def _moved_site(
     return moved
 
 
-class _BindingContext(NamedTuple):
-    """What a call binds through besides its own text: the names its file
-    imports, and the bases of the classes it is written in."""
-
-    imports: frozenset[tuple[str, str, str]]
-    names: frozenset[tuple[str, str, str]]
-    bases: frozenset[tuple[str, str]]
-
-
-def _binding_context(site: CallSite, snap: Snapshot) -> _BindingContext:
-    modules = {qn for qn, path in snap.modules if path == site.caller_path}
-    caller = site.caller.partition(cs.CHAR_PAREN_OPEN)[0]
-    return _BindingContext(
-        imports=frozenset(row for row in snap.imported if row[0] in modules),
-        names=frozenset(
-            (binding.module, binding.imported_name, binding.bound)
-            for binding in snap.bindings
-            if binding.importer_path == site.caller_path
-        ),
-        bases=frozenset(
-            (cls, base)
-            for cls, base in snap.bases
-            if caller.startswith(cls + cs.SEPARATOR_DOT)
-        ),
+def _through_own_receiver(site: CallSite, name: str, trees: _SourceTrees) -> bool:
+    """Whether the call goes through its caller's own `this` (Python's
+    `self` or `cls`, Java's implicit receiver), which names the caller's
+    class wherever the class is not changed."""
+    language = _language(site.caller_path)
+    fields = _MEMBER_FIELDS.get(language) if language is not None else None
+    if fields is None or site.line is None or site.col is None:
+        return False
+    root = trees.root(site.caller_path)
+    access = _member_access(root, site, name, fields) if root is not None else None
+    if access is None:
+        return False
+    target = access.child_by_field_name(cs.FIELD_OBJECT)
+    if target is None:
+        return language == cs.SupportedLanguage.JAVA
+    if target.type == cs.TS_THIS:
+        return True
+    return (
+        language == cs.SupportedLanguage.PYTHON
+        and target.type == cs.TS_IDENTIFIER
+        and _node_text(target) in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
     )
 
 
@@ -2914,26 +2911,30 @@ def _calls_into(
     drawn = [site for site in after.sites if _reaches(site, qn, is_accessor)]
     name = after.definitions[qn].name
     # A definite binding a call had still names what it runs while the call
-    # is the call it was: in a file the edit left alone, or in an edited
-    # file whose edit kept its caller's shape and what the call binds
-    # through. The shape ignores names, so `extends Cart` can now read
-    # `extends Tart` (bot reviews on PR #3632).
+    # is the call it was and goes through its caller's own `this`: that
+    # names the caller's class, so the binding holds while no class at a
+    # touched path changed its bases (`extends Cart` can now read `extends
+    # Tart` though every method keeps its shape). Any other receiver can
+    # come to name something else through an edit the graph keeps no trace
+    # of, a local renamed or a factory's new return type (bot reviews on PR
+    # #3632).
+    bases_kept = before.bases == after.bases
     unchanged: set[CallSite] = set()
     for site in before.sites:
         if not _reaches(site, qn, was_accessor):
             continue
-        definite = site.resolution in _DEFINITE_RESOLUTIONS
-        if site.caller_path not in after.paths:
-            drawn.append(site)
-            if definite:
-                unchanged.add(site)
-            continue
-        current = _moved_site(site, name, before, after, trees)
+        current = (
+            _moved_site(site, name, before, after, trees)
+            if site.caller_path in after.paths
+            else site
+        )
         if current is None:
             continue
         drawn.append(current)
-        if definite and _binding_context(site, before) == _binding_context(
-            current, after
+        if (
+            bases_kept
+            and site.resolution in _DEFINITE_RESOLUTIONS
+            and _through_own_receiver(current, name, trees)
         ):
             unchanged.add(current)
     # One site per position: a call the edit left alone is drawn before and

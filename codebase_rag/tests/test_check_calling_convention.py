@@ -977,6 +977,33 @@ def test_a_call_in_a_file_the_edit_only_commented_keeps_its_binding(
     assert _verdicts(delta, "scale")["viaScale"] == cs.DELTA_CONVENTION_NEEDS_CLASS
 
 
+def test_a_call_whose_receiver_the_edit_swapped_is_judged_by_its_binding_after(
+    temp_repo: Path,
+) -> None:
+    # Negative, bot review on PR #3632: `a.scale(2)` on a local `new Cart()`
+    # becomes `b.scale(2)` on an untyped parameter, which may hold anything
+    # with a public `scale`. `via` keeps its shape, as a shape ignores
+    # names: only a call through `this` is known to name what it did.
+    cart = (
+        "export class Cart {\n  scale(x: number): number {\n    return x * 2;\n  }\n}\n"
+    )
+    shop = (
+        'import { Cart } from "./cart";\n\n'
+        "export function via(b) {\n  const a = new Cart();\n  return a.scale(2);\n}\n"
+    )
+
+    delta = _edit_all(
+        temp_repo,
+        {"cart.ts": cart, "shop.ts": shop},
+        {
+            "cart.ts": cart.replace("  scale(", "  private scale("),
+            "shop.ts": shop.replace("return a.scale(2)", "return b.scale(2)"),
+        },
+    )
+
+    assert _verdicts(delta, "scale") == {"via": cs.DELTA_ARITY_UNKNOWN}
+
+
 def test_a_call_in_an_edited_file_is_judged_by_its_binding_after(
     temp_repo: Path,
 ) -> None:
