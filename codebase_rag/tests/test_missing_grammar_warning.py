@@ -120,24 +120,28 @@ def test_doctor_names_the_missing_grammars(
 
 
 def test_doctor_does_not_build_a_grammar_checkout(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, cgr_checkout: Path
 ) -> None:
-    # A checkout's `grammars/tree-sitter-go` with a setup.py: loading falls
-    # back to building it in place, which runs that script. A health check
-    # answers a yes/no and must not run code from the directory it is in.
-    bindings = tmp_path / parser_loader._submodule_bindings_path(
-        cs.SupportedLanguage.GO
-    )
-    bindings.mkdir(parents=True)
-    (bindings.parents[1] / cs.SETUP_PY).write_text("raise SystemExit(1)\n")
-    monkeypatch.chdir(tmp_path)
+    # cgr's own checkout holds `grammars/tree-sitter-go` with a setup.py (the
+    # only place the loader builds from): loading falls back to building it
+    # in place, which runs that script. A health check answers a yes/no and
+    # must not run checkout code.
+    submodule = parser_loader._submodule_path(cs.SupportedLanguage.GO)
+    assert submodule is not None
+    assert submodule.is_relative_to(cgr_checkout)
+    parser_loader._bindings_path(submodule).mkdir(parents=True)
+    (submodule / cs.SETUP_PY).write_text("raise SystemExit(1)\n")
     monkeypatch.setattr(parser_loader, "_loader_cache", {})
     _without_pip_grammars(monkeypatch, {cs.SupportedLanguage.GO})
     ran: list[str] = []
     monkeypatch.setattr(
-        parser_loader, "_build_submodule", lambda lang: ran.append(lang) or False
+        parser_loader,
+        "_build_submodule",
+        lambda lang, _path: ran.append(lang) or False,
     )
-    monkeypatch.setattr(parser_loader, "_import_submodule", ran.append)
+    monkeypatch.setattr(
+        parser_loader, "_import_submodule", lambda lang, _path: ran.append(lang)
+    )
     result = HealthChecker().check_tree_sitter_grammars()
     assert ran == [], ran
     assert result.error is not None and "go" in result.error, result
