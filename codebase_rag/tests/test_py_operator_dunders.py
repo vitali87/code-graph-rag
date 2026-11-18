@@ -9,6 +9,8 @@ caller of a removed `__add__`, `__call__` or `__enter__` (issue #2852).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from codebase_rag import constants as cs
@@ -26,6 +28,7 @@ class Box:
     def __gt__(self, o): return True
     def __neg__(self): return self
     def __getitem__(self, i): return i
+    def __contains__(self, k): return True
     def __call__(self, x): return x
     def __iter__(self): return iter([])
     def __aiter__(self): return self
@@ -184,6 +187,49 @@ def same_type_equality():
 def same_type_ordering():
     b = Base(); b2 = Base()
     return b < b2
+
+def contains_commented():
+    a = Box()
+    return (1 in  # membership check
+            a)
+
+def compare_commented():
+    a = Box(); b = Box()
+    return (a <  # ordering
+            b)
+
+
+class Cursor:
+    def __next__(self): raise StopIteration
+    async def __anext__(self): raise StopAsyncIteration
+
+
+class Container:
+    def __iter__(self): return Cursor()
+    def __next__(self): raise StopIteration
+    def __aiter__(self): return Cursor()
+    async def __anext__(self): raise StopAsyncIteration
+
+
+class Opaque:
+    def __iter__(self): return iter([])
+    def __next__(self): raise StopIteration
+
+
+def loop_container():
+    c = Container()
+    for _x in c:
+        pass
+
+async def loop_container_async():
+    c = Container()
+    async for _x in c:
+        pass
+
+def loop_opaque():
+    o = Opaque()
+    for _x in o:
+        pass
 """
 
 
@@ -317,3 +363,115 @@ def test_a_fallback_python_never_takes_is_not_recorded(
     callees: dict[str, set[str]], caller: str, expected: set[str]
 ) -> None:
     assert _operator_dunders(callees, caller) == expected, callees.get(caller)
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("contains_commented", {"Box.__contains__"}),
+        ("compare_commented", {"Box.__lt__", "Box.__gt__"}),
+    ],
+)
+def test_a_comment_between_operands_keeps_the_call(
+    callees: dict[str, set[str]], caller: str, expected: set[str]
+) -> None:
+    # tree-sitter lists the comment among the comparison's named children.
+    assert _dunders(callees, caller) == expected, callees.get(caller)
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("loop_container", {"Container.__iter__", "Cursor.__next__"}),
+        ("loop_container_async", {"Container.__aiter__", "Cursor.__anext__"}),
+        # Negative: `iter([])` is no project class, so no `__next__` is
+        # guessed, `Opaque.__next__` included.
+        ("loop_opaque", {"Opaque.__iter__"}),
+    ],
+)
+def test_a_loop_advances_the_iterator_its_iter_returns(
+    callees: dict[str, set[str]], caller: str, expected: set[str]
+) -> None:
+    found = {
+        c
+        for owner in ("Container", "Cursor", "Opaque")
+        for c in _dunders(callees, caller, owner)
+    }
+    assert found == expected, callees.get(caller)
+
+
+_REBOUND = """\
+class A:
+    def __neg__(self): return self
+
+
+class B:
+    def __neg__(self): return self
+
+
+class Base:
+    def __add__(self, o): return NotImplemented
+
+
+class Child(Base):
+    def __radd__(self, o): return self
+
+
+def rebound():
+    x = A()
+    first = -x
+    x = B()
+    second = -x
+    return first, second
+
+
+def rebound_reflected():
+    b = Base(); c = Child()
+    total = b + c
+    c = Base()
+    return total
+"""
+
+
+def _site_callees(tmp_path: Path, source: str) -> set[tuple[str, str, int]]:
+    root = tmp_path / "ops"
+    root.mkdir()
+    (root / "m.py").write_text(source, encoding="utf-8")
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="ops",
+    ).run(force=True)
+    return {
+        (
+            str(edge[1]).removeprefix("ops.m."),
+            str(edge[4]).removeprefix("ops.m."),
+            int(dict(edge[5])[cs.KEY_LINE]),
+        )
+        for edge in store.keyed_edges
+        if edge[2] == cs.RelationshipType.CALLS.value and len(edge) > 5
+    }
+
+
+def test_each_operator_site_reads_the_binding_that_reaches_it(
+    tmp_path: Path,
+) -> None:
+    # `x` holds an A at the first `-x` and a B at the second; `c` holds a
+    # Child where `b + c` runs, so its `__radd__` may run there.
+    edges = _site_callees(tmp_path, _REBOUND)
+    negations = {
+        (callee, line)
+        for caller, callee, line in edges
+        if caller == "rebound" and "__" in callee
+    }
+    assert negations == {("A.__neg__", 19), ("B.__neg__", 21)}, negations
+    added = {
+        callee
+        for caller, callee, _line in edges
+        if caller == "rebound_reflected" and "__" in callee
+    }
+    assert added == {"Base.__add__", "Child.__radd__"}, added

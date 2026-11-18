@@ -2019,16 +2019,9 @@ def _is_async(node: Node) -> bool:
     return any(child.type == cs.TS_PY_ASYNC for child in node.children)
 
 
-def _same_known_type(
-    left: Node | None, right: Node | None, local_var_types: dict[str, str] | None
-) -> bool:
-    """Whether both operands are locals of one known type."""
-    if not local_var_types or left is None or right is None:
-        return False
-    left_type = local_var_types.get(safe_decode_text(left) or "")
-    return left_type is not None and left_type == local_var_types.get(
-        safe_decode_text(right) or ""
-    )
+def _one_known_type(left: set[str], right: set[str]) -> bool:
+    """Whether both operands hold one known type, the same, at their site."""
+    return len(left) == 1 and left == right
 
 
 def _operator_dunder_dispatches(node: Node) -> list[_DunderDispatch]:
@@ -2058,16 +2051,18 @@ def _operator_dunder_dispatches(node: Node) -> list[_DunderDispatch]:
     return []
 
 
-def _iteration_dispatches(node: Node) -> list[_DunderDispatch]:
-    # Two calls, not one call's fallbacks: `__iter__` makes the iterator and
-    # `__next__` advances it. The second resolves when the iterable is its
-    # own iterator, the one case its type is known here.
-    iterable = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+def _iteration_protocol(node: Node) -> tuple[str, str]:
+    """The dunder that makes a loop's iterator, and the one that advances it."""
     if _is_async(node):
-        dunders = (cs.PY_DUNDER_AITER, cs.PY_DUNDER_ANEXT)
-    else:
-        dunders = (cs.PY_DUNDER_ITER, cs.PY_DUNDER_NEXT)
-    return [[(iterable, dunder, False)] for dunder in dunders]
+        return cs.PY_DUNDER_AITER, cs.PY_DUNDER_ANEXT
+    return cs.PY_DUNDER_ITER, cs.PY_DUNDER_NEXT
+
+
+def _iteration_dispatches(node: Node) -> list[_DunderDispatch]:
+    # `__iter__` is called on the iterable. `__next__` is called on what it
+    # returned, not on the iterable: `_emit_iterator_advance` resolves that.
+    iterable = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+    return [[(iterable, _iteration_protocol(node)[0], False)]]
 
 
 def _subscript_dispatches(node: Node) -> list[_DunderDispatch]:
@@ -2135,7 +2130,12 @@ def _comparison_dispatches(node: Node) -> list[_DunderDispatch]:
     # `a < b < c` is `a < b and b < c`: each adjacent pair is one comparison.
     operators = node.children_by_field_name(cs.TS_FIELD_OPERATORS)
     operator_ids = {op.id for op in operators}
-    operands = [c for c in node.named_children if c.id not in operator_ids]
+    # A comment between operands is a named child too (`key in  # note`).
+    operands = [
+        c
+        for c in node.named_children
+        if c.id not in operator_ids and c.type != cs.TS_COMMENT
+    ]
     if len(operands) != len(operators) + 1:
         return []
     dispatches: list[_DunderDispatch] = []
@@ -9736,18 +9736,100 @@ class CallProcessor:
                 continue
             dispatches = _operator_dunder_dispatches(node)
             for dispatch in dispatches:
-                first = dispatch[0][0]
+                first = self._operand_types(
+                    caller_node, dispatch[0][0], local_var_types, module_qn
+                )
                 for operand, dunder, reflected in dispatch:
-                    if reflected and _same_known_type(first, operand, local_var_types):
+                    if reflected and _one_known_type(
+                        first,
+                        self._operand_types(
+                            caller_node, operand, local_var_types, module_qn
+                        ),
+                    ):
                         continue
-                    self._emit_operator_dunder(
-                        operand, dunder, caller_spec, module_qn, local_var_types
-                    )
+                    for view in self._operand_views(
+                        caller_node, operand, local_var_types, module_qn
+                    ):
+                        self._emit_operator_dunder(
+                            operand, dunder, caller_spec, module_qn, view
+                        )
+            if node.type in (cs.TS_PY_FOR_STATEMENT, cs.TS_PY_FOR_IN_CLAUSE):
+                self._emit_iterator_advance(
+                    node, caller_node, caller_spec, module_qn, local_var_types
+                )
             if not dispatches and node.type == cs.TS_PY_CALL:
                 self._emit_instance_call(node, caller_spec, module_qn, local_var_types)
             for operand in _truthiness_operands(node):
                 self._emit_truthiness(operand, caller_spec, module_qn, local_var_types)
             stack.extend(node.children)
+
+    def _operand_views(
+        self,
+        caller_node: Node,
+        operand: Node | None,
+        local_var_types: dict[str, str] | None,
+        module_qn: str,
+    ) -> tuple[dict[str, str] | None, ...]:
+        """The type maps an operand is resolved through at its site.
+
+        `x = A(); -x; x = B(); -x`: each `-x` reads the binding that reaches
+        it, not the one the flat map kept for the whole body. A name bound
+        once, or an attribute, is the flat map's.
+        """
+        return self._python_name_views(
+            caller_node, operand, local_var_types, module_qn
+        ) or (local_var_types,)
+
+    def _operand_types(
+        self,
+        caller_node: Node,
+        operand: Node | None,
+        local_var_types: dict[str, str] | None,
+        module_qn: str,
+    ) -> set[str]:
+        """The types an operand may hold at its site."""
+        text = safe_decode_text(operand) if operand is not None else None
+        if not text:
+            return set()
+        return {
+            bound
+            for view in self._operand_views(
+                caller_node, operand, local_var_types, module_qn
+            )
+            if view and (bound := view.get(text))
+        }
+
+    @_site_scoped
+    def _emit_iterator_advance(
+        self,
+        node: Node,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        # A loop calls `__next__` on the iterator `__iter__` returned:
+        # `Container.__iter__` returning a `Cursor` runs `Cursor.__next__`,
+        # whatever `Container` defines. An iterator whose type is not known
+        # gets no edge; one that returns itself (`return self`) is its class.
+        iterable = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+        text = safe_decode_text(iterable) if iterable is not None else None
+        if not text or any(ch in text for ch in cs.PY_OPERAND_REJECT_CHARS):
+            return
+        creator, advancer = _iteration_protocol(node)
+        engine = self._resolver.type_inference.python_type_inference
+        for view in self._operand_views(
+            caller_node, iterable, local_var_types, module_qn
+        ):
+            if not view or not view.get(text):
+                continue
+            iterator = engine._infer_expression_return_type(
+                f"{text}{cs.SEPARATOR_DOT}{creator}()", module_qn, view
+            )
+            if iterator:
+                self._emit_operator_dunder(
+                    iterable, advancer, caller_spec, module_qn, {text: iterator}
+                )
 
     @_site_scoped
     def _emit_truthiness(
