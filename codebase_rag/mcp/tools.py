@@ -354,11 +354,24 @@ def _project_holding(
     holders = [
         (name, root)
         for name, raw in roots.items()
-        if raw and repo_path.is_relative_to(root := Path(raw).resolve())
+        if raw
+        and (root := _resolved_root(raw)) is not None
+        and repo_path.is_relative_to(root)
     ]
     if not holders:
         return None
     return max(holders, key=lambda h: len(h[1].parts))
+
+
+def _resolved_root(raw: str) -> Path | None:
+    # Another project's stored root may since have become a link loop
+    # (`resolve` raises RuntimeError for one on Python 3.12) or unreadable:
+    # it holds none of the workspace's repos, and must not cost the listing
+    # the projects already found (CodeRabbit, PR #2964).
+    try:
+        return Path(raw).resolve()
+    except (OSError, RuntimeError):
+        return None
 
 
 def _resolution_section(resolution: "FrameResolutionRate") -> dict:

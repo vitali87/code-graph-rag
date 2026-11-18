@@ -196,6 +196,9 @@ async def test_the_index_command_quotes_a_project_name_for_the_shell(
         ("$(whoami)", None),
         ("a`b", None),
         ('a"&calc&"', None),
+        ("alpha\u201dbeta", None),
+        ("alpha\u201cbeta", None),
+        ("alpha\u201ebeta", None),
         ("a\\", None),
         ("a\nb", None),
     ],
@@ -229,3 +232,29 @@ async def test_on_windows_the_index_command_keeps_a_hostile_name_one_argument(
     assert "--project-name beta" not in hint, hint
     assert '--project-name "beta' not in hint, hint
     assert "'beta%PATH%'" in hint, hint
+
+
+@pytest.mark.anyio
+async def test_a_root_that_cannot_be_resolved_does_not_erase_the_listing(
+    root: Path,
+) -> None:
+    # CodeRabbit review of PR #2964: another project's root replaced by a
+    # link loop made `resolve` raise (Python 3.12), and `list_projects`
+    # answered with an error and no projects at all.
+    loop = root / "loop"
+    try:
+        loop.symlink_to(loop)
+    except OSError:
+        pytest.skip("symlinks not available")
+    registry, _ingestor = _registry(
+        root,
+        {ALPHA: root / "a", "other__9999": loop},
+        ("a", ALPHA),
+        ("g", GAMMA),
+    )
+
+    result = await registry.list_projects()
+
+    assert "error" not in result, result
+    assert result["projects"] == [ALPHA], result
+    assert result.get("not_indexed") == [GAMMA], result

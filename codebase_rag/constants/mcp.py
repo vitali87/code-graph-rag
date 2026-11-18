@@ -393,7 +393,9 @@ MCP_WORKSPACE_INDEX_COMMAND = (
 # On Windows the command is quoted with double quotes, which cmd.exe,
 # PowerShell and Git Bash all read literally except for these characters; a
 # path or name holding one gets no pasteable command (Greptile, PR #2964).
-MCP_WINDOWS_SHELL_UNQUOTABLE = frozenset('"%!$`\\')
+# PowerShell also ends a double-quoted string at a typographic double quote
+# (CodeRabbit, PR #2964).
+MCP_WINDOWS_SHELL_UNQUOTABLE = frozenset('"%!$`\\\u201c\u201d\u201e')
 # Characters none of those shells treats specially outside quotes either.
 MCP_WINDOWS_SHELL_PLAIN = re.compile(r"[\w./:-]+")
 MCP_WORKSPACE_INDEX_UNQUOTABLE = (
