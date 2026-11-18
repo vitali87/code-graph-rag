@@ -195,7 +195,9 @@ _MCP_COLUMNS_NOTE = (
     "`col` and `end_col` are 0-based UTF-8 byte offsets into the line; "
     "`col_char` and `end_col_char` are the same positions in characters "
     "(Unicode code points, what string indexing counts), absent when the file "
-    "cannot be read from this server's checkout of the project. "
+    "cannot be read from this server's checkout of the project or is a Java "
+    "source of a Lombok build, which may have been parsed from its delombok "
+    "expansion. "
 )
 MCP_RESOLVE = (
     "Resolve a name or a location to qualified names in the graph. `target` is "

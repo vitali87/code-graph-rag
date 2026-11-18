@@ -154,8 +154,9 @@ EPILOG_GRAPH_COLUMNS = (
     "the graph stores them. col_char and end_col_char are the same positions "
     "counted in characters (Unicode code points), read from the file under "
     "--repo-path when the project was indexed from it; they are left out when "
-    "the file cannot be read there or the offset does not fall on a character "
-    "of that line."
+    "the file cannot be read there, when it is a Java source of a Lombok build "
+    "(which may have been parsed from its delombok expansion), or when the "
+    "offset does not fall on a character of that line."
 )
 HELP_GRAPH_PROJECT = "Project name in the graph (default: derived from --repo-path)."
 HELP_GRAPH_REPO_PATH = (

@@ -26,6 +26,7 @@ from codebase_rag.graph_cli import cli as graph_cli
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers import java_lombok
 from codebase_rag.types_defs import PropertyParams, ResultRow
 from codebase_rag.utils.char_columns import CharColumns
 from evals.cgr_graph import _StatefulIngestor
@@ -50,6 +51,24 @@ REEXPORT = {
     "pkg/greet.py": GREET_PY,
     "app.py": f"{APP_LINE}\n\n\ndef main():\n    return label(GRUSS)\n",
 }
+# A Lombok build, whose Java sources the indexer parses from their delombok
+# expansion when java and a Lombok jar are at hand (issue #1140). Lombok's
+# `val` expands to the type it stands for, so on that line every byte column
+# after it counts the expansion, not the file.
+LOMBOK_POM = (
+    "<project><dependencies><dependency><groupId>org.projectlombok</groupId>"
+    "<artifactId>lombok</artifactId></dependency></dependencies></project>"
+)
+PLAIN_POM = "<project></project>"
+GREETER = "src/main/java/demo/Greeter.java"
+GREETER_LINE = (
+    '    String greet() { val s = "Grüße"; return label(s) + label("noch einmal"); }'
+)
+GREETER_RAW = (
+    "package demo;\n\npublic class Greeter {\n"
+    f"    String label(String x) {{ return x; }}\n\n{GREETER_LINE}\n}}\n"
+)
+GREETER_EXPANDED = GREETER_RAW.replace("val s", "final java.lang.String s")
 
 
 def _store(root: Path, files: dict[str, str]) -> _StatefulIngestor:
@@ -195,6 +214,59 @@ async def test_importers_through_reexports_answer_them_on_every_via_row(
             for r in rows
         ] == [(f"{P}.pkg", facade, []), (f"{P}.app", app, [facade])]
         assert rows[1]["col"] == len(APP_LINE[: app[0]].encode())
+
+
+def _fake_delombok(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        java_lombok.shutil,
+        "which",
+        lambda command: "/fake/java" if command == "java" else None,
+    )
+    monkeypatch.setattr(
+        java_lombok, "find_lombok_jar", lambda: Path("/fake/lombok.jar")
+    )
+
+    def expand(java: str, jar: Path, source_root: Path, out_dir: Path) -> bool:
+        for original in source_root.rglob("*.java"):
+            target = out_dir / original.relative_to(source_root)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(GREETER_EXPANDED, encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(java_lombok, "_run_delombok", expand)
+
+
+def test_a_source_parsed_from_its_delombok_expansion_gets_no_character_columns(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The byte columns count the expansion; read against the checked-in
+    line they gave a plausible but wrong character column (Codex review)."""
+    _fake_delombok(monkeypatch)
+    store = _store(temp_repo, {"pom.xml": LOMBOK_POM, GREETER: GREETER_RAW})
+    label = graph_query.resolve(_fetch(store), P, "Greeter.label")[0]
+    rows = _cli(store, temp_repo, "callers", label["qualified_name"])
+    expanded = GREETER_LINE.replace("val s", "final java.lang.String s")
+    first = expanded.index("label(s)")
+    assert [r["col"] for r in rows][:1] == [len(expanded[:first].encode())]
+    assert len(rows) == 2
+    assert all(cs.KEY_COL_CHAR not in r and cs.KEY_END_COL_CHAR not in r for r in rows)
+
+
+@pytest.mark.parametrize(("pom", "converted"), [(PLAIN_POM, True), (LOMBOK_POM, False)])
+def test_only_a_lombok_builds_java_sources_are_left_unconverted(
+    temp_repo: Path, pom: str, converted: bool
+) -> None:
+    """Whether delombok ran for the index is not known here (java and the
+    jar may be on another machine), so a Lombok build's sources are left
+    out whether or not this machine could expand them."""
+    (temp_repo / GREETER).parent.mkdir(parents=True)
+    (temp_repo / GREETER).write_text(GREETER_RAW, encoding="utf-8")
+    (temp_repo / "pom.xml").write_text(pom, encoding="utf-8")
+    col = GREETER_LINE.index("label(s)")
+    expected = col if converted else None
+    assert CharColumns(temp_repo).at(GREETER, 6, len(GREETER_LINE[:col].encode())) == (
+        expected
+    )
 
 
 # --- what must not change ---------------------------------------------------------

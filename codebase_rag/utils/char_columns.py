@@ -57,12 +57,20 @@ def _parsed_lines(root: Path, path: str) -> list[bytes] | None:
     A source declaring another encoding, a UTF-16 one and a notebook were
     parsed as UTF-8 text made from the file, and the byte columns count that
     text, not the file (issues #2445, #3153, #2480). Lines split on `\\n`
-    alone, as tree-sitter counts rows.
+    alone, as tree-sitter counts rows. None too for a Java source the
+    indexer may have parsed from its delombok expansion (issue #1140).
     """
     file = root / path
     try:
         if not file.resolve().is_relative_to(root.resolve()) or not file.is_file():
             return None
+        if file.suffix == cs.EXT_JAVA:
+            # Imported here, as the notebook reader below is. The expansion
+            # is only had by running delombok, so such a file answers nothing.
+            from ..parsers.java_lombok import may_parse_delomboked
+
+            if may_parse_delomboked(root, path):
+                return None
         source = file.read_bytes()
     except (OSError, RuntimeError, ValueError):
         return None
