@@ -262,6 +262,8 @@ PATCH_FORMATTER_TIMEOUT_S = 60
 PATCH_TS_FIELD_IDENTIFIER = "field_identifier"
 PATCH_TS_NAMESPACE_IDENTIFIER = "namespace_identifier"
 PATCH_TS_STATEMENT_IDENTIFIER = "statement_identifier"
+# `{ pad }` renamed keeps its key: `{ pad: padLeft }` (issue #3252).
+PATCH_SHORTHAND_KEY_SEPARATOR = ": "
 LANG_GIT_SUFFIX = ".git"
 LANG_GITMODULES_FILE = ".gitmodules"
 LANG_CALL_KEYWORD_EXCLUDE = "call"
