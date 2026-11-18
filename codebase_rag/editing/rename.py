@@ -28,6 +28,7 @@ rewritten: prose is not a graph edge.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from collections.abc import Callable, Iterable
@@ -108,6 +109,10 @@ _JS_MODULE_STATEMENTS = frozenset({cs.TS_IMPORT_STATEMENT, cs.TS_EXPORT_STATEMEN
 _JS_GENERATOR_TYPES = frozenset(
     {cs.TS_GENERATOR_FUNCTION_DECLARATION, cs.TS_GENERATOR_FUNCTION}
 )
+# A script by its extension, whatever its package.json says.
+_JS_SCRIPT_SUFFIXES = frozenset({cs.EXT_CJS, cs.EXT_CTS})
+# The words reserved only in some code, which a use site is checked for.
+_JS_CONTEXT_RESERVED_WORDS = cs.JS_STRICT_RESERVED_WORDS | {cs.JS_AWAIT}
 # Languages whose identifiers may contain `$` (`$emit`, jQuery's `$`).
 _DOLLAR_IDENTIFIER_LANGUAGES = frozenset(
     {
@@ -122,6 +127,73 @@ _DOLLAR_IDENTIFIER_LANGUAGES = frozenset(
 # Languages whose identifiers are ASCII alone: Lua's lexer reads letters and
 # digits as the C locale does, so `数据`, `Größe` and `x٣` do not load.
 _ASCII_IDENTIFIER_LANGUAGES = frozenset({cs.SupportedLanguage.LUA})
+
+
+class _JsFile(NamedTuple):
+    root: Node
+    source: bytes
+    module: bool
+    strict: bool
+
+    def token_at(self, line: int, col: int) -> Node | None:
+        point = (line - 1, col)
+        return self.root.descendant_for_point_range(point, point)
+
+
+def _js_is_member_name(node: Node) -> bool:
+    """Whether an identifier is an IdentifierName a reserved word may be:
+    a property after `.`, or a key."""
+    parent = node.parent
+    if parent is None:
+        return False
+    field = parent.child_by_field_name(cs.FIELD_PROPERTY)
+    return field is not None and field == node
+
+
+def _js_words_at(
+    file: _JsFile, token: Node | None, *, binding: bool, is_class: bool
+) -> frozenset[str]:
+    """The context-dependent words reserved where `token` sits.
+
+    Strict code reserves `let`, `static`, `yield` and the rest wherever the
+    file, a class or an enclosing "use strict" body makes it so; a module
+    reserves `await`; the nearest enclosing function reserves `await` when
+    async and `yield` when a generator. A binding's own function is not its
+    enclosing one: `async function await() {}` binds outside its body.
+    """
+    strict = file.strict or is_class
+    words: set[str] = set()
+    holder = token.parent if token is not None else None
+    current = holder
+    while current is not None:
+        if current.type == cs.TS_CLASS_BODY:
+            strict = True
+        elif current.type in cs.JS_TS_FUNCTION_NODES:
+            body = current.child_by_field_name(cs.FIELD_BODY)
+            if body is not None and _js_opens_with_use_strict(body, file.source):
+                strict = True
+        current = current.parent
+    enclosing = holder.parent if binding and holder is not None else holder
+    while enclosing is not None and enclosing.type not in cs.JS_TS_FUNCTION_NODES:
+        enclosing = enclosing.parent
+    if enclosing is not None:
+        keywords = {child.type for child in enclosing.children}
+        if cs.TS_JS_ASYNC_KEYWORD in keywords:
+            words.add(cs.JS_AWAIT)
+        if enclosing.type in _JS_GENERATOR_TYPES or cs.JS_GENERATOR_STAR in keywords:
+            words.add(cs.JS_YIELD)
+    if (
+        binding
+        and holder is not None
+        and holder.parent is not None
+        and holder.parent.type == cs.TS_LEXICAL_DECLARATION
+    ):
+        words.add(cs.JS_LET)
+    if strict:
+        words |= cs.JS_STRICT_RESERVED_WORDS
+    if file.module:
+        words.add(cs.JS_AWAIT)
+    return frozenset(words)
 
 
 def _js_opens_with_use_strict(scope: Node, source: bytes) -> bool:
@@ -1687,6 +1759,17 @@ class Renamer:
                 unplanned,
             )
         sites.extend(unplanned)
+        if reserving := self._js_sites_reserving(sites, new_name):
+            raise RenameRefused(
+                cs.RENAME_RESERVED_AT_SITES.format(
+                    name=new_name,
+                    language=get_language_for_extension(Path(reserving[0].path).suffix),
+                    count=len(reserving),
+                    locations=_locations(reserving),
+                ),
+                reserving,
+                unlocatable,
+            )
         if crossing := self._go_sites_losing_visibility(qn, sites, old_name, new_name):
             raise RenameRefused(
                 cs.RENAME_GO_UNEXPORTS.format(
@@ -1789,27 +1872,12 @@ class Renamer:
         declaration `let`. A CommonJS script may name a function `await` or
         `let`, so those were refused there before they could fail.
         """
-        try:
-            source = (self.repo_root / path).read_bytes()
-        except OSError:
-            source = b""
-        parser = load_parsers()[0].get(language)
-        if parser is None:
+        file = self._js_file(path, language)
+        if file is None:
             return frozenset()
-        root = parser.parse(source).root_node
-        module = Path(path).suffix in _JS_MODULE_SUFFIXES or any(
-            child.type in _JS_MODULE_STATEMENTS for child in root.named_children
-        )
-        strict = (
-            module
-            or language != cs.SupportedLanguage.JS
-            or found["label"] == cs.NodeLabel.CLASS.value
-            or _js_opens_with_use_strict(root, source)
-        )
-        words: set[str] = set()
         token = (
             _name_token(
-                source,
+                file.source,
                 language,
                 found["start_line"],
                 found["end_line"] or found["start_line"],
@@ -1818,35 +1886,93 @@ class Renamer:
             if found["name"] and found["start_line"]
             else None
         )
-        node: Node | None = None
-        if token is not None:
-            point = (token[0] - 1, token[1])
-            node = root.descendant_for_point_range(point, point)
-        definition = node.parent if node is not None else None
-        declaration = definition.parent if definition is not None else None
-        current = definition
-        while current is not None:
-            outer = current != definition
-            if current.type == cs.TS_CLASS_BODY:
-                strict = True
-            elif current.type in cs.JS_TS_FUNCTION_NODES:
-                body = current.child_by_field_name(cs.FIELD_BODY)
-                if body is not None and _js_opens_with_use_strict(body, source):
-                    strict = True
-                if outer and any(
-                    child.type == cs.TS_JS_ASYNC_KEYWORD for child in current.children
-                ):
-                    words.add(cs.JS_AWAIT)
-                if outer and current.type in _JS_GENERATOR_TYPES:
-                    words.add(cs.JS_YIELD)
-            elif current.type == cs.TS_LEXICAL_DECLARATION and current == declaration:
-                words.add(cs.JS_LET)
-            current = current.parent
-        if strict:
-            words |= cs.JS_STRICT_RESERVED_WORDS
-        if module:
-            words.add(cs.JS_AWAIT)
-        return frozenset(words)
+        node = file.token_at(token[0], token[1]) if token is not None else None
+        return _js_words_at(
+            file,
+            node,
+            binding=True,
+            is_class=found["label"] == cs.NodeLabel.CLASS.value,
+        )
+
+    def _js_file(self, path: str, language: cs.SupportedLanguage) -> _JsFile | None:
+        parser = load_parsers()[0].get(language)
+        if parser is None:
+            return None
+        try:
+            source = (self.repo_root / path).read_bytes()
+        except OSError:
+            source = b""
+        root = parser.parse(source).root_node
+        suffix = Path(path).suffix
+        module = (
+            suffix in _JS_MODULE_SUFFIXES
+            or any(child.type in _JS_MODULE_STATEMENTS for child in root.named_children)
+            or (
+                suffix not in _JS_SCRIPT_SUFFIXES
+                and self._package_type(path) == cs.JS_PACKAGE_TYPE_MODULE
+            )
+        )
+        strict = (
+            module
+            or language != cs.SupportedLanguage.JS
+            or _js_opens_with_use_strict(root, source)
+        )
+        return _JsFile(root, source, module, strict)
+
+    def _package_type(self, path: str) -> str | None:
+        """The `type` of the package.json nearest the file, as Node reads it
+        to tell a `.js` module (`"type": "module"`) from a script."""
+        root = self.repo_root.resolve()
+        directory = (self.repo_root / path).resolve().parent
+        while directory.is_relative_to(root):
+            manifest = directory / cs.DEP_FILE_PACKAGE_JSON
+            if manifest.is_file():
+                try:
+                    data = json.loads(manifest.read_text(encoding=cs.ENCODING_UTF8))
+                except (OSError, ValueError):
+                    return None
+                kind = data.get(cs.KEY_TYPE) if isinstance(data, dict) else None
+                return kind if isinstance(kind, str) else None
+            if directory == root:
+                break
+            directory = directory.parent
+        return None
+
+    def _js_sites_reserving(
+        self, sites: list[RenameSite], new_name: str
+    ) -> list[RenameSite]:
+        """JS/TS uses of the symbol where `new_name` is reserved.
+
+        A CommonJS script may define `function await() {}`, but its
+        `fetch(1)` inside an async function becomes `await(1)`: still valid,
+        and no longer a call. The same holds for `yield` in a generator and
+        every strict-only word in a module that imports the function.
+        """
+        if new_name not in _JS_CONTEXT_RESERVED_WORDS:
+            return []
+        files: dict[str, _JsFile | None] = {}
+        found: list[RenameSite] = []
+        for site in sites:
+            language = get_language_for_extension(Path(site.path).suffix)
+            if (
+                site.kind == "definition"
+                or language not in _RESERVED_METHOD_NAME_LANGUAGES
+            ):
+                continue
+            if site.path not in files:
+                files[site.path] = self._js_file(site.path, language)
+            file = files[site.path]
+            node = file.token_at(site.line, site.col) if file is not None else None
+            if (
+                file is None
+                or node is None
+                or node.type != cs.TS_IDENTIFIER
+                or _js_is_member_name(node)
+            ):
+                continue
+            if new_name in _js_words_at(file, node, binding=False, is_class=False):
+                found.append(site)
+        return found
 
     def _go_sites_losing_visibility(
         self, qn: str, sites: list[RenameSite], old_name: str, new_name: str

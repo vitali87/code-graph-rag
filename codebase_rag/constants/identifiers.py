@@ -77,6 +77,10 @@ JS_AWAIT = "await"
 JS_YIELD = "yield"
 # No `let` or `const` declaration may bind `let`.
 JS_LET = "let"
+# The token that makes a method or function a generator (`*gen() {}`).
+JS_GENERATOR_STAR = "*"
+# A package.json `type` that makes its `.js` files ES modules.
+JS_PACKAGE_TYPE_MODULE = "module"
 # How Python reads an identifier: NFKC-normalised, so `K` (the Kelvin sign)
 # binds `K` (PEP 3131).
 PY_IDENTIFIER_NORMAL_FORM = "NFKC"

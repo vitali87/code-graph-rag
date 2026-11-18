@@ -312,3 +312,79 @@ def test_a_word_reserved_where_the_name_sits_is_refused(
     with pytest.raises(RenameRefused) as refused:
         _plan(temp_repo, graph, member, new)
     assert "is a reserved word in" in str(refused.value), str(refused.value)
+
+
+@pytest.mark.parametrize("new", ["await", "let"])
+def test_a_js_file_a_module_package_holds_is_a_module(
+    temp_repo: Path, mock_ingestor: MagicMock, new: str
+) -> None:
+    # `"type": "module"` makes api.js a module with no import or export of
+    # its own, and Node refuses `function await() {}` in it.
+    _write(temp_repo, "pkg/package.json", '{"type": "module"}\n')
+    _write(temp_repo, "pkg/api.js", "function fetch(url) { return url; }\nfetch(1);\n")
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "pkg.api.fetch", new)
+    assert "is a reserved word in" in str(refused.value), str(refused.value)
+
+
+def test_a_cjs_file_in_a_module_package_is_still_a_script(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `.cjs` is CommonJS whatever the package says.
+    _write(temp_repo, "pkg/package.json", '{"type": "module"}\n')
+    _write(
+        temp_repo,
+        "pkg/api.cjs",
+        "function fetch(url) { return url; }\nmodule.exports = { fetch };\n",
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "pkg.api.fetch", "await")
+    assert "function await(url)" in report.diff, report.message
+
+
+_JS_USES = (
+    "function fetch(x) { return x + 10; }\n"
+    "async function run() { return fetch(1); }\n"
+    "function* gen() { yield fetch(2); }\n"
+    "async function outer() {\n"
+    "  function inner() { return fetch(3); }\n"
+    "  return inner();\n"
+    "}\n"
+    "module.exports = { fetch, run, gen, outer };\n"
+)
+
+
+@pytest.mark.parametrize(("new", "line"), [("await", 2), ("yield", 3)])
+def test_a_word_reserved_where_a_use_sits_is_refused(
+    temp_repo: Path, mock_ingestor: MagicMock, new: str, line: int
+) -> None:
+    # `fetch(1)` in an async function would become `await(1)`, which parses
+    # and no longer calls the function; `yield fetch(2)` likewise.
+    _write(temp_repo, "uses.js", _JS_USES)
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "uses.fetch", new)
+    assert str(refused.value).startswith(
+        f"Not a valid identifier: {new} is a reserved word in javascript where"
+    ), str(refused.value)
+    assert f"uses.js:{line}" in str(refused.value), str(refused.value)
+
+
+def test_a_use_in_a_plain_function_inside_an_async_one_may_take_await(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `inner` is not async, so `await(3)` there is a call.
+    _write(
+        temp_repo,
+        "inner.js",
+        "function fetch(x) { return x + 10; }\n"
+        "async function outer() {\n"
+        "  function inner() { return fetch(3); }\n"
+        "  return inner();\n"
+        "}\n"
+        "module.exports = { fetch, outer };\n",
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "inner.fetch", "await")
+    assert "return await(3);" in report.diff, report.message

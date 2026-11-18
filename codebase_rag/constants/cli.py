@@ -967,6 +967,12 @@ RENAME_BAD_NAME = "Not a valid identifier: {name}"
 # Refused up front with the reason, rather than as a rewrite that "would no
 # longer parse" (issue #3225).
 RENAME_RESERVED_WORD = "Not a valid identifier: {name} is a reserved word in {language}"
+# A word the definition may take, but some of its uses may not: `fetch(1)`
+# inside an async function would become `await(1)`.
+RENAME_RESERVED_AT_SITES = (
+    "Not a valid identifier: {name} is a reserved word in {language} where "
+    "{count} use(s) sit ({locations})"
+)
 # Python reads an identifier NFKC-normalised, while strings that name it
 # (`__all__`, a patch target) keep the spelling, so the two would disagree.
 RENAME_PY_NORMALISED_NAME = (
