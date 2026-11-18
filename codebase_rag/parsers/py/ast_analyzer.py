@@ -20,7 +20,7 @@ from ...types_defs import (
 )
 from .. import native_trees
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
-from ..utils import get_cached_query, safe_decode_text
+from ..utils import get_cached_query, safe_decode_text, sorted_captures
 from .definition_index import PythonDefinitionIndexes
 from .utils import call_head
 from .utils import split_top_level as _split_top_level
