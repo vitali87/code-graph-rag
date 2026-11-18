@@ -6,7 +6,10 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.path_utils import (
@@ -14,6 +17,7 @@ from codebase_rag.utils.path_utils import (
     should_skip_path,
     should_skip_rel_file,
 )
+from evals.cgr_graph import _StatefulIngestor
 
 
 def _skip(
@@ -344,3 +348,79 @@ class TestVcsMetadataNeverWalked:
         assert should_keep_dir(".git", f"{parent}nomatch/", None, pattern)
         assert should_keep_dir(".git", "nomatch/", None, pattern)
         assert time.perf_counter() - started < 1
+
+
+def _folder_paths(store: _StatefulIngestor) -> set[str]:
+    return {
+        str(props[cs.KEY_PATH])
+        for (label, _uid), props in store.nodes.items()
+        if label == cs.NodeLabel.FOLDER.value
+    }
+
+
+class TestVcsMetadataLeavesAnOlderGraph:
+    """A graph indexed before #3642 holds Folders inside `.git`, and their
+    directories still exist, so the orphan prune kept them (CodeRabbit review
+    of #3644). The first sync after the upgrade drops them."""
+
+    def _index(
+        self,
+        repo: Path,
+        store: _StatefulIngestor,
+        unignore: frozenset[str] = TestVcsMetadataNeverWalked.UNANCHORED,
+    ) -> None:
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=store,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+            unignore_paths=unignore,
+        ).run()
+
+    def _stamp_an_older_parser(self, repo: Path) -> None:
+        state_file(repo, cs.PARSER_FINGERPRINT_FILENAME).write_text(
+            "built-before-3642", encoding="utf-8"
+        )
+
+    def test_an_older_index_loses_its_metadata_folders_on_the_next_sync(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The walk rule is a fingerprint input, so an upgrade that changes it
+        # makes the next sync re-parse and prune rather than take the in-sync
+        # fast path.
+        assert "utils/path_utils.py" in cs.PARSER_FINGERPRINT_SOURCE_FILES
+        repo = tmp_path / "repo"
+        (repo / "src").mkdir(parents=True)
+        (repo / "src" / "a.py").write_text("def f():\n    return 1\n")
+        for folder in ("hooks", "objects/12", "refs/heads"):
+            (repo / ".git" / folder).mkdir(parents=True)
+        store = _StatefulIngestor()
+        with monkeypatch.context() as old_rule:
+            old_rule.setattr(cs, "VCS_METADATA_DIRS", frozenset())
+            self._index(repo, store)
+        assert ".git/objects/12" in _folder_paths(store)
+        self._stamp_an_older_parser(repo)
+
+        self._index(repo, store)
+
+        folders = _folder_paths(store)
+        assert "src" in folders
+        assert not any(path.startswith(".git") for path in folders), folders
+
+    def test_a_named_metadata_dir_keeps_its_folders(self, tmp_path: Path) -> None:
+        # Negative: a `.git` a `!` line names is still walked, so the prune
+        # leaves its Folders.
+        repo = tmp_path / "repo"
+        (repo / "submodule1" / ".git" / "hooks").mkdir(parents=True)
+        (repo / ".git" / "objects").mkdir(parents=True)
+        named = frozenset({"submodule1/.git"})
+        store = _StatefulIngestor()
+        self._index(repo, store, named)
+        self._stamp_an_older_parser(repo)
+
+        self._index(repo, store, named)
+
+        folders = _folder_paths(store)
+        assert {"submodule1/.git", "submodule1/.git/hooks"} <= folders, folders
+        assert not {".git", ".git/objects"} & folders, folders
