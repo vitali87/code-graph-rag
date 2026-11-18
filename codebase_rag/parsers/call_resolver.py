@@ -660,12 +660,7 @@ class CallResolver:
         return self._rust_scope_type(followed) or followed
 
     def _try_resolve_method(
-        self,
-        class_qn: str,
-        method_name: str,
-        separator: str = cs.SEPARATOR_DOT,
-        *,
-        build_copies: bool = True,
+        self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
     ) -> tuple[str, str] | None:
         # A class-body alias of the name (issue #2620) lists every method
         # the member may hold, its own `def` included when that survives.
@@ -674,9 +669,7 @@ class CallResolver:
         method_qn = f"{class_qn}{separator}{method_name}"
         if method_qn in self.function_registry:
             return self.function_registry[method_qn], method_qn
-        return self._resolve_inherited_method(
-            class_qn, method_name, build_copies=build_copies
-        )
+        return self._resolve_inherited_method(class_qn, method_name)
 
     def reset_resolution_caches(self) -> None:
         # The watch pass deletes EVERY CALLS edge and recomputes them
@@ -1904,11 +1897,7 @@ class CallResolver:
                     method_name, ()
                 )
             ]
-            # The implementer is one build's copy of its type: another copy's
-            # method runs in another build, never for this one.
-            if result := self._try_resolve_method(
-                implementer, method_name, build_copies=False
-            ):
+            if result := self._try_resolve_method(implementer, method_name):
                 found.append(result)
             for target in found:
                 targets.setdefault(target, {})[implementer] = guessed
@@ -5736,6 +5725,10 @@ class CallResolver:
                 language,
             ):
                 return result
+            if language == cs.SupportedLanguage.GO and (
+                found := self._go_build_copy_method(class_qn, method_name, module_qn)
+            ):
+                return found
             if language == cs.SupportedLanguage.DART and (
                 extension := self._dart_extension_member(
                     class_qn, method_name, module_qn
@@ -7883,12 +7876,7 @@ class CallResolver:
         return order
 
     def _resolve_inherited_method(
-        self,
-        class_qn: str,
-        method_name: str,
-        own_members: bool = True,
-        *,
-        build_copies: bool = True,
+        self, class_qn: str, method_name: str, own_members: bool = True
     ) -> tuple[str, str] | None:
         # Every caller has already looked for a def of the name on class_qn
         # itself. A class-body alias there (`run = _plain`, issue #2620) is
@@ -7903,37 +7891,47 @@ class CallResolver:
                 return None
         if found := self._go_variant_method(class_qn, method_name):
             return found
-        if class_qn in self.class_inheritance:
-            # Which class binds the name first decides whether a value hides
-            # it, and that order is the C3 MRO, not this walk's breadth-first
-            # order: `class C(A, B)` reaches a `run` that A inherits before B's
-            # `run = None` or `run = _impl`.
-            if (order := self._binding_aware_mro(class_qn, method_name)) is not None:
-                return self._resolve_inherited_along_mro(order, method_name)
-            if found := self._resolve_inherited_breadth_first(class_qn, method_name):
-                return found
-        return (
-            self._go_build_copy_method(class_qn, method_name) if build_copies else None
-        )
+        if class_qn not in self.class_inheritance:
+            return None
+        # Which class binds the name first decides whether a value hides
+        # it, and that order is the C3 MRO, not this walk's breadth-first
+        # order: `class C(A, B)` reaches a `run` that A inherits before B's
+        # `run = None` or `run = _impl`.
+        if (order := self._binding_aware_mro(class_qn, method_name)) is not None:
+            return self._resolve_inherited_along_mro(order, method_name)
+        return self._resolve_inherited_breadth_first(class_qn, method_name)
 
     def _go_build_copy_method(
-        self, type_qn: str, method_name: str
+        self, type_qn: str, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
         # A Go type each build declares again (`Iovec` in `ztypes_linux.go`
         # and in `ztypes_darwin.go`) is one type, but a receiver resolves to
         # one of its copies and each method sits on the copy its own file
         # builds with. A copy without the method left the call to the
         # name-only fallback, which bound `var v Iovec; v.SetLen()` to
-        # `Cmsghdr.SetLen` (#3148). Copies go by qn, so the answer does not
-        # depend on registration order. An interface's copies were searched
-        # already (`_go_variant_method`).
-        if type_qn in self.go_declaration_variants:
+        # `Cmsghdr.SetLen` (#3148). Another copy's method counts only where
+        # some build compiles the caller with that copy and that method, so
+        # a Linux caller never lands on a Windows-only method; the copies go
+        # by qn, so the answer does not depend on registration order. An
+        # interface's copies were searched already (`_go_variant_method`).
+        builds = self.go_builds
+        if builds is None or type_qn in self.go_declaration_variants:
             return None
+        caller = self.go_caller_rel(module_qn)
         for copy_qn in self._go_build_copies(type_qn):
             method_qn = f"{copy_qn}{cs.SEPARATOR_DOT}{method_name}"
-            if method_qn in self.function_registry:
-                return self.function_registry[method_qn], method_qn
-            if found := self._resolve_inherited_breadth_first(copy_qn, method_name):
+            found = (
+                (self.function_registry[method_qn], method_qn)
+                if method_qn in self.function_registry
+                else self._resolve_inherited_breadth_first(copy_qn, method_name)
+            )
+            if found is not None and not builds.apart(
+                (
+                    caller,
+                    self.go_declaring_rel(copy_qn),
+                    self.go_declaring_rel(found[1]),
+                )
+            ):
                 return found
         return None
 

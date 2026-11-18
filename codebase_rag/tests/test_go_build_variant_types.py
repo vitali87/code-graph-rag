@@ -71,6 +71,7 @@ func appendBytes(bs [][]byte) []Iovec {
 # Indexes each tree named on the command line under this process's hash seed
 # and writes every node and edge, with its properties, to the first argument.
 # The project's sync time is the clock's, the one property no seed decides.
+# No embedding pass: this process has none of pytest's vector-store isolation.
 _DUMP = """
 import json
 import sys
@@ -92,6 +93,7 @@ for root in roots:
         parsers=parsers,
         queries=queries,
         project_name="bt",
+        skip_embeddings=True,
     ).run(force=True)
     store.flush_all()
     graphs.append(
@@ -172,6 +174,7 @@ def _index(root: Path) -> _StatefulIngestor:
         parsers=parsers,
         queries=queries,
         project_name=_PROJECT,
+        skip_embeddings=True,
     ).run(force=True)
     store.flush_all()
     return store
@@ -244,6 +247,44 @@ def test_a_copy_without_the_method_reaches_the_copy_that_has_it(
     # method of another type that the name-only fallback picked.
     store = _index(_per_build_layout(tmp_path / "bt", ("linux",)))
     assert _callees(store) == {f"{_PROJECT}.sys.ztypes_linux.Iovec.SetLen"}
+
+
+def test_another_copys_method_counts_only_where_the_callers_build_reaches_it(
+    tmp_path: Path,
+) -> None:
+    # FreeBSD and Linux both declare the methods; the caller is Linux-only.
+    # FreeBSD's copy sorts first, but no build compiles it with the caller,
+    # so the call takes Linux's.
+    root = _per_build_layout(tmp_path / "bt", ("freebsd", "linux"))
+    (root / "sys" / "use_linux.go").write_text(
+        "package sys\n\nfunc useLinux() {\n\tvar v Iovec\n\tv.SetLen(1)\n}\n",
+        encoding=cs.ENCODING_UTF8,
+    )
+    store = _index(root)
+    callees = {
+        callee
+        for caller, callee in _edges(store, cs.RelationshipType.CALLS)
+        if caller == f"{_PROJECT}.sys.use_linux.useLinux"
+    }
+    assert callees == {f"{_PROJECT}.sys.ztypes_linux.Iovec.SetLen"}, callees
+
+
+def test_a_python_receiver_never_reaches_a_go_types_copies(tmp_path: Path) -> None:
+    # The copies of a Go type are a Go caller's business. A Python local
+    # typed by the same bare name binds no Go method, as before.
+    root = _per_build_layout(tmp_path / "bt", ("linux",))
+    (root / "use.py").write_text(
+        "def annotated(v: Iovec):\n    v.SetLen(1)\n\n\n"
+        "def built():\n    v = Iovec()\n    v.SetLen(1)\n",
+        encoding=cs.ENCODING_UTF8,
+    )
+    store = _index(root)
+    reached = {
+        callee
+        for caller, callee in _edges(store, cs.RelationshipType.CALLS)
+        if caller.startswith(f"{_PROJECT}.use.")
+    }
+    assert not any(callee.startswith(f"{_PROJECT}.sys.") for callee in reached), reached
 
 
 def test_one_types_methods_on_one_line_of_several_files_stay_apart(
