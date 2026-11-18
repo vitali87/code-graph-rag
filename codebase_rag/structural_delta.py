@@ -114,7 +114,8 @@ class Snapshot(NamedTuple):
     `bindings` the by-name imports into and out of the touched files;
     `callers` the definitions elsewhere that make sites into them;
     `modules` the (qualified name, path) of each Module at a touched path,
-    and `module_bindings` every import of one of them.
+    `module_bindings` every import of one of them, and `bases` the
+    (class, base) of each class at a touched path.
     """
 
     paths: frozenset[str]
@@ -131,6 +132,7 @@ class Snapshot(NamedTuple):
     callers: Mapping[str, Definition] = MappingProxyType({})
     modules: frozenset[tuple[str, str]] = frozenset()
     module_bindings: tuple[ImportBinding, ...] = ()
+    bases: frozenset[tuple[str, str]] = frozenset()
 
 
 class RenameFinding(TypedDict):
@@ -381,6 +383,18 @@ def _touched_modules(
     )
 
 
+def _touched_bases(
+    fetch_all: QueryFn, params: PropertyDict
+) -> frozenset[tuple[str, str]]:
+    """The (class, base) of each class at a touched path."""
+    return frozenset(
+        (source, base)
+        for row in fetch_all(cq.CYPHER_DELTA_BASES, params)
+        if (source := _text(row.get(cs.KEY_FROM_QN)))
+        and (base := _text(row.get(cs.KEY_TO_QN)))
+    )
+
+
 def _module_import_bindings(
     fetch_all: QueryFn, params: PropertyDict
 ) -> tuple[ImportBinding, ...]:
@@ -498,6 +512,7 @@ def snapshot(
         callers=callers,
         modules=_touched_modules(fetch_all, params),
         module_bindings=_module_import_bindings(fetch_all, params),
+        bases=_touched_bases(fetch_all, params),
     )
 
 
@@ -2841,6 +2856,33 @@ def _moved_site(
     return moved
 
 
+class _BindingContext(NamedTuple):
+    """What a call binds through besides its own text: the names its file
+    imports, and the bases of the classes it is written in."""
+
+    imports: frozenset[tuple[str, str, str]]
+    names: frozenset[tuple[str, str, str]]
+    bases: frozenset[tuple[str, str]]
+
+
+def _binding_context(site: CallSite, snap: Snapshot) -> _BindingContext:
+    modules = {qn for qn, path in snap.modules if path == site.caller_path}
+    caller = site.caller.partition(cs.CHAR_PAREN_OPEN)[0]
+    return _BindingContext(
+        imports=frozenset(row for row in snap.imported if row[0] in modules),
+        names=frozenset(
+            (binding.module, binding.imported_name, binding.bound)
+            for binding in snap.bindings
+            if binding.importer_path == site.caller_path
+        ),
+        bases=frozenset(
+            (cls, base)
+            for cls, base in snap.bases
+            if caller.startswith(cls + cs.SEPARATOR_DOT)
+        ),
+    )
+
+
 def _reaches(site: CallSite, qn: str, accessor: bool) -> bool:
     # A JS/TS getter read is a REFERENCES edge: the read runs the getter but
     # is no call, and the edit breaks it all the same (bot review on PR #3311).
@@ -2871,22 +2913,29 @@ def _calls_into(
     was_accessor, is_accessor = accessor
     drawn = [site for site in after.sites if _reaches(site, qn, is_accessor)]
     name = after.definitions[qn].name
-    # Calls in a file the edit left alone are the calls they were, so a
-    # definite binding they had still names what they run. One in an edited
-    # file may have changed though its caller kept its shape (the shape
-    # ignores names: `extends Cart` can now read `extends Tart`).
+    # A definite binding a call had still names what it runs while the call
+    # is the call it was: in a file the edit left alone, or in an edited
+    # file whose edit kept its caller's shape and what the call binds
+    # through. The shape ignores names, so `extends Cart` can now read
+    # `extends Tart` (bot reviews on PR #3632).
     unchanged: set[CallSite] = set()
     for site in before.sites:
         if not _reaches(site, qn, was_accessor):
             continue
+        definite = site.resolution in _DEFINITE_RESOLUTIONS
         if site.caller_path not in after.paths:
             drawn.append(site)
-            if site.resolution in _DEFINITE_RESOLUTIONS:
+            if definite:
                 unchanged.add(site)
             continue
         current = _moved_site(site, name, before, after, trees)
-        if current is not None:
-            drawn.append(current)
+        if current is None:
+            continue
+        drawn.append(current)
+        if definite and _binding_context(site, before) == _binding_context(
+            current, after
+        ):
+            unchanged.add(current)
     # One site per position: a call the edit left alone is drawn before and
     # after it, and a Python property read as a call and a reference both;
     # the call edge is the one judged. Of the two drawings of an unchanged

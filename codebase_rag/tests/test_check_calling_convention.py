@@ -94,6 +94,22 @@ def _edit(root: Path, files: dict[str, str], rel: str, edited: str) -> Structura
     )
 
 
+def _edit_all(
+    root: Path, files: dict[str, str], edits: dict[str, str]
+) -> StructuralDelta:
+    store, updater = _index(root, files)
+    for rel, edited in edits.items():
+        (root / rel).write_text(edited, encoding="utf-8")
+    rels = sorted(edits)
+    return observe(
+        store.fetch_all,
+        PROJECT,
+        rels,
+        lambda: updater.reingest(rels),
+        repo_root=root,
+    )
+
+
 def _verdicts(delta: StructuralDelta, name: str) -> dict[str, str]:
     change = _change(delta, name)
     return {
@@ -836,6 +852,15 @@ export class Sub extends Cart {
   }
 }
 """
+SHOP_SUB_TS = SHOP_TS.replace(
+    "    return this.shared();\n  }\n",
+    "    return this.shared();\n  }\n\n"
+    "  viaScale(): number {\n    return this.scale(2);\n  }\n",
+)
+CART_SCALE_STATIC_TS = CART_TS.replace(
+    "  scale(x: number): number {\n    return x * this.total();",
+    "  static scale(x: number): number {\n    return x * 2;",
+)
 
 
 def _tsc(root: Path) -> str:
@@ -903,16 +928,12 @@ def test_typescript_static_added_breaks_instance_calls(temp_repo: Path) -> None:
 def _scale_made_static_under_a_subclass(temp_repo: Path) -> StructuralDelta:
     # `Sub.viaScale` calls `this.scale(2)` in shop.ts, which the edit of
     # cart.ts (making `scale` static) leaves alone.
-    shop = SHOP_TS.replace(
-        "    return this.shared();\n  }\n",
-        "    return this.shared();\n  }\n\n"
-        "  viaScale(): number {\n    return this.scale(2);\n  }\n",
+    return _edit(
+        temp_repo,
+        {"cart.ts": CART_TS, "shop.ts": SHOP_SUB_TS},
+        "cart.ts",
+        CART_SCALE_STATIC_TS,
     )
-    edited = CART_TS.replace(
-        "  scale(x: number): number {\n    return x * this.total();",
-        "  static scale(x: number): number {\n    return x * 2;",
-    )
-    return _edit(temp_repo, {"cart.ts": CART_TS, "shop.ts": shop}, "cart.ts", edited)
 
 
 @needs_tsc
@@ -937,6 +958,21 @@ def test_a_call_the_edit_left_guessed_is_judged_by_its_binding_before(
     # `scale` exactly before the edit, so that binding decides. Needs no
     # `tsc`, so it runs where the test above is skipped.
     delta = _scale_made_static_under_a_subclass(temp_repo)
+
+    assert _verdicts(delta, "scale")["viaScale"] == cs.DELTA_CONVENTION_NEEDS_CLASS
+
+
+def test_a_call_in_a_file_the_edit_only_commented_keeps_its_binding(
+    temp_repo: Path,
+) -> None:
+    # Bot review on PR #3632: the edit also touches shop.ts, with a comment
+    # that moves every line down. `this.scale(2)` is still the call it was,
+    # so its binding before the edit decides, as when shop.ts is left alone.
+    delta = _edit_all(
+        temp_repo,
+        {"cart.ts": CART_TS, "shop.ts": SHOP_SUB_TS},
+        {"cart.ts": CART_SCALE_STATIC_TS, "shop.ts": "// Reviewed.\n" + SHOP_SUB_TS},
+    )
 
     assert _verdicts(delta, "scale")["viaScale"] == cs.DELTA_CONVENTION_NEEDS_CLASS
 

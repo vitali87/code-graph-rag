@@ -1894,6 +1894,17 @@ WHERE n.qualified_name STARTS WITH $project_prefix
             AND NOT n.qualified_name STARTS WITH (longer_project + '.'))
   AND n.path IN $paths
 RETURN n.qualified_name AS qualified_name, n.path AS path"""
+# The bases of the classes at the touched paths: they decide what `this` or
+# `self` reaches in a method there, and an edit can change them while every
+# method keeps its shape (bot review on PR #3632).
+CYPHER_DELTA_BASES = """MATCH (c)-[:INHERITS]->(b)
+WHERE c.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE c.qualified_name <> longer_project
+            AND NOT c.qualified_name STARTS WITH (longer_project + '.'))
+  AND c.path IN $paths
+RETURN DISTINCT c.qualified_name AS from_qn,
+       coalesce(b.qualified_name, b.name) AS to_qn"""
 CYPHER_DELTA_MODULE_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(t:Module)
 WHERE m.qualified_name STARTS WITH $project_prefix
   AND t.qualified_name STARTS WITH $project_prefix

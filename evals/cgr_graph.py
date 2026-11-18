@@ -478,6 +478,19 @@ class _StatefulIngestor:
             rows.append(self._delta_node_row(label, props))
         return rows
 
+    def _delta_bases(
+        self, prefix: str, paths: set[str], longer_project_prefixes: set[str]
+    ) -> list[ResultRow]:
+        inherits = cs.RelationshipType.INHERITS.value
+        return [
+            {cs.KEY_FROM_QN: _result(fv), cs.KEY_TO_QN: _result(tv)}
+            for (fl, fv, rel, _tl, tv) in sorted(self.edges, key=repr)
+            if rel == inherits
+            and self._delta_path_of(fl, fv) in paths
+            and _str(fv).startswith(prefix)
+            and not _shadowed_by_longer_owner(_str(fv), longer_project_prefixes)
+        ]
+
     def _delta_sites(
         self, prefix: str, paths: set[str], longer_project_prefixes: set[str]
     ) -> list[ResultRow]:
@@ -1324,6 +1337,8 @@ class _StatefulIngestor:
             ]
         if query == cq.CYPHER_DELTA_MODULE_IMPORTERS:
             return self._delta_module_importers(prefix, paths, longer_project_prefixes)
+        if query == cq.CYPHER_DELTA_BASES:
+            return self._delta_bases(prefix, paths, longer_project_prefixes)
         if query == cq.CYPHER_DEAD_CODE_RELS:
             return [
                 {
@@ -1380,6 +1395,7 @@ class _StatefulIngestor:
                 | cq.CYPHER_DELTA_NAMED_IMPORTS
                 | cq.CYPHER_DELTA_MODULES
                 | cq.CYPHER_DELTA_MODULE_IMPORTERS
+                | cq.CYPHER_DELTA_BASES
                 | cq.CYPHER_DELTA_CALLERS_OF
                 | cq.CYPHER_DELTA_REMOTE_CALLERS_OF
                 | cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF
