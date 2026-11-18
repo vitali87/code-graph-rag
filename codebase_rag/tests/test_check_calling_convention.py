@@ -941,6 +941,28 @@ def test_a_call_the_edit_left_guessed_is_judged_by_its_binding_before(
     assert _verdicts(delta, "scale")["viaScale"] == cs.DELTA_CONVENTION_NEEDS_CLASS
 
 
+def test_a_call_in_an_edited_file_is_judged_by_its_binding_after(
+    temp_repo: Path,
+) -> None:
+    # Negative, bot review on PR #3632: the same edit makes `Sub` extend
+    # `Tart`, which has no `scale`, so `this.scale(2)` no longer runs
+    # `Cart.scale`. `via` keeps its shape, as a shape ignores names, but its
+    # exact binding before the edit says nothing about the call now.
+    source = (
+        "export class Cart {\n  scale(x: number): number {\n    return x * 2;\n  }\n}\n\n"
+        "export class Tart {\n  size(): number {\n    return 1;\n  }\n}\n\n"
+        "export class Sub extends Cart {\n  via(): number {\n"
+        "    return this.scale(2);\n  }\n}\n"
+    )
+    edited = source.replace("  scale(x", "  static scale(x").replace(
+        "Sub extends Cart", "Sub extends Tart"
+    )
+
+    delta = _edit(temp_repo, {"cart.ts": source}, "cart.ts", edited)
+
+    assert _verdicts(delta, "scale") == {"via": cs.DELTA_ARITY_UNKNOWN}
+
+
 @needs_tsc
 def test_typescript_private_breaks_only_callers_outside_the_class(
     temp_repo: Path,

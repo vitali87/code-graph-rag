@@ -2871,26 +2871,33 @@ def _calls_into(
     was_accessor, is_accessor = accessor
     drawn = [site for site in after.sites if _reaches(site, qn, is_accessor)]
     name = after.definitions[qn].name
+    # Calls in a file the edit left alone are the calls they were, so a
+    # definite binding they had still names what they run. One in an edited
+    # file may have changed though its caller kept its shape (the shape
+    # ignores names: `extends Cart` can now read `extends Tart`).
+    unchanged: set[CallSite] = set()
     for site in before.sites:
         if not _reaches(site, qn, was_accessor):
             continue
-        current = (
-            _moved_site(site, name, before, after, trees)
-            if site.caller_path in after.paths
-            else site
-        )
+        if site.caller_path not in after.paths:
+            drawn.append(site)
+            if site.resolution in _DEFINITE_RESOLUTIONS:
+                unchanged.add(site)
+            continue
+        current = _moved_site(site, name, before, after, trees)
         if current is not None:
             drawn.append(current)
     # One site per position: a call the edit left alone is drawn before and
     # after it, and a Python property read as a call and a reference both;
-    # the call edge is the one judged. Of the two drawings of a call, the
-    # definite binding is judged: the edit can cost the re-bound edge its
-    # `exact` (`this.scale(2)` once `scale` turns static, issue #3628), and
-    # the call reached `qn` as surely as before.
+    # the call edge is the one judged. Of the two drawings of an unchanged
+    # call, the definite binding is judged: the edit can cost the re-bound
+    # edge its `exact` (`this.scale(2)` once `scale` turns static, issue
+    # #3628), and the call reached `qn` as surely as before. Otherwise the
+    # binding after the edit is (bot review on PR #3632).
     drawn.sort(
         key=lambda site: (
             site.rel != cs.RelationshipType.CALLS.value,
-            site.resolution not in _DEFINITE_RESOLUTIONS,
+            site not in unchanged,
         )
     )
     sites: dict[tuple[str, str, int | None, int | None], CallSite] = {}
