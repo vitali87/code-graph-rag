@@ -109,6 +109,11 @@ _JS_MODULE_STATEMENTS = frozenset({cs.TS_IMPORT_STATEMENT, cs.TS_EXPORT_STATEMEN
 _JS_GENERATOR_TYPES = frozenset(
     {cs.TS_GENERATOR_FUNCTION_DECLARATION, cs.TS_GENERATOR_FUNCTION}
 )
+# A token that reads the symbol's value: a plain name, or a shorthand
+# property (`{ fetch }`), whose value the rename rewrites.
+_JS_VALUE_REFERENCE_TYPES = frozenset(
+    {cs.TS_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER}
+)
 # A script by its extension, whatever its package.json says.
 _JS_SCRIPT_SUFFIXES = frozenset({cs.EXT_CJS, cs.EXT_CTS})
 # The words reserved only in some code, which a use site is checked for.
@@ -191,16 +196,32 @@ def _js_words_at(
         words.add(cs.JS_LET)
     if strict:
         words |= cs.JS_STRICT_RESERVED_WORDS
+        if binding:
+            # Strict code may read `eval` and `arguments` but bind neither.
+            words |= cs.JS_STRICT_RESTRICTED_BINDINGS
     if file.module:
         words.add(cs.JS_AWAIT)
     return frozenset(words)
+
+
+def _js_has_top_level_await(root: Node) -> bool:
+    stack = list(root.children)
+    while stack:
+        node = stack.pop()
+        if node.type in cs.JS_TS_FUNCTION_NODES or node.type == cs.TS_CLASS_BODY:
+            continue
+        if node.type == cs.TS_JS_AWAIT_EXPRESSION:
+            return True
+        stack.extend(node.children)
+    return False
 
 
 def _js_opens_with_use_strict(scope: Node, source: bytes) -> bool:
     """Whether a program or function body's directive prologue, the string
     statements that open it, holds `'use strict'`."""
     for statement in scope.named_children:
-        if statement.type == cs.TS_COMMENT:
+        # A `#!` line opens a script before its prologue, like a comment.
+        if statement.type in (cs.TS_COMMENT, cs.TS_JS_HASH_BANG_LINE):
             continue
         values = [c for c in statement.named_children if c.type != cs.TS_COMMENT]
         if (
@@ -221,11 +242,35 @@ def _is_go_identifier(name: str) -> bool:
     # Go's letters are `_` and Unicode category L, its digits category Nd
     # alone; `isidentifier` also admits `a·b`, a letter number (`Ⅻ`) and a
     # combining mark.
-    return all(
+    return bool(name) and all(
         char == cs.CHAR_UNDERSCORE
         or unicodedata.category(char).startswith(cs.UNICODE_LETTER_CATEGORY_PREFIX)
         or (index and unicodedata.category(char) == cs.UNICODE_DECIMAL_DIGIT_CATEGORY)
         for index, char in enumerate(name)
+    )
+
+
+def _is_spelled_for(language: cs.SupportedLanguage | None, name: str) -> bool:
+    """Whether `name` is an identifier of the definition's language.
+
+    Python's rule (`isidentifier`) is the base: JS/TS also take `$` and a
+    ZWNJ/ZWJ after the first character, Scala, Dart and Java `$`. Go is
+    held to its letters and digits as well, Lua to ASCII. A name another
+    language's own rule takes beyond these (`aͺ` in Go, `€total` in Java)
+    is one its tree-sitter grammar refuses too, so the rewrite could not be
+    checked.
+    """
+    spelled = (
+        name.replace("$", "_") if language in _DOLLAR_IDENTIFIER_LANGUAGES else name
+    )
+    if language in _RESERVED_METHOD_NAME_LANGUAGES and spelled:
+        spelled = spelled[0] + "".join(
+            c for c in spelled[1:] if c not in cs.JS_IDENTIFIER_JOINERS
+        )
+    return (
+        spelled.isidentifier()
+        and (language not in _ASCII_IDENTIFIER_LANGUAGES or name.isascii())
+        and (language != cs.SupportedLanguage.GO or _is_go_identifier(name))
     )
 
 
@@ -1759,7 +1804,9 @@ class Renamer:
                 unplanned,
             )
         sites.extend(unplanned)
-        if reserving := self._js_sites_reserving(sites, new_name):
+        if reserving := self._js_sites_reserving(
+            sites, new_name
+        ) + self._js_imports_reserving(imports, old_name, new_name):
             raise RenameRefused(
                 cs.RENAME_RESERVED_AT_SITES.format(
                     name=new_name,
@@ -1823,16 +1870,7 @@ class Renamer:
         found = graph_query.definition(self.fetch_all, self.project, qn, None)
         path = found["path"]
         language = get_language_for_extension(Path(path).suffix) if path else None
-        spelled = (
-            new_name.replace("$", "_")
-            if language in _DOLLAR_IDENTIFIER_LANGUAGES
-            else new_name
-        )
-        if (
-            not spelled.isidentifier()
-            or (language in _ASCII_IDENTIFIER_LANGUAGES and not new_name.isascii())
-            or (language == cs.SupportedLanguage.GO and not _is_go_identifier(new_name))
-        ):
+        if not _is_spelled_for(language, new_name):
             return cs.RENAME_BAD_NAME.format(name=new_name)
         if (
             language == cs.SupportedLanguage.PYTHON
@@ -1904,12 +1942,19 @@ class Renamer:
             source = b""
         root = parser.parse(source).root_node
         suffix = Path(path).suffix
+        package_type = (
+            self._package_type(path) if suffix not in _JS_SCRIPT_SUFFIXES else None
+        )
         module = (
             suffix in _JS_MODULE_SUFFIXES
             or any(child.type in _JS_MODULE_STATEMENTS for child in root.named_children)
+            or package_type == cs.JS_PACKAGE_TYPE_MODULE
+            # Node detects a module from module-only syntax in a file no
+            # extension or package type calls CommonJS: a top-level `await`.
             or (
                 suffix not in _JS_SCRIPT_SUFFIXES
-                and self._package_type(path) == cs.JS_PACKAGE_TYPE_MODULE
+                and package_type != cs.JS_PACKAGE_TYPE_COMMONJS
+                and _js_has_top_level_await(root)
             )
         )
         strict = (
@@ -1938,6 +1983,41 @@ class Renamer:
             directory = directory.parent
         return None
 
+    def _js_imports_reserving(
+        self,
+        imports: list[tuple[ImportSite, str]],
+        old_name: str,
+        new_name: str,
+    ) -> list[RenameSite]:
+        """JS/TS imports that bind the symbol under its own name, where the
+        new name may not be bound: `import { fetch }` would become
+        `import { await }`, which no module accepts. One with an alias
+        (`import { fetch as run }`) keeps its local name and is not one."""
+        if (
+            new_name
+            not in _JS_CONTEXT_RESERVED_WORDS | cs.JS_STRICT_RESTRICTED_BINDINGS
+        ):
+            return []
+        files: dict[str, _JsFile | None] = {}
+        found: list[RenameSite] = []
+        for site, module in imports:
+            language = get_language_for_extension(Path(site.path).suffix)
+            if language not in _RESERVED_METHOD_NAME_LANGUAGES or site.alias not in (
+                None,
+                old_name,
+            ):
+                continue
+            if site.path not in files:
+                files[site.path] = self._js_file(site.path, language)
+            file = files[site.path]
+            if file is not None and new_name in _js_words_at(
+                file, None, binding=True, is_class=False
+            ):
+                found.append(
+                    RenameSite("import", site.path, site.line, site.col, module, None)
+                )
+        return found
+
     def _js_sites_reserving(
         self, sites: list[RenameSite], new_name: str
     ) -> list[RenameSite]:
@@ -1963,10 +2043,12 @@ class Renamer:
                 files[site.path] = self._js_file(site.path, language)
             file = files[site.path]
             node = file.token_at(site.line, site.col) if file is not None else None
+            # `{ fetch }` reads `fetch` too: its key stays, its value is the
+            # rewritten use (`{ fetch: yield }`).
             if (
                 file is None
                 or node is None
-                or node.type != cs.TS_IDENTIFIER
+                or node.type not in _JS_VALUE_REFERENCE_TYPES
                 or _js_is_member_name(node)
             ):
                 continue

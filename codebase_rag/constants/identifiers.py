@@ -79,8 +79,16 @@ JS_YIELD = "yield"
 JS_LET = "let"
 # The token that makes a method or function a generator (`*gen() {}`).
 JS_GENERATOR_STAR = "*"
-# A package.json `type` that makes its `.js` files ES modules.
+# A package.json `type` that makes its `.js` files ES modules, and the one
+# that keeps them CommonJS.
 JS_PACKAGE_TYPE_MODULE = "module"
+JS_PACKAGE_TYPE_COMMONJS = "commonjs"
+# Names strict code may read but not bind.
+JS_STRICT_RESTRICTED_BINDINGS = frozenset({"eval", "arguments"})
+# The `#!` line tree-sitter-javascript parses before a script's statements.
+TS_JS_HASH_BANG_LINE = "hash_bang_line"
+# ZWNJ and ZWJ, which a JS name may hold after its first character.
+JS_IDENTIFIER_JOINERS = frozenset({"\u200c", "\u200d"})
 # How Python reads an identifier: NFKC-normalised, so `K` (the Kelvin sign)
 # binds `K` (PEP 3131).
 PY_IDENTIFIER_NORMAL_FORM = "NFKC"

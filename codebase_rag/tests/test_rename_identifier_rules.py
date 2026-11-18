@@ -388,3 +388,91 @@ def test_a_use_in_a_plain_function_inside_an_async_one_may_take_await(
     graph = _index(temp_repo, mock_ingestor)
     report = _plan(temp_repo, graph, "inner.fetch", "await")
     assert "return await(3);" in report.diff, report.message
+
+
+@pytest.mark.parametrize(
+    ("rel", "source", "member", "new"),
+    [
+        (
+            "mod.js",
+            "export function fetch(url) { return url; }\n",
+            "mod.fetch",
+            "eval",
+        ),
+        (
+            "cli.cjs",
+            "#!/usr/bin/env node\n'use strict';\n"
+            "function fetch(url) { return url; }\nmodule.exports = { fetch };\n",
+            "cli.fetch",
+            "interface",
+        ),
+        (
+            "tla.js",
+            "function fetch(url) { return url; }\nawait Promise.resolve(fetch(1));\n",
+            "tla.fetch",
+            "await",
+        ),
+        (
+            "gen.js",
+            "function fetch(x) { return x; }\n"
+            "function* make() { return { fetch }; }\n"
+            "module.exports = { make };\n",
+            "gen.fetch",
+            "yield",
+        ),
+    ],
+    ids=[
+        "strict-eval",
+        "shebang-use-strict",
+        "top-level-await",
+        "shorthand-in-generator",
+    ],
+)
+def test_a_name_its_strict_or_module_or_generator_context_refuses(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    rel: str,
+    source: str,
+    member: str,
+    new: str,
+) -> None:
+    _write(temp_repo, rel, source)
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, member, new)
+    assert "is a reserved word in" in str(refused.value), str(refused.value)
+
+
+def test_a_script_function_may_still_be_named_eval(
+    temp_repo: Path, js_graph: RecordedGraph
+) -> None:
+    # Negative: sloppy code may bind `eval`.
+    report = _plan(temp_repo, js_graph, "api.fetch", "eval")
+    assert "function eval(url)" in report.diff, report.message
+
+
+def test_an_unaliased_import_of_the_new_name_is_refused(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # api.cjs is a script, so its own `function await() {}` would load, but
+    # `import { fetch }` in main.mjs would become `import { await }`.
+    _write(
+        temp_repo,
+        "api.cjs",
+        "function fetch(url) { return url; }\nmodule.exports = { fetch };\n",
+    )
+    # No use of `fetch` in main.mjs: only the import binds the new name.
+    _write(temp_repo, "main.mjs", 'import { fetch } from "./api.cjs";\n')
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "api.fetch", "await")
+    assert "main.mjs" in str(refused.value), str(refused.value)
+
+
+def test_a_js_name_with_a_zero_width_joiner_is_accepted(
+    temp_repo: Path, js_graph: RecordedGraph
+) -> None:
+    # ECMAScript lets ZWNJ (U+200C) follow a name's first character; Python's
+    # identifier rule does not.
+    report = _plan(temp_repo, js_graph, "api.fetch", "a\u200cb")
+    assert "function a\u200cb(url)" in report.diff, report.message
