@@ -84,6 +84,23 @@ def run_others():
     os.popen("uptime")
 
 
+def echo_back():
+    print(subprocess.check_output(["echo", os.getenv("ECHO_TOKEN")]))
+
+
+def run_back():
+    done = subprocess.run(["echo", os.getenv("RUN_TOKEN")], capture_output=True)
+    print(done.stdout)
+
+
+def popen_back():
+    print(os.popen(os.getenv("POPEN_TOKEN")).read())
+
+
+def exit_code_only():
+    print(subprocess.call(["echo", os.getenv("CODE_TOKEN")]))
+
+
 def make_path(p):
     return Path(p)
 
@@ -177,6 +194,22 @@ def test_values_flow_into_the_process_and_the_env(
     assert ("resource::ENV::TOOL_CMD", _PROCESS) in flows, flows
     # setdefault writes its default into the variable.
     assert ("resource::ENV::HOME", "resource::ENV::TOOL_HOME") in flows, flows
+
+
+def test_a_commands_output_carries_what_it_was_given(
+    edges: set[tuple[str, str, str]],
+) -> None:
+    # Greptile review of PR 3108: as write sinks, the runners lost the
+    # unknown-call rule that carried their arguments into their result, so a
+    # token echoed back by the command never reached stdout.
+    flows = {(src, dst) for src, rel, dst in edges if rel == "FLOWS_TO"}
+    stdout = "resource::STDOUT::<dynamic>"
+    for token in ("ECHO_TOKEN", "RUN_TOKEN", "POPEN_TOKEN"):
+        assert (f"resource::ENV::{token}", _PROCESS) in flows, flows
+        assert (f"resource::ENV::{token}", stdout) in flows, flows
+    # Negative: an exit code carries nothing of the command it ran.
+    assert ("resource::ENV::CODE_TOKEN", _PROCESS) in flows, flows
+    assert ("resource::ENV::CODE_TOKEN", stdout) not in flows, flows
 
 
 def test_look_alike_calls_are_not_io(edges: set[tuple[str, str, str]]) -> None:

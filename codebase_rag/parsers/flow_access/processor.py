@@ -4278,10 +4278,13 @@ class FlowProcessor:
         # taint (issue #2588). A first-party callee never gets here: it keeps
         # its return summary. A write sink returns nothing of its payload and a
         # taint-clearing call nothing of its input, so both yield no operands.
-        if (
-            registry_match(ctx.write_sinks, raw, ctx.import_map) is not None
-            or registry_match(_PY_TAINT_CLEARING_CALLS, raw, ctx.import_map) is not None
-        ):
+        # A command runner returns the command's output, which can echo its
+        # arguments back (`print(check_output(["echo", token]))`), so it keeps
+        # them (Greptile review of PR 3108).
+        write_sink = registry_match(ctx.write_sinks, raw, ctx.import_map)
+        if (write_sink is not None and not write_sink.returns_output) or registry_match(
+            _PY_TAINT_CLEARING_CALLS, raw, ctx.import_map
+        ) is not None:
             return []
         operands: list[Node] = []
         func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)

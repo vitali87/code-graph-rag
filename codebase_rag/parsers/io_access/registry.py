@@ -41,7 +41,8 @@ _PYTHON_SINKS: tuple[IOSink, ...] = (
         target_kw="key",
     ),
     # Running a command (issue #2778): the command is the resource, so a
-    # tainted argument reaching it models command injection.
+    # tainted argument reaching it models command injection. All but the
+    # exit-code ones return the command's output, which can echo it back.
     *(
         IOSink(
             f"subprocess.{fn}",
@@ -49,6 +50,7 @@ _PYTHON_SINKS: tuple[IOSink, ...] = (
             IODirection.WRITE,
             target_arg=0,
             target_kw="args",
+            returns_output=fn not in ("call", "check_call"),
         )
         for fn in ("run", "call", "check_call", "check_output", "Popen")
     ),
@@ -65,6 +67,7 @@ _PYTHON_SINKS: tuple[IOSink, ...] = (
         IODirection.WRITE,
         target_arg=0,
         target_kw="cmd",
+        returns_output=True,
     ),
     IOSink("json.load", ResourceKind.FILE, IODirection.READ),
     IOSink("json.dump", ResourceKind.FILE, IODirection.WRITE),
