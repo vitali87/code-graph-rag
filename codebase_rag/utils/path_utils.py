@@ -323,18 +323,12 @@ def should_skip_path(
     if exclude_paths and matches_ignore_patterns(match_path, exclude_paths):
         return True
     dir_parts = rel_path.parent.parts if _is_file else rel_path.parts
-    if has_unrescued_vcs_part(dir_parts, unignore_paths):
-        return True
-    # A metadata dir a `!` line names, and a directory in it that the line
-    # spells a path through, are kept as the walk keeps them: the built-in
-    # check below counts `.git` itself as ignored, so a file rescued there had
-    # no Folder ancestry (CodeRabbit review of #3644).
     if (
-        not _is_file
-        and not cs.VCS_METADATA_DIRS.isdisjoint(dir_parts)
-        and unignore_names_vcs_dir(rel_path_str, unignore_paths)
-    ):
-        return False
+        verdict := _vcs_metadata_verdict(
+            dir_parts, rel_path_str, _is_file, unignore_paths
+        )
+    ) is not None:
+        return verdict
     # The rescuable half, decided BEFORE the general unignore below: that check
     # returns False for a directory-level `!` too, since gitwildmatch matches
     # `build/js/jquery.min.js` against the pattern `build`. Requiring a pattern
@@ -344,19 +338,51 @@ def should_skip_path(
         return not (
             unignore_paths and unignore_names_this_file(rel_path_str, unignore_paths)
         )
-    # unignore rescues only built-in ignores, never explicit user excludes.
-    if unignore_paths and matches_ignore_patterns(match_path, unignore_paths):
-        return False
-    if (
-        not _is_file
-        and unignore_paths
-        and any(unignore_could_match_within(u, rel_path_str) for u in unignore_paths)
-    ):
-        # structure traversal must descend into a built-in-ignored dir when
-        # an unignore pattern can match beneath it (mirrors _should_keep_dir),
-        # or rescued files get no Folder/Package ancestry in the graph.
+    if _unignore_rescues(match_path, rel_path_str, _is_file, unignore_paths):
         return False
     return has_ignored_dir_part(dir_parts)
+
+
+def _vcs_metadata_verdict(
+    dir_parts: tuple[str, ...],
+    rel_path_str: str,
+    is_file: bool,
+    unignore_paths: frozenset[str] | None,
+) -> bool | None:
+    # Whether to skip a path for the version-control metadata dirs on it:
+    # True or False when they decide, None when they do not.
+    if has_unrescued_vcs_part(dir_parts, unignore_paths):
+        return True
+    # A metadata dir a `!` line names, and a directory in it that the line
+    # spells a path through, are kept as the walk keeps them: the built-in
+    # check after this counts `.git` itself as ignored, so a file rescued
+    # there had no Folder ancestry (CodeRabbit review of #3644).
+    if (
+        not is_file
+        and not cs.VCS_METADATA_DIRS.isdisjoint(dir_parts)
+        and unignore_names_vcs_dir(rel_path_str, unignore_paths)
+    ):
+        return False
+    return None
+
+
+def _unignore_rescues(
+    match_path: str,
+    rel_path_str: str,
+    is_file: bool,
+    unignore_paths: frozenset[str] | None,
+) -> bool:
+    if not unignore_paths:
+        return False
+    # unignore rescues only built-in ignores, never explicit user excludes.
+    if matches_ignore_patterns(match_path, unignore_paths):
+        return True
+    # structure traversal must descend into a built-in-ignored dir when
+    # an unignore pattern can match beneath it (mirrors _should_keep_dir),
+    # or rescued files get no Folder/Package ancestry in the graph.
+    return not is_file and any(
+        unignore_could_match_within(u, rel_path_str) for u in unignore_paths
+    )
 
 
 def unignore_names_vcs_dir(rel_dir: str, unignore_paths: frozenset[str] | None) -> bool:
@@ -401,23 +427,31 @@ def _pattern_reaches_dir(
     positions = _past_empty_double_stars({0}, pattern_parts)
     for index, part in enumerate(dir_parts):
         literal = index == last and part in cs.VCS_METADATA_DIRS
-        advanced: set[int] = set()
-        for position in positions:
-            if position == len(pattern_parts):
-                continue
-            segment = pattern_parts[position]
-            if segment == cs.GLOB_DOUBLE_STAR:
-                if not literal:
-                    advanced.add(position)
-            elif literal:
-                if segment == part:
-                    advanced.add(position + 1)
-            elif fnmatch.fnmatchcase(part, segment):
-                advanced.add(position + 1)
-        positions = _past_empty_double_stars(advanced, pattern_parts)
+        positions = _past_empty_double_stars(
+            _positions_after(positions, pattern_parts, part, literal), pattern_parts
+        )
         if not positions:
             return False
     return True
+
+
+def _positions_after(
+    positions: set[int], pattern_parts: tuple[str, ...], part: str, literal: bool
+) -> set[int]:
+    # The pattern positions that can follow `positions` once a directory
+    # segment `part` is consumed. A `literal` part (a metadata dir ending the
+    # path) only an identical segment matches; a `**` never stands for it.
+    advanced: set[int] = set()
+    for position in positions:
+        if position == len(pattern_parts):
+            continue
+        segment = pattern_parts[position]
+        if segment == cs.GLOB_DOUBLE_STAR:
+            if not literal:
+                advanced.add(position)
+        elif segment == part if literal else fnmatch.fnmatchcase(part, segment):
+            advanced.add(position + 1)
+    return advanced
 
 
 def _past_empty_double_stars(
