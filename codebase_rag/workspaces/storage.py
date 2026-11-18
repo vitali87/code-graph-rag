@@ -4,11 +4,11 @@ import re
 import tomllib
 from pathlib import Path
 
-import tomli_w
 from pydantic import ValidationError
 
 from ..config import settings
 from ..utils.path_utils import derive_project_name, project_name_error
+from ..utils.toml_writer import dumps as dumps_toml
 from . import constants as cs
 from .models import WorkspaceConfig, WorkspaceRepo
 
@@ -67,8 +67,7 @@ def save_workspace(config: WorkspaceConfig, home: Path | None = None) -> Path:
     path = workspace_path(config.name, home)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"workspace": config.model_dump()}
-    with path.open("wb") as f:
-        tomli_w.dump(payload, f)
+    path.write_bytes(dumps_toml(payload).encode())
     return path
 
 
