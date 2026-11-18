@@ -325,6 +325,16 @@ def should_skip_path(
     dir_parts = rel_path.parent.parts if _is_file else rel_path.parts
     if has_unrescued_vcs_part(dir_parts, unignore_paths):
         return True
+    # A metadata dir a `!` line names, and a directory in it that the line
+    # spells a path through, are kept as the walk keeps them: the built-in
+    # check below counts `.git` itself as ignored, so a file rescued there had
+    # no Folder ancestry (CodeRabbit review of #3644).
+    if (
+        not _is_file
+        and not cs.VCS_METADATA_DIRS.isdisjoint(dir_parts)
+        and unignore_names_vcs_dir(rel_path_str, unignore_paths)
+    ):
+        return False
     # The rescuable half, decided BEFORE the general unignore below: that check
     # returns False for a directory-level `!` too, since gitwildmatch matches
     # `build/js/jquery.min.js` against the pattern `build`. Requiring a pattern
@@ -350,8 +360,9 @@ def should_skip_path(
 
 
 def unignore_names_vcs_dir(rel_dir: str, unignore_paths: frozenset[str] | None) -> bool:
-    """Whether an unignore spells out this version-control metadata dir.
+    """Whether an unignore spells out a path through this directory.
 
+    Asked of a version-control metadata dir, and of a directory inside one.
     Only such a line (`!submodule1/.git`) rescues anything in it. A line that
     can match at any depth (`!*.[Cc]ache/`, `!**/packages/build/`, both in
     .NET's standard `.gitignore`) keeps every other built-in-ignored
@@ -364,35 +375,68 @@ def unignore_names_vcs_dir(rel_dir: str, unignore_paths: frozenset[str] | None) 
     for pattern in unignore_paths:
         bare = pattern.strip(cs.SEPARATOR_SLASH)
         if cs.SEPARATOR_SLASH not in bare:
-            if bare == dir_parts[-1]:
+            # `!.git/` names a `.git` at any depth, `!/.git/` only the root's.
+            anchored = pattern.startswith(cs.SEPARATOR_SLASH)
+            if bare == dir_parts[-1] and (not anchored or len(dir_parts) == 1):
                 return True
             continue
-        if _pattern_reaches_vcs_dir(tuple(bare.split(cs.SEPARATOR_SLASH)), dir_parts):
+        if _pattern_reaches_dir(tuple(bare.split(cs.SEPARATOR_SLASH)), dir_parts):
             return True
     return False
 
 
-def _pattern_reaches_vcs_dir(
+def _pattern_reaches_dir(
     pattern_parts: tuple[str, ...], dir_parts: tuple[str, ...]
 ) -> bool:
-    # The segments before the metadata dir may be globs (`submodule*/.git/x`)
-    # or `**`, but the metadata dir's own segment must be spelled out: a
-    # wildcard standing in for it (`*/*/x.py`) is a broad line, not a rescue.
-    if not dir_parts:
-        return True
-    if not pattern_parts:
-        return False
-    head, rest = pattern_parts[0], pattern_parts[1:]
-    if head == cs.GLOB_DOUBLE_STAR:
-        return _pattern_reaches_vcs_dir(rest, dir_parts) or (
-            len(dir_parts) > 1
-            and _pattern_reaches_vcs_dir(pattern_parts, dir_parts[1:])
-        )
-    if len(dir_parts) == 1:
-        return head == dir_parts[0]
-    return fnmatch.fnmatchcase(dir_parts[0], head) and _pattern_reaches_vcs_dir(
-        rest, dir_parts[1:]
-    )
+    # Whether the pattern's leading segments match the whole directory path.
+    # Any segment may be a glob or `**`, except a metadata dir that ends the
+    # path: it must be spelled out, since a wildcard standing in for it
+    # (`*/*/x.py`) is a broad line, not a rescue.
+    #
+    # One dir segment at a time, keeping the set of pattern positions that
+    # can stand there, so each (pattern, dir) position pair is visited once:
+    # recursing on `**` both ways was exponential in the number of `**`
+    # segments (CodeRabbit review of #3644).
+    last = len(dir_parts) - 1
+    positions = _past_empty_double_stars({0}, pattern_parts)
+    for index, part in enumerate(dir_parts):
+        literal = index == last and part in cs.VCS_METADATA_DIRS
+        advanced: set[int] = set()
+        for position in positions:
+            if position == len(pattern_parts):
+                continue
+            segment = pattern_parts[position]
+            if segment == cs.GLOB_DOUBLE_STAR:
+                if not literal:
+                    advanced.add(position)
+            elif literal:
+                if segment == part:
+                    advanced.add(position + 1)
+            elif fnmatch.fnmatchcase(part, segment):
+                advanced.add(position + 1)
+        positions = _past_empty_double_stars(advanced, pattern_parts)
+        if not positions:
+            return False
+    return True
+
+
+def _past_empty_double_stars(
+    positions: set[int], pattern_parts: tuple[str, ...]
+) -> set[int]:
+    # A `**` may match no segment at all, so the position after it is
+    # reachable wherever it is.
+    reachable = set(positions)
+    pending = list(positions)
+    while pending:
+        position = pending.pop()
+        if (
+            position < len(pattern_parts)
+            and pattern_parts[position] == cs.GLOB_DOUBLE_STAR
+            and position + 1 not in reachable
+        ):
+            reachable.add(position + 1)
+            pending.append(position + 1)
+    return reachable
 
 
 def has_unrescued_vcs_part(

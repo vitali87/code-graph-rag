@@ -2,9 +2,11 @@
 # (gitwildmatch): globs, anchoring, dir-only trailing slash, and `!` unignore
 # lines rescuing built-in ignores. Bare-name patterns keep their existing
 # match-at-any-depth behavior, so old ignore files stay valid.
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.path_utils import (
@@ -257,3 +259,88 @@ class TestVcsMetadataNeverWalked:
     ) -> None:
         assert not should_keep_dir(".git", "sub/", None, frozenset({"*/*/x.py"}))
         assert not should_keep_dir(".git", "", None, frozenset({"**/*/x.py"}))
+
+    def test_a_glob_that_continues_the_dirs_name_does_not_rescue_it(
+        self, tmp_path: Path
+    ) -> None:
+        # CodeRabbit review of #3644: `!.git[0-9]/config` never matches `.git`.
+        broad = frozenset({".git[0-9]/config", "*.[Cc]ache/"})
+        assert not should_keep_dir(".git", "", None, broad)
+        assert should_skip_path(
+            tmp_path / ".git" / "objects", tmp_path, unignore_paths=broad, is_file=False
+        )
+        assert should_keep_dir(".git", "", None, frozenset({".git/hooks/*.py"}))
+
+    def test_a_root_anchored_line_rescues_only_the_root_metadata_dir(
+        self, tmp_path: Path
+    ) -> None:
+        # CodeRabbit review of #3644: `!/.git/` names the root's `.git` alone.
+        anchored = frozenset({"/.git/", "*.py"})
+        assert should_keep_dir(".git", "", None, anchored)
+        assert not should_keep_dir(".git", "pkg/", None, anchored)
+        assert should_skip_path(
+            tmp_path / "pkg" / ".git" / "hooks" / "x.py",
+            tmp_path,
+            unignore_paths=anchored,
+            is_file=True,
+        )
+        assert should_skip_rel_file(
+            "pkg/.git/hooks/x.py", ("pkg", ".git", "hooks"), unignore_paths=anchored
+        )
+        assert should_keep_dir(".git", "pkg/", None, frozenset({".git/"}))
+
+    def test_the_structure_walk_keeps_a_named_metadata_dir(
+        self, tmp_path: Path
+    ) -> None:
+        # CodeRabbit review of #3644: the file walk entered `submodule1/.git`
+        # for these lines, but the structure predicate dropped it, so the
+        # rescued files had no Folder ancestry.
+        named = frozenset({"submodule*/.git/keep.py", "submodule*/.git/sub/keep.py"})
+        for kept in ("submodule1/.git", "submodule1/.git/sub"):
+            assert not should_skip_path(
+                tmp_path / kept, tmp_path, unignore_paths=named, is_file=False
+            ), kept
+        for skipped in (".git", "submodule1/.git/objects", "submodule1/.git/sub/x"):
+            assert should_skip_path(
+                tmp_path / skipped, tmp_path, unignore_paths=named, is_file=False
+            ), skipped
+
+    def test_a_rescued_file_in_a_metadata_dir_gets_its_folders(
+        self, tmp_path: Path
+    ) -> None:
+        sub = tmp_path / "submodule1" / ".git" / "sub"
+        sub.mkdir(parents=True)
+        (sub / "keep.py").write_text("def kept():\n    return 1\n")
+        (tmp_path / "submodule1" / ".git" / "objects" / "12").mkdir(parents=True)
+        ingestor = MagicMock()
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=ingestor,
+            repo_path=tmp_path,
+            parsers=parsers,
+            queries=queries,
+            unignore_paths=frozenset({"submodule*/.git/sub/keep.py"}),
+        ).run(force=True)
+
+        paths = {
+            (call.args[0], call.args[1].get("path"))
+            for call in ingestor.ensure_node_batch.call_args_list
+        }
+
+        assert (cs.NodeLabel.FILE, "submodule1/.git/sub/keep.py") in paths
+        folders = {path for label, path in paths if label == cs.NodeLabel.FOLDER}
+        assert {"submodule1", "submodule1/.git", "submodule1/.git/sub"} <= folders
+        assert not any("objects" in str(path) for path in folders), folders
+
+    def test_many_double_stars_are_matched_at_once(self) -> None:
+        # CodeRabbit review of #3644: recursing on `**` both ways took time
+        # exponential in the number of `**` segments.
+        stars = [cs.GLOB_DOUBLE_STAR] * 20
+        pattern = frozenset({"/".join([*stars, "nomatch", ".git", "x.py"])})
+        parent = "".join(f"d{index}/" for index in range(20))
+        started = time.perf_counter()
+
+        assert not should_keep_dir(".git", parent, None, pattern)
+        assert should_keep_dir(".git", f"{parent}nomatch/", None, pattern)
+        assert should_keep_dir(".git", "nomatch/", None, pattern)
+        assert time.perf_counter() - started < 1
