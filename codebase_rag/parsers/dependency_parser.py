@@ -4,13 +4,12 @@ import tomllib
 from pathlib import Path
 from typing import ClassVar, NamedTuple
 
-import defusedxml.ElementTree as ET
-from defusedxml import DefusedXmlException
 from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
 from ..models import Dependency
+from ..utils import safe_xml
 
 
 def _extract_pep508_package_name(dep_string: str) -> tuple[str, str]:
@@ -36,15 +35,14 @@ def _load_toml(file_path: Path) -> dict:
 
 
 # What a manifest's own content raises: not valid JSON, TOML or XML, not
-# UTF-8, or XML entity declarations that defusedxml refuses. Anything else (a
+# UTF-8, or XML entity declarations that safe_xml refuses. Anything else (a
 # file gone or unreadable, a fault in the parser) stays an ERROR, which the
 # #1070 suite gate watches for.
 _CONTENT_ERRORS = (
     json.JSONDecodeError,
     tomllib.TOMLDecodeError,
     UnicodeDecodeError,
-    ET.ParseError,
-    DefusedXmlException,
+    *safe_xml.XML_CONTENT_ERRORS,
 )
 
 
@@ -282,10 +280,7 @@ class CsprojParser(DependencyParser):
     failure_message = ls.DEP_PARSE_ERROR_CSPROJ
 
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
-        tree = ET.parse(file_path)
-        root = tree.getroot()
-
-        for pkg_ref in root.iter(cs.DEP_XML_PACKAGE_REF):
+        for pkg_ref in safe_xml.find_all(file_path, cs.DEP_XML_PACKAGE_REF):
             include = pkg_ref.get(cs.DEP_ATTR_INCLUDE)
             version = pkg_ref.get(cs.DEP_ATTR_VERSION)
 

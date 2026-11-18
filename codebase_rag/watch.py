@@ -43,6 +43,7 @@ from .constants import (
     CONTENT_EVENT_TYPES,
     DEFAULT_DEBOUNCE_SECONDS,
     DEFAULT_MAX_WAIT_SECONDS,
+    RULE_INPUT_EVENT_TYPES,
     WATCHER_SLEEP_INTERVAL,
     EventType,
 )
@@ -429,7 +430,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             self._dispatch_file(file_event)
 
     def _follow_ignore_rules(self, event: FileSystemEvent, rules: IgnoreRules) -> bool:
-        """Re-read the rules when the event touches an input; False to drop it.
+        """Re-read the rules when the event changes an input; False to drop it.
 
         Only the repository's own files go further: the extra watch on a
         linked worktree's git directory exists for its index alone.
@@ -437,7 +438,9 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         paths = [Path(_event_path(event.src_path))]
         if event.event_type == EventType.MOVED:
             paths.append(Path(_event_path(event.dest_path)))
-        if any(path in rules.inputs for path in paths):
+        if event.event_type in RULE_INPUT_EVENT_TYPES and any(
+            path in rules.inputs for path in paths
+        ):
             self._apply_ignore_rules(rules)
         return any(path.is_relative_to(rules.repo_path) for path in paths)
 
