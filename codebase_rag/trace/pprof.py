@@ -39,7 +39,7 @@ from .records import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence, Sized
     from pathlib import Path
 
 _Sample = tuple[list[int], int]
@@ -390,6 +390,29 @@ def _accumulate_edges(
     return edges
 
 
+def _require_profile_content(
+    profile_path: Path, strings: Sequence[str], functions: Sized, samples: Sized
+) -> None:
+    """Refuse a profile with nothing to convert, saying why.
+
+    Every profile pprof writes has a string table; one that decoded without
+    one is not a profile. A decoded profile with no samples is a valid one
+    from a run too short to be sampled (issue #2887).
+    """
+    if not strings:
+        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
+    if not samples:
+        # pprof requires the table's first string to be empty, and its own
+        # tooling rejects a profile without it: such a payload is corrupt, not
+        # a run too short to sample, and "profile longer" would mislead.
+        message = (
+            cs.TRACE_ERR_BAD_PPROF if strings[0] else cs.TRACE_ERR_PPROF_NO_SAMPLES
+        )
+        raise TraceFormatError(message.format(path=profile_path))
+    if not functions:
+        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
+
+
 def convert_pprof_profile(
     profile_path: Path,
     repo_root: Path,
@@ -412,8 +435,7 @@ def convert_pprof_profile(
         strings, functions, locations, samples = _decode_profile(raw)
     except TraceFormatError as e:
         raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path)) from e
-    if not strings or not functions or not samples:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
+    _require_profile_content(profile_path, strings, functions, samples)
 
     root_prefix = repo_root.resolve().as_posix() + "/"
     frames: dict[int, FramePoint | None] = {}
