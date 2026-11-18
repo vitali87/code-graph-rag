@@ -37,6 +37,14 @@ SURFACE_ATTR_MAX = "max"
 SURFACE_ATTR_MIN_OPEN = "min_open"
 SURFACE_ATTR_MAX_OPEN = "max_open"
 SURFACE_ATTR_CLAMP = "clamp"
+# What a click Path type checks before the command runs.
+SURFACE_ATTR_DIR_OKAY = "dir_okay"
+SURFACE_ATTR_FILE_OKAY = "file_okay"
+SURFACE_ATTR_EXISTS = "exists"
+SURFACE_ATTR_READABLE = "readable"
+SURFACE_ATTR_WRITABLE = "writable"
+SURFACE_ATTR_RESOLVE_PATH = "resolve_path"
+SURFACE_ATTR_ALLOW_DASH = "allow_dash"
 # An SDK class's members are recorded when a first-party class defines them;
 # what pydantic or object supply is theirs, not cgr's.
 SURFACE_FIRST_PARTY_MODULES = ("codebase_rag", "cgr")

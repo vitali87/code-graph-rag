@@ -2047,13 +2047,25 @@ class SurfaceBounds(TypedDict):
     clamp: bool
 
 
+class SurfacePathRule(TypedDict):
+    exists: bool
+    file_okay: bool
+    dir_okay: bool
+    readable: bool
+    writable: bool
+    resolve_path: bool
+    allow_dash: bool
+
+
 class SurfaceParam(TypedDict):
     name: str
     kind: str
     flags: list[str]
     type: str
+    nargs: int
     choices: list[str] | None
     bounds: SurfaceBounds | None
+    path: SurfacePathRule | None
     required: bool
     multiple: bool
     is_flag: bool
@@ -2079,7 +2091,9 @@ class SurfaceMcpTool(TypedDict):
 class SurfaceSetting(TypedDict):
     name: str
     env: list[str]
+    env_only: bool
     type: str
+    constraints: dict[str, JsonValue]
     default: JsonValue
 
 
@@ -2125,11 +2139,13 @@ class SurfaceProtoEnum(TypedDict):
 class SurfaceSdkMember(TypedDict):
     name: str
     signature: str | None
+    is_async: bool
 
 
 class SurfaceSdkName(TypedDict):
     name: str
     signature: str | None
+    is_async: bool
     members: list[SurfaceSdkMember]
 
 

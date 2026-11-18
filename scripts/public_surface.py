@@ -17,6 +17,7 @@ and `test_public_surface.py` fails when the code drifts from it.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import inspect
 import json
 import sys
@@ -165,6 +166,23 @@ def _bounds(param: CliParam) -> td.SurfaceBounds | None:
     )
 
 
+def _path_rule(param: CliParam) -> td.SurfacePathRule | None:
+    """What a path option checks before the command runs (`exists`, file
+    or directory): the type's name alone says only that it is a path."""
+    kind = param.type
+    if not hasattr(kind, cs.SURFACE_ATTR_DIR_OKAY):
+        return None
+    return td.SurfacePathRule(
+        exists=bool(getattr(kind, cs.SURFACE_ATTR_EXISTS, False)),
+        file_okay=bool(getattr(kind, cs.SURFACE_ATTR_FILE_OKAY, True)),
+        dir_okay=bool(getattr(kind, cs.SURFACE_ATTR_DIR_OKAY, True)),
+        readable=bool(getattr(kind, cs.SURFACE_ATTR_READABLE, True)),
+        writable=bool(getattr(kind, cs.SURFACE_ATTR_WRITABLE, False)),
+        resolve_path=bool(getattr(kind, cs.SURFACE_ATTR_RESOLVE_PATH, False)),
+        allow_dash=bool(getattr(kind, cs.SURFACE_ATTR_ALLOW_DASH, False)),
+    )
+
+
 def _param(param: CliParam) -> td.SurfaceParam:
     kind = (
         cs.SurfaceParamKind.OPTION
@@ -176,8 +194,10 @@ def _param(param: CliParam) -> td.SurfaceParam:
         kind=kind,
         flags=[*param.opts, *param.secondary_opts],
         type=param.type.name,
+        nargs=param.nargs,
         choices=_choices(param),
         bounds=_bounds(param),
+        path=_path_rule(param),
         required=param.required,
         multiple=param.multiple,
         is_flag=bool(getattr(param, cs.SURFACE_ATTR_IS_FLAG, False)),
@@ -364,12 +384,30 @@ def _env_names(name: str, field: FieldInfo) -> list[str]:
     return [name]
 
 
+def _constraints(field: FieldInfo) -> dict[str, td.JsonValue]:
+    """A setting's declared limits (`ge=1`): tightening one rejects values
+    that were valid, though the type and default stay the same."""
+    found: dict[str, td.JsonValue] = {}
+    for item in field.metadata:
+        if dataclasses.is_dataclass(item) and not isinstance(item, type):
+            for key, value in dataclasses.asdict(item).items():
+                found[key] = _json_value(value)
+        else:
+            found[type(item).__name__] = str(item)
+    return dict(sorted(found.items()))
+
+
 def setting_list() -> list[td.SurfaceSetting]:
+    # A security waiver that only an exported variable may grant: a
+    # repository's own .env cannot turn it on.
+    env_only = {name.upper() for name in cs.ENVIRONMENT_ONLY_SETTINGS}
     return [
         td.SurfaceSetting(
             name=name,
             env=_env_names(name, field),
+            env_only=any(env.upper() in env_only for env in _env_names(name, field)),
             type=_type_name(field.annotation),
+            constraints=_constraints(field),
             default=(
                 cs.SURFACE_COMPUTED_DEFAULT
                 if field.default_factory is not None
@@ -517,17 +555,25 @@ def _members(value: object) -> list[td.SurfaceSdkMember]:
                 continue
             if isinstance(member, property):
                 found[name] = td.SurfaceSdkMember(
-                    name=name, signature=cs.SURFACE_PROPERTY_SIGNATURE
+                    name=name,
+                    signature=cs.SURFACE_PROPERTY_SIGNATURE,
+                    is_async=False,
                 )
             elif isinstance(member, staticmethod | classmethod):
-                found[name] = td.SurfaceSdkMember(
-                    name=name, signature=_signature_of(member.__func__)
-                )
+                found[name] = _sdk_member(name, member.__func__)
             elif inspect.isfunction(member):
-                found[name] = td.SurfaceSdkMember(
-                    name=name, signature=_signature_of(member)
-                )
+                found[name] = _sdk_member(name, member)
     return [found[name] for name in sorted(found)]
+
+
+def _sdk_member(name: str, function: Callable[..., object]) -> td.SurfaceSdkMember:
+    # An awaited method turned plain keeps its signature but breaks every
+    # caller that awaits it.
+    return td.SurfaceSdkMember(
+        name=name,
+        signature=_signature_of(function),
+        is_async=inspect.iscoroutinefunction(function),
+    )
 
 
 def python_sdk() -> list[td.SurfaceSdkName]:
@@ -535,6 +581,7 @@ def python_sdk() -> list[td.SurfaceSdkName]:
         td.SurfaceSdkName(
             name=name,
             signature=_signature_of(getattr(cgr, name)),
+            is_async=inspect.iscoroutinefunction(getattr(cgr, name)),
             members=_members(getattr(cgr, name)),
         )
         for name in sorted(cgr.__all__)

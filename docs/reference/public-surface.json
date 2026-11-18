@@ -13,8 +13,10 @@
             "-v"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -30,8 +32,10 @@
             "-q"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -52,8 +56,10 @@
             "qualified_name"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -68,8 +74,10 @@
             "new_params"
           ],
           "type": "str",
+          "nargs": -1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -84,8 +92,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -100,8 +118,10 @@
             "--project"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -116,8 +136,10 @@
             "--map"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -132,8 +154,10 @@
             "--allow-heuristic"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -148,8 +172,10 @@
             "--dry-run"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -170,8 +196,10 @@
             "--base"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -186,8 +214,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -203,8 +241,10 @@
             "-p"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -219,8 +259,10 @@
             "--fail-on-found"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -235,8 +277,10 @@
             "--isolated"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -257,8 +301,10 @@
             "target"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -273,6 +319,7 @@
             "--budget"
           ],
           "type": "int range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 1,
@@ -281,6 +328,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -295,8 +343,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -312,8 +370,10 @@
             "-p"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -340,8 +400,10 @@
             "-f"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -357,8 +419,10 @@
             "-s"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -395,8 +459,10 @@
             "-p"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -412,8 +478,10 @@
             "-n"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -428,8 +496,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -445,8 +523,10 @@
             "-e"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -461,8 +541,10 @@
             "--decorator-root"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -477,8 +559,10 @@
             "--exclude"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -494,8 +578,10 @@
             "--no-include-tests"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -511,8 +597,10 @@
             "--no-classes"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -527,11 +615,13 @@
             "--format"
           ],
           "type": "choice",
+          "nargs": 1,
           "choices": [
             "table",
             "json"
           ],
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -547,8 +637,18 @@
             "-o"
           ],
           "type": "path",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": false,
+            "file_okay": true,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -563,8 +663,10 @@
             "--fail-on-found"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -579,6 +681,7 @@
             "--min-resolution"
           ],
           "type": "choice",
+          "nargs": 1,
           "choices": [
             "exact",
             "overload",
@@ -587,6 +690,7 @@
             "dynamic"
           ],
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -602,8 +706,10 @@
             "--no-endpoint-roots"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -619,8 +725,10 @@
             "--no-public-roots"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -642,8 +750,10 @@
             "-p"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -659,8 +769,10 @@
             "-n"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -675,8 +787,10 @@
             "--repo-path"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -697,8 +811,10 @@
             "--old"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -713,8 +829,10 @@
             "--new"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -729,8 +847,10 @@
             "--json-out"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -757,8 +877,10 @@
             "-p"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -774,8 +896,10 @@
             "-n"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -790,8 +914,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -806,6 +940,7 @@
             "--threshold"
           ],
           "type": "float range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 0.0,
@@ -814,6 +949,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -828,6 +964,7 @@
             "--min-size"
           ],
           "type": "int range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 1,
@@ -836,6 +973,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -850,8 +988,10 @@
             "--exact-only"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -866,8 +1006,10 @@
             "--exclude"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -882,11 +1024,13 @@
             "--format"
           ],
           "type": "choice",
+          "nargs": 1,
           "choices": [
             "table",
             "json"
           ],
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -902,8 +1046,18 @@
             "-o"
           ],
           "type": "path",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": false,
+            "file_okay": true,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -918,8 +1072,10 @@
             "--fail-on-found"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -934,6 +1090,7 @@
             "--open"
           ],
           "type": "int range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 1,
@@ -942,6 +1099,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -963,6 +1121,7 @@
             "--count"
           ],
           "type": "integer range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 1,
@@ -971,6 +1130,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -985,8 +1145,10 @@
             "--diff"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1001,8 +1163,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1024,6 +1196,7 @@
             "--count"
           ],
           "type": "integer range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 1,
@@ -1032,6 +1205,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1046,8 +1220,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1063,8 +1247,10 @@
             "-p"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1086,8 +1272,10 @@
             "--output"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1103,8 +1291,10 @@
             "-p"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -1120,8 +1310,10 @@
             "-n"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -1136,8 +1328,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1152,8 +1354,10 @@
             "--workspace"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1169,8 +1373,10 @@
             "--no-json"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1185,8 +1391,10 @@
             "--batch-size"
           ],
           "type": "int",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1207,8 +1415,10 @@
             "qualified_name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1223,6 +1433,7 @@
             "--depth"
           ],
           "type": "integer range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 1,
@@ -1231,6 +1442,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1245,8 +1457,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1262,8 +1484,10 @@
             "-p"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1284,8 +1508,10 @@
             "qualified_name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1300,6 +1526,7 @@
             "--depth"
           ],
           "type": "integer range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 1,
@@ -1308,6 +1535,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1322,8 +1550,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1339,8 +1577,10 @@
             "-p"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1361,8 +1601,10 @@
             "qualified_name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1377,8 +1619,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1394,8 +1646,10 @@
             "-p"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1416,8 +1670,10 @@
             "qualified_name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1432,6 +1688,7 @@
             "--depth"
           ],
           "type": "integer range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 1,
@@ -1440,6 +1697,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1454,8 +1712,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1471,8 +1739,10 @@
             "-p"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1493,8 +1763,10 @@
             "module_qualified_name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1509,8 +1781,10 @@
             "--through-reexports"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1525,8 +1799,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1542,8 +1826,10 @@
             "-p"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1564,8 +1850,10 @@
             "qualified_name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1580,6 +1868,7 @@
             "--depth"
           ],
           "type": "integer range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 1,
@@ -1588,6 +1877,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1602,8 +1892,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1619,8 +1919,10 @@
             "-p"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1641,8 +1943,10 @@
             "target"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1657,8 +1961,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1674,8 +1988,10 @@
             "-p"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1696,8 +2012,10 @@
             "qualified_name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1712,8 +2030,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1729,8 +2057,10 @@
             "-p"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1751,8 +2081,10 @@
             "graph_file"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1773,8 +2105,10 @@
             "command"
           ],
           "type": "str",
+          "nargs": -1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1795,8 +2129,10 @@
             "--repo-path"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1812,8 +2148,10 @@
             "--output-proto-dir"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1828,8 +2166,10 @@
             "--split-index"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1844,8 +2184,10 @@
             "--exclude"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -1860,8 +2202,10 @@
             "--capture"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -1876,8 +2220,10 @@
             "--interactive-setup"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1898,8 +2244,10 @@
             "language_name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1914,8 +2262,10 @@
             "--grammar-url"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1942,8 +2292,10 @@
             "-v"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1964,8 +2316,10 @@
             "language_name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1980,8 +2334,10 @@
             "--keep-submodule"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2002,11 +2358,13 @@
             "--transport"
           ],
           "type": "choice",
+          "nargs": 1,
           "choices": [
             "stdio",
             "http"
           ],
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2021,8 +2379,10 @@
             "--host"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2037,8 +2397,10 @@
             "--port"
           ],
           "type": "int",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2053,8 +2415,10 @@
             "--workspace"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2069,8 +2433,10 @@
             "--read-only"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2091,8 +2457,10 @@
             "qualified_name"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -2107,8 +2475,10 @@
             "target_module"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -2123,8 +2493,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2139,8 +2519,10 @@
             "--project"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2155,8 +2537,10 @@
             "--keep-alias"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2171,8 +2555,10 @@
             "--dry-run"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2193,8 +2579,10 @@
             "language"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -2209,8 +2597,10 @@
             "--repo-path"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2225,8 +2615,10 @@
             "--reference-document"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2241,8 +2633,10 @@
             "--orchestrator"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2257,8 +2651,10 @@
             "--cypher"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2273,8 +2669,10 @@
             "--no-confirm"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2289,8 +2687,10 @@
             "--no-instructions"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2305,6 +2705,7 @@
             "--batch-size"
           ],
           "type": "int range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 1,
@@ -2313,6 +2714,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2333,8 +2735,10 @@
             "old_scope"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -2349,8 +2753,10 @@
             "new_scope"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -2366,8 +2772,10 @@
             "-p"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2382,8 +2790,10 @@
             "--new-project"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2398,8 +2808,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2414,8 +2834,10 @@
             "--pair"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -2430,8 +2852,10 @@
             "--include-tests"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2446,8 +2870,10 @@
             "--fail-on-found"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2468,8 +2894,10 @@
             "--dry-run"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2485,8 +2913,10 @@
             "-y"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2507,8 +2937,10 @@
             "qualified_name"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -2523,8 +2955,10 @@
             "new_name"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -2539,8 +2973,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2556,8 +3000,10 @@
             "-p"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2572,8 +3018,10 @@
             "--allow-heuristic"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2588,8 +3036,10 @@
             "--dry-run"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2610,8 +3060,10 @@
             "--repo-path"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2626,8 +3078,10 @@
             "--update-graph"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2642,8 +3096,10 @@
             "--clean"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2659,8 +3115,10 @@
             "-y"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2676,8 +3134,10 @@
             "--output"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2692,8 +3152,10 @@
             "--orchestrator"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2708,8 +3170,10 @@
             "--cypher"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2724,8 +3188,10 @@
             "--no-confirm"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2740,8 +3206,10 @@
             "--no-instructions"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2756,6 +3224,7 @@
             "--batch-size"
           ],
           "type": "int range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 1,
@@ -2764,6 +3233,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2778,8 +3248,10 @@
             "--project-name"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2794,8 +3266,10 @@
             "--exclude"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -2810,8 +3284,10 @@
             "--capture"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -2826,8 +3302,10 @@
             "--interactive-setup"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2843,8 +3321,10 @@
             "--ask-agent"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2859,11 +3339,13 @@
             "--output-format"
           ],
           "type": "choice",
+          "nargs": 1,
           "choices": [
             "table",
             "json"
           ],
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2878,8 +3360,10 @@
             "--no-start-stack"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2894,8 +3378,10 @@
             "--no-sync"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2910,8 +3396,10 @@
             "--no-embeddings"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2926,8 +3414,10 @@
             "--projects"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2942,8 +3432,10 @@
             "--workspace"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2965,8 +3457,10 @@
             "-p"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -2982,8 +3476,10 @@
             "-n"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -2998,8 +3494,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3014,8 +3520,10 @@
             "--workspace"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3046,8 +3554,18 @@
             "profile_file"
           ],
           "type": "file",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": true,
+            "dir_okay": false,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3062,8 +3580,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3079,8 +3607,18 @@
             "-o"
           ],
           "type": "file",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": false,
+            "file_okay": true,
+            "dir_okay": false,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3095,8 +3633,10 @@
             "--include"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3111,8 +3651,10 @@
             "--workload"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3127,8 +3669,10 @@
             "--language"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3143,8 +3687,10 @@
             "--format"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3159,8 +3705,10 @@
             "--path-map"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -3175,8 +3723,10 @@
             "--build-id"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3191,8 +3741,10 @@
             "--service"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3207,8 +3759,10 @@
             "--label"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3223,8 +3777,10 @@
             "--commit"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3245,8 +3801,18 @@
             "trace_file"
           ],
           "type": "file",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": true,
+            "dir_okay": false,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3261,8 +3827,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3277,8 +3853,10 @@
             "--project-name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3299,8 +3877,10 @@
             "url"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3315,8 +3895,18 @@
             "--repo-path"
           ],
           "type": "directory",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": true,
+            "file_okay": false,
+            "dir_okay": true,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3332,8 +3922,18 @@
             "-o"
           ],
           "type": "file",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": false,
+            "file_okay": true,
+            "dir_okay": false,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3348,8 +3948,18 @@
             "--save"
           ],
           "type": "file",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": {
+            "exists": false,
+            "file_okay": true,
+            "dir_okay": false,
+            "readable": true,
+            "writable": false,
+            "resolve_path": false,
+            "allow_dash": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3364,8 +3974,10 @@
             "--header"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -3380,8 +3992,10 @@
             "--timeout"
           ],
           "type": "float",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3396,8 +4010,10 @@
             "--workload"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3412,8 +4028,10 @@
             "--language"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3428,8 +4046,10 @@
             "--path-map"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -3444,8 +4064,10 @@
             "--build-id"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3460,8 +4082,10 @@
             "--service"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3476,8 +4100,10 @@
             "--label"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3492,8 +4118,10 @@
             "--commit"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3515,8 +4143,10 @@
             "--index-dir"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3531,8 +4161,10 @@
             "--trusted-manifest-sha256"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3553,8 +4185,10 @@
             "--repo-path"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3569,8 +4203,10 @@
             "--project-name"
           ],
           "type": "str",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3586,6 +4222,7 @@
             "-d"
           ],
           "type": "float range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 0,
@@ -3594,6 +4231,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3609,6 +4247,7 @@
             "-m"
           ],
           "type": "float range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 0,
@@ -3617,6 +4256,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3631,6 +4271,7 @@
             "--batch-size"
           ],
           "type": "int range",
+          "nargs": 1,
           "choices": null,
           "bounds": {
             "min": 1,
@@ -3639,6 +4280,7 @@
             "max_open": false,
             "clamp": false
           },
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3653,8 +4295,10 @@
             "--no-start-stack"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -3670,8 +4314,10 @@
             "-y"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -3692,8 +4338,10 @@
             "name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3708,8 +4356,10 @@
             "repo_path"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3725,8 +4375,10 @@
             "-p"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3747,8 +4399,10 @@
             "name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3764,8 +4418,10 @@
             "-d"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3780,8 +4436,10 @@
             "--force"
           ],
           "type": "boolean",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -3802,8 +4460,10 @@
             "name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3829,8 +4489,10 @@
             "name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3845,8 +4507,10 @@
             "repo_path"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3867,8 +4531,10 @@
             "name"
           ],
           "type": "text",
+          "nargs": 1,
           "choices": null,
           "bounds": null,
+          "path": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3880,6 +4546,7 @@
     }
   ],
   "exit_codes": {
+    "CLI_EXIT_FOUND": 1,
     "CLI_EXIT_INTERRUPTED": 130,
     "CLI_EXIT_USAGE_ERROR": 2,
     "GRAPH_EXIT_UNKNOWN_PROJECT": 3,
@@ -4900,7 +5567,9 @@
       "env": [
         "AGENT_RETRIES"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 3
     },
     {
@@ -4908,7 +5577,9 @@
       "env": [
         "CGR_ALLOW_SENSITIVE_READS"
       ],
+      "env_only": true,
       "type": "bool",
+      "constraints": {},
       "default": false
     },
     {
@@ -4916,7 +5587,9 @@
       "env": [
         "CGR_ALLOW_SENSITIVE_WRITES"
       ],
+      "env_only": true,
       "type": "bool",
+      "constraints": {},
       "default": false
     },
     {
@@ -4924,7 +5597,9 @@
       "env": [
         "CACHE_EVICTION_DIVISOR"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 10
     },
     {
@@ -4932,7 +5607,9 @@
       "env": [
         "CACHE_MAX_ENTRIES"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 1000
     },
     {
@@ -4940,7 +5617,9 @@
       "env": [
         "CACHE_MAX_MEMORY_MB"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 500
     },
     {
@@ -4948,7 +5627,9 @@
       "env": [
         "CACHE_MEMORY_THRESHOLD_RATIO"
       ],
+      "env_only": false,
       "type": "float",
+      "constraints": {},
       "default": 0.8
     },
     {
@@ -4956,7 +5637,9 @@
       "env": [
         "CGR_CAPTURE_LOCAL_DEFINITIONS"
       ],
+      "env_only": false,
       "type": "bool",
+      "constraints": {},
       "default": true
     },
     {
@@ -4964,7 +5647,9 @@
       "env": [
         "CGR_CAPTURE"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": ""
     },
     {
@@ -4972,7 +5657,9 @@
       "env": [
         "CGR_DIFF_COMMAND"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -4980,7 +5667,9 @@
       "env": [
         "CGR_EDITOR"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "auto"
     },
     {
@@ -4988,7 +5677,9 @@
       "env": [
         "CGR_EDITOR_URL_TEMPLATE"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -4996,7 +5687,9 @@
       "env": [
         "CGR_HOME"
       ],
+      "env_only": false,
       "type": "Path",
+      "constraints": {},
       "default": "<computed>"
     },
     {
@@ -5004,7 +5697,9 @@
       "env": [
         "CGR_CONTEXT_COMPACTION_ENABLED"
       ],
+      "env_only": false,
       "type": "bool",
+      "constraints": {},
       "default": true
     },
     {
@@ -5012,7 +5707,9 @@
       "env": [
         "CPP_FRONTEND"
       ],
+      "env_only": false,
       "type": "CppFrontend",
+      "constraints": {},
       "default": "hybrid"
     },
     {
@@ -5020,7 +5717,9 @@
       "env": [
         "CSHARP_FRONTEND"
       ],
+      "env_only": false,
       "type": "CSharpFrontend",
+      "constraints": {},
       "default": "treesitter"
     },
     {
@@ -5028,7 +5727,9 @@
       "env": [
         "CYPHER_API_KEY"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5036,7 +5737,9 @@
       "env": [
         "CYPHER_ENDPOINT"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5044,7 +5747,9 @@
       "env": [
         "CYPHER_MODEL"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": ""
     },
     {
@@ -5052,7 +5757,9 @@
       "env": [
         "CYPHER_PROJECT_ID"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5060,7 +5767,9 @@
       "env": [
         "CYPHER_PROVIDER"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": ""
     },
     {
@@ -5068,7 +5777,9 @@
       "env": [
         "CYPHER_PROVIDER_TYPE"
       ],
+      "env_only": false,
       "type": "GoogleProviderType | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5076,7 +5787,9 @@
       "env": [
         "CYPHER_REGION"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "us-central1"
     },
     {
@@ -5084,7 +5797,9 @@
       "env": [
         "CYPHER_SERVICE_ACCOUNT_FILE"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5092,7 +5807,9 @@
       "env": [
         "CYPHER_THINKING_BUDGET"
       ],
+      "env_only": false,
       "type": "int | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5100,7 +5817,9 @@
       "env": [
         "CGR_EMBEDDING_DEVICE"
       ],
+      "env_only": false,
       "type": "EmbeddingDevice | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5108,7 +5827,9 @@
       "env": [
         "EMBEDDING_MAX_LENGTH"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 512
     },
     {
@@ -5116,7 +5837,9 @@
       "env": [
         "EMBEDDING_PROGRESS_INTERVAL"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 10
     },
     {
@@ -5124,7 +5847,9 @@
       "env": [
         "CGR_EMBEDDING_PROVIDER"
       ],
+      "env_only": false,
       "type": "EmbeddingProvider",
+      "constraints": {},
       "default": "unixcoder"
     },
     {
@@ -5132,7 +5857,11 @@
       "env": [
         "FILE_FLUSH_INTERVAL"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {
+        "gt": 0
+      },
       "default": 500
     },
     {
@@ -5140,7 +5869,11 @@
       "env": [
         "FLUSH_THREAD_POOL_SIZE"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {
+        "gt": 0
+      },
       "default": 4
     },
     {
@@ -5148,7 +5881,9 @@
       "env": [
         "GO_FRONTEND"
       ],
+      "env_only": false,
       "type": "GoFrontend",
+      "constraints": {},
       "default": "auto"
     },
     {
@@ -5156,7 +5891,9 @@
       "env": [
         "GRAPH_BACKEND"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "sqlite"
     },
     {
@@ -5164,7 +5901,9 @@
       "env": [
         "JAVA_FRONTEND"
       ],
+      "env_only": false,
       "type": "JavaFrontend",
+      "constraints": {},
       "default": "heuristic"
     },
     {
@@ -5172,7 +5911,9 @@
       "env": [
         "LAB_PORT"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 3000
     },
     {
@@ -5180,7 +5921,9 @@
       "env": [
         "LITELLM_HEALTH_TIMEOUT"
       ],
+      "env_only": false,
       "type": "float",
+      "constraints": {},
       "default": 5.0
     },
     {
@@ -5188,7 +5931,9 @@
       "env": [
         "LOMBOK_JAR"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5196,7 +5941,9 @@
       "env": [
         "MCP_HTTP_AUTH_TOKEN"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5204,7 +5951,9 @@
       "env": [
         "MCP_HTTP_ENDPOINT_PATH"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "/mcp"
     },
     {
@@ -5212,7 +5961,9 @@
       "env": [
         "MCP_HTTP_HOST"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "127.0.0.1"
     },
     {
@@ -5220,7 +5971,9 @@
       "env": [
         "MCP_HTTP_PORT"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 8080
     },
     {
@@ -5228,7 +5981,9 @@
       "env": [
         "MCP_READ_ONLY"
       ],
+      "env_only": false,
       "type": "bool",
+      "constraints": {},
       "default": false
     },
     {
@@ -5236,7 +5991,11 @@
       "env": [
         "MEMGRAPH_BATCH_SIZE"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {
+        "ge": 1
+      },
       "default": 1000
     },
     {
@@ -5244,7 +6003,9 @@
       "env": [
         "MEMGRAPH_HOST"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "localhost"
     },
     {
@@ -5252,7 +6013,9 @@
       "env": [
         "MEMGRAPH_HTTP_PORT"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 7444
     },
     {
@@ -5260,7 +6023,9 @@
       "env": [
         "MEMGRAPH_PASSWORD"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5268,7 +6033,9 @@
       "env": [
         "MEMGRAPH_PORT"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 7687
     },
     {
@@ -5276,7 +6043,9 @@
       "env": [
         "MEMGRAPH_USERNAME"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5284,7 +6053,9 @@
       "env": [
         "MILVUS_COLLECTION_NAME"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "code_embeddings"
     },
     {
@@ -5292,7 +6063,9 @@
       "env": [
         "MILVUS_CONSISTENCY_LEVEL"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "Strong"
     },
     {
@@ -5300,7 +6073,9 @@
       "env": [
         "MILVUS_DB_NAME"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5308,7 +6083,9 @@
       "env": [
         "MILVUS_TOKEN"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5316,7 +6093,9 @@
       "env": [
         "MILVUS_TOP_K"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 5
     },
     {
@@ -5324,7 +6103,9 @@
       "env": [
         "MILVUS_URI"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "./.milvus_code_embeddings.db"
     },
     {
@@ -5332,7 +6113,9 @@
       "env": [
         "MILVUS_VECTOR_DIM"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 768
     },
     {
@@ -5340,7 +6123,11 @@
       "env": [
         "MODEL_MAX_TOKENS"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {
+        "gt": 0
+      },
       "default": 8192
     },
     {
@@ -5348,7 +6135,9 @@
       "env": [
         "NEO4J_DATABASE"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "neo4j"
     },
     {
@@ -5356,7 +6145,9 @@
       "env": [
         "NEO4J_PASSWORD"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5364,7 +6155,9 @@
       "env": [
         "NEO4J_URI"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "bolt://localhost:7687"
     },
     {
@@ -5372,7 +6165,9 @@
       "env": [
         "NEO4J_USERNAME"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5380,7 +6175,9 @@
       "env": [
         "OLLAMA_BASE_URL"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "http://localhost:11434"
     },
     {
@@ -5388,7 +6185,9 @@
       "env": [
         "OLLAMA_HEALTH_TIMEOUT"
       ],
+      "env_only": false,
       "type": "float",
+      "constraints": {},
       "default": 5.0
     },
     {
@@ -5396,7 +6195,9 @@
       "env": [
         "OPENAI_EMBEDDING_API_KEY"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5404,7 +6205,9 @@
       "env": [
         "OPENAI_EMBEDDING_BASE_URL"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "https://api.openai.com/v1"
     },
     {
@@ -5412,7 +6215,11 @@
       "env": [
         "OPENAI_EMBEDDING_BATCH_SIZE"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {
+        "gt": 0
+      },
       "default": 128
     },
     {
@@ -5420,7 +6227,11 @@
       "env": [
         "OPENAI_EMBEDDING_DIMENSIONS"
       ],
+      "env_only": false,
       "type": "int | None",
+      "constraints": {
+        "gt": 0
+      },
       "default": null
     },
     {
@@ -5428,7 +6239,9 @@
       "env": [
         "OPENAI_EMBEDDING_MODEL"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "text-embedding-3-small"
     },
     {
@@ -5436,7 +6249,11 @@
       "env": [
         "OPENAI_EMBEDDING_TIMEOUT"
       ],
+      "env_only": false,
       "type": "float",
+      "constraints": {
+        "gt": 0
+      },
       "default": 60.0
     },
     {
@@ -5444,7 +6261,9 @@
       "env": [
         "ORCHESTRATOR_API_KEY"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5452,7 +6271,9 @@
       "env": [
         "ORCHESTRATOR_ENDPOINT"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5460,7 +6281,9 @@
       "env": [
         "ORCHESTRATOR_MODEL"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": ""
     },
     {
@@ -5468,7 +6291,9 @@
       "env": [
         "ORCHESTRATOR_OUTPUT_RETRIES"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 100
     },
     {
@@ -5476,7 +6301,9 @@
       "env": [
         "ORCHESTRATOR_PROJECT_ID"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5484,7 +6311,9 @@
       "env": [
         "ORCHESTRATOR_PROVIDER"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": ""
     },
     {
@@ -5492,7 +6321,9 @@
       "env": [
         "ORCHESTRATOR_PROVIDER_TYPE"
       ],
+      "env_only": false,
       "type": "GoogleProviderType | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5500,7 +6331,9 @@
       "env": [
         "ORCHESTRATOR_REGION"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "us-central1"
     },
     {
@@ -5508,7 +6341,9 @@
       "env": [
         "ORCHESTRATOR_SERVICE_ACCOUNT_FILE"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5516,7 +6351,9 @@
       "env": [
         "ORCHESTRATOR_THINKING_BUDGET"
       ],
+      "env_only": false,
       "type": "int | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5524,7 +6361,9 @@
       "env": [
         "PYTHON_FRONTEND"
       ],
+      "env_only": false,
       "type": "PythonFrontend",
+      "constraints": {},
       "default": "heuristic"
     },
     {
@@ -5532,7 +6371,9 @@
       "env": [
         "QDRANT_ALLOW_INSECURE_API_KEY"
       ],
+      "env_only": false,
       "type": "bool",
+      "constraints": {},
       "default": false
     },
     {
@@ -5540,7 +6381,9 @@
       "env": [
         "QDRANT_API_KEY"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5548,7 +6391,11 @@
       "env": [
         "QDRANT_BATCH_SIZE"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {
+        "gt": 0
+      },
       "default": 50
     },
     {
@@ -5556,7 +6403,9 @@
       "env": [
         "QDRANT_COLLECTION_NAME"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "code_embeddings"
     },
     {
@@ -5564,7 +6413,9 @@
       "env": [
         "QDRANT_DB_PATH"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "./.qdrant_code_embeddings"
     },
     {
@@ -5572,7 +6423,11 @@
       "env": [
         "QDRANT_RETRY_BASE_DELAY"
       ],
+      "env_only": false,
       "type": "float",
+      "constraints": {
+        "gt": 0
+      },
       "default": 0.5
     },
     {
@@ -5580,7 +6435,9 @@
       "env": [
         "QDRANT_TOP_K"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 5
     },
     {
@@ -5588,7 +6445,11 @@
       "env": [
         "QDRANT_UPSERT_RETRIES"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {
+        "gt": 0
+      },
       "default": 3
     },
     {
@@ -5596,7 +6457,9 @@
       "env": [
         "QDRANT_URL"
       ],
+      "env_only": false,
       "type": "str | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5604,7 +6467,9 @@
       "env": [
         "QDRANT_VECTOR_DIM"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 768
     },
     {
@@ -5612,7 +6477,11 @@
       "env": [
         "QUERY_MEMORY_LIMIT_MB"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {
+        "gt": 0
+      },
       "default": 4096
     },
     {
@@ -5620,7 +6489,11 @@
       "env": [
         "QUERY_RESULT_MAX_TOKENS"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {
+        "gt": 0
+      },
       "default": 16000
     },
     {
@@ -5628,7 +6501,11 @@
       "env": [
         "QUERY_RESULT_ROW_CAP"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {
+        "gt": 0
+      },
       "default": 500
     },
     {
@@ -5636,7 +6513,11 @@
       "env": [
         "QUERY_TIMEOUT_S"
       ],
+      "env_only": false,
       "type": "float",
+      "constraints": {
+        "gt": 0
+      },
       "default": 60.0
     },
     {
@@ -5644,7 +6525,9 @@
       "env": [
         "CGR_QUIET"
       ],
+      "env_only": false,
       "type": "bool",
+      "constraints": {},
       "default": false
     },
     {
@@ -5652,7 +6535,9 @@
       "env": [
         "SHELL_COMMAND_ALLOWLIST"
       ],
+      "env_only": false,
       "type": "frozenset[str]",
+      "constraints": {},
       "default": [
         "awk",
         "cat",
@@ -5689,7 +6574,9 @@
       "env": [
         "SHELL_COMMAND_TIMEOUT"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 30
     },
     {
@@ -5697,7 +6584,9 @@
       "env": [
         "SHELL_NONINTERACTIVE_READ_COMMANDS"
       ],
+      "env_only": false,
       "type": "frozenset[str]",
+      "constraints": {},
       "default": [
         "cat",
         "cut",
@@ -5716,7 +6605,9 @@
       "env": [
         "SHELL_READ_ONLY_COMMANDS"
       ],
+      "env_only": false,
       "type": "frozenset[str]",
+      "constraints": {},
       "default": [
         "echo",
         "pwd",
@@ -5728,7 +6619,9 @@
       "env": [
         "SHELL_SAFE_GIT_SUBCOMMANDS"
       ],
+      "env_only": false,
       "type": "frozenset[str]",
+      "constraints": {},
       "default": []
     },
     {
@@ -5736,7 +6629,9 @@
       "env": [
         "CGR_SKIP_EMBEDDINGS"
       ],
+      "env_only": false,
       "type": "bool",
+      "constraints": {},
       "default": false
     },
     {
@@ -5744,7 +6639,9 @@
       "env": [
         "CGR_SPONSOR_PLEDGE"
       ],
+      "env_only": false,
       "type": "bool",
+      "constraints": {},
       "default": true
     },
     {
@@ -5752,7 +6649,9 @@
       "env": [
         "SQLITE_GRAPH_PATH"
       ],
+      "env_only": false,
       "type": "Path | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5760,7 +6659,9 @@
       "env": [
         "SQLITE_VECTOR_DIM"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 768
     },
     {
@@ -5768,7 +6669,9 @@
       "env": [
         "SQLITE_VECTOR_PATH"
       ],
+      "env_only": false,
       "type": "Path | None",
+      "constraints": {},
       "default": null
     },
     {
@@ -5776,7 +6679,9 @@
       "env": [
         "SQLITE_VECTOR_TOP_K"
       ],
+      "env_only": false,
       "type": "int",
+      "constraints": {},
       "default": 5
     },
     {
@@ -5784,7 +6689,9 @@
       "env": [
         "TARGET_REPO_PATH"
       ],
+      "env_only": false,
       "type": "str",
+      "constraints": {},
       "default": "."
     },
     {
@@ -5792,7 +6699,9 @@
       "env": [
         "CGR_TRUST_PROJECT_INSTRUCTIONS"
       ],
+      "env_only": true,
       "type": "bool",
+      "constraints": {},
       "default": false
     },
     {
@@ -5800,7 +6709,9 @@
       "env": [
         "CGR_VECTOR_STORE_BACKEND"
       ],
+      "env_only": false,
       "type": "VectorStoreBackend",
+      "constraints": {},
       "default": "sqlite"
     }
   ],
@@ -8254,194 +9165,240 @@
     {
       "name": "CypherGenerator",
       "signature": "(active_projects: 'list[str] | None' = None) -> 'None'",
+      "is_async": false,
       "members": [
         {
           "name": "generate",
-          "signature": "(self, natural_language_query: 'str') -> 'str'"
+          "signature": "(self, natural_language_query: 'str') -> 'str'",
+          "is_async": true
         },
         {
           "name": "repair",
-          "signature": "(self, natural_language_query: 'str', failed_query: 'str', error: 'str') -> 'str'"
+          "signature": "(self, natural_language_query: 'str', failed_query: 'str', error: 'str') -> 'str'",
+          "is_async": true
         }
       ]
     },
     {
       "name": "GraphLoader",
       "signature": "(file_path: str)",
+      "is_async": false,
       "members": [
         {
           "name": "find_node_by_property",
-          "signature": "(self, property_name: str, value: str | int | float | bool | list[str] | None) -> list[codebase_rag.models.GraphNode]"
+          "signature": "(self, property_name: str, value: str | int | float | bool | list[str] | None) -> list[codebase_rag.models.GraphNode]",
+          "is_async": false
         },
         {
           "name": "find_nodes_by_label",
-          "signature": "(self, label: str) -> list[codebase_rag.models.GraphNode]"
+          "signature": "(self, label: str) -> list[codebase_rag.models.GraphNode]",
+          "is_async": false
         },
         {
           "name": "get_incoming_relationships",
-          "signature": "(self, node_id: int) -> list[codebase_rag.models.GraphRelationship]"
+          "signature": "(self, node_id: int) -> list[codebase_rag.models.GraphRelationship]",
+          "is_async": false
         },
         {
           "name": "get_node_by_id",
-          "signature": "(self, node_id: int) -> codebase_rag.models.GraphNode | None"
+          "signature": "(self, node_id: int) -> codebase_rag.models.GraphNode | None",
+          "is_async": false
         },
         {
           "name": "get_outgoing_relationships",
-          "signature": "(self, node_id: int) -> list[codebase_rag.models.GraphRelationship]"
+          "signature": "(self, node_id: int) -> list[codebase_rag.models.GraphRelationship]",
+          "is_async": false
         },
         {
           "name": "get_relationships_for_node",
-          "signature": "(self, node_id: int) -> list[codebase_rag.models.GraphRelationship]"
+          "signature": "(self, node_id: int) -> list[codebase_rag.models.GraphRelationship]",
+          "is_async": false
         },
         {
           "name": "load",
-          "signature": "(self) -> None"
+          "signature": "(self) -> None",
+          "is_async": false
         },
         {
           "name": "metadata",
-          "signature": "<property>"
+          "signature": "<property>",
+          "is_async": false
         },
         {
           "name": "nodes",
-          "signature": "<property>"
+          "signature": "<property>",
+          "is_async": false
         },
         {
           "name": "relationships",
-          "signature": "<property>"
+          "signature": "<property>",
+          "is_async": false
         },
         {
           "name": "summary",
-          "signature": "(self) -> codebase_rag.types_defs.GraphSummary"
+          "signature": "(self) -> codebase_rag.types_defs.GraphSummary",
+          "is_async": false
         }
       ]
     },
     {
       "name": "MemgraphIngestor",
       "signature": "(host: 'str', port: 'int', batch_size: 'int' = 1000, username: 'str | None' = None, password: 'str | None' = None, use_merge: 'bool' = True, dialect: 'GraphDialect | None' = None, sqlite_path: 'str | None' = None)",
+      "is_async": false,
       "members": [
         {
           "name": "clean_database",
-          "signature": "(self) -> 'None'"
+          "signature": "(self) -> 'None'",
+          "is_async": false
         },
         {
           "name": "close_driver",
-          "signature": "(self) -> 'None'"
+          "signature": "(self) -> 'None'",
+          "is_async": false
         },
         {
           "name": "delete_project",
-          "signature": "(self, project_name: 'str', expected_root: 'str | None' = None, own_run_id: 'str' = '') -> 'bool'"
+          "signature": "(self, project_name: 'str', expected_root: 'str | None' = None, own_run_id: 'str' = '') -> 'bool'",
+          "is_async": false
         },
         {
           "name": "ensure_constraints",
-          "signature": "(self) -> 'None'"
+          "signature": "(self) -> 'None'",
+          "is_async": false
         },
         {
           "name": "ensure_node_batch",
-          "signature": "(self, label: 'str', properties: 'dict[str, PropertyValue]') -> 'None'"
+          "signature": "(self, label: 'str', properties: 'dict[str, PropertyValue]') -> 'None'",
+          "is_async": false
         },
         {
           "name": "ensure_relationship_batch",
-          "signature": "(self, from_spec: 'tuple[str, str, PropertyValue]', rel_type: 'str', to_spec: 'tuple[str, str, PropertyValue]', properties: 'dict[str, PropertyValue] | None' = None) -> 'None'"
+          "signature": "(self, from_spec: 'tuple[str, str, PropertyValue]', rel_type: 'str', to_spec: 'tuple[str, str, PropertyValue]', properties: 'dict[str, PropertyValue] | None' = None) -> 'None'",
+          "is_async": false
         },
         {
           "name": "execute_write",
-          "signature": "(self, query: 'str', params: 'PropertyParams | None' = None) -> 'None'"
+          "signature": "(self, query: 'str', params: 'PropertyParams | None' = None) -> 'None'",
+          "is_async": false
         },
         {
           "name": "export_graph_to_dict",
-          "signature": "(self, project_names: 'Sequence[str]' = ()) -> 'GraphData'"
+          "signature": "(self, project_names: 'Sequence[str]' = ()) -> 'GraphData'",
+          "is_async": false
         },
         {
           "name": "fetch_all",
-          "signature": "(self, query: 'str', params: 'PropertyParams | None' = None) -> 'list[ResultRow]'"
+          "signature": "(self, query: 'str', params: 'PropertyParams | None' = None) -> 'list[ResultRow]'",
+          "is_async": false
         },
         {
           "name": "fetch_read_only",
-          "signature": "(self, query: 'str') -> 'list[ResultRow]'"
+          "signature": "(self, query: 'str') -> 'list[ResultRow]'",
+          "is_async": false
         },
         {
           "name": "flush_all",
-          "signature": "(self) -> 'None'"
+          "signature": "(self) -> 'None'",
+          "is_async": false
         },
         {
           "name": "flush_nodes",
-          "signature": "(self) -> 'None'"
+          "signature": "(self) -> 'None'",
+          "is_async": false
         },
         {
           "name": "flush_relationships",
-          "signature": "(self) -> 'None'"
+          "signature": "(self) -> 'None'",
+          "is_async": false
         },
         {
           "name": "list_project_roots",
-          "signature": "(self) -> 'dict[str, str | None]'"
+          "signature": "(self) -> 'dict[str, str | None]'",
+          "is_async": false
         },
         {
           "name": "list_projects",
-          "signature": "(self) -> 'list[str]'"
+          "signature": "(self) -> 'list[str]'",
+          "is_async": false
         },
         {
           "name": "sqlite_graph_path",
-          "signature": "(self) -> 'str'"
+          "signature": "(self) -> 'str'",
+          "is_async": false
         }
       ]
     },
     {
       "name": "embed_code",
       "signature": "(code: 'str', max_length: 'int | None' = None) -> 'list[float]'",
+      "is_async": false,
       "members": []
     },
     {
       "name": "load_graph",
       "signature": "(file_path: str) -> codebase_rag.graph_loader.GraphLoader",
+      "is_async": false,
       "members": []
     },
     {
       "name": "settings",
       "signature": null,
+      "is_async": false,
       "members": [
         {
           "name": "active_cypher_config",
-          "signature": "<property>"
+          "signature": "<property>",
+          "is_async": false
         },
         {
           "name": "active_orchestrator_config",
-          "signature": "<property>"
+          "signature": "<property>",
+          "is_async": false
         },
         {
           "name": "graph_db_file",
-          "signature": "<property>"
+          "signature": "<property>",
+          "is_async": false
         },
         {
           "name": "memgraph_set_without_backend",
-          "signature": "<property>"
+          "signature": "<property>",
+          "is_async": false
         },
         {
           "name": "ollama_endpoint",
-          "signature": "<property>"
+          "signature": "<property>",
+          "is_async": false
         },
         {
           "name": "parse_model_string",
-          "signature": "(self, model_string: 'str') -> 'tuple[str, str]'"
+          "signature": "(self, model_string: 'str') -> 'tuple[str, str]'",
+          "is_async": false
         },
         {
           "name": "qdrant_set_without_backend",
-          "signature": "<property>"
+          "signature": "<property>",
+          "is_async": false
         },
         {
           "name": "resolve_batch_size",
-          "signature": "(self, batch_size: 'int | None') -> 'int'"
+          "signature": "(self, batch_size: 'int | None') -> 'int'",
+          "is_async": false
         },
         {
           "name": "set_cypher",
-          "signature": "(self, provider: 'str', model: 'str', **kwargs: 'Unpack[ModelConfigKwargs]') -> 'None'"
+          "signature": "(self, provider: 'str', model: 'str', **kwargs: 'Unpack[ModelConfigKwargs]') -> 'None'",
+          "is_async": false
         },
         {
           "name": "set_orchestrator",
-          "signature": "(self, provider: 'str', model: 'str', **kwargs: 'Unpack[ModelConfigKwargs]') -> 'None'"
+          "signature": "(self, provider: 'str', model: 'str', **kwargs: 'Unpack[ModelConfigKwargs]') -> 'None'",
+          "is_async": false
         },
         {
           "name": "vector_db_file",
-          "signature": "<property>"
+          "signature": "<property>",
+          "is_async": false
         }
       ]
     }

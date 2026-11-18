@@ -15,6 +15,7 @@ import json
 from pathlib import PurePosixPath, PureWindowsPath
 from unittest.mock import patch
 
+import click
 import pytest
 
 from codebase_rag import constants as cs
@@ -25,6 +26,8 @@ from codec import schema_pb2
 from scripts.public_surface import (
     SNAPSHOT,
     _json_value,
+    _param,
+    _sdk_member,
     build_surface,
     cli_commands,
     mcp_tool_list,
@@ -135,3 +138,52 @@ def test_an_sdk_class_records_its_public_methods() -> None:
         name.startswith((cs.SURFACE_PRIVATE_PREFIX, cs.SURFACE_PYDANTIC_PREFIX))
         for name in every
     )
+
+
+def test_a_path_option_records_whether_the_path_must_exist() -> None:
+    must = click.Option(["--repo"], type=click.Path(exists=True, file_okay=False))
+    may = click.Option(["--repo"], type=click.Path(exists=False, file_okay=False))
+
+    assert _param(must)["path"] != _param(may)["path"]
+    assert _param(click.Option(["--depth"], type=int))["path"] is None
+
+
+def test_an_argument_records_how_many_values_it_takes() -> None:
+    many = click.Argument(["names"], nargs=-1)
+    one = click.Argument(["names"])
+
+    assert _param(many)["nargs"] == -1
+    assert _param(one)["nargs"] == 1
+
+
+def test_a_setting_records_its_limits_and_whether_only_the_environment_sets_it() -> (
+    None
+):
+    settings = {setting["name"]: setting for setting in setting_list()}
+    env_only = {name.upper() for name in cs.ENVIRONMENT_ONLY_SETTINGS}
+
+    assert settings["MEMGRAPH_BATCH_SIZE"]["constraints"] == {"ge": 1}
+    for setting in settings.values():
+        assert setting["env_only"] == any(
+            env.upper() in env_only for env in setting["env"]
+        )
+    assert any(setting["env_only"] for setting in settings.values())
+
+
+async def _awaited(value: int) -> int:
+    return value
+
+
+def _plain(value: int) -> int:
+    return value
+
+
+def test_an_sdk_method_records_whether_it_is_awaited() -> None:
+    sdk = {entry["name"]: entry for entry in python_sdk()}
+    generator = {member["name"]: member for member in sdk["CypherGenerator"]["members"]}
+
+    assert generator["generate"]["is_async"]
+    assert (
+        _sdk_member("f", _awaited)["signature"] == _sdk_member("f", _plain)["signature"]
+    )
+    assert _sdk_member("f", _awaited) != _sdk_member("f", _plain)

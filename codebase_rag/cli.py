@@ -2290,7 +2290,7 @@ def check_command(
             raise typer.Exit(code=1) from error
     typer.echo(json.dumps(delta, indent=cs.MCP_JSON_INDENT))
     if fail_on_found and has_findings(delta):
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=cs.CLI_EXIT_FOUND)
 
 
 EditReingest = Callable[[list[str]], ReingestReport]
@@ -3435,7 +3435,7 @@ def dead_code(
     )
 
     if fail_on_found and candidates:
-        raise typer.Exit(1)
+        raise typer.Exit(code=cs.CLI_EXIT_FOUND)
 
 
 def _similarity_text(group: DuplicateGroup) -> str:
@@ -3852,7 +3852,7 @@ def duplicates(
         _open_duplicate_group(report.groups, open_group, root_path, resolved)
 
     if fail_on_found and report.groups:
-        raise typer.Exit(1)
+        raise typer.Exit(code=cs.CLI_EXIT_FOUND)
 
 
 def _project_to_delete(explicit: str | None, repo: Path | None) -> str:
