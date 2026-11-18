@@ -414,3 +414,20 @@ def test_a_module_declaration_is_no_include(tmp_path: Path) -> None:
     assert ("foo.use", "z.helper") in calls, calls
     assert ("foo.use", "a.helper") not in calls, calls
     assert ("a.a", "a.helper") in calls, calls
+
+
+# A global module fragment includes foo.h, then declares module `foo`: both
+# bind the qn foo.h takes, and the include is still a real one.
+_FRAGMENT_INCLUDE = {
+    "foo.h": "static inline int helper() { return 1; }\n",
+    "a.cpp": (
+        'module;\n#include "foo.h"\nexport module foo;\nint a() { return helper(); }\n'
+    ),
+}
+
+
+def test_an_include_a_module_declaration_shares_its_qn_with_still_reaches(
+    tmp_path: Path,
+) -> None:
+    calls = _calls(tmp_path / "fragment", _FRAGMENT_INCLUDE, "cpp")
+    assert ("a.a", "foo.helper") in calls, calls
