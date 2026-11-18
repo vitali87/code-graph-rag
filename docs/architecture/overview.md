@@ -52,4 +52,4 @@ User Query → AI Model (Cypher Gen) → Cypher Query → Graph Results → Resp
 | `prompt-toolkit` | Interactive command line |
 | `diff-match-patch` | Code patching |
 | `watchdog` | Filesystem events monitoring |
-| `huggingface-hub` | UniXcoder model download |
+| `huggingface-hub` | UniXcoder model download (`semantic` extra) |
