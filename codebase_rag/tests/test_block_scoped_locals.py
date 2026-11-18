@@ -597,6 +597,106 @@ def test_a_js_reassignment_from_a_shadowed_factory_keeps_the_type(
     assert edges[16] == _exact("C.m")
 
 
+def test_a_js_reassignment_from_a_hoisted_var_factory_keeps_the_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `var make` is the function's from its first line, so `make()` calls it
+    # even before the declaration, not the file's `make(): B` (bot review).
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class B { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "\n"
+        "function make(): B { return new B(); }\n"
+        "\n"
+        "export function run(): number {\n"
+        "  let sum = 0;\n"
+        "  make = () => new A();\n"
+        "  {\n"
+        "    let x = new A();\n"
+        "    x = make();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  var make: () => A;\n"
+        "  {\n"
+        "    const x = new C();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  return sum;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[13] == _exact("A.m")
+    assert edges[18] == _exact("C.m")
+
+
+def test_a_js_reassignment_from_a_local_factory_reads_its_return_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The `make` called is the function's own arrow, whose return type says
+    # B (bot review).
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class B extends A { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "\n"
+        "export function run(): number {\n"
+        "  const make = (): B => new B();\n"
+        "  let sum = 0;\n"
+        "  {\n"
+        "    let x: A = new A();\n"
+        "    x = make();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  {\n"
+        "    const x = new C();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  return sum;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[11] == _exact("B.m")
+    assert edges[15] == _exact("C.m")
+
+
+def test_a_js_reassignment_from_a_shadowed_class_s_method_keeps_the_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `Factory.one()` calls the parameter `Factory`, not the class whose
+    # `one()` returns B, so `x` stays the A (bot review).
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class B { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "class Factory { static one(): B { return new B(); } }\n"
+        "interface Maker { one(): A; }\n"
+        "\n"
+        "export function run(Factory: Maker): number {\n"
+        "  let sum = 0;\n"
+        "  {\n"
+        "    let x = new A();\n"
+        "    x = Factory.one();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  {\n"
+        "    const x = new C();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  return sum;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[12] == _exact("A.m")
+    assert edges[16] == _exact("C.m")
+
+
 def test_a_js_reassignment_types_its_variable_as_a_declarator_would(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

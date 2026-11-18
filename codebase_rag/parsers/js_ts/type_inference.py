@@ -27,6 +27,10 @@ from ..utils import (
 )
 from . import utils as ut
 
+# The function values a declarator can bind (`const make = () => ...`).
+_JS_FUNCTION_VALUE_TYPES = frozenset(
+    {cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION}
+)
 # Callable node types whose bodies own their locals and returns; the shared
 # JS_TS_FUNCTION_NODES tuple lacks the generator EXPRESSION form.
 _JS_NESTED_CALLABLE_TYPES = frozenset(cs.JS_TS_FUNCTION_NODES) | {
@@ -113,6 +117,14 @@ def _container_element(type_str: str | None) -> str | None:
     ):
         return type_str[len(cs.JS_LIST_TYPE_PREFIX) : -1] or None
     return None
+
+
+def _enclosing_function(node: ASTNode) -> ASTNode:
+    """The function `node` is in, or the module when it is in none."""
+    current = node
+    while current.parent is not None and current.type not in _JS_NESTED_CALLABLE_TYPES:
+        current = current.parent
+    return current
 
 
 def _tree_root(node: ASTNode) -> ASTNode:
@@ -630,18 +642,61 @@ class JsTypeInferenceEngine:
             else None
         )
         if callee is not None and callee.type == cs.TS_IDENTIFIER:
-            # A local or parameter `make` in scope here is not the file's
-            # `make()`, whose return type the lookup below would read.
-            callee_name = safe_decode_text(callee) or ""
-            if any(
-                start <= callee.start_byte < end
-                for start, end, _node in names.found.get(callee_name, ())
-            ):
-                return None
-            return self._call_return_type(value, names.module_qn)
+            # A `make` declared in this function is the one called, not the
+            # file's `make()` the lookup below reads: only a local function
+            # value says what it returns, a parameter says nothing.
+            if (local := self._declared_in_scope(callee, names)) is None:
+                return self._call_return_type(value, names.module_qn)
+            return self._local_function_return_type(local, callee, names.module_qn)
+        receiver = (
+            callee.child_by_field_name(cs.FIELD_OBJECT)
+            if callee is not None and callee.type == cs.TS_MEMBER_EXPRESSION
+            else None
+        )
+        if (
+            receiver is not None
+            and receiver.type == cs.TS_IDENTIFIER
+            and self._declared_in_scope(receiver, names) is not None
+        ):
+            # `Factory.one()` on a local or parameter `Factory`, not on the
+            # class of that name whose return type the typing below reads.
+            return None
         return self._infer_js_variable_type_from_value(
             value, names.module_qn, names.language
         )
+
+    @staticmethod
+    def _declared_in_scope(ident: ASTNode, names: _ScopedNames) -> ASTNode | None:
+        # The declaration of `ident`'s name in this function in scope at it,
+        # the innermost one where several are. A `var` is hoisted: the name
+        # is that variable from the top of its function, even on a line
+        # before the declaration.
+        held: list[tuple[int, ASTNode]] = []
+        for start, end, node in names.found.get(safe_decode_text(ident) or "", ()):
+            if (parent := node.parent) is not None and (
+                parent.type == cs.TS_VARIABLE_DECLARATION
+            ):
+                start = _enclosing_function(node).start_byte
+            if start <= ident.start_byte < end:
+                held.append((end - start, node))
+        return min(held, key=lambda entry: entry[0])[1] if held else None
+
+    def _local_function_return_type(
+        self, declaration: ASTNode, callee: ASTNode, module_qn: str
+    ) -> str | None:
+        # `const make = (): B => new B()`: the arrow's return type, read as
+        # for a file-level function.
+        value = (
+            declaration.child_by_field_name(cs.FIELD_VALUE)
+            if declaration.type == cs.TS_VARIABLE_DECLARATOR
+            else None
+        )
+        if value is None or value.type not in _JS_FUNCTION_VALUE_TYPES:
+            return None
+        function_qn = f"{module_qn}{cs.SEPARATOR_DOT}{safe_decode_text(callee)}"
+        return self._annotated_return_type_of(
+            value, module_qn
+        ) or self._analyze_return_statements(value, function_qn)
 
     def _first_party_interface_qn(self, type_name: str, module_qn: str) -> str | None:
         # An import names the symbol or its module, so both spellings are tried
