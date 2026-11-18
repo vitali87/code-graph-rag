@@ -54,6 +54,10 @@ def notify():
 def quiet():
     other = os.getenv("OTHER_TOKEN")
     return len(other)
+
+
+def hello():
+    print("hi")
 """
 
 CLIENT = f"""import os
@@ -94,19 +98,24 @@ def _project(tmp_path: Path, name: str, rel: str, text: str) -> Path:
     return root
 
 
-@pytest.fixture
-def notify(memgraph_ingestor: MemgraphIngestor, tmp_path: Path) -> MemgraphIngestor:
-    _index(memgraph_ingestor, _project(tmp_path, "notify", "app.py", NOTIFY), "notify")
-    return memgraph_ingestor
+# The embedded engine is the default backend, and the verdict's reads must
+# run there too.
+@pytest.fixture(params=["memgraph_ingestor", "sqlite_ingestor"])
+def ingestor(request: pytest.FixtureRequest) -> MemgraphIngestor:
+    return request.getfixturevalue(request.param)
 
 
 @pytest.fixture
-def services(memgraph_ingestor: MemgraphIngestor, tmp_path: Path) -> MemgraphIngestor:
-    _index(memgraph_ingestor, _project(tmp_path, "server", "api.py", SERVER), "server")
-    _index(
-        memgraph_ingestor, _project(tmp_path, "client", "client.py", CLIENT), "client"
-    )
-    return memgraph_ingestor
+def notify(ingestor: MemgraphIngestor, tmp_path: Path) -> MemgraphIngestor:
+    _index(ingestor, _project(tmp_path, "notify", "app.py", NOTIFY), "notify")
+    return ingestor
+
+
+@pytest.fixture
+def services(ingestor: MemgraphIngestor, tmp_path: Path) -> MemgraphIngestor:
+    _index(ingestor, _project(tmp_path, "server", "api.py", SERVER), "server")
+    _index(ingestor, _project(tmp_path, "client", "client.py", CLIENT), "client")
+    return ingestor
 
 
 def test_an_env_value_printed_is_a_flow_to_stdout(notify: MemgraphIngestor) -> None:
@@ -125,6 +134,34 @@ def test_a_function_that_prints_a_value_flows_to_stdout(
 
     assert result.verdict == FLOW_VERDICT_FOUND
     assert result.path == ("notify.app.notify", STDOUT)
+
+
+@pytest.mark.parametrize(
+    "function",
+    ["notify.app.send", "notify.app.hello"],
+    ids=["a-parameter-it-prints", "a-literal-it-prints"],
+)
+def test_a_function_reaches_the_sink_its_own_body_writes(
+    notify: MemgraphIngestor, function: str
+) -> None:
+    # `send` prints the value `notify` read, so the resource flow is
+    # `notify`'s; `hello` prints a literal, which makes no flow at all (bot
+    # review on PR #2762).
+    result = flow_reachability_verdict(notify.fetch_all, "notify", function, STDOUT)
+
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.path == (function, STDOUT)
+
+
+def test_a_client_env_value_reaches_the_sink_the_handler_writes(
+    services: MemgraphIngestor,
+) -> None:
+    result = flow_reachability_verdict(
+        services.fetch_all, "client", CLIENT_TOKEN, STDOUT
+    )
+
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.path == (CLIENT_TOKEN, NETWORK, "server.api.create_item", STDOUT)
 
 
 def test_a_client_function_reaches_the_handler_of_another_service(

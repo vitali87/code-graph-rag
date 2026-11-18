@@ -19,10 +19,11 @@ FLOW_VERDICT_UNKNOWN = "UNKNOWN"
 # resource flow (`ENV::K -> STDOUT`) has two `resource::` endpoints, so it is
 # anchored by the `scope` it records instead: the project's function whose
 # body produced it (issue #2747). That function is also linked to the sink
-# it wrote, so a question asked from code (`notify -> STDOUT`, or a client
-# function through its NETWORK resource into another service's handler)
-# reaches the resource. The source side gets no such link: a function that
-# reads two resources would join every source to every sink it writes.
+# its value reached, so a question asked from code (`notify -> STDOUT`, or a
+# client function through its NETWORK resource into another service's
+# handler) reaches the resource. The source side gets no such link: a
+# function that reads two resources would join every source to every sink
+# it writes.
 # The prefix also matches a dotted sibling project (`p.` matches `p.v2.fn`),
 # so the walk keeps only the rows the project owns exactly; a
 # resource-to-resource row carries its scope for that (bot review on PR
@@ -41,6 +42,19 @@ UNION
 MATCH (:{cs.NodeLabel.RESOURCE.value})-[r:{cs.RelationshipType.FLOWS_TO.value}]->(b:{cs.NodeLabel.RESOURCE.value})
 WHERE r.scope STARTS WITH $project_prefix OR r.scope = $project_name
 RETURN r.scope AS source, b.qualified_name AS target, NULL AS scope
+"""
+
+# A function also reaches every resource its own body writes. A resource
+# flow belongs to the function that read the value, so `send(v)` printing
+# the `v` its caller read owns none, and a literal write (`print("hi")`)
+# makes no flow at all; without these edges both answered NO_FLOW with no
+# gaps (bot review on PR #2762). Read apart from CYPHER_FLOW_EDGES, which
+# explain_traceback reads too: a write is no FLOWS_TO evidence there, and a
+# project with writes but no flows must keep reporting `flow_used` false.
+CYPHER_FLOW_WRITE_EDGES = f"""MATCH (f)-[:{cs.RelationshipType.WRITES_TO.value}]->(b:{cs.NodeLabel.RESOURCE.value})
+WHERE f.qualified_name STARTS WITH $project_prefix
+   OR f.qualified_name = $project_name
+RETURN DISTINCT f.qualified_name AS source, b.qualified_name AS target
 """
 
 _RESOURCE_QN_PREFIX = cs.RESOURCE_QN_FORMAT.partition("{")[0]
@@ -121,14 +135,9 @@ def flow_reachability_verdict(
     source_qn: str,
     sink_qn: str,
 ) -> FlowVerdict:
-    prefix = f"{project_name}{cs.SEPARATOR_DOT}"
-    params = {
-        cs.KEY_PROJECT_PREFIX: prefix,
-        cs.KEY_PROJECT_NAME: project_name,
-    }
     projects = _registered_projects(fetch_all, project_name)
     graph = _FlowGraph({}, {})
-    _add_edges(graph, fetch_all(CYPHER_FLOW_EDGES, params), project_name, projects)
+    _load_project(graph, fetch_all, project_name, projects)
     # Resource-to-handler hops join the graph up front (one read of edges
     # only); a handler project's own flow edges load when the walk reaches
     # a hop into it, and not before, so a local verdict never reads an
@@ -149,18 +158,7 @@ def flow_reachability_verdict(
         - loaded
     ):
         for other in sorted(entered):
-            _add_edges(
-                graph,
-                fetch_all(
-                    CYPHER_FLOW_EDGES,
-                    {
-                        cs.KEY_PROJECT_PREFIX: f"{other}{cs.SEPARATOR_DOT}",
-                        cs.KEY_PROJECT_NAME: other,
-                    },
-                ),
-                other,
-                projects,
-            )
+            _load_project(graph, fetch_all, other, projects)
         loaded |= entered
 
     if path := _bfs_path(graph, source_qn, sink_qn, project_name, projects):
@@ -255,6 +253,17 @@ def _reachable(
                 seen.add(state)
                 queue.append(state)
     return {qn for qn, _project in seen}
+
+
+def _load_project(
+    graph: _FlowGraph, fetch_all: QueryFn, project: str, projects: tuple[str, ...]
+) -> None:
+    params = {
+        cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}",
+        cs.KEY_PROJECT_NAME: project,
+    }
+    for query in (CYPHER_FLOW_EDGES, CYPHER_FLOW_WRITE_EDGES):
+        _add_edges(graph, fetch_all(query, params), project, projects)
 
 
 def _add_edges(

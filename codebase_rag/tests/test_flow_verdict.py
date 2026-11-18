@@ -13,6 +13,7 @@ from codebase_rag.flow_verdict import (
     CYPHER_FLOW_COVERAGE_GAPS,
     CYPHER_FLOW_EDGES,
     CYPHER_FLOW_REMOTE_EDGES,
+    CYPHER_FLOW_WRITE_EDGES,
     FLOW_VERDICT_FOUND,
     FLOW_VERDICT_NO_FLOW,
     FLOW_VERDICT_UNKNOWN,
@@ -29,6 +30,7 @@ def _query_fn(
     other_edges: dict[str, list[tuple[str, ...]]] | None = None,
     calls: list[tuple[str, dict | None]] | None = None,
     projects: list[str] | None = None,
+    writes: dict[str, list[tuple[str, str]]] | None = None,
 ):
     """Flow edges are (source, target), or (source, target, scope) for a
     resource-to-resource flow; `remote` rows are (source, target) with the
@@ -36,7 +38,8 @@ def _query_fn(
     holds the flow edges of
     every project other than the asked one, keyed by project name; `gaps`
     is the asked project's list, or one per project; `calls` records every
-    (query, params) issued."""
+    (query, params) issued; `writes` holds each project's (function,
+    resource) WRITES_TO rows, as its prefix query returns them."""
 
     def fetch_all(query: str, params=None):
         if calls is not None:
@@ -51,6 +54,11 @@ def _query_fn(
             return [
                 {"source": e[0], "target": e[1], "scope": e[2] if len(e) > 2 else None}
                 for e in rows
+            ]
+        if query == CYPHER_FLOW_WRITE_EDGES:
+            return [
+                {"source": f, "target": r}
+                for f, r in (writes or {}).get(project or "", [])
             ]
         if query == CYPHER_FLOW_COVERAGE_GAPS:
             if isinstance(gaps, dict):
@@ -488,3 +496,84 @@ def test_a_flow_through_the_handler_of_another_project_still_reaches_its_sink() 
     )
     assert result.verdict == FLOW_VERDICT_FOUND
     assert result.path == (TOKEN, NET, "q.api.handler", STDOUT)
+
+
+# `notify` reads TOKEN and hands it to `send(v)`, which prints it; `hello`
+# prints a literal. As the indexer writes them: the arg flow, the resource
+# flow and its link from `notify` (its scope), and each function's writes.
+NOTIFY_EDGES = [
+    ("p.app.notify", "p.app.send"),
+    (TOKEN, STDOUT, "p.app.notify"),
+    ("p.app.notify", STDOUT),
+]
+NOTIFY_WRITES = {"p": [("p.app.send", STDOUT), ("p.app.hello", STDOUT)]}
+
+
+@pytest.mark.parametrize(
+    "function",
+    ["p.app.send", "p.app.hello"],
+    ids=["a-parameter-it-prints", "a-literal-it-prints"],
+)
+def test_a_function_reaches_the_sink_its_own_body_writes(function: str) -> None:
+    """The resource flow belongs to the function that read the value
+    (`notify`), and a literal write makes none, so neither `send` nor
+    `hello` owned a link to STDOUT: NO_FLOW with no gaps, a verified
+    absence of a write that is in the graph (bot review on PR #2762)."""
+    result = flow_reachability_verdict(
+        _query_fn(NOTIFY_EDGES, [], writes=NOTIFY_WRITES), "p", function, STDOUT
+    )
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.path == (function, STDOUT)
+
+
+def test_the_handler_of_another_service_reaches_the_sink_it_writes() -> None:
+    """The entered project's writes load with its flows: the handler prints
+    the request it was sent, a parameter, so it owns no resource flow."""
+    result = flow_reachability_verdict(
+        _query_fn(
+            [(TOKEN, NET, "p.client.send")],
+            [],
+            remote=[(NET, "q.api.handler")],
+            other_edges={"q": []},
+            projects=["p", "q"],
+            writes={"q": [("q.api.handler", STDOUT)]},
+        ),
+        "p",
+        TOKEN,
+        STDOUT,
+    )
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.path == (TOKEN, NET, "q.api.handler", STDOUT)
+
+
+# Negative: what must not change.
+
+
+def test_a_write_joins_no_resource_to_the_function_that_writes() -> None:
+    """A write links its function to the sink, never a resource to the
+    function: `ENV::OTHER` read in a function that prints something else
+    still has no flow to STDOUT."""
+    result = flow_reachability_verdict(
+        _query_fn([], [], writes={"p": [("p.app.quiet", STDOUT)]}),
+        "p",
+        "resource::ENV::OTHER",
+        STDOUT,
+    )
+    assert result.verdict == FLOW_VERDICT_NO_FLOW
+
+
+def test_a_dotted_sibling_projects_write_is_not_this_projects() -> None:
+    """`p.`'s prefix read returns `p.v2`'s writes too; only `p.v2` owns
+    them."""
+    result = flow_reachability_verdict(
+        _query_fn(
+            [],
+            [],
+            projects=["p", "p.v2"],
+            writes={"p": [("p.v2.app.send", STDOUT)]},
+        ),
+        "p",
+        "p.v2.app.send",
+        STDOUT,
+    )
+    assert result.verdict == FLOW_VERDICT_NO_FLOW
