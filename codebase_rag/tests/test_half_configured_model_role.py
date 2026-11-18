@@ -18,6 +18,7 @@ import typer
 from codebase_rag import cli as cli_module
 from codebase_rag import constants as cs
 from codebase_rag.config import AppConfig, settings
+from codebase_rag.tests.conftest import patch_active_model
 from codebase_rag.tools import health_checker
 from codebase_rag.tools.health_checker import HealthChecker
 
@@ -109,8 +110,8 @@ def half_configured_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "ORCHESTRATOR_MODEL", "")
     monkeypatch.setattr(settings, "CYPHER_PROVIDER", "")
     monkeypatch.setattr(settings, "CYPHER_MODEL", "")
-    monkeypatch.setattr(settings, "_active_orchestrator", None)
-    monkeypatch.setattr(settings, "_active_cypher", None)
+    patch_active_model(monkeypatch, "_active_orchestrator", None)
+    patch_active_model(monkeypatch, "_active_cypher", None)
 
 
 @pytest.mark.usefixtures("half_configured_orchestrator")
