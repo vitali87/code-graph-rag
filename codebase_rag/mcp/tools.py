@@ -2247,13 +2247,16 @@ class MCPToolsRegistry:
             self._flag_from_failed_clear = None
         return persisted_incomplete
 
-    def _hydrate_reingest_updater(self, project_name: str) -> GraphUpdater:
+    def _hydrate_reingest_updater(
+        self, project_name: str, purged: list[int | None] | None = None
+    ) -> GraphUpdater:
         """Build a scoped updater when none is retained.
 
         Split out of `_reingest_sync` to keep it under the
         cognitive-complexity limit; the guards and their reasoning are
         unchanged. Raises rather than returning on a refusal, exactly as
-        it did inline.
+        it did inline. `purged` receives how many legacy structure nodes the
+        constraint migration removed, or None when the ingestor cannot say.
         """
         # A scoped re-ingest completes a graph; it cannot stand in for
         # the first index. After delete_project or wipe_database the
@@ -2308,7 +2311,9 @@ class MCPToolsRegistry:
         # the index and update paths mark before. Invariant (c).
         if (refusal := self._require_marker(project_name)) is not None:
             raise RuntimeError(refusal)
-        self.ingestor.ensure_constraints()
+        removed = self.ingestor.ensure_constraints()
+        if purged is not None:
+            purged.append(removed if isinstance(removed, int) else None)
         # The same exclusion set the index and update paths use, or an
         # agent-named path under a CLI-excluded directory would be
         # indexed here and kept by every later update.
@@ -3572,17 +3577,6 @@ class MCPToolsRegistry:
             ),
         )
 
-    def _legacy_structure_present(self) -> bool:
-        """Whether the graph holds the legacy Folder/File structure the
-        constraint migration purges (issue #897)."""
-        return any(
-            self.ingestor.fetch_all(query, None)
-            for query in (
-                cq.CYPHER_ANY_SHARED_STRUCTURE,
-                cq.CYPHER_ANY_KEYLESS_STRUCTURE,
-            )
-        )
-
     def _retained_updater_for(self, project_name: str) -> GraphUpdater | None:
         """The warm updater a rename re-ingests through, if this project has one.
 
@@ -3594,7 +3588,9 @@ class MCPToolsRegistry:
             return None
         return retained
 
-    def _rename_reingest_updater(self, project_name: str) -> GraphUpdater:
+    def _rename_reingest_updater(
+        self, project_name: str, purged: list[int | None] | None = None
+    ) -> GraphUpdater:
         """The updater the rename re-ingests through, refusing a partial graph.
 
         A retained updater for THIS project is reused as-is: it is warm, and
@@ -3621,7 +3617,7 @@ class MCPToolsRegistry:
         """
         retained = self._retained_updater_for(project_name)
         if retained is None:
-            return self._hydrate_reingest_updater(project_name)
+            return self._hydrate_reingest_updater(project_name, purged)
         # Recovery FIRST, then the latch: reading the latch before
         # `_persisted_incomplete` can clear a stranded recoverable marker left
         # this path refusing a rename the cold path allows.
@@ -3637,7 +3633,10 @@ class MCPToolsRegistry:
         return retained
 
     def _guarded_rename_reingest(
-        self, project_name: str, clear_errors: list[str] | None = None
+        self,
+        project_name: str,
+        clear_errors: list[str] | None = None,
+        purged: list[int | None] | None = None,
     ) -> Callable[[list[str]], ReingestReport] | None:
         """The rename's re-ingest callback, behind the incomplete-run marker.
 
@@ -3656,14 +3655,14 @@ class MCPToolsRegistry:
 
         A clear that fails is appended to `clear_errors`, so the rename
         reports it rather than reading as a clean success (CodeRabbit, PR
-        #2900).
+        #2900). A hydration's purge count goes to `purged`.
         """
         if (
             self._live_updater is None
             and project_name not in self.ingestor.list_projects()
         ):
             return None
-        updater = self._rename_reingest_updater(project_name)
+        updater = self._rename_reingest_updater(project_name, purged)
 
         def guarded(paths: list[str]) -> ReingestReport:
             if (
@@ -3744,13 +3743,15 @@ class MCPToolsRegistry:
         # up front: it is what refuses a rename over a partial graph, or one
         # whose marker cannot be written, before any file changes.
         hydrates = self._retained_updater_for(project_name) is None
-        # Hydration runs the constraint migration, which purges legacy
-        # structure; the graph then lacks those nodes until a rebuild, so the
-        # marker hydration put down stays (Greptile, PR #2900).
-        purges_legacy = hydrates and self._legacy_structure_present()
         guarded: Callable[[list[str]], ReingestReport] | None = None
         reingested: list[list[str]] = []
         clear_errors: list[str] = []
+        # What hydration's constraint migration purged. Counted, not probed
+        # beforehand: with a legacy constraint in force it removes every
+        # Folder/File two projects own, which no probe sees for projects over
+        # one root (CodeRabbit, PR #2900).
+        hydration_purged: list[int | None] = []
+        edits_remain = False
         marker_error: str | None = None
         refusal: RenameRefused | None = None
         try:
@@ -3761,7 +3762,9 @@ class MCPToolsRegistry:
             # root above, and the guarded callback rejects a cached updater
             # built for a different project, so the delta is measured under
             # the same name the re-ingest writes.
-            guarded = self._guarded_rename_reingest(project_name, clear_errors)
+            guarded = self._guarded_rename_reingest(
+                project_name, clear_errors, hydration_purged
+            )
             reingest = None if guarded is None else _recording(guarded, reingested)
             report = rename(
                 root,
@@ -3774,19 +3777,25 @@ class MCPToolsRegistry:
                 reingest=reingest,
                 heuristic_opt_in=cs.MCPParamName.ALLOW_HEURISTIC,
             )
+            edits_remain = report.applied
         except RenameRefused as refused:
             refusal = refused
         finally:
             # The callback, once called, settles the marker itself (cleared,
             # or kept over a graph it may have written). Uncalled, nothing
-            # touched the graph after hydration, so the run is complete. A
-            # failed clear raises the in-process flag and is reported in the
-            # result, never dropped (CodeRabbit, PR #2900).
+            # touched the graph after hydration, so the run is complete -- if
+            # hydration purged nothing and no edit is left on disk. A rename
+            # that committed its edits but never re-ingested (its graph read
+            # failed) leaves a graph behind the tree, and the marker stays
+            # rather than coming off until the re-mark below (CodeRabbit, PR
+            # #2900). A failed clear raises the in-process flag and is
+            # reported in the result, never dropped.
             if (
                 hydrates
                 and guarded is not None
                 and not reingested
-                and not purges_legacy
+                and hydration_purged == [0]
+                and not edits_remain
             ):
                 marker_error = self._require_marker_cleared(project_name)
         if marker_error is None and clear_errors:

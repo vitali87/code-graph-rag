@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -527,6 +528,36 @@ class TestLegacyPathKeyMigration:
 
         assert not any(q.startswith("DROP CONSTRAINT") for q in executed)
         assert not any("DETACH DELETE" in q for q in executed)
+
+    def test_reports_how_many_nodes_it_purged(self) -> None:
+        # A cold MCP rename keeps its hydration marker when this is nonzero:
+        # with a legacy constraint in force the purge takes every Folder/File
+        # two projects own, which no probe beforehand sees (PR #2900).
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        def answer(
+            rows: list[dict], damaged: bool
+        ) -> Callable[[str, dict | None], list[dict]]:
+            def run(query: str, params: dict | None = None) -> list[dict]:
+                if query.startswith("SHOW CONSTRAINT"):
+                    return rows
+                if "damaged" in query:
+                    return [{"damaged": 1}] if damaged else []
+                if "purged" in query:
+                    return [{"purged": 2}]
+                return []
+
+            return run
+
+        for rows, damaged, expected in (
+            (self.LEGACY_ROWS, False, 4),
+            (self.CLEAN_ROWS, True, 4),
+            (self.CLEAN_ROWS, False, 0),
+        ):
+            with patch.object(
+                MemgraphIngestor, "_execute_query", side_effect=answer(rows, damaged)
+            ):
+                assert ingestor.ensure_constraints() == expected, (rows, damaged)
 
     def test_show_constraint_failure_propagates(self) -> None:
         ingestor = MemgraphIngestor(host="localhost", port=7687)

@@ -727,9 +727,12 @@ class MemgraphIngestor:
         )
         return any(row.get(KEY_ROOT_PATH) == root for row in rows)
 
-    def ensure_constraints(self) -> None:
+    def ensure_constraints(self) -> int:
+        """Ensure the schema; returns how many legacy Folder/File nodes the
+        issue #897 migration purged, so a caller knows whether the graph
+        lost structure it must rebuild."""
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
-        self._migrate_legacy_path_keys()
+        purged = self._migrate_legacy_path_keys()
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(self._dialect.create_constraint(label, prop))
@@ -737,8 +740,9 @@ class MemgraphIngestor:
                 pass
         logger.info(ls.MG_CONSTRAINTS_DONE)
         self._ensure_indexes()
+        return purged
 
-    def _migrate_legacy_path_keys(self) -> None:
+    def _migrate_legacy_path_keys(self) -> int:
         """Retire the superseded Folder/File relative-path keys (issue #897).
 
         A database that still enforces the legacy constraints was written by
@@ -781,7 +785,7 @@ class MemgraphIngestor:
                 self._execute_query(CYPHER_ANY_KEYLESS_STRUCTURE)
             )
         if not damaged:
-            return
+            return 0
         purged = 0
         for purge_query in (cross_project_purge, CYPHER_PURGE_KEYLESS_STRUCTURE):
             rows = self._execute_query(purge_query)
@@ -789,6 +793,7 @@ class MemgraphIngestor:
                 purged += int(str(rows[0][KEY_PURGED]))
         if purged:
             logger.warning(ls.MG_LEGACY_PURGE.format(count=purged))
+        return purged
 
     def _ensure_indexes(self) -> None:
         logger.info(ls.MG_ENSURING_INDEXES)
