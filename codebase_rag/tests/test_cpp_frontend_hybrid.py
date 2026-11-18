@@ -911,8 +911,9 @@ def _write_two_limits(root: Path, use_h: str, one: str, two: str) -> None:
 
 
 @pytest.mark.parametrize("macro", ["a.LIMIT", "b.LIMIT"])
+@pytest.mark.parametrize("function_like", [False, True], ids=["object", "function"])
 def test_hybrid_rename_refuses_a_use_another_same_named_macro_binds(
-    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, macro: str
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, macro: str, function_like: bool
 ) -> None:
     # use.h is compiled after a.h in one.cpp and after b.h in two.cpp, so
     # its one LIMIT token is each macro's: renaming it for one leaves the
@@ -922,10 +923,15 @@ def test_hybrid_rename_refuses_a_use_another_same_named_macro_binds(
     root = temp_repo / "twolimits"
     _write_two_limits(
         root,
-        "static inline int cap(int n) { return n > LIMIT ? LIMIT : n; }\n",
+        "static inline int cap(int n) { return n > LIMIT(n) ? LIMIT(n) : n; }\n"
+        if function_like
+        else "static inline int cap(int n) { return n > LIMIT ? LIMIT : n; }\n",
         '#include "a.h"\n#include "use.h"\nint one() { return cap(1); }\n',
         '#include "b.h"\n#include "use.h"\nint two() { return cap(2); }\n',
     )
+    if function_like:
+        (root / "a.h").write_text("#define LIMIT(x) 3\n", encoding="utf-8")
+        (root / "b.h").write_text("#define LIMIT(x) 4\n", encoding="utf-8")
     store = _StatefulIngestor()
     _index_dup(root, monkeypatch, store)
     with pytest.raises(RenameRefused) as refused:
@@ -995,7 +1001,12 @@ def test_an_overload_fan_out_is_no_second_binding_of_a_site(
     renamer = Renamer(tmp_path, lambda *_args: [], "p")
     monkeypatch.setattr(renamer, "_collect", lambda _qn: (sibling, [], "f", "Function"))
     assert renamer._sites_another_namesake_binds(["p.m.f"], "f", planned) == []
-    # The same site proven for both is the macro case, and is refused.
-    proven = [s._replace(resolution=cs.EdgeResolution.EXACT) for s in planned]
-    sibling[:] = [s._replace(resolution=cs.EdgeResolution.EXACT) for s in sibling]
-    assert renamer._sites_another_namesake_binds(["p.m.f"], "f", proven) == [proven[1]]
+    # The same site bound for both is the macro case, and is refused, also
+    # where tree-sitter's `heuristic` label won the merge for a
+    # function-like macro.
+    for resolution in (cs.EdgeResolution.EXACT, cs.EdgeResolution.HEURISTIC):
+        bound = [s._replace(resolution=resolution) for s in planned]
+        sibling[:] = [s._replace(resolution=resolution) for s in sibling]
+        assert renamer._sites_another_namesake_binds(["p.m.f"], "f", bound) == [
+            bound[1]
+        ], resolution

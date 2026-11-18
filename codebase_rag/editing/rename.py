@@ -1854,12 +1854,14 @@ class Renamer:
             for path in definitions
         ):
             return []
-        # Proven bindings only: an overload fan-out's guessed sibling is the
-        # ambiguity `allow_heuristic` decides, not a second definition.
+        # An overload fan-out's guessed sibling is the ambiguity
+        # `allow_heuristic` decides, not a second definition. A function-like
+        # macro's use keeps tree-sitter's `heuristic` label over libclang's
+        # `exact` one, so only the fan-out label is left out.
         uses = {
             (s.path, s.line, s.col): s
             for s in sites
-            if s.kind != "definition" and s.resolution == cs.EdgeResolution.EXACT
+            if s.kind != "definition" and s.resolution != cs.EdgeResolution.OVERLOAD
         }
         if not uses:
             return []
@@ -1876,7 +1878,7 @@ class Renamer:
                 position = (site.path, site.line, site.col)
                 if (
                     site.kind != "definition"
-                    and site.resolution == cs.EdgeResolution.EXACT
+                    and site.resolution != cs.EdgeResolution.OVERLOAD
                     and position in uses
                 ):
                     shared.setdefault(position, uses[position])
