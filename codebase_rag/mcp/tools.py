@@ -3370,7 +3370,8 @@ class MCPToolsRegistry:
                         cs.MCPSchemaType.INTEGER, td.MCP_PARAM_BUDGET_TOKENS
                     ),
                     cs.MCPParamName.PROJECT: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                        cs.MCPSchemaType.STRING,
+                        self._project_default_description(),
                     ),
                 },
                 required=[cs.MCPParamName.TARGET],
@@ -3478,7 +3479,8 @@ class MCPToolsRegistry:
                         cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_MOVE_DRY_RUN
                     ),
                     cs.MCPParamName.PROJECT: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                        cs.MCPSchemaType.STRING,
+                        self._project_default_description(),
                     ),
                 },
                 required=[
@@ -3796,7 +3798,8 @@ class MCPToolsRegistry:
                         cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
                     ),
                     cs.MCPParamName.PROJECT: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                        cs.MCPSchemaType.STRING,
+                        self._project_default_description(),
                     ),
                 },
                 required=[

@@ -557,9 +557,9 @@ MCP_PARAM_PROJECT = (
     "the available names. Omit to search every project."
 )
 # The tools that read one project and default to the server's own (issue
-# #2757): the graph tools, rename and find_duplicate_code. `{default}` is the
-# project an omitted argument means, so an empty answer is not read as a
-# graph-wide one.
+# #2757): the graph tools, context, rename, move, change_signature and
+# find_duplicate_code. `{default}` is the project an omitted argument means,
+# so an empty answer is not read as a graph-wide one.
 MCP_PARAM_PROJECT_DEFAULT = (
     "Optional. The indexed project to read; use list_projects for the "
     "available names. Omitted, it is {default}, not every project."

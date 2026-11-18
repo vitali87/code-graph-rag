@@ -28,7 +28,14 @@ SERVER_DEFAULT_TOOLS = (
     cs.MCPToolName.ENDPOINTS,
     cs.MCPToolName.FIND_DUPLICATE_CODE,
     cs.MCPToolName.RENAME,
+    # These three read through `_graph_query` as well, so an omitted project
+    # is the server's too.
+    cs.MCPToolName.CONTEXT,
+    cs.MCPToolName.MOVE,
+    cs.MCPToolName.CHANGE_SIGNATURE,
 )
+# query_code_graph binds no project when none is given, so it does read every
+# project.
 EVERY_PROJECT_TOOLS = (cs.MCPToolName.QUERY_CODE_GRAPH,)
 
 
