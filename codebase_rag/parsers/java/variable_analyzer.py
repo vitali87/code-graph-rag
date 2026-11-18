@@ -297,9 +297,9 @@ class JavaVariableAnalyzerMixin:
                 value_node, module_qn, local_var_types
             ):
                 # Only a type the initializer writes (`new Box()`, a cast) is
-                # read in this scope. One inferred from a call was named where
-                # the method is declared, so a type the caller nests must not
-                # take it over (Greptile, PR #2973).
+                # read in this scope. One inferred from a call or a field was
+                # named where it is declared, so a type the caller nests must
+                # not take it over (Greptile, PR #2973).
                 resolved_type = self._resolve_java_type_name(
                     inferred_type,
                     module_qn,
@@ -1048,5 +1048,10 @@ class JavaVariableAnalyzerMixin:
             if field_info.get(cs.FIELD_NAME) == field_name and (
                 field_type := field_info.get(cs.FIELD_TYPE)
             ):
-                return self._resolve_java_type_name(str(field_type), module_qn)
+                # Named where the field is declared, member types it inherits
+                # included, so a local copying it reads the same type
+                # (Greptile, PR #2973).
+                return self._resolve_java_type_name(
+                    str(field_type), module_qn, field_child
+                )
         return None

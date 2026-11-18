@@ -210,6 +210,28 @@ public class Consumer {
     }
 }
 """
+# A field's type is named where the field is declared: `Button` in Panel is
+# the member Panel inherits from Widgets, also when a local copies the field
+# (Greptile, PR #2973).
+WIDGETS = """\
+package demo;
+
+public class Widgets {
+    public static class Button { public void click() {} }
+}
+"""
+PANEL = """\
+package demo;
+
+public class Panel extends Widgets {
+    Button field;
+
+    void press() {
+        var x = this.field;
+        x.click();
+    }
+}
+"""
 
 PREFIX = "src.main.java.demo"
 
@@ -228,6 +250,8 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     _write(root, "src/main/java/api/Factory.java", API_FACTORY)
     _write(root, f"{PREFIX.replace('.', '/')}/Inherit.java", INHERIT)
     _write(root, f"{PREFIX.replace('.', '/')}/Consumer.java", CONSUMER)
+    _write(root, f"{PREFIX.replace('.', '/')}/Widgets.java", WIDGETS)
+    _write(root, f"{PREFIX.replace('.', '/')}/Panel.java", PANEL)
     return _index(root, MagicMock())
 
 
@@ -315,11 +339,13 @@ _API_CHECK = "api.Helper.Helper.check()"
             "demo.Inherit.Inherit.ProtectedBase.Helper.check()",
         ),
         ("Consumer.Consumer.use(Factory)", _API_CHECK),
+        ("Panel.Panel.press()", "demo.Widgets.Widgets.Button.click()"),
     ],
     ids=[
         "private-member-not-inherited",
         "protected-member-shadows-the-import",
         "return-type-named-where-declared",
+        "field-type-named-where-declared",
     ],
 )
 def test_an_uninherited_member_or_a_return_type_keeps_the_import(
