@@ -508,6 +508,8 @@ def _registry(tmp_path: Path) -> tuple[MCPToolsRegistry, str]:
     project = derive_project_name(tmp_path)
     ingestor = MagicMock()
     ingestor.fetch_all = _fetch_all_for(project)
+    # The server's root is indexed: an unindexed one is refused (#3193).
+    ingestor.list_projects.return_value = [project]
     registry = MCPToolsRegistry(
         project_root=str(tmp_path), ingestor=ingestor, cypher_gen=MagicMock()
     )
