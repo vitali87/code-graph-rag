@@ -289,8 +289,8 @@ pull request.
 3. **Go end to end**, with its type checker: the pilot. Its default moves to
    Rust when every gate holds; its internals tests are rewritten; its Python
    code is deleted. The porting rate measured here sizes the rest.
-4. **The other languages**, one release each: JS/TS, Python, Java, C#, C/C++
-   (libclang through `clang-sys`), PHP, Scala, Lua, Dart, Julia, SQL.
+4. **The other languages**, one release each: JS/TS, Python, Java, Rust, C#,
+   C/C++ (libclang through `clang-sys`), PHP, Scala, Lua, Dart, Julia, SQL.
    Families move together (JS with TS, C with C++).
 5. **The rest of indexing**: cross-language linking (endpoints, routes, RPC,
    imports, trace edges), data flow and I/O, the Markdown tier, the ast-grep
