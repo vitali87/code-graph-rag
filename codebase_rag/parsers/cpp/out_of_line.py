@@ -15,14 +15,19 @@ definition may name do not depend on which other files were parsed first.
 
 from __future__ import annotations
 
+import functools
+import sys
+from pathlib import Path
 from typing import NamedTuple
 
 from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import CppClassLookup
+from ...utils.source_encoding import grammar_bytes
 from ..utils import safe_decode_text
 from . import utils as cpp_utils
+from .preproc_recovery import parse_with_preproc_recovery
 
 # What holds declarations at namespace scope: the file, a namespace and its
 # body, an `extern "C++"` block, a preprocessor branch, a template, and a
@@ -74,6 +79,8 @@ type _FileDeclarations = dict[tuple[str, str], list[_Declaration]]
 # 1-slot memo of the last file's declarations: every out-of-line definition
 # of a file asks, and the answer is per file.
 _last_file_declarations: tuple[Node, _FileDeclarations] | None = None
+# A position past every declaration: all of an included header is visible.
+_WHOLE_FILE = sys.maxsize
 
 
 def class_lookup(func_node: Node, class_name: str) -> CppClassLookup:
@@ -88,29 +95,39 @@ def class_lookup(func_node: Node, class_name: str) -> CppClassLookup:
             class_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT),
             _namespace_scope(func_node),
         )
-    if written.anchored:
-        return CppClassLookup(
-            cs.SEPARATOR_DOT.join(written.parts), cs.CPP_GLOBAL_NAMESPACE_PATH
-        )
-    declarations = _file_declarations(func_node)
-    parts, scope, position = (
+    # A leading `::` starts the lookup at the global namespace, so only an
+    # alias declared there can stand for its first part.
+    return _follow_aliases(
+        _file_declarations(func_node),
         written.parts,
-        _namespace_scope(func_node),
+        cs.CPP_GLOBAL_NAMESPACE_PATH
+        if written.anchored
+        else _namespace_scope(func_node),
         func_node.start_byte,
     )
-    # An alias of an alias is looked up from where the first one is declared;
-    # the hop limit ends a cycle in broken code.
-    for _ in range(cs.CPP_MAX_ALIAS_HOPS):
-        found = _alias_at(declarations, position, scope, parts[0])
-        if found is None:
-            break
-        scope, target, position = found
-        parts = target.parts + parts[1:]
-        if target.anchored:
-            return CppClassLookup(
-                cs.SEPARATOR_DOT.join(parts), cs.CPP_GLOBAL_NAMESPACE_PATH
-            )
-    return CppClassLookup(cs.SEPARATOR_DOT.join(parts), scope)
+
+
+def header_alias_lookup(path: Path, lookup: CppClassLookup) -> CppClassLookup | None:
+    """What an alias declared in the header `path` turns `lookup` into, or None.
+
+    For a header the definition's file includes, whose declarations it sees
+    wherever they sit in the header. The file is read from disk, so a header
+    an incremental run did not re-parse answers as it does on a full run.
+    """
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    declarations = _header_declarations(str(path), stat.st_mtime_ns, stat.st_size)
+    if declarations is None:
+        return None
+    through = _follow_aliases(
+        declarations,
+        tuple(lookup.name.split(cs.SEPARATOR_DOT)),
+        lookup.scope,
+        _WHOLE_FILE,
+    )
+    return None if through == lookup else through
 
 
 def scope_candidates(lookup: CppClassLookup) -> list[str]:
@@ -166,6 +183,27 @@ def _plain_name(node: Node) -> str:
     return "".join((safe_decode_text(node) or "").split())
 
 
+def _follow_aliases(
+    declarations: _FileDeclarations,
+    parts: tuple[str, ...],
+    scope: str,
+    position: int,
+) -> CppClassLookup:
+    # An alias of an alias is looked up from where the first one is declared;
+    # the hop limit ends a cycle in broken code.
+    for _ in range(cs.CPP_MAX_ALIAS_HOPS):
+        found = _alias_at(declarations, position, scope, parts[0])
+        if found is None:
+            break
+        scope, target, position = found
+        parts = target.parts + parts[1:]
+        if target.anchored:
+            return CppClassLookup(
+                cs.SEPARATOR_DOT.join(parts), cs.CPP_GLOBAL_NAMESPACE_PATH
+            )
+    return CppClassLookup(cs.SEPARATOR_DOT.join(parts), scope)
+
+
 def _alias_at(
     declarations: _FileDeclarations, position: int, scope: str, name: str
 ) -> tuple[str, _WrittenName, int] | None:
@@ -197,6 +235,35 @@ def _file_declarations(node: Node) -> _FileDeclarations:
         root = root.parent
     if _last_file_declarations is not None and _last_file_declarations[0] == root:
         return _last_file_declarations[1]
+    found = _collect_declarations(root)
+    _last_file_declarations = (root, found)
+    return found
+
+
+# Keyed by modification time and size as well as path, so an edited header
+# is read again by a long-lived process.
+@functools.lru_cache(maxsize=64)
+def _header_declarations(
+    path: str, mtime_ns: int, size: int
+) -> _FileDeclarations | None:
+    # Imported here: the loader imports the parsers package this module is in.
+    from ...parser_loader import load_parsers
+
+    parsers, _queries = load_parsers()
+    if cs.SupportedLanguage.CPP not in parsers:
+        return None
+    try:
+        source = Path(path).read_bytes()
+    except OSError:
+        return None
+    language = cs.SupportedLanguage.CPP
+    tree = parse_with_preproc_recovery(
+        parsers[language], grammar_bytes(source, language, Path(path)), language
+    )
+    return _collect_declarations(tree.root_node)
+
+
+def _collect_declarations(root: Node) -> _FileDeclarations:
     found: _FileDeclarations = {}
     # Function and class bodies are not walked: what they declare is local
     # to them and never names an out-of-line definition's class.
@@ -209,7 +276,6 @@ def _file_declarations(node: Node) -> _FileDeclarations:
             )
         if current.type in _NAMESPACE_SCOPE_CONTAINER_TYPES:
             pending.extend(current.named_children)
-    _last_file_declarations = (root, found)
     return found
 
 

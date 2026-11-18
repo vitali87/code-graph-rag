@@ -8,17 +8,21 @@
 # namespace outward, and anything less certain waits for the full registry.
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
+from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.cpp import out_of_line
 from codebase_rag.parsers.cpp import utils as cpp_utils
 from codebase_rag.tests.conftest import get_relationships, run_updater
 from codebase_rag.types_defs import CppClassLookup
+from evals.cgr_graph import _StatefulIngestor
 
 IMPL_H = """#pragma once
 
@@ -458,6 +462,145 @@ def test_a_nearer_class_hides_an_outer_alias(
     assert graph.owner_path("src/shadow.cc", 8) == "src/shadow.cc"
 
 
+# Greptile's example on #3645: the header publishes its nested class under a
+# namespace-scope alias, and a source that includes it defines through it.
+HEADER_ALIAS_LIB_H = """#pragma once
+namespace lib {
+class Outer {
+ public:
+  class Inner {
+   public:
+    void run();
+  };
+};
+using Inner = Outer::Inner;
+}  // namespace lib
+"""
+HEADER_ALIAS_USE_CC = """#include "lib.h"
+namespace lib {
+void Inner::run() {}
+}  // namespace lib
+"""
+
+
+def _module_children(mock_ingestor: MagicMock) -> set[str]:
+    return {
+        str(call.args[2][2])
+        for call in get_relationships(mock_ingestor, cs.RelationshipType.DEFINES.value)
+        if str(call.args[0][0]) == cs.NodeLabel.MODULE.value
+    }
+
+
+# `a_use.cc` sorts before lib.h and `use.cc` after it.
+@pytest.mark.parametrize("source", ["a_use", "use"])
+def test_an_alias_in_the_classs_own_header_reaches_the_nested_class(
+    temp_repo: Path, mock_ingestor: MagicMock, source: str
+) -> None:
+    (temp_repo / "lib.h").write_text(HEADER_ALIAS_LIB_H)
+    (temp_repo / f"{source}.cc").write_text(HEADER_ALIAS_USE_CC)
+    run_updater(temp_repo, mock_ingestor)
+    graph = _Graph(mock_ingestor)
+
+    qn = graph.methods[(f"{source}.cc", 3)]
+    assert graph.owners.get(qn, "").endswith(".lib.Outer.Inner"), (qn, graph.owners)
+    assert graph.owner_path(f"{source}.cc", 3) == "lib.h"
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        pytest.param(
+            HEADER_ALIAS_LIB_H.replace("using Inner = Outer::Inner;\n", ""),
+            id="no-alias",
+        ),
+        pytest.param(
+            HEADER_ALIAS_LIB_H.replace(
+                "using Inner = Outer::Inner;\n",
+                "namespace other {\nusing Inner = lib::Outer::Inner;\n}\n",
+            ),
+            id="alias-in-a-namespace-that-does-not-enclose-the-definition",
+        ),
+    ],
+)
+def test_without_a_visible_header_alias_the_nested_class_is_not_reached(
+    temp_repo: Path, mock_ingestor: MagicMock, header: str
+) -> None:
+    (temp_repo / "lib.h").write_text(header)
+    (temp_repo / "use.cc").write_text(HEADER_ALIAS_USE_CC)
+    run_updater(temp_repo, mock_ingestor)
+    graph = _Graph(mock_ingestor)
+
+    qn = graph.methods[("use.cc", 3)]
+    assert qn not in graph.owners, (qn, graph.owners)
+    assert qn in _module_children(mock_ingestor)
+
+
+def test_an_anchored_qualifier_follows_a_global_alias(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "lib.h").write_text(
+        "#pragma once\nnamespace lib {\nclass Owner {\n public:\n  void run();\n"
+        "};\n}  // namespace lib\n"
+    )
+    (temp_repo / "use.cc").write_text(
+        '#include "lib.h"\nusing Alias = lib::Owner;\nvoid ::Alias::run() {}\n'
+    )
+    run_updater(temp_repo, mock_ingestor)
+    graph = _Graph(mock_ingestor)
+
+    assert graph.owner_path("use.cc", 3) == "lib.h", graph.owners
+
+
+def _index_stateful(store: _StatefulIngestor, repo: Path, force: bool) -> None:
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.CPP not in parsers:
+        pytest.skip("cpp parser not available")
+    GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    ).run(force=force)
+
+
+# Editing use.cc re-parses only it: lib.h is rehydrated from the graph, and
+# its alias is read from disk, so the incremental graph equals the clean one.
+@pytest.mark.parametrize("edited", ["use.cc", "lib.h"])
+def test_a_header_alias_reaches_the_nested_class_on_an_incremental_run(
+    temp_repo: Path, edited: str
+) -> None:
+    root = temp_repo / "proj"
+    root.mkdir()
+    (root / "lib.h").write_text(HEADER_ALIAS_LIB_H, encoding="utf-8")
+    (root / "use.cc").write_text(HEADER_ALIAS_USE_CC, encoding="utf-8")
+    store = _StatefulIngestor()
+    _index_stateful(store, root, force=True)
+    clean = (frozenset(store.nodes), frozenset(store.edges))
+    # The body joins the header's `run`, rather than minting a module-level
+    # `proj.use.Inner.run` of its own.
+    assert _run_methods(store) == {"proj.lib.lib.Outer.Inner.run"}
+
+    edited_path = root / edited
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    edited_path.write_text(
+        edited_path.read_text(encoding="utf-8") + "// touched\n", encoding="utf-8"
+    )
+    os.utime(edited_path, (cache_mtime + 1, cache_mtime + 1))
+    _index_stateful(store, root, force=False)
+
+    assert _run_methods(store) == {"proj.lib.lib.Outer.Inner.run"}
+    assert (frozenset(store.nodes), frozenset(store.edges)) == clean
+
+
+def _run_methods(store: _StatefulIngestor) -> set[str]:
+    return {
+        str(qn)
+        for (label, qn) in store.nodes
+        if label == cs.NodeLabel.METHOD.value and str(qn).endswith(".run")
+    }
+
+
 @pytest.fixture(scope="module")
 def cpp_parser():
     parsers, _ = load_parsers()
@@ -564,6 +707,16 @@ def _lookup_of_last_definition(cpp_parser, code: str) -> CppClassLookup:
             "namespace b { template <class T> struct X; void X::f() {} } }",
             CppClassLookup("X", "a.b"),
             id="nearer-template-hides-alias",
+        ),
+        pytest.param(
+            "using Alias = lib::Owner;\nvoid ::Alias::run() {}",
+            CppClassLookup("lib.Owner", ""),
+            id="anchored-through-a-global-alias",
+        ),
+        pytest.param(
+            "namespace x { using Alias = lib::Owner; void ::Alias::run() {} }",
+            CppClassLookup("Alias", ""),
+            id="anchored-skips-a-namespace-alias",
         ),
         pytest.param(
             "namespace x { void ::lib::Widget::draw() {} }",

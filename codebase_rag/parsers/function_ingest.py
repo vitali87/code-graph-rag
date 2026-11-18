@@ -814,12 +814,44 @@ class FunctionIngestMixin:
         # written says: `Writer` is not `Impl::Writer` or `Outer::log::Writer`.
         # No class at all leaves the definition unattached rather than
         # misattached (#3137).
+        nested: list[str] = []
         for candidate in dict.fromkeys((candidates[0], candidates[-1])):
             for class_qn in self._cpp_classes_ending_with(candidate):
-                if self._is_cpp_class_visible_from(
-                    class_qn, module_qn
-                ) and not self._nests_beyond(class_qn, class_lookup.name):
+                if not self._is_cpp_class_visible_from(class_qn, module_qn):
+                    continue
+                if not self._nests_beyond(class_qn, class_lookup.name):
                     return class_qn
+                nested.append(class_qn)
+        # A nested class is reached only through an alias its own header
+        # declares (`using Inner = Outer::Inner;`), the usual way a header
+        # publishes one, and only when that alias names exactly this class.
+        # An alias in some other header needs the includes followed.
+        return next(
+            (
+                class_qn
+                for class_qn in dict.fromkeys(nested)
+                if self._header_alias_names(class_qn, class_lookup)
+            ),
+            None,
+        )
+
+    def _header_alias_names(self, class_qn: str, class_lookup: CppClassLookup) -> bool:
+        if (path := self._cpp_class_file(class_qn)) is None or (
+            through := out_of_line.header_alias_lookup(path, class_lookup)
+        ) is None:
+            return False
+        return self._cpp_class_scoped_path(class_qn) in out_of_line.scope_candidates(
+            through
+        )
+
+    def _cpp_class_file(self, class_qn: str) -> Path | None:
+        # The file on disk that declares the class: its module's on a full or
+        # incremental run alike, else the path its rehydrated node records.
+        owner = self._cpp_class_module_qn(class_qn)
+        if owner is not None and (path := self.module_qn_to_file_path.get(owner)):
+            return path
+        if rehydrated := self.rehydrated_definition_paths.get(class_qn):
+            return self.repo_path / rehydrated
         return None
 
     def _find_namespace_scoped_cpp_class(
