@@ -894,6 +894,14 @@ INTERACTIVE_MSG_KEEPS_THIS_RUN = (
 INTERACTIVE_MSG_KEEPS_NOT_SAVED = (
     "Could not write {file} ({error}); the choice is kept for this run only."
 )
+# A kept path another exclusion still matches: a `!` line cannot keep it, and
+# saving one would report a keep that never happens (review of PR 2510).
+INTERACTIVE_MSG_KEEPS_BLOCKED = (
+    "Not kept: {blocked}. Each is still excluded by the line shown in "
+    ".cgrignore or .gitignore, and an exclusion wins over any keep. To keep "
+    "one, narrow or remove that line."
+)
+INTERACTIVE_BLOCKED_KEEP = "{path} (excluded by {patterns})"
 INTERACTIVE_EXPAND_SUFFIX = "e"
 INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."

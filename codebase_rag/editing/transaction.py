@@ -92,7 +92,7 @@ def _repo_lock(root: Path) -> Generator[EditLock]:
 
 
 @contextmanager
-def repo_write_lock(root: Path) -> Iterator[None]:
+def repo_write_lock(root: Path) -> Generator[None]:
     """Hold the tree's write lock: one read-modify-write in `root` at a time.
 
     The lock edit transactions take, for any other writer of a repository

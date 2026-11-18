@@ -271,24 +271,26 @@ def _enclosing_excludes(keep: str, exclude_paths: frozenset[str]) -> frozenset[s
         f"{cs.SEPARATOR_SLASH.join(parts[:depth])}{cs.SEPARATOR_SLASH}"
         for depth in range(1, len(parts))
     ]
-    # Compiled here, one pattern at a time, rather than through
-    # compiled_ignore_spec, whose small cache holds the walk's whole sets.
     return frozenset(
         pattern
         for pattern in exclude_paths
-        if any(
-            PathSpec.from_lines(cs.GITWILDMATCH_STYLE, [pattern]).match_file(directory)
-            for directory in enclosing
-        )
+        if any(_single_ignore_spec(pattern).match_file(d) for d in enclosing)
     )
 
 
+# Compiled one pattern at a time, rather than through compiled_ignore_spec,
+# whose small cache holds the walk's whole sets.
+@lru_cache(maxsize=256)
+def _single_ignore_spec(pattern: str) -> PathSpec:
+    return PathSpec.from_lines(cs.GITWILDMATCH_STYLE, [pattern])
+
+
 def excludes_applying_to(
-    rel_path_str: str,
+    match_path: str,
     exclude_paths: frozenset[str] | None,
     unignore_paths: frozenset[str] | None,
 ) -> frozenset[str] | None:
-    """The exclude patterns that decide `rel_path_str`.
+    """The exclude patterns that decide `match_path` (a directory ends in `/`).
 
     Excludes win over unignores, with one exception: the exclusion of a
     directory ENCLOSING a nested keep gives way on the path down to the keep
@@ -300,19 +302,61 @@ def excludes_applying_to(
     """
     if not exclude_paths or not unignore_paths:
         return exclude_paths
+    rel_path_str = match_path.rstrip(cs.SEPARATOR_SLASH)
     lifted: set[str] = set()
     for keep in nested_keeps(unignore_paths):
-        if _on_the_way_to_or_inside(rel_path_str, keep):
+        if keep.startswith(f"{rel_path_str}{cs.SEPARATOR_SLASH}"):
             lifted |= _enclosing_excludes(keep, exclude_paths)
+        elif rel_path_str == keep or rel_path_str.startswith(
+            f"{keep}{cs.SEPARATOR_SLASH}"
+        ):
+            lifted |= {
+                pattern
+                for pattern in _enclosing_excludes(keep, exclude_paths)
+                if not _matches_at_or_below_keep(pattern, match_path, keep)
+            }
     return exclude_paths - lifted if lifted else exclude_paths
 
 
-def _on_the_way_to_or_inside(rel_path_str: str, keep: str) -> bool:
-    return (
-        rel_path_str == keep
-        or rel_path_str.startswith(f"{keep}{cs.SEPARATOR_SLASH}")
-        or keep.startswith(f"{rel_path_str}{cs.SEPARATOR_SLASH}")
+def exclusions_matching(
+    match_path: str,
+    exclude_paths: frozenset[str],
+    unignore_paths: frozenset[str] | None,
+) -> frozenset[str]:
+    """The exclude patterns that still exclude `match_path` (a directory ends in `/`).
+
+    The same decision the walk predicates make, pattern by pattern, so a
+    caller can name the line that keeps a path out.
+    """
+    applying = excludes_applying_to(match_path, exclude_paths, unignore_paths)
+    return frozenset(
+        pattern
+        for pattern in applying or ()
+        if _single_ignore_spec(pattern).match_file(match_path)
     )
+
+
+def _matches_at_or_below_keep(pattern: str, match_path: str, keep: str) -> bool:
+    """Whether `pattern` matches `match_path` at the keep or below it.
+
+    Only the match on a directory enclosing the keep gives way. With
+    `secrets/` excluded and `!secrets/public` kept, the `secrets/` inside
+    `secrets/public/secrets/` is a match of its own and still excludes
+    (Greptile review of PR 2510). A slash-free pattern matches by name at
+    any depth, so matching it against the path below the keep's parent sees
+    exactly the directories from the keep down. An anchored pattern matches
+    at one depth, the enclosing directory it was lifted for, so it has no
+    match below; only a `**` inside one can match at several, and that rare
+    case is still lifted whole.
+    """
+    unanchored = pattern.strip().rstrip(cs.SEPARATOR_SLASH)
+    while unanchored.startswith(cs.GLOB_ANY_DEPTH_PREFIX):
+        unanchored = unanchored.removeprefix(cs.GLOB_ANY_DEPTH_PREFIX)
+    if cs.SEPARATOR_SLASH in unanchored:
+        return False
+    parent = keep.rsplit(cs.SEPARATOR_SLASH, 1)[0]
+    below_parent = match_path[len(parent) + 1 :]
+    return _single_ignore_spec(pattern).match_file(below_parent)
 
 
 def should_keep_dir(
@@ -331,7 +375,7 @@ def should_keep_dir(
     # an explicit exclude can never be rescued by unignore (excludes win
     # at the file level too), so prune the subtree outright -- unless it
     # encloses a nested keep, whose way down stays open (PR 2510).
-    exclude_paths = excludes_applying_to(rel_dir, exclude_paths, unignore_paths)
+    exclude_paths = excludes_applying_to(f"{rel_dir}/", exclude_paths, unignore_paths)
     if exclude_paths and matches_ignore_patterns(f"{rel_dir}/", exclude_paths):
         return False
     if dirname not in cs.IGNORE_PATTERNS:
@@ -422,7 +466,7 @@ def should_skip_path(
     # A directory enclosing a nested keep loses its exclusion here and is
     # then kept by the unignore-beneath rule below, as in should_keep_dir,
     # so the kept files get their Folder ancestry.
-    exclude_paths = excludes_applying_to(rel_path_str, exclude_paths, unignore_paths)
+    exclude_paths = excludes_applying_to(match_path, exclude_paths, unignore_paths)
     if exclude_paths and matches_ignore_patterns(match_path, exclude_paths):
         return True
     # The rescuable half, decided BEFORE the general unignore below: that check

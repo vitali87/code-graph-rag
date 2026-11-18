@@ -632,6 +632,8 @@ UNCONDITIONAL_IGNORE_FILENAME_ENDINGS = tuple(sorted(UNCONDITIONAL_IGNORE_SUFFIX
 
 # pathspec style for .cgrignore / --exclude patterns (#495).
 GITWILDMATCH_STYLE = "gitignore"
+# A leading `**/` matches in every directory, as a slash-free pattern does.
+GLOB_ANY_DEPTH_PREFIX = "**/"
 
 # JDK binaries the Java frontend probes and runs (issue #1181).
 JAVAC_BIN = "javac"

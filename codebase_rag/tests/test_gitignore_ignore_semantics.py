@@ -125,6 +125,32 @@ class TestGitignoreUnignoreSemantics:
         assert not _skip("gen/x.py", exclude=exclude, unignore=unignore)
         assert _skip("gen/y.py", exclude=exclude, unignore=unignore)
 
+    def test_the_same_exclusion_still_applies_below_a_keep(self) -> None:
+        # Greptile review of PR 2510: only the enclosing directory's match
+        # gives way. With `secrets/` excluded and `!secrets/public` kept, a
+        # second `secrets/` inside the keep is a match of its own.
+        exclude = frozenset({"secrets/"})
+        unignore = frozenset({"secrets/public"})
+        assert not _skip("secrets/public/a.py", exclude=exclude, unignore=unignore)
+        assert _skip(
+            "secrets/public/secrets/config.py", exclude=exclude, unignore=unignore
+        )
+        assert _skip(
+            "secrets/public/x/secrets/y.py", exclude=exclude, unignore=unignore
+        )
+        assert _skip("secrets/other.py", exclude=exclude, unignore=unignore)
+
+    def test_an_anchored_enclosing_exclusion_is_lifted_inside_the_keep(
+        self,
+    ) -> None:
+        # Negative: an anchored pattern matches at one depth only, so a
+        # same-named directory deeper inside the keep is not excluded.
+        exclude = frozenset({"/secrets/"})
+        unignore = frozenset({"secrets/public"})
+        assert not _skip(
+            "secrets/public/secrets/config.py", exclude=exclude, unignore=unignore
+        )
+
 
 class TestDirPruning:
     # greptile P1 on #596: an explicitly excluded directory must stay pruned
@@ -157,6 +183,14 @@ class TestDirPruning:
         assert updater._should_keep_dir("gen", "")
         assert updater._should_keep_dir("sub", "gen/")
         assert not updater._should_keep_dir("other", "gen/")
+
+    def test_a_repeated_exclusion_inside_a_keep_is_still_pruned(self) -> None:
+        # Greptile review of PR 2510: the walk agrees with the file decision
+        # and does not enter the second `secrets/` below the keep.
+        updater = self._updater(frozenset({"secrets/"}), frozenset({"secrets/public"}))
+        assert updater._should_keep_dir("secrets", "")
+        assert updater._should_keep_dir("public", "secrets/")
+        assert not updater._should_keep_dir("secrets", "secrets/public/")
 
     def test_builtin_pruned_dir_kept_when_unignore_targets_beneath(self) -> None:
         updater = self._updater(None, frozenset({"bin/keep.py"}))

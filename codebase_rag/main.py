@@ -117,7 +117,11 @@ from .types_defs import (
     ToolArgs,
 )
 from .utils.interruptible_thread import run_in_interruptible_thread
-from .utils.path_utils import derive_project_name, is_symlink_entry
+from .utils.path_utils import (
+    derive_project_name,
+    exclusions_matching,
+    is_symlink_entry,
+)
 from .utils.rich_markdown import LeftAlignedMarkdown
 from .utils.token_utils import estimate_message_tokens
 
@@ -2029,6 +2033,21 @@ def _offer_to_save_keeps(
     itself excludes needs that line removed, not a `!` line beside it:
     `.cgrignore` excludes beat its `!` lines (review of PR 2510).
     """
+    blocked = _keeps_still_excluded(new_keeps, cgrignore_excludes)
+    if blocked:
+        listing = cs.SEPARATOR_COMMA_SPACE.join(
+            cs.INTERACTIVE_BLOCKED_KEEP.format(
+                path=path, patterns=cs.SEPARATOR_COMMA_SPACE.join(patterns)
+            )
+            for path, patterns in blocked.items()
+        )
+        app_context.console.print(
+            style(
+                cs.INTERACTIVE_MSG_KEEPS_BLOCKED.format(blocked=listing),
+                cs.Color.YELLOW,
+            )
+        )
+        new_keeps = new_keeps - frozenset(blocked)
     if not new_keeps:
         return
     lines = [f"{cs.CGRIGNORE_UNIGNORE_PREFIX}{path}" for path in sorted(new_keeps)]
@@ -2072,6 +2091,37 @@ def _offer_to_save_keeps(
             lines=listing, lifted=lifted_listing, file=CGRIGNORE_FILENAME
         )
     app_context.console.print(style(saved, cs.Color.GREEN))
+
+
+def _keeps_still_excluded(
+    new_keeps: frozenset[str], excludes: frozenset[str]
+) -> dict[str, list[str]]:
+    """The keeps an exclusion other than their own line still matches.
+
+    Saving lifts only an exclusion written exactly as the kept path. Another
+    one that matches it (`bin/` for a kept `app/bin`) still wins after the
+    save, on this run and every later sync, so the keep must not be reported
+    saved (Greptile review of PR 2510). Removing that line instead would
+    also bring in every other path it excludes, which nobody chose. A
+    blocked keep's own line stays, and may in turn block another, hence the
+    loop.
+    """
+    blocked: dict[str, list[str]] = {}
+    while True:
+        remaining = excludes - ((new_keeps - frozenset(blocked)) & excludes)
+        found = {
+            keep: patterns
+            for keep in sorted(new_keeps)
+            if (patterns := _exclusions_of_kept_dir(keep, remaining))
+        }
+        if found.keys() == blocked.keys():
+            return found
+        blocked = found
+
+
+def _exclusions_of_kept_dir(keep: str, excludes: frozenset[str]) -> list[str]:
+    directory = f"{keep.strip().strip(cs.SEPARATOR_SLASH)}{cs.SEPARATOR_SLASH}"
+    return sorted(exclusions_matching(directory, excludes, frozenset({keep})))
 
 
 def _merge_keeps_into_ignore_file(

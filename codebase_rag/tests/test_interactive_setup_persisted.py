@@ -393,6 +393,97 @@ def test_an_excluded_file_inside_a_kept_directory_stays_excluded(
     assert "generated/node_modules/pkg/index.js" not in _walked(generated)
 
 
+@pytest.fixture
+def broadly_excluded(repo: Path) -> Path:
+    # `.cgrignore` excludes every `bin/`, so the kept `app/bin` is matched by
+    # a line that is not the kept path itself.
+    (repo / "app" / "bin").mkdir(parents=True)
+    (repo / "app" / "bin" / "cli.py").write_text("def cli():\n    pass\n")
+    (repo / CGRIGNORE_FILENAME).write_text("bin/\n")
+    return repo
+
+
+def _keep_nested(
+    repo: Path, answers: list[str], confirm: bool
+) -> tuple[frozenset[str], MagicMock]:
+    with (
+        patch("codebase_rag.main.Prompt.ask", side_effect=answers),
+        patch("rich.prompt.Confirm.ask", return_value=confirm) as confirm_ask,
+    ):
+        kept = prompt_for_unignored_directories(repo)
+    return kept, confirm_ask
+
+
+def test_a_keep_another_exclusion_matches_is_reported_not_saved(
+    broadly_excluded: Path, console: MagicMock
+) -> None:
+    # Greptile review of PR 2510: saving `!app/bin` left `bin/` matching it,
+    # so this run and every later one pruned it while setup reported it
+    # saved. Rows: bin (nested: app/bin, bin, bin/); keep only app/bin.
+    before = (broadly_excluded / CGRIGNORE_FILENAME).read_text()
+
+    _, confirm_ask = _keep_nested(broadly_excluded, ["1e", "1"], confirm=True)
+
+    confirm_ask.assert_not_called()
+    assert (broadly_excluded / CGRIGNORE_FILENAME).read_text() == before
+    printed = _printed(console)
+    assert "Not kept: app/bin (excluded by bin/)" in printed
+    assert "every later sync keeps them" not in printed
+    assert "app/bin/cli.py" not in _walked(broadly_excluded)
+
+
+def test_a_blocked_keep_does_not_stop_the_others_being_saved(
+    broadly_excluded: Path, console: MagicMock
+) -> None:
+    # Negative: a keep no other line matches is saved as before beside the
+    # one reported.
+    (broadly_excluded / "app" / "node_modules").mkdir()
+    (broadly_excluded / "app" / "node_modules" / "m.py").write_text("X = 1\n")
+
+    # Rows: bin, node_modules. Expand bin and keep app/bin; keep node_modules.
+    _keep_nested(broadly_excluded, ["1e,2", "1"], confirm=True)
+
+    lines = (broadly_excluded / CGRIGNORE_FILENAME).read_text().splitlines()
+    assert "!app/node_modules" in lines
+    assert "!app/bin" not in lines
+    assert "bin/" in lines
+    walked = _walked(broadly_excluded)
+    assert "app/node_modules/m.py" in walked
+    assert "app/bin/cli.py" not in walked
+    assert "Not kept: app/bin" in _printed(console)
+
+
+def test_keeping_the_exclusion_itself_still_lifts_it(
+    broadly_excluded: Path, console: MagicMock
+) -> None:
+    # Negative: keeping the whole `bin` group includes the `bin/` line itself,
+    # which is lifted, so `app/bin` is no longer blocked and is kept.
+    _keep_nested(broadly_excluded, ["1"], confirm=True)
+
+    lines = (broadly_excluded / CGRIGNORE_FILENAME).read_text().splitlines()
+    assert "bin/" not in lines
+    assert "!app/bin" in lines
+    assert "app/bin/cli.py" in _walked(broadly_excluded)
+    assert "Not kept" not in _printed(console)
+
+
+def test_a_repeated_exclusion_inside_a_saved_keep_still_applies(
+    repo: Path, console: MagicMock
+) -> None:
+    # Greptile review of PR 2510: the walk of a later sync, with `secrets/`
+    # excluded and `!secrets/public` saved, leaves out the `secrets/` nested
+    # inside the keep.
+    (repo / CGRIGNORE_FILENAME).write_text("secrets/\n!secrets/public\n")
+    for rel in ("secrets/public/a.py", "secrets/public/secrets/config.py"):
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text("X = 1\n")
+
+    walked = _walked(repo)
+
+    assert "secrets/public/a.py" in walked
+    assert "secrets/public/secrets/config.py" not in walked
+
+
 def test_concurrent_saves_both_keep_their_choice(
     vendored: Path, console: MagicMock
 ) -> None:
