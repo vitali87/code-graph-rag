@@ -534,6 +534,26 @@ def test_build_script_makes_unpackaged_imports_resolvable() -> None:
     )
 
 
+def test_build_script_bundles_the_rust_extension() -> None:
+    """Every target imports `codebase_rag`, which stops without the extension.
+
+    The extension is imported by a name held in a constant, so PyInstaller's
+    analysis never sees it, and a target frozen without it builds and then
+    dies on startup. The build script must name it for PyInstaller, as the
+    release binary's spec does.
+    """
+    from codebase_rag.constants.embedded_graph import EG_RUST_MODULE
+
+    build = (FUZZ_DIR.parent / ".clusterfuzzlite" / "build.sh").read_text()
+    code = "\n".join(
+        line for line in build.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert f"--collect-all={EG_RUST_MODULE}" in code, (
+        "build.sh must bundle the Rust extension into the fuzz targets, or "
+        "`import codebase_rag` fails in every one of them"
+    )
+
+
 def test_packaged_wheel_really_excludes_evals() -> None:
     """The premise of the test above, checked rather than assumed.
 

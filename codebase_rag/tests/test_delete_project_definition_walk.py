@@ -33,7 +33,10 @@ _OWNERSHIP_QUERIES = {
     "stats_relationship_counts": cq.CYPHER_STATS_PROJECT_RELATIONSHIP_COUNTS,
     "stats_per_project": cq.CYPHER_STATS_PER_PROJECT,
 }
-_DEFINITION_WALKERS = {"delete_project": cq.CYPHER_DELETE_PROJECT} | _OWNERSHIP_QUERIES
+_DEFINITION_WALKERS = {
+    "delete_project": cq.CYPHER_DELETE_PROJECT,
+    "delete_project_if_root": cq.CYPHER_DELETE_PROJECT_IF_ROOT,
+} | _OWNERSHIP_QUERIES
 
 
 def _walked(query: str) -> frozenset[str]:
