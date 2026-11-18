@@ -115,7 +115,7 @@ class Snapshot(NamedTuple):
     `callers` the definitions elsewhere that make sites into them;
     `modules` the (qualified name, path) of each Module at a touched path,
     `module_bindings` every import of one of them, and `bases` the
-    (class, base) of each class at a touched path.
+    (class, base) links above the classes the sites' callers sit in.
     """
 
     paths: frozenset[str]
@@ -383,16 +383,55 @@ def _touched_modules(
     )
 
 
-def _touched_bases(
-    fetch_all: QueryFn, params: PropertyDict
+def _enclosing_names(qualified_name: str) -> list[str]:
+    """The qualified names `qualified_name` is nested in, innermost first."""
+    parts = qualified_name.partition(cs.CHAR_PAREN_OPEN)[0].split(cs.SEPARATOR_DOT)
+    return [cs.SEPARATOR_DOT.join(parts[:end]) for end in range(len(parts) - 1, 0, -1)]
+
+
+def _bases_above(
+    fetch_all: QueryFn, params: PropertyDict, callers: Iterable[str]
 ) -> frozenset[tuple[str, str]]:
-    """The (class, base) of each class at a touched path."""
-    return frozenset(
-        (source, base)
-        for row in fetch_all(cq.CYPHER_DELTA_BASES, params)
-        if (source := _text(row.get(cs.KEY_FROM_QN)))
-        and (base := _text(row.get(cs.KEY_TO_QN)))
-    )
+    """The (class, base) links above the classes `callers` sit in, read one
+    level at a time up to the top of each hierarchy."""
+    frontier = {name for caller in callers for name in _enclosing_names(caller)}
+    seen: set[str] = set()
+    links: set[tuple[str, str]] = set()
+    while frontier:
+        seen |= frontier
+        rows = fetch_all(
+            cq.CYPHER_DELTA_BASES, {**params, cs.KEY_QNS: sorted(frontier)}
+        )
+        found = {
+            (source, base)
+            for row in rows
+            if (source := _text(row.get(cs.KEY_FROM_QN)))
+            and (base := _text(row.get(cs.KEY_TO_QN)))
+        }
+        links |= found
+        frontier = {base for _, base in found} - seen
+    return frozenset(links)
+
+
+def _chain(
+    caller: str, bases: frozenset[tuple[str, str]]
+) -> frozenset[tuple[str, str]]:
+    """The (class, base) links above the classes `caller` sits in."""
+    above: dict[str, list[str]] = {}
+    for source, base in bases:
+        above.setdefault(source, []).append(base)
+    pending = _enclosing_names(caller)
+    seen: set[str] = set()
+    links: set[tuple[str, str]] = set()
+    while pending:
+        name = pending.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        for base in above.get(name, ()):
+            links.add((name, base))
+            pending.append(base)
+    return frozenset(links)
 
 
 def _module_import_bindings(
@@ -512,7 +551,7 @@ def snapshot(
         callers=callers,
         modules=_touched_modules(fetch_all, params),
         module_bindings=_module_import_bindings(fetch_all, params),
-        bases=_touched_bases(fetch_all, params),
+        bases=_bases_above(fetch_all, params, {site.caller for site in sites}),
     )
 
 
@@ -2912,13 +2951,12 @@ def _calls_into(
     name = after.definitions[qn].name
     # A definite binding a call had still names what it runs while the call
     # is the call it was and goes through its caller's own `this`: that
-    # names the caller's class, so the binding holds while no class at a
-    # touched path changed its bases (`extends Cart` can now read `extends
-    # Tart` though every method keeps its shape). Any other receiver can
-    # come to name something else through an edit the graph keeps no trace
-    # of, a local renamed or a factory's new return type (bot reviews on PR
+    # names the caller's class, so the binding holds while no class above
+    # it changed its bases (`extends Cart` can now read `extends Tart`
+    # though every method keeps its shape). Any other receiver can come to
+    # name something else through an edit the graph keeps no trace of, a
+    # local renamed or a factory's new return type (bot reviews on PR
     # #3632).
-    bases_kept = before.bases == after.bases
     unchanged: set[CallSite] = set()
     for site in before.sites:
         if not _reaches(site, qn, was_accessor):
@@ -2932,9 +2970,9 @@ def _calls_into(
             continue
         drawn.append(current)
         if (
-            bases_kept
-            and site.resolution in _DEFINITE_RESOLUTIONS
+            site.resolution in _DEFINITE_RESOLUTIONS
             and _through_own_receiver(current, name, trees)
+            and _chain(site.caller, before.bases) == _chain(current.caller, after.bases)
         ):
             unchanged.add(current)
     # One site per position: a call the edit left alone is drawn before and

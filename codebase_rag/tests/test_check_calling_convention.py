@@ -977,6 +977,22 @@ def test_a_call_in_a_file_the_edit_only_commented_keeps_its_binding(
     assert _verdicts(delta, "scale")["viaScale"] == cs.DELTA_CONVENTION_NEEDS_CLASS
 
 
+def test_a_class_the_call_does_not_sit_under_may_change_its_bases(
+    temp_repo: Path,
+) -> None:
+    # Bot review on PR #3632: the same edit adds `Extra extends Cart`. That
+    # changes no class above `Sub`, so `this.scale(2)` in `Sub.viaScale` is
+    # judged by its binding before the edit, as without `Extra`.
+    delta = _edit(
+        temp_repo,
+        {"cart.ts": CART_TS, "shop.ts": SHOP_SUB_TS},
+        "cart.ts",
+        CART_SCALE_STATIC_TS + "\nexport class Extra extends Cart {}\n",
+    )
+
+    assert _verdicts(delta, "scale")["viaScale"] == cs.DELTA_CONVENTION_NEEDS_CLASS
+
+
 def test_a_call_whose_receiver_the_edit_swapped_is_judged_by_its_binding_after(
     temp_repo: Path,
 ) -> None:
