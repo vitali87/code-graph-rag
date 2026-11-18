@@ -278,6 +278,18 @@ def _rust_tail_expression(func_node: Node) -> Node | None:
     return None if tail.type in _RUST_NON_VALUE_TAIL else tail
 
 
+class PriorResourceFlow(NamedTuple):
+    """A resource-to-resource flow as the graph held it, with its owner."""
+
+    scope: str
+    src: str
+    src_name: str
+    src_kind: str
+    dst: str
+    dst_name: str
+    dst_kind: str
+
+
 class Taint(NamedTuple):
     # What is tainting a variable: resolved resource origins plus the set of
     # callee QNs whose (possibly not-yet-processed) return value it carries. A
@@ -1144,6 +1156,13 @@ class FlowProcessor:
         # against the parameter-sink closure in finalize to emit origin -> sink.
         # The fifth element is the calling function, which owns the flow.
         self._param_call_sites: list[tuple[Taint, str, str, str, str]] = []
+        # The callers walked this run, and the resource flows the graph held
+        # for the re-parsed modules before their delete, by owning scope. A
+        # flow composed through a callee this run does not walk (an unchanged
+        # file's) cannot be rebuilt here, so finalize puts the prior one back
+        # while its scope still makes the call (review of PR #2759).
+        self._walked: set[str] = set()
+        self._prior_flows: dict[str, set[PriorResourceFlow]] = defaultdict(set)
         self._pending_captures: dict[str, _PendingCapture] = {}
         # Per-function positional parameter slots so a call site's arg:<index>
         # resolves to the right callee parameter. The Python path truncates at
@@ -1182,6 +1201,7 @@ class FlowProcessor:
     ) -> None:
         if not self._enabled:
             return
+        self._walked.add(caller_qn)
         sinks = IO_SINKS.get(language, ())
         if not sinks:
             return
@@ -4799,7 +4819,10 @@ class FlowProcessor:
         # any pending callee's return origins) into every sink the matched
         # parameter reaches.
         self._emit_param_call_site_flows(resolved)
+        self._restore_undecided_prior_flows()
         # One-shot per run: clear so a reused processor never re-emits.
+        self._walked.clear()
+        self._prior_flows.clear()
         self._return_edge_candidates.clear()
         self._deferred_resource_flows.clear()
         self._deferred_arg_edges.clear()
@@ -4809,6 +4832,68 @@ class FlowProcessor:
         self._param_call_sites.clear()
         self._positional_params.clear()
         self._variadic_params.clear()
+
+    def remember_prior_flows(self, flows: list[PriorResourceFlow]) -> None:
+        """Hold the resource flows a re-parsed module owned before its delete."""
+        if self._enabled:
+            for flow in flows:
+                self._prior_flows[flow.scope].add(flow)
+
+    def _restore_undecided_prior_flows(self) -> None:
+        # A walked caller's flow through a callee this run did not walk is
+        # neither re-derived nor known gone: `log(os.getenv("K"))` whose `log`
+        # prints sits in an unchanged file. The prior flow comes back when
+        # its scope still makes such a call, and its known end still matches
+        # (the argument's origin, or the sink a pending return reaches), so a
+        # call removed or retargeted in the edit does not keep it.
+        if not self._prior_flows:
+            return
+        patterns: dict[str, list[tuple[frozenset[str] | None, frozenset[str] | None]]]
+        patterns = defaultdict(list)
+        walked = self._walked
+        for taint, callee_qn, _via, _token, scope in self._param_call_sites:
+            pending_unwalked = any(p not in walked for p in taint.pending)
+            if callee_qn in walked and not pending_unwalked:
+                continue
+            sources = (
+                None
+                if pending_unwalked
+                else frozenset(self._resource_qn(o) for o in taint.origins)
+            )
+            patterns[scope].append((sources, None))
+        for pending, kind, identity, scope in self._deferred_resource_flows:
+            if any(p not in walked for p in pending):
+                sink = resource_qn(kind, identity, self._project_name)
+                patterns[scope].append((None, frozenset({sink})))
+        for scope, flows in self._prior_flows.items():
+            if scope not in walked or not (scope_patterns := patterns.get(scope)):
+                continue
+            for flow in sorted(flows):
+                if any(
+                    (sources is None or flow.src in sources)
+                    and (sinks is None or flow.dst in sinks)
+                    for sources, sinks in scope_patterns
+                ):
+                    self._re_emit_prior_flow(flow)
+
+    def _resource_qn(self, binding: HandleBinding) -> str:
+        return resource_qn(binding.kind, binding.identity, self._project_name)
+
+    def _re_emit_prior_flow(self, flow: PriorResourceFlow) -> None:
+        for qn, name, kind in (
+            (flow.src, flow.src_name, flow.src_kind),
+            (flow.dst, flow.dst_name, flow.dst_kind),
+        ):
+            self.ingestor.ensure_node_batch(
+                cs.NodeLabel.RESOURCE,
+                {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_NAME: name, KEY_KIND: kind},
+            )
+        self.ingestor.ensure_relationship_batch(
+            (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, flow.src),
+            cs.RelationshipType.FLOWS_TO,
+            (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, flow.dst),
+            properties={KEY_KIND: FlowKind.RESOURCE.value, KEY_SCOPE: flow.scope},
+        )
 
     def _pass_through_extras(
         self, return_params: set[tuple[str, str]]

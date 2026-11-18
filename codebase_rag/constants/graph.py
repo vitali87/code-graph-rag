@@ -1050,7 +1050,7 @@ MODULE_SUBTREE_REL_PATTERN = (
     "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT"
     "|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY"
 )
-CYPHER_DELETE_MODULE = (
+_CYPHER_MODULE_SUBTREE = (
     # Scoped to the project: two projects in the shared graph can hold the
     # same relative path, and a path-only match would take the sibling's
     # module subtree with it. A repository-root __init__.py's module qn IS
@@ -1090,8 +1090,36 @@ CYPHER_DELETE_MODULE = (
     # after a sync that drops the `findings` capture group, or per finding
     # the edited source no longer matches (issue #2536).
     f"OPTIONAL MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*0..]->(c) "
+)
+CYPHER_DELETE_MODULE = (
+    _CYPHER_MODULE_SUBTREE
     # The walk starts at length 0, so `owned` includes the module itself.
-    "WITH m, collect(DISTINCT c) AS owned " + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
+    + "WITH m, collect(DISTINCT c) AS owned "
+    + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
+)
+# The resource flows CYPHER_DELETE_MODULE is about to take, read first: a
+# flow composed through a callee in a file the run does not re-parse cannot
+# be rebuilt from the caller alone, so the flow walk puts it back while the
+# caller still makes that call (review of PR #2759).
+CYPHER_MODULE_RESOURCE_FLOWS = (
+    _CYPHER_MODULE_SUBTREE
+    + "WITH collect(DISTINCT c.qualified_name) AS owners "
+    + f"MATCH (a:{NodeLabel.RESOURCE.value})-[rf:{RelationshipType.FLOWS_TO.value}]->"
+    + f"(b:{NodeLabel.RESOURCE.value}) "
+    + "WHERE rf.scope IN owners "
+    + "RETURN rf.scope AS scope, a.qualified_name AS src, a.name AS src_name, "
+    + "a.kind AS src_kind, b.qualified_name AS dst, b.name AS dst_name, "
+    + "b.kind AS dst_kind"
+)
+# Its columns, in PriorResourceFlow's field order.
+PRIOR_FLOW_COLUMNS = (
+    "scope",
+    "src",
+    "src_name",
+    "src_kind",
+    "dst",
+    "dst_name",
+    "dst_kind",
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
 # projects, and a path-only delete would take the sibling's node (issue #897).
