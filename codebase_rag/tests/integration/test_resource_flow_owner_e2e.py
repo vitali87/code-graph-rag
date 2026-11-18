@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -139,6 +140,31 @@ def test_deleting_the_project_drops_its_flow_while_stdout_stays_anchored(
     assert _token_flows(ingestor) == []
 
 
+def test_pruning_the_project_by_its_root_drops_its_flow(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # `cgr prune` deletes through the root-guarded form of the project delete,
+    # which must clean up the flows as the plain form does.
+    _index(
+        ingestor,
+        _write(tmp_path / "other", {"main.py": PRINTER}),
+        "other",
+        force=True,
+    )
+    _index(
+        ingestor,
+        _write(tmp_path / "billing", {"app.py": LEAK}),
+        "billing",
+        force=True,
+    )
+    root = ingestor.list_project_roots()["billing"]
+    assert root is not None
+
+    assert ingestor.delete_project("billing", expected_root=root) is True
+
+    assert _token_flows(ingestor) == []
+
+
 def test_each_function_owns_its_own_flow(
     ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
@@ -186,6 +212,33 @@ def test_reindexing_another_file_keeps_the_leak(
 
     _write(root, {"util.py": PRINTER + "\n\ndef more():\n    return 2\n"})
     _index(ingestor, root, "billing")
+
+    assert [dst for dst, _ in _token_flows(ingestor)] == [STDOUT]
+
+
+def test_a_prune_held_back_by_a_writing_run_keeps_the_flow(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # The guard is part of the delete statement; a project it leaves alone
+    # keeps its flows too.
+    _index(
+        ingestor,
+        _write(tmp_path / "billing", {"app.py": LEAK}),
+        "billing",
+        force=True,
+    )
+    root = ingestor.list_project_roots()["billing"]
+    assert root is not None
+    ingestor._execute_query(
+        cq.CYPHER_MARK_PROJECT_INCOMPLETE,
+        {
+            cs.KEY_PROJECT_NAME: "billing",
+            cs.KEY_RUN_ID: "elsewhere",
+            cs.KEY_WRITING: True,
+        },
+    )
+
+    assert ingestor.delete_project("billing", expected_root=root) is False
 
     assert [dst for dst, _ in _token_flows(ingestor)] == [STDOUT]
 

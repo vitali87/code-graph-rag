@@ -1,7 +1,9 @@
 # ClusterFuzzLite on pull requests.
 #
 # Runs each harness in fuzz/ for a short budget against the PR's head, seeded
-# from the corpus in fuzz/corpus/. A crash fails the job with the reproducing
+# from the corpus in fuzz/corpus/, and each cargo-fuzz target in
+# rust/cgr_graph_rs/fuzz in a job of its own (see .clusterfuzzlite/build.sh for
+# why a job builds one language). A crash fails the job with the reproducing
 # input attached as an artifact.
 #
 # See https://google.github.io/clusterfuzzlite/
@@ -21,23 +23,24 @@ concurrency:
 
 jobs:
   fuzzing:
-    name: Fuzz (${{ matrix.sanitizer }})
+    name: Fuzz (${{ matrix.language }}, ${{ matrix.sanitizer }})
     runs-on: ubuntu-latest
     permissions:
       security-events: write
     strategy:
       fail-fast: false
       matrix:
+        language: [python, rust]
         sanitizer: [address]
     steps:
-      - name: Build fuzzers (${{ matrix.sanitizer }})
+      - name: Build fuzzers (${{ matrix.language }}, ${{ matrix.sanitizer }})
         uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           sanitizer: ${{ matrix.sanitizer }}
-          language: python
+          language: ${{ matrix.language }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run fuzzers (${{ matrix.sanitizer }})
+      - name: Run fuzzers (${{ matrix.language }}, ${{ matrix.sanitizer }})
         uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -50,5 +53,5 @@ jobs:
           # 30s default). A PyInstaller-frozen Python target is slow to start,
           # so dropping this risks real crashes being written off as
           # unreproducible.
-          language: python
+          language: ${{ matrix.language }}
           output-sarif: true
