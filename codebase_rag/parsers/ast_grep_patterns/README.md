@@ -86,11 +86,12 @@ generic `call` nodes) or when the value you want is a literal rather than an
 identifier (a Solidity import path).
 
 Kind rules take the name from the node's `name` field, falling back to its
-first identifier-like child. Three optional keys handle the rest:
+first identifier-like child. Optional keys handle the rest:
 
 | Key | Applies to | Effect |
 |---|---|---|
 | `name_child` | `kind` | take the name from this child kind instead of the default lookup |
+| `name_paths` | `kind` | ordered `/`-separated direct-child kind paths, tried when `name_child` has no match; use the first leaf's text, replacing `.` with U+2024 (`․`); no match skips the definition without default lookup |
 | `has_child` | `kind` | skip matches with no child of this kind |
 | `name_head` | `pattern` | keep only the leading identifier of the capture |
 | `receiver_child` | `kind` | name the declaration under the type this child names (needs `scoped_names`) |
