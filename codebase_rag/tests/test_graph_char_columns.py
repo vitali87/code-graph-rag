@@ -74,7 +74,7 @@ GREETER_EXPANDED = GREETER_RAW.replace("val s", "final java.lang.String s")
 def _store(root: Path, files: dict[str, str]) -> _StatefulIngestor:
     for rel, text in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
-        (root / rel).write_text(text, encoding="utf-8")
+        (root / rel).write_text(text, encoding="utf-8", newline="\n")
     parsers, queries = load_parsers()
     store = _StatefulIngestor()
     GraphUpdater(
@@ -230,7 +230,7 @@ def _fake_delombok(monkeypatch: pytest.MonkeyPatch) -> None:
         for original in source_root.rglob("*.java"):
             target = out_dir / original.relative_to(source_root)
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(GREETER_EXPANDED, encoding="utf-8")
+            target.write_text(GREETER_EXPANDED, encoding="utf-8", newline="\n")
         return True
 
     monkeypatch.setattr(java_lombok, "_run_delombok", expand)
@@ -260,8 +260,8 @@ def test_only_a_lombok_builds_java_sources_are_left_unconverted(
     jar may be on another machine), so a Lombok build's sources are left
     out whether or not this machine could expand them."""
     (temp_repo / GREETER).parent.mkdir(parents=True)
-    (temp_repo / GREETER).write_text(GREETER_RAW, encoding="utf-8")
-    (temp_repo / "pom.xml").write_text(pom, encoding="utf-8")
+    (temp_repo / GREETER).write_text(GREETER_RAW, encoding="utf-8", newline="\n")
+    (temp_repo / "pom.xml").write_text(pom, encoding="utf-8", newline="\n")
     col = GREETER_LINE.index("label(s)")
     expected = col if converted else None
     assert CharColumns(temp_repo).at(GREETER, 6, len(GREETER_LINE[:col].encode())) == (
@@ -301,7 +301,7 @@ def test_another_checkout_is_not_read_for_the_character_columns(
     store = _store(temp_repo, {"greet.py": GREET_PY})
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
-    (elsewhere / "greet.py").write_text(ASCII_PY, encoding="utf-8")
+    (elsewhere / "greet.py").write_text(ASCII_PY, encoding="utf-8", newline="\n")
     rows = _cli(store, elsewhere, "callers", LABEL)
     assert [r["col"] for r in rows] == [28, 49]
     assert all(cs.KEY_COL_CHAR not in r for r in rows)
@@ -361,8 +361,22 @@ def test_each_file_is_read_once_per_answer(
 def test_a_position_off_the_line_or_inside_a_character_answers_nothing(
     temp_repo: Path, line: int | None, col: int | None, expected: int | None
 ) -> None:
-    (temp_repo / "greet.py").write_text(GREET_PY, encoding="utf-8")
+    (temp_repo / "greet.py").write_text(GREET_PY, encoding="utf-8", newline="\n")
     assert CharColumns(temp_repo).at("greet.py", line, col) == expected
+
+
+def test_a_crlf_line_keeps_its_carriage_return_as_tree_sitter_does(
+    temp_repo: Path,
+) -> None:
+    # Tree-sitter breaks lines on `\n` alone, so on a CRLF line the `\r` is
+    # the line's last character and the column after it is the line's end.
+    (temp_repo / "crlf.py").write_bytes("s = 'П'\r\nt = 1\r\n".encode())
+    columns = CharColumns(temp_repo)
+    first = "s = 'П'\r"
+    assert columns.at("crlf.py", 1, len("s = 'П".encode())) == len("s = 'П")
+    assert columns.at("crlf.py", 1, len(first.encode())) == len(first)
+    assert columns.at("crlf.py", 1, len(first.encode()) + 1) is None
+    assert columns.at("crlf.py", 2, 4) == 4
 
 
 def test_no_root_a_missing_file_or_a_path_outside_the_root_answers_nothing(
@@ -370,8 +384,8 @@ def test_no_root_a_missing_file_or_a_path_outside_the_root_answers_nothing(
 ) -> None:
     root = temp_repo / "repo"
     root.mkdir()
-    (root / "greet.py").write_text(GREET_PY, encoding="utf-8")
-    (temp_repo / "outside.py").write_text(GREET_PY, encoding="utf-8")
+    (root / "greet.py").write_text(GREET_PY, encoding="utf-8", newline="\n")
+    (temp_repo / "outside.py").write_text(GREET_PY, encoding="utf-8", newline="\n")
     assert CharColumns(root).at("greet.py", 6, 28) == 22
     assert CharColumns(None).at("greet.py", 6, 28) is None
     assert CharColumns(root).at("missing.py", 6, 28) is None
