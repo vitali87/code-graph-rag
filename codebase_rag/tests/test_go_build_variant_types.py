@@ -24,6 +24,7 @@ from codebase_rag import constants as cs
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.call_resolver import CallResolver
 from codebase_rag.types_defs import PropertyValue
 from evals.cgr_graph import _StatefulIngestor
 
@@ -267,6 +268,40 @@ def test_another_copys_method_counts_only_where_the_callers_build_reaches_it(
         if caller == f"{_PROJECT}.sys.use_linux.useLinux"
     }
     assert callees == {f"{_PROJECT}.sys.ztypes_linux.Iovec.SetLen"}, callees
+
+
+def test_a_copy_counts_only_where_a_build_certainly_reaches_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only Linux declares the methods, and `use_odd.go`'s constraint cannot
+    # be read, so whether a build compiles it with Linux's copy is unknown.
+    # A call edge needs a build that certainly compiles the caller, the copy
+    # and the method; unknown is no, so the copies give the call nothing and
+    # it is left to the name-only lookup. `readv.go` builds everywhere and
+    # still reaches Linux's copy.
+    root = _per_build_layout(tmp_path / "bt", ("linux",))
+    (root / "sys" / "use_odd.go").write_text(
+        "//go:build linux &&\n\npackage sys\n\n"
+        "func useOdd() {\n\tvar v Iovec\n\tv.SetLen(1)\n}\n",
+        encoding=cs.ENCODING_UTF8,
+    )
+    found: dict[str, list[tuple[str, str] | None]] = {}
+    original = CallResolver._go_build_copy_method
+
+    def spy(
+        self: CallResolver, type_qn: str, method_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        result = original(self, type_qn, method_name, module_qn)
+        found.setdefault(module_qn, []).append(result)
+        return result
+
+    monkeypatch.setattr(CallResolver, "_go_build_copy_method", spy)
+    _index(root)
+    linux_set_len = f"{_PROJECT}.sys.ztypes_linux.Iovec.SetLen"
+    assert [hit and hit[1] for hit in found[f"{_PROJECT}.sys.readv"]] == [
+        linux_set_len
+    ], found
+    assert found[f"{_PROJECT}.sys.use_odd"] == [None], found
 
 
 def test_a_python_receiver_never_reaches_a_go_types_copies(tmp_path: Path) -> None:

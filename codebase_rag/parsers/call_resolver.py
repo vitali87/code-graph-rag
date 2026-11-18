@@ -7925,7 +7925,7 @@ class CallResolver:
                 if method_qn in self.function_registry
                 else self._resolve_inherited_breadth_first(copy_qn, method_name)
             )
-            if found is not None and not builds.apart(
+            if found is not None and builds.together(
                 (
                     caller,
                     self.go_declaring_rel(copy_qn),
