@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -195,18 +197,19 @@ def test_unloadable_translation_unit_is_reported_not_silent(
     assert any("geometry.cpp" in m for m in messages), messages
 
 
-def test_entry_whose_directory_is_gone_loads_from_the_cwd(
-    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_entry_whose_directory_is_gone_loads_from_the_cwd(temp_repo: Path) -> None:
     # The entry's build directory was removed, but its relative paths load
     # from the cwd: what clang reports must not be joined to the missing one.
     root = temp_repo / "cppnodir"
     _write_geometry(root, relative=True)
     entry = _entry(root / "build-gone", "geometry.cpp", "-Iinc")
     (root / "compile_commands.json").write_text(json.dumps([entry]), encoding="utf-8")
-    monkeypatch.chdir(root)
     ingestor = MagicMock()
-    pending, _ = run_cpp_frontend_hybrid(ingestor, root, root.name, root)
+    # Left before `temp_repo` is removed: autouse fixtures take `monkeypatch`
+    # first, so it would restore the cwd only after that, and Windows cannot
+    # remove the directory a process is working in.
+    with contextlib.chdir(root):
+        pending, _ = run_cpp_frontend_hybrid(ingestor, root, root.name, root)
 
     functions = _functions(ingestor)
     assert "cppnodir.geometry.h.AREA" in functions, sorted(functions)
@@ -214,6 +217,11 @@ def test_entry_whose_directory_is_gone_loads_from_the_cwd(
     assert all(p.rel_path == "geometry.cpp" for p in pending), pending
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows resolves `..` by text before following a link, so there "
+    "`objdir/../main.cpp` names `cpplink/main.cpp` for clang and Python alike",
+)
 def test_parent_of_a_symlinked_directory_is_the_link_targets_parent(
     temp_repo: Path, elsewhere: Path
 ) -> None:
