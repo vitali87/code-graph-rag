@@ -1,0 +1,1050 @@
+"""A JS/TS side-effect import is an IMPORTS edge (issue #3267).
+
+`import "./instrument"`, `import "reflect-metadata"` and a statement-level
+`require("./db");` bind no name, and the import pass recorded only bindings,
+so none of them produced an edge: `graph importers` returned nothing for a
+module that is imported, and a deleted `./instrument` was invisible to
+`cgr check`.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.tests.conftest import create_and_run_updater
+
+_FILES = {
+    "src/instrument.ts": "export function initTracing(): void {}\ninitTracing();\n",
+    "src/routes.ts": 'export function route(): string { return "/"; }\n',
+    "src/main.ts": (
+        'import "./instrument";\nimport "reflect-metadata";\n'
+        'import { route } from "./routes";\n\nexport const app = route();\n'
+    ),
+    "src/db.js": "function connect() { return 1; }\nconnect();\nmodule.exports = {};\n",
+    "src/cache.js": "module.exports = {};\n",
+    "src/polyfill.ts": "export const ok = true;\n",
+    "src/boot.ts": 'await import("./polyfill");\nexport const booted = true;\n',
+    "src/server.js": (
+        'require("./db");\nconst routes = require("./routes");\n'
+        'import("./cache");\nmodule.exports = routes;\n'
+    ),
+}
+
+
+def _imports(repo: Path, mock: MagicMock) -> dict[tuple[str, str], dict]:
+    # (importer, target) -> the edge's properties.
+    prefix = f"{repo.name}."
+    out: dict[tuple[str, str], dict] = {}
+    for c in mock.ensure_relationship_batch.call_args_list:
+        if c.args[1] != cs.RelationshipType.IMPORTS.value:
+            continue
+        props = (
+            c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {}) or {}
+        )
+        out[
+            (
+                str(c.args[0][2]).removeprefix(prefix),
+                str(c.args[2][2]).removeprefix(prefix),
+            )
+        ] = dict(props)
+    return out
+
+
+@pytest.fixture
+def imports(temp_repo: Path, mock_ingestor: MagicMock) -> dict[tuple[str, str], dict]:
+    for rel, text in _FILES.items():
+        (temp_repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (temp_repo / rel).write_text(text, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor)
+    return _imports(temp_repo, mock_ingestor)
+
+
+@pytest.mark.parametrize(
+    ("importer", "target", "line"),
+    [
+        ("src.main", "src.instrument", 1),
+        ("src.server", "src.db", 1),
+        ("src.server", "src.cache", 3),
+        ("src.boot", "src.polyfill", 1),
+    ],
+    ids=[
+        "ts-import-statement",
+        "js-require-statement",
+        "js-dynamic-import",
+        "ts-awaited-dynamic-import",
+    ],
+)
+def test_a_side_effect_import_of_a_module_is_an_imports_edge(
+    imports: dict[tuple[str, str], dict], importer: str, target: str, line: int
+) -> None:
+    props = imports.get((importer, target))
+    assert props is not None, sorted(imports)
+    # Where the statement is, and no bound or imported name.
+    assert props.get(cs.KEY_LINE) == line, props
+    assert cs.KEY_ALIAS not in props, props
+    assert cs.KEY_IMPORTED_NAME not in props, props
+
+
+def test_a_side_effect_import_of_a_package_reaches_its_external_module(
+    imports: dict[tuple[str, str], dict],
+) -> None:
+    assert ("src.main", "reflect-metadata") in imports, sorted(imports)
+
+
+def test_binding_imports_keep_their_edges(
+    imports: dict[tuple[str, str], dict],
+) -> None:
+    # Negative: the named import and the bound require are unchanged.
+    assert imports[("src.main", "src.routes")].get(cs.KEY_LINE) == 3
+    assert imports[("src.server", "src.routes")].get(cs.KEY_LINE) == 2
+
+
+def test_the_target_is_the_imported_file_beside_a_directory_index(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The specifier names the whole module, so a sibling `index.ts` in the
+    # same directory must not take the edge from `setup.ts`.
+    files = {
+        "lib/index.ts": "export const ready = true;\n",
+        "lib/setup.ts": "export const done = true;\n",
+        "app.ts": 'import "./lib/setup";\nexport const x = 1;\n',
+    }
+    for rel, text in files.items():
+        (temp_repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (temp_repo / rel).write_text(text, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    targets = {to for frm, to in _imports(temp_repo, mock_ingestor) if frm == "app"}
+    assert targets == {"lib.setup"}, targets
+
+
+def test_a_removed_side_effect_import_loses_its_edge(temp_repo: Path) -> None:
+    # Negative: the side-effect list is per parse, so an edit that drops
+    # `import "./instrument"` leaves no edge behind on re-ingest.
+    from codebase_rag.graph_updater import GraphUpdater
+    from codebase_rag.parser_loader import load_parsers
+    from evals.cgr_graph import _StatefulIngestor
+
+    root = temp_repo / "proj"
+    (root / "src").mkdir(parents=True)
+    (root / "src/instrument.ts").write_text(_FILES["src/instrument.ts"])
+    (root / "src/main.ts").write_text('import "./instrument";\nexport const x = 1;\n')
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    )
+    updater.run(force=True)
+
+    def importers() -> set[str]:
+        return {
+            str(edge[1])
+            for edge in store.edges
+            if edge[2] == cs.RelationshipType.IMPORTS.value
+            and edge[4] == "proj.src.instrument"
+        }
+
+    assert importers() == {"proj.src.main"}
+    (root / "src/main.ts").write_text("export const x = 1;\n")
+    updater.reingest(["src/main.ts"], deleted=[])
+    assert importers() == set()
+
+
+@pytest.mark.parametrize(
+    "specifier", ["@scope/pkg", "zone.js", "pkg/subpath", "node:fs", "reflect-metadata"]
+)
+@pytest.mark.parametrize(
+    "statement",
+    [
+        'import "{}";\n',
+        'require("{}");\n',
+        'import * as ns from "{}";\n',
+        'export * from "{}";\n',
+    ],
+    ids=[
+        "side-effect-import",
+        "require-statement",
+        "namespace-import",
+        "star-reexport",
+    ],
+)
+def test_a_whole_module_import_of_a_package_names_the_package_a_named_one_does(
+    temp_repo: Path, mock_ingestor: MagicMock, statement: str, specifier: str
+) -> None:
+    # The specifier names the package itself, so the edge reaches the
+    # ExternalModule `import x from` the same specifier reaches. The
+    # resolution read its last segment as an imported name, and
+    # `import "@scope/pkg"` imported `@scope`, `import "zone.js"` `zone`.
+    files = {
+        "named.ts": f'import x from "{specifier}";\nexport const a = x;\n',
+        "whole.js": statement.format(specifier) + "export const b = 1;\n",
+    }
+    for rel, text in files.items():
+        (temp_repo / rel).write_text(text, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    edges = _imports(temp_repo, mock_ingestor)
+    named = {to for frm, to in edges if frm == "named"}
+    whole = {to for frm, to in edges if frm == "whole"}
+    assert len(named) == 1, edges
+    assert whole == named, edges
+
+
+@pytest.mark.parametrize(
+    ("source", "line"),
+    [
+        ('if (process.env.TRACE) require("./db");\n', 1),
+        ('function boot() {\n  require("./db");\n}\nboot();\n', 2),
+        ('try {\n  require("./db");\n} catch (e) {}\n', 2),
+        ('async function load() {\n  await import("./db");\n}\nload();\n', 2),
+        ('void import("./db");\n', 1),
+        (
+            'import { createRequire } from "node:module";\n'
+            "export function boot() {\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./db");\n}\n',
+            4,
+        ),
+    ],
+    ids=[
+        "if-branch",
+        "function-body",
+        "try-block",
+        "awaited-in-function",
+        "void-dynamic-import",
+        "create-require-in-a-function",
+    ],
+)
+def test_a_nested_side_effect_call_is_an_imports_edge(
+    temp_repo: Path, mock_ingestor: MagicMock, source: str, line: int
+) -> None:
+    # A statement-level call below the top level still loads the module, as
+    # a bound `require` there is already an import.
+    (temp_repo / "db.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (temp_repo / "main.js").write_text(source, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    props = _imports(temp_repo, mock_ingestor).get(("main", "db"))
+    assert props is not None, sorted(_imports(temp_repo, mock_ingestor))
+    assert props.get(cs.KEY_LINE) == line, props
+
+
+def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `require.resolve("./db")` and a call whose value is used are
+    # no side-effect import of `./db`.
+    (temp_repo / "db.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (temp_repo / "main.js").write_text(
+        'function where() {\n  require.resolve("./db");\n  return lookup("./db");\n}\n'
+        "where();\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    assert ("main", "db") not in _imports(temp_repo, mock_ingestor)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'function run(require) {\n  require("./db");\n}\nrun(() => {});\n',
+        'const run = (require) => {\n  require("./db");\n};\nrun(() => {});\n',
+        'function run() {\n  const require = () => {};\n  require("./db");\n}\nrun();\n',
+        'function run() {\n  function require() {}\n  require("./db");\n}\nrun();\n',
+        'try {\n  load();\n} catch (require) {\n  require("./db");\n}\n',
+        'function boot() {\n  {\n    function require() {}\n  }\n  require("./db");\n}\n',
+        'export const ready = true;\nconst require = () => {};\nrequire("./db");\n',
+        'function require(name) {\n  return name;\n}\nrequire("./db");\n',
+        "function run(require) {\n  {\n"
+        "    const require = createRequire(import.meta.url);\n  }\n"
+        '  require("./db");\n}\n',
+        'import { createRequire as makeRequire } from "node:module";\n'
+        "function run(makeRequire) {\n  const require = makeRequire();\n"
+        '  require("./db");\n}\nrun(() => () => {});\n',
+        'import { createRequire } from "node:module";\n'
+        "function run(make) {\n  const createRequire = make;\n"
+        "  const require = createRequire();\n"
+        '  require("./db");\n}\nrun(() => () => {});\n',
+        "const helpers = { createRequire: () => () => {} };\n"
+        "const make = helpers.createRequire;\n"
+        'const require = make();\nrequire("./db");\n',
+        'import { createRequire } from "node:module";\n'
+        "let make = createRequire;\nmake = () => () => {};\n"
+        'const require = make();\nrequire("./db");\n',
+        'import { createRequire } from "node:module";\n'
+        "let require = createRequire(import.meta.url);\n"
+        'require = () => {};\nrequire("./db");\n',
+        'import { createRequire } from "node:module";\n'
+        "let make = createRequire;\nfor (make of [() => () => {}]) {}\n"
+        'const require = make();\nrequire("./db");\n',
+    ],
+    ids=[
+        "parameter",
+        "arrow-parameter",
+        "local-const",
+        "local-function",
+        "catch",
+        "sloppy-block-function",
+        "module-level-helper",
+        "module-level-function",
+        "parameter-beside-a-block-loader",
+        "parameter-spelled-like-the-factory",
+        "alias-of-a-parameter",
+        "another-object-s-factory",
+        "reassigned-factory-alias",
+        "reassigned-loader",
+        "alias-rewritten-by-a-loop",
+    ],
+)
+def test_a_call_to_a_local_named_require_is_no_import(
+    temp_repo: Path, mock_ingestor: MagicMock, source: str
+) -> None:
+    # Negative: a parameter or local that a scope around the call binds is
+    # whatever was passed or declared, not Node's loader (Greptile, PR #3284).
+    (temp_repo / "db.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (temp_repo / "main.js").write_text(source, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    assert ("main", "db") not in _imports(temp_repo, mock_ingestor)
+
+
+_BLOCK_FUNCTION = (
+    "function boot() {\n  {\n    function require() {}\n  }\n"
+    '  require("./db");\n}\nboot();\n'
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        ("main.js", f'"use strict";\n{_BLOCK_FUNCTION}'),
+        ("main.js", _BLOCK_FUNCTION.replace("{\n  {", '{\n  "use strict";\n  {', 1)),
+        ("main.mjs", f"export const ready = true;\n{_BLOCK_FUNCTION}"),
+        (
+            "main.js",
+            "class App {\n  boot() {\n    {\n      function require() {}\n    }\n"
+            '    require("./db");\n  }\n}\n',
+        ),
+    ],
+    ids=["file-directive", "function-directive", "es-module", "class-method"],
+)
+def test_strict_code_keeps_a_block_s_function_to_the_block(
+    temp_repo: Path, mock_ingestor: MagicMock, name: str, source: str
+) -> None:
+    # Strict code scopes a function declared in a nested block to that block,
+    # so the `require` called after it is Node's loader (Greptile, PR #3284).
+    (temp_repo / "db.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (temp_repo / name).write_text(source, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    assert ("main", "db") in _imports(temp_repo, mock_ingestor), sorted(
+        _imports(temp_repo, mock_ingestor)
+    )
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        'import { createRequire } from "node:module";\n'
+        "const require = createRequire(import.meta.url);\n",
+        'import { createRequire as makeRequire } from "node:module";\n'
+        "const require = makeRequire(import.meta.url);\n",
+        'const { createRequire: makeRequire } = require("node:module");\n'
+        "const require = makeRequire(import.meta.url);\n",
+        'const { createRequire } = require("node:module");\n'
+        "const require = createRequire(import.meta.url);\n",
+        'import * as module from "node:module";\n'
+        "const createRequire = module.createRequire;\n"
+        "const require = createRequire(import.meta.url);\n",
+        'import { createRequire } from "node:module";\n'
+        "const make = createRequire;\nconst makeLoader = make;\n"
+        "const require = makeLoader(import.meta.url);\n",
+        'const { createRequire } = await import("node:module");\n'
+        "const require = createRequire(import.meta.url);\n",
+        'import nodeModule from "node:module";\n'
+        "const require = nodeModule.createRequire(import.meta.url);\n",
+        'import { createRequire } from "node:module";\n'
+        "const require = createRequire(import.meta.url);\n"
+        "function configure(require) {\n  require = null;\n}\n",
+        'const { "createRequire": make } = await import("node:module");\n'
+        "const require = make(import.meta.url);\n",
+        'import { "createRequire" as make } from "node:module";\n'
+        "const require = make(import.meta.url);\n",
+        'import { createRequire } from "node:module";\n'
+        "const require = createRequire(import.meta.filename);\n",
+        'const { createRequire } = require("node:module");\n'
+        "const require = createRequire(__filename);\n",
+        'import { createRequire } from "node:module";\n'
+        'const require = createRequire(new URL("./main.mjs", import.meta.url));\n',
+        'import { createRequire } from "node:module";\n'
+        'const require = createRequire(new URL(".", import.meta.url));\n',
+    ],
+    ids=[
+        "create-require",
+        "renamed-import",
+        "renamed-destructure",
+        "destructure",
+        "property-read",
+        "alias-chain",
+        "dynamic-import",
+        "default-import",
+        "a-parameter-reassigned-elsewhere",
+        "quoted-destructure",
+        "quoted-import",
+        "import-meta-filename",
+        "commonjs-filename",
+        "url-of-the-module-itself",
+        "url-of-the-module-s-directory",
+    ],
+)
+def test_a_module_level_require_made_by_create_require_still_imports(
+    temp_repo: Path, mock_ingestor: MagicMock, factory: str
+) -> None:
+    # An ES module's `const require = createRequire(import.meta.url)` is the
+    # loader itself, under whatever name the module imports the factory as,
+    # so a call to it still imports the module (Greptile, PR #3284).
+    (temp_repo / "db.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (temp_repo / "main.mjs").write_text(
+        f'{factory}require("./db");\n', encoding="utf-8"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    props = _imports(temp_repo, mock_ingestor).get(("main", "db"))
+    assert props is not None, sorted(_imports(temp_repo, mock_ingestor))
+    assert props.get(cs.KEY_LINE) == factory.count("\n") + 1, props
+
+
+def _write_plugin_layout(repo: Path, loader_source: str) -> None:
+    # `src/main.mjs` loads `./setup` through `loader_source`; a `setup.js`
+    # sits beside it, in `plugins/` and at the root.
+    for rel in ("src/setup.js", "plugins/setup.js", "setup.js"):
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text("module.exports = {};\n", encoding="utf-8")
+    (repo / "src/main.mjs").write_text(
+        f'import {{ createRequire }} from "node:module";\n{loader_source}'
+        'require("./setup");\n',
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize(
+    ("base", "target"),
+    [
+        ('new URL("../plugins/entry.js", import.meta.url)', "plugins.setup"),
+        ('new URL("../plugins/", import.meta.url)', "plugins.setup"),
+        ("new URL('../plugins/nested/../entry.js', import.meta.url)", "plugins.setup"),
+        ('new URL("../plugins", import.meta.url)', "setup"),
+    ],
+    ids=["a-file", "a-directory", "a-dotted-path", "a-file-named-like-the-directory"],
+)
+def test_a_create_require_loader_resolves_from_the_file_it_was_given(
+    temp_repo: Path, mock_ingestor: MagicMock, base: str, target: str
+) -> None:
+    # `createRequire` resolves from the file it is given, not the module
+    # that calls it: `require("./setup")` through a loader made for
+    # `../plugins/entry.js` loads `plugins/setup.js` (Greptile, PR #3284).
+    # `../plugins` without a slash names a file `plugins` at the root, so
+    # that loader resolves from the root.
+    _write_plugin_layout(temp_repo, f"const require = createRequire({base});\n")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    imports = _imports(temp_repo, mock_ingestor)
+    assert ("src.main", target) in imports, sorted(imports)
+    assert ("src.main", "src.setup") not in imports, sorted(imports)
+
+
+@pytest.mark.parametrize(
+    "loader_source",
+    [
+        "const somewhere = process.argv[2];\n"
+        "const require = createRequire(somewhere);\n",
+        'const require = createRequire("/opt/app/plugins/entry.js");\n',
+        'const require = createRequire(new URL("file:///opt/app/entry.js"));\n',
+        "const require = createRequire("
+        'new URL("https://example.com/entry.js", import.meta.url));\n',
+        'const require = createRequire(new URL("/plugins/entry.js", import.meta.url));\n',
+        'const require = createRequire(new URL("../plugins/entry.js", process.argv[2]));\n',
+        "const require = createRequire("
+        'new URL("../plugins/entry.js?v=1", import.meta.url));\n',
+        "class URL {\n  constructor(path, base) {}\n}\n"
+        'const require = createRequire(new URL("../plugins/entry.js", import.meta.url));\n',
+        "const __filename = process.argv[2];\n"
+        "const require = createRequire(__filename);\n",
+        "const require = createRequire();\n",
+    ],
+    ids=[
+        "a-computed-path",
+        "an-absolute-path",
+        "an-absolute-url",
+        "a-url-with-a-scheme",
+        "a-root-relative-url",
+        "a-url-against-a-computed-base",
+        "a-url-with-a-query",
+        "a-local-url-class",
+        "a-local-filename",
+        "no-argument",
+    ],
+)
+def test_a_create_require_loader_for_a_file_the_module_does_not_name_imports_nothing(
+    temp_repo: Path, mock_ingestor: MagicMock, loader_source: str
+) -> None:
+    # Negative: a loader whose base the module computes, or one outside the
+    # repository, resolves from a directory the graph cannot tell, so its
+    # `require("./setup")` records no edge rather than one to the caller's
+    # neighbour (Greptile, PR #3284).
+    _write_plugin_layout(temp_repo, loader_source)
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    imports = _imports(temp_repo, mock_ingestor)
+    assert (
+        not {
+            ("src.main", "src.setup"),
+            ("src.main", "plugins.setup"),
+            ("src.main", "setup"),
+        }
+        & imports.keys()
+    ), sorted(imports)
+
+
+_CREATE_REQUIRE = 'import { createRequire } from "node:module";\n'
+
+
+def _write_loader_module(repo: Path, name: str, source: str) -> None:
+    # `src/<name>` holds `source`; a `setup.js` sits beside it, in
+    # `plugins/` and at the root.
+    _write_plugin_layout(repo, "")
+    (repo / "src/main.mjs").unlink()
+    (repo / "src" / name).write_text(source, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("name", "source", "target"),
+    [
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}const require = createRequire(import.meta.url as string);\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}const require = createRequire((import.meta.url));\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}const require = createRequire(import.meta.url!);\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}const require = createRequire(<string>import.meta.url);\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}"
+            "const require = createRequire(import.meta.url satisfies string);\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const require = createRequire((import.meta).url);\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}"
+            "const require = createRequire((/* this file */ import.meta.url));\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}"
+            "const require = <NodeRequire>createRequire(import.meta.url);\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}"
+            'const require = createRequire(import.meta.url, "ignored");\n'
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const load = createRequire(import.meta.url);\n"
+            'const require = load;\nrequire("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import {{ fileURLToPath }} from "node:url";\n'
+            "const __filename = fileURLToPath(import.meta.url);\n"
+            'const require = createRequire(__filename);\nrequire("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import {{ fileURLToPath as toPath }} from "url";\n'
+            "const require = createRequire(toPath(import.meta.url));\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import url from "node:url";\n'
+            "const require = createRequire(url.fileURLToPath(import.meta.url));\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import * as url from "url";\n'
+            "const here = url.fileURLToPath(import.meta.url);\n"
+            'const require = createRequire(here);\nrequire("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}const {{ pathToFileURL }} = await import("node:url");\n'
+            "const require = createRequire(pathToFileURL(import.meta.filename));\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import {{ fileURLToPath }} from "node:url";\n'
+            "const require = createRequire(\n"
+            '  fileURLToPath(new URL("../plugins/", import.meta.url)),\n);\n'
+            'require("./setup");\n',
+            "plugins.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const require = createRequire(new URL(import.meta.url));\n"
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}const entry = "../plugins/entry.js";\n'
+            "const require = createRequire(new URL(entry, import.meta.url));\n"
+            'require("./setup");\n',
+            "plugins.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const here = import.meta.url;\n"
+            "const require = createRequire("
+            'new URL("../plugins/entry.js", here));\nrequire("./setup");\n',
+            "plugins.setup",
+        ),
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}const require = createRequire(\n"
+            '  new URL("../plugins/entry.js" as string, import.meta.url as string),\n'
+            ');\nrequire("./setup");\n',
+            "plugins.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}"
+            "const require = createRequire("
+            'new URL("../plugins/entry.js", import.meta.url, "ignored"));\n'
+            'require("./setup");\n',
+            "plugins.setup",
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}const require = createRequire(new URL("", import.meta.url));\n'
+            'require("./setup");\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const require = createRequire(import.meta.dirname);\n"
+            'require("./setup");\n',
+            "setup",
+        ),
+        (
+            "main.js",
+            'const { createRequire } = require("node:module");\n'
+            "function load() {\n  const require = createRequire(__dirname);\n"
+            '  require("./setup");\n}\nload();\n',
+            "setup",
+        ),
+        (
+            "main.mjs",
+            'import "node:module";\nasync function boot() {\n'
+            '  var { createRequire } = await import("node:module");\n'
+            "  {\n    function createRequire() {}\n  }\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n}\nboot();\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            'var { createRequire } = await import("node:module");\n'
+            "{\n  function createRequire() {}\n}\n"
+            "const require = createRequire(import.meta.url);\n"
+            'require("./setup");\nexport {};\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const boot = function require() {{\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n}};\nboot();\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const boot = function* require() {{\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n}};\nboot().next();\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            "const boot = async function createRequire() {\n"
+            '  var { createRequire } = await import("node:module");\n'
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n};\nboot();\nexport {};\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}function require() {{\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n}}\nrequire();\n',
+            "src.setup",
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const Boot = class require {{\n  run() {{\n"
+            "    const require = createRequire(import.meta.url);\n"
+            '    require("./setup");\n  }}\n}};\nnew Boot().run();\n',
+            "src.setup",
+        ),
+    ],
+    ids=[
+        "as-cast",
+        "parentheses",
+        "non-null",
+        "angle-bracket-cast",
+        "satisfies",
+        "parenthesized-import-meta",
+        "comment-in-parentheses",
+        "cast-loader",
+        "an-ignored-second-argument",
+        "loader-alias",
+        "esm-filename",
+        "renamed-converter",
+        "converter-read-off-the-default-import",
+        "converter-read-off-the-namespace",
+        "path-to-file-url",
+        "converted-url",
+        "url-of-the-module",
+        "named-path",
+        "named-base",
+        "cast-url-arguments",
+        "an-ignored-third-url-argument",
+        "empty-url",
+        "import-meta-dirname",
+        "commonjs-dirname",
+        "a-strict-block-s-own-function",
+        "a-strict-module-block-s-own-function",
+        "inside-a-function-expression-of-its-name",
+        "inside-a-generator-expression-of-its-name",
+        "inside-a-function-expression-named-like-the-factory",
+        "inside-a-function-declaration-of-its-name",
+        "inside-a-class-expression-of-its-name",
+    ],
+)
+def test_a_create_require_loader_spelled_any_way_node_reads_still_imports(
+    temp_repo: Path, mock_ingestor: MagicMock, name: str, source: str, target: str
+) -> None:
+    # Casts, parentheses, aliases, Node's `url` converters and named values
+    # change nothing about the file a loader is made for, so each still
+    # records its import, from that file's directory (Greptile, PR #3284).
+    # A directory path has no trailing slash, which `createRequire` reads as
+    # a file, so `createRequire(__dirname)` resolves from the parent. Strict
+    # code keeps a block's function to the block, so it leaves the factory
+    # around it settled. A function declaration's name binds around it, and
+    # a function or class expression's own name is shadowed by what its body
+    # declares, so neither counts against the loader inside.
+    _write_loader_module(temp_repo, name, source)
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    imports = _imports(temp_repo, mock_ingestor)
+    assert ("src.main", target) in imports, sorted(imports)
+    others = {"src.setup", "plugins.setup", "setup"} - {target}
+    assert not {("src.main", other) for other in others} & imports.keys(), sorted(
+        imports
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}function fileURLToPath(url) {{\n"
+            "  return process.argv[2];\n}\n"
+            "const require = createRequire(fileURLToPath(import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import {{ fileURLToPath }} from "./paths.js";\n'
+            "const require = createRequire(fileURLToPath(import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import {{ fileURLToPath }} from "node:url";\n'
+            "let __filename = fileURLToPath(import.meta.url);\n"
+            "__filename = process.argv[2];\n"
+            'const require = createRequire(__filename);\nrequire("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const require = createRequire("
+            'new URL("../plugins/entry.js", import.meta.filename));\n'
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}let entry = "../plugins/entry.js";\n'
+            "entry = process.argv[2];\n"
+            "const require = createRequire(new URL(entry, import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const name = process.argv[2];\n"
+            "const require = createRequire("
+            "new URL(`../plugins/${name}.js`, import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.ts",
+            f"{_CREATE_REQUIRE}let require = createRequire(import.meta.url);\n"
+            '(<any>require) = () => {};\nrequire("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}let load = createRequire(import.meta.url);\n"
+            "load = () => () => {};\n"
+            'const require = load;\nrequire("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}var entry = "../plugins/entry.js";\n'
+            'var entry = "./entry.js";\n'
+            "const require = createRequire(new URL(entry, import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}let entry = "../plugins/entry.js";\n'
+            "const require = createRequire(new URL(entry, import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}var entry = "../plugins/entry.js";\n'
+            "function entry() {}\n"
+            "const require = createRequire(new URL(entry, import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}let entry = "./entry.js";\n'
+            '[entry] = ["../plugins/entry.js"];\n'
+            "const require = createRequire(new URL(entry, import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}let entry = "./entry.js";\n'
+            'for (entry of ["../plugins/entry.js"]) {}\n'
+            "const require = createRequire(new URL(entry, import.meta.url));\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}var require = createRequire("
+            'new URL("../plugins/entry.js", import.meta.url));\n'
+            "var require = createRequire(import.meta.url);\n"
+            'require("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f'{_CREATE_REQUIRE}import {{ fileURLToPath }} from "node:url";\n'
+            "var __filename = fileURLToPath("
+            'new URL("../plugins/entry.js", import.meta.url));\n'
+            "var __filename = fileURLToPath(import.meta.url);\n"
+            'const require = createRequire(__filename);\nrequire("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}var make = createRequire;\n"
+            "var make = () => () => {};\n"
+            'const require = make(import.meta.url);\nrequire("./setup");\n',
+        ),
+        (
+            "main.mjs",
+            'import "node:module";\nasync function boot() {\n'
+            '  var { createRequire } = await import("node:module");\n'
+            "  function createRequire() {}\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n}\nboot();\n',
+        ),
+        (
+            "main.js",
+            "function boot() {\n"
+            '  var { createRequire } = require("node:module");\n'
+            "  {\n    function createRequire() {}\n  }\n"
+            "  const require = createRequire(__filename);\n"
+            '  require("./setup");\n}\nboot();\n',
+        ),
+        (
+            "main.js",
+            'var { createRequire } = require("node:module");\n'
+            "{\n  function createRequire() {}\n}\n"
+            "function boot() {\n  const require = createRequire(__filename);\n"
+            '  require("./setup");\n}\nboot();\n',
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}function boot(require) {{\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n}}\nboot();\n',
+        ),
+        (
+            "main.mjs",
+            f"{_CREATE_REQUIRE}const boot = function require(require) {{\n"
+            "  const require = createRequire(import.meta.url);\n"
+            '  require("./setup");\n}};\nboot();\n',
+        ),
+    ],
+    ids=[
+        "a-local-converter",
+        "a-converter-from-another-module",
+        "a-reassigned-filename",
+        "a-path-as-the-url-base",
+        "a-reassigned-path",
+        "a-template-path",
+        "a-loader-rewritten-through-a-cast",
+        "a-reassigned-loader-alias",
+        "a-path-declared-twice",
+        "a-let-path",
+        "a-path-beside-a-function-of-its-name",
+        "a-path-rewritten-by-destructuring",
+        "a-path-rewritten-by-a-loop",
+        "a-loader-declared-twice",
+        "a-filename-declared-twice",
+        "a-factory-alias-declared-twice",
+        "a-factory-beside-a-function-of-its-name",
+        "a-sloppy-block-function-hoisted-over-the-factory",
+        "a-sloppy-module-block-function-over-the-factory",
+        "a-loader-beside-a-parameter-of-its-name",
+        "a-loader-beside-a-parameter-of-a-function-expression-s-name",
+    ],
+)
+def test_a_create_require_loader_whose_file_cannot_be_told_imports_nothing(
+    temp_repo: Path, mock_ingestor: MagicMock, name: str, source: str
+) -> None:
+    # Negative: a converter that is not Node's, a value something rewrites,
+    # a computed path, and `new URL` against a path (which throws) leave
+    # the loader's directory unknown, so it records no edge (Greptile, PR
+    # #3284). Only a name one `const` binds and nothing writes holds a
+    # value the graph can trust: a second `var entry` rebinds it, and so
+    # can any `let` or `var`. A function beside the factory in its scope
+    # rebinds it, as does one in a block of sloppy code, which Node hoists
+    # into the scope around it.
+    _write_loader_module(temp_repo, name, source)
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    imports = _imports(temp_repo, mock_ingestor)
+    targets = {"src.setup", "plugins.setup", "setup"}
+    assert not {("src.main", t) for t in targets} & imports.keys(), sorted(imports)
+
+
+def test_a_package_through_a_loader_for_another_directory_is_still_the_package(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A bare specifier names the same package from any directory, so a
+    # loader's base leaves it as it is.
+    _write_loader_module(
+        temp_repo,
+        "main.mjs",
+        f"{_CREATE_REQUIRE}const require = createRequire("
+        'new URL("../plugins/entry.js", import.meta.url));\n'
+        'require("left-pad");\n',
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    imports = _imports(temp_repo, mock_ingestor)
+    assert ("src.main", "left-pad") in imports, sorted(imports)
+
+
+def test_only_the_first_argument_names_the_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `require(name, "./db")` loads `name`; a later string argument
+    # is no specifier (CodeRabbit, PR #3284).
+    (temp_repo / "db.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (temp_repo / "main.js").write_text(
+        'const name = "./other";\nrequire(name, "./db");\n', encoding="utf-8"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    assert ("main", "db") not in _imports(temp_repo, mock_ingestor)
+
+
+@pytest.mark.parametrize(
+    ("statement", "binds"),
+    [
+        ('import {} from "./instrument";\n', False),
+        ('import type {} from "./instrument";\n', False),
+        ('import init, {} from "./instrument";\n', True),
+    ],
+    ids=["empty-named-imports", "empty-type-imports", "default-beside-empty"],
+)
+def test_an_import_clause_binding_nothing_is_a_side_effect_import(
+    temp_repo: Path, mock_ingestor: MagicMock, statement: str, binds: bool
+) -> None:
+    # `import {} from "./instrument"` still loads the module, but its clause
+    # binds no name, so neither branch recorded it. A clause binding a
+    # default beside the empty list keeps its own named edge.
+    (temp_repo / "instrument.ts").write_text(
+        "export default function init(): void {}\n", encoding="utf-8"
+    )
+    (temp_repo / "main.ts").write_text(
+        statement + "export const x = 1;\n", encoding="utf-8"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    props = _imports(temp_repo, mock_ingestor).get(("main", "instrument"))
+    assert props is not None, sorted(_imports(temp_repo, mock_ingestor))
+    assert props.get(cs.KEY_LINE) == 1, props
+    assert (cs.KEY_ALIAS in props) is binds, props

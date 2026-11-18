@@ -720,18 +720,19 @@ class TestPrefixedExtensionOnType:
         self, calls: list[Edge]
     ) -> None:
         # other_ops.dart's `p` is other_geo.dart: its `p.Point` is a
-        # DIFFERENT class, so the chained hop on a geo.Point (column 24)
-        # never reaches OtherOps.total. Only the direct `q.total()` at column
-        # 36 may, through the pre-existing name-only fallback this lookup
-        # does not own.
+        # DIFFERENT class, so the chained hop on a geo.Point (`total` at
+        # column 19) never reaches OtherOps.total. Only the direct `q.total()`
+        # (`total` at column 31) may, through the pre-existing name-only
+        # fallback this lookup does not own. A Dart call site starts at its
+        # callee name (#2769).
         sites = {
             (line, col)
             for src, dst, line, col in calls
             if src.endswith(".use.useOtherPoint") and dst.endswith(".OtherOps.total")
         }
-        assert sites <= {(12, 36)}, sorted(calls)
-        # The sibling chain in usePrefixed DOES reach its extension (col 22).
-        assert (7, 22) in {
+        assert sites <= {(12, 31)}, sorted(calls)
+        # The sibling chain in usePrefixed DOES reach its extension (col 19).
+        assert (7, 19) in {
             (line, col)
             for src, dst, line, col in calls
             if src.endswith(".use.usePrefixed") and dst.endswith(".Ops.sum")

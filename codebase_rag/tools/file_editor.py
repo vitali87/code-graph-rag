@@ -19,6 +19,7 @@ from ..language_spec import get_language_for_extension, get_language_spec
 from ..models import LanguageSpec
 from ..parser_loader import load_parsers
 from ..schemas import EditResult
+from ..sensitive_paths import is_git_internal
 from ..types_defs import AfterWrite, FunctionMatch
 from . import tool_descriptions as td
 
@@ -299,6 +300,11 @@ class FileEditor:
             full_path = (self.project_root / file_path).resolve()
             full_path.relative_to(self.project_root)
 
+            if is_git_internal(full_path, self.project_root):
+                refused = te.GIT_INTERNAL_WRITE_REFUSED.format(path=file_path)
+                logger.warning(refused)
+                return EditResult(file_path=file_path, error_message=refused)
+
             if not full_path.is_file():
                 logger.error(ls.EDITOR_FILE_NOT_FOUND.format(path=file_path))
                 return failed
@@ -385,6 +391,10 @@ class FileEditor:
 
     @validate_project_path(EditResult, path_arg_name="file_path")
     async def _edit_validated(self, file_path: Path, new_content: str) -> EditResult:
+        if is_git_internal(file_path, self.project_root):
+            refused = te.GIT_INTERNAL_WRITE_REFUSED.format(path=file_path)
+            logger.warning(refused)
+            return EditResult(file_path=str(file_path), error_message=refused)
         try:
             if not file_path.is_file():
                 error_msg = te.FILE_NOT_FOUND_OR_DIR.format(path=file_path)
