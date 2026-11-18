@@ -114,7 +114,8 @@ class Snapshot(NamedTuple):
     `bindings` the by-name imports into and out of the touched files;
     `callers` the definitions elsewhere that make sites into them;
     `modules` the (qualified name, path) of each Module at a touched path,
-    and `module_bindings` every import of one of them.
+    `module_bindings` every import of one of them, and `bases` the
+    (class, base) links above the classes the sites' callers sit in.
     """
 
     paths: frozenset[str]
@@ -131,6 +132,7 @@ class Snapshot(NamedTuple):
     callers: Mapping[str, Definition] = MappingProxyType({})
     modules: frozenset[tuple[str, str]] = frozenset()
     module_bindings: tuple[ImportBinding, ...] = ()
+    bases: frozenset[tuple[str, str]] = frozenset()
 
 
 class RenameFinding(TypedDict):
@@ -381,6 +383,57 @@ def _touched_modules(
     )
 
 
+def _enclosing_names(qualified_name: str) -> list[str]:
+    """The qualified names `qualified_name` is nested in, innermost first."""
+    parts = qualified_name.partition(cs.CHAR_PAREN_OPEN)[0].split(cs.SEPARATOR_DOT)
+    return [cs.SEPARATOR_DOT.join(parts[:end]) for end in range(len(parts) - 1, 0, -1)]
+
+
+def _bases_above(
+    fetch_all: QueryFn, params: PropertyDict, callers: Iterable[str]
+) -> frozenset[tuple[str, str]]:
+    """The (class, base) links above the classes `callers` sit in, read one
+    level at a time up to the top of each hierarchy."""
+    frontier = {name for caller in callers for name in _enclosing_names(caller)}
+    seen: set[str] = set()
+    links: set[tuple[str, str]] = set()
+    while frontier:
+        seen |= frontier
+        rows = fetch_all(
+            cq.CYPHER_DELTA_BASES, {**params, cs.KEY_QNS: sorted(frontier)}
+        )
+        found = {
+            (source, base)
+            for row in rows
+            if (source := _text(row.get(cs.KEY_FROM_QN)))
+            and (base := _text(row.get(cs.KEY_TO_QN)))
+        }
+        links |= found
+        frontier = {base for _, base in found} - seen
+    return frozenset(links)
+
+
+def _chain(
+    caller: str, bases: frozenset[tuple[str, str]]
+) -> frozenset[tuple[str, str]]:
+    """The (class, base) links above the classes `caller` sits in."""
+    above: dict[str, list[str]] = {}
+    for source, base in bases:
+        above.setdefault(source, []).append(base)
+    pending = _enclosing_names(caller)
+    seen: set[str] = set()
+    links: set[tuple[str, str]] = set()
+    while pending:
+        name = pending.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        for base in above.get(name, ()):
+            links.add((name, base))
+            pending.append(base)
+    return frozenset(links)
+
+
 def _module_import_bindings(
     fetch_all: QueryFn, params: PropertyDict
 ) -> tuple[ImportBinding, ...]:
@@ -443,8 +496,14 @@ def snapshot(
     paths: Iterable[str],
     *,
     longer_project_prefixes: tuple[str, ...] | None = None,
+    chain_callers: Iterable[str] = (),
 ) -> Snapshot:
-    """Read the subgraph of `paths` (repo-relative) and the module imports."""
+    """Read the subgraph of `paths` (repo-relative) and the module imports.
+
+    `chain_callers` are callers whose class hierarchy is read as well as
+    that of the snapshot's own sites: those of the snapshot before an
+    edit, which the graph after it may no longer draw.
+    """
     path_list = sorted(set(paths))
     longer_prefixes = (
         _longer_project_prefixes(fetch_all, project_name)
@@ -498,6 +557,9 @@ def snapshot(
         callers=callers,
         modules=_touched_modules(fetch_all, params),
         module_bindings=_module_import_bindings(fetch_all, params),
+        bases=_bases_above(
+            fetch_all, params, {site.caller for site in sites} | set(chain_callers)
+        ),
     )
 
 
@@ -2841,6 +2903,30 @@ def _moved_site(
     return moved
 
 
+def _through_own_receiver(site: CallSite, name: str, trees: _SourceTrees) -> bool:
+    """Whether the call goes through its caller's own `this` (Python's
+    `self` or `cls`, Java's implicit receiver), which names the caller's
+    class wherever the class is not changed."""
+    language = _language(site.caller_path)
+    fields = _MEMBER_FIELDS.get(language) if language is not None else None
+    if fields is None or site.line is None or site.col is None:
+        return False
+    root = trees.root(site.caller_path)
+    access = _member_access(root, site, name, fields) if root is not None else None
+    if access is None:
+        return False
+    target = access.child_by_field_name(cs.FIELD_OBJECT)
+    if target is None:
+        return language == cs.SupportedLanguage.JAVA
+    if target.type == cs.TS_THIS:
+        return True
+    return (
+        language == cs.SupportedLanguage.PYTHON
+        and target.type == cs.TS_IDENTIFIER
+        and _node_text(target) in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
+    )
+
+
 def _reaches(site: CallSite, qn: str, accessor: bool) -> bool:
     # A JS/TS getter read is a REFERENCES edge: the read runs the getter but
     # is no call, and the edit breaks it all the same (bot review on PR #3311).
@@ -2871,6 +2957,16 @@ def _calls_into(
     was_accessor, is_accessor = accessor
     drawn = [site for site in after.sites if _reaches(site, qn, is_accessor)]
     name = after.definitions[qn].name
+    # A definite binding a call had still names what it runs while the call
+    # is the call it was and goes through its caller's own `this`: that
+    # names the caller's class, so the binding holds while no class above
+    # it changed its bases. Once one did (`extends Cart` can now read
+    # `extends Tart` though every method keeps its shape), the binding is
+    # a guess: the call may now run another class's method. Any other
+    # receiver can come to name something else through an edit the graph
+    # keeps no trace of, a local renamed or a factory's new return type
+    # (bot reviews on PR #3632).
+    unchanged: set[CallSite] = set()
     for site in before.sites:
         if not _reaches(site, qn, was_accessor):
             continue
@@ -2879,12 +2975,27 @@ def _calls_into(
             if site.caller_path in after.paths
             else site
         )
-        if current is not None:
-            drawn.append(current)
+        if current is None:
+            continue
+        if _through_own_receiver(current, name, trees):
+            if _chain(site.caller, before.bases) != _chain(current.caller, after.bases):
+                current = current._replace(resolution=cs.EdgeResolution.HEURISTIC.value)
+            elif site.resolution in _DEFINITE_RESOLUTIONS:
+                unchanged.add(current)
+        drawn.append(current)
     # One site per position: a call the edit left alone is drawn before and
     # after it, and a Python property read as a call and a reference both;
-    # the call edge is the one judged.
-    drawn.sort(key=lambda site: site.rel != cs.RelationshipType.CALLS.value)
+    # the call edge is the one judged. Of the two drawings of an unchanged
+    # call, the definite binding is judged: the edit can cost the re-bound
+    # edge its `exact` (`this.scale(2)` once `scale` turns static, issue
+    # #3628), and the call reached `qn` as surely as before. Otherwise the
+    # binding after the edit is (bot review on PR #3632).
+    drawn.sort(
+        key=lambda site: (
+            site.rel != cs.RelationshipType.CALLS.value,
+            site not in unchanged,
+        )
+    )
     sites: dict[tuple[str, str, int | None, int | None], CallSite] = {}
     for site in drawn:
         sites.setdefault((site.caller, site.caller_path, site.line, site.col), site)
@@ -3503,6 +3614,7 @@ def observe(
         project_name,
         path_list,
         longer_project_prefixes=longer_prefixes,
+        chain_callers=[site.caller for site in before.sites],
     )
     delta = structural_delta(
         fetch_all,
