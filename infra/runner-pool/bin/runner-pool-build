@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Builds the image every job runs in, around the newest GitHub runner release.
+# install.sh runs it once and a weekly timer again: GitHub stops sending jobs
+# to a runner that falls too far behind, and the rebuild also picks up
+# Ubuntu's security updates.
+set -euo pipefail
+
+POOL_LIB=${POOL_LIB:-/usr/local/lib/runner-pool}
+# shellcheck source=lib.sh
+. "$POOL_LIB/lib.sh"
+load_config
+
+context=$(mktemp --directory)
+trap 'rm -rf "$context"' EXIT
+cp -r "$POOL_LIB/image/." "$context/"
+
+release=$(gh_api GET /repos/actions/runner/releases/latest)
+version=$(jq --raw-output '.tag_name | ltrimstr("v")' <<<"$release")
+asset=actions-runner-linux-x64-$version.tar.gz
+# The release lists each download's checksum; older releases only carry it
+# in the notes, between BEGIN/END SHA markers.
+sha=$(jq --raw-output --arg asset "$asset" '
+  ((.assets // [])[] | select(.name == $asset) | .digest // empty | ltrimstr("sha256:")),
+  (try (.body | capture("<!-- BEGIN SHA linux-x64 -->(?<h>[0-9a-f]{64})<!-- END SHA linux-x64 -->").h) catch empty)
+  ' <<<"$release" | head -n 1)
+if [[ ! $sha =~ ^[0-9a-f]{64}$ ]]; then
+  log "no checksum published for $asset; not building"
+  exit 1
+fi
+
+log "downloading runner $version"
+curl --fail --silent --show-error --location --retry 3 \
+  --output "$context/actions-runner.tar.gz" \
+  "https://github.com/actions/runner/releases/download/v$version/$asset"
+echo "$sha  $context/actions-runner.tar.gz" | sha256sum --check --quiet
+
+# --no-cache so the weekly build really does pick up new Ubuntu packages.
+docker build --pull --no-cache --tag "$POOL_IMAGE" \
+  --label "runner-version=$version" "$context"
+docker image prune --force >/dev/null
+log "built $POOL_IMAGE with runner $version"

@@ -1,0 +1,10 @@
+[Unit]
+Description=Rebuild the runner pool job image with the newest runner release
+Documentation=https://github.com/vitali87/code-graph-rag/tree/main/infra/runner-pool
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/runner-pool/runner-pool-build

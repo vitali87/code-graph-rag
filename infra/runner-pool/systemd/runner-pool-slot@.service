@@ -1,0 +1,22 @@
+[Unit]
+Description=Runner pool job slot %i
+Documentation=https://github.com/vitali87/code-graph-rag/tree/main/infra/runner-pool
+Requires=docker.service
+After=docker.service network-online.target runner-pool-mirror.service
+Wants=network-online.target
+PartOf=runner-pool.target
+# A slot exits after every job by design; never stop restarting it.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/runner-pool/runner-pool-slot %i
+# Stopping the container first lets the runner say goodbye to GitHub, and
+# the script then removes the registration if no job used it.
+ExecStop=-/usr/bin/docker stop --time 30 runner-pool-%i
+Restart=always
+RestartSec=3
+TimeoutStopSec=90
+
+[Install]
+WantedBy=runner-pool.target

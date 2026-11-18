@@ -22,7 +22,13 @@ concurrency:
 jobs:
   lint:
     name: Lint & Format
-    runs-on: ubuntu-latest
+    # On our own servers when one has a free slot, on GitHub's
+    # otherwise; forks and releases always on GitHub's: infra/runner-pool/README.md
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
 
     steps:
@@ -98,7 +104,11 @@ jobs:
 
   typecheck:
     name: Type Check
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
 
     steps:
@@ -145,7 +155,11 @@ jobs:
 
   test-unit:
     name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }}, shard ${{ matrix.shard }})
-    runs-on: ${{ matrix.os }}
+    runs-on: >-
+      ${{ matrix.os == 'ubuntu-latest' && vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || matrix.os }}
     # The whole -n auto suite outgrew one job: it reached 38-43 min on Windows
     # and 39 min on macOS with coverage, so the 45 min cap cancelled
     # healthy runs at 99% and turned main red with no test failing. Raising
@@ -255,7 +269,11 @@ jobs:
 
   test-unit-base:
     name: Unit Tests (base install)
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     # A base install ships only the test extra: no treesitter-full, semantic
     # or milvus. Grammar- and optional-dependency-gated tests must SKIP here,
     # not fail (issues #1371 and #1410); this job keeps that enforced.
@@ -308,7 +326,11 @@ jobs:
 
   test-integration:
     name: Integration Tests (ubuntu-latest)
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 25
 
     steps:
@@ -379,7 +401,11 @@ jobs:
 
   binary-smoke:
     name: Binary Smoke Test
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
 
     steps:
@@ -426,7 +452,11 @@ jobs:
   # user's terminal a week later (#1096).
   wheel-fresh-resolution:
     name: Wheel Smoke (unlocked resolution)
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
 
     steps:
@@ -486,7 +516,11 @@ jobs:
 
   pr-title-check:
     name: PR Title Convention
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     if: github.event_name == 'pull_request'
     timeout-minutes: 5
     # The action reads the pull request's current title through the API.
@@ -524,7 +558,11 @@ jobs:
 
   go-frontend:
     name: Go Frontend
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 15
 
     steps:
@@ -582,7 +620,11 @@ jobs:
   # installs them and runs every test file that probes for one.
   toolchain-tests:
     name: Toolchain Tests
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 45
 
     steps:
@@ -658,7 +700,11 @@ jobs:
 
   rust-graph-core:
     name: Rust Graph Core
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     # rust/cgr_graph_rs (published as cgr-graph-rs, a default dependency on
     # the platforms it has wheels for) runs the embedded graph's whole-graph
     # procedures, its Cypher parser, the ingestor's batch writes and result
@@ -715,7 +761,11 @@ jobs:
 
   greptile-gate:
     name: Greptile 5/5 Gate
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     # Every pull request: Greptile reviews forks, Dependabot and every base,
     # and greptile.json has it review each push and draft. The gate fails
     # only on a score below 5/5; with Greptile absent (out of credits,
@@ -746,7 +796,11 @@ jobs:
 
   sonar-gate:
     name: Sonar Zero Issues Gate
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     # Mirror the eligibility of the SonarCloud Analysis job in
     # sonarcloud.yml (PRs targeting main, excluding Dependabot and fork
     # heads): a PR that never gets analyzed must skip the gate instead of
@@ -857,7 +911,11 @@ jobs:
 
   all-checks-pass:
     name: All Checks Pass
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     if: always()
     needs:
       [

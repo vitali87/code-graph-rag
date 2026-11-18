@@ -15,6 +15,9 @@ updates:
     directories:
       - "/"
       - "/.clusterfuzzlite"
+      # The runner pool's job image (infra/runner-pool): its Ubuntu base
+      # moves by digest here, and each server rebuilds it weekly.
+      - "/infra/runner-pool/image"
     schedule:
       interval: "weekly"
 

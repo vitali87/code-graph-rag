@@ -22,7 +22,13 @@ jobs:
     # (e.g. a maintainer pushing to a Dependabot PR), and the sonar-gate job in
     # ci.yml mirrors this condition, so both must key on the same field.
     if: github.event_name == 'push' || (github.event.pull_request.user.login != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ubuntu-latest
+    # On our own servers when one has a free slot, on GitHub's
+    # otherwise; forks and releases always on GitHub's: infra/runner-pool/README.md
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     # The coverage run of the full suite alone now takes 26-47 min depending on
     # the runner, and the scan 2-4 min more, so a 50 min cap cut the scan off
     # and the Sonar gate never saw an analysis.

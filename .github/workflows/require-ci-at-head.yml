@@ -27,7 +27,13 @@ permissions:
 jobs:
   require-ci-at-head:
     name: CI Ran At Head
-    runs-on: ubuntu-latest
+    # On our own servers when one has a free slot, on GitHub's
+    # otherwise; forks and releases always on GitHub's: infra/runner-pool/README.md
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - name: Assert a CI run exists at this PR's head

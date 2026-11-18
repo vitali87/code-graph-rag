@@ -20,7 +20,13 @@ concurrency:
 
 jobs:
   score:
-    runs-on: ubuntu-latest
+    # On our own servers when one has a free slot, on GitHub's
+    # otherwise; forks and releases always on GitHub's: infra/runner-pool/README.md
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

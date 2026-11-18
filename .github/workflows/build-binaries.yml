@@ -43,7 +43,13 @@ jobs:
   ci-gate:
     name: Require green CI at the release commit
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    # On our own servers when one has a free slot, on GitHub's
+    # otherwise; forks and releases always on GitHub's: infra/runner-pool/README.md
+    runs-on: >-
+      ${{ vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -65,7 +71,11 @@ jobs:
     if: >-
       !cancelled()
       && (needs.ci-gate.result == 'success' || !startsWith(github.ref, 'refs/tags/v'))
-    runs-on: ${{ matrix.os }}
+    runs-on: >-
+      ${{ matrix.os == 'ubuntu-latest' && vars.OWN_RUNNERS_FREE == 'true' && github.event_name != 'release'
+      && !startsWith(github.ref, 'refs/tags/')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON('["self-hosted","own-linux"]') || matrix.os }}
     permissions:
       contents: write
     timeout-minutes: 30

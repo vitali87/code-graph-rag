@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Runs one job slot. It registers a single-use runner with GitHub, starts a
+# fresh container for it and waits; the runner takes one job and exits, and
+# the container goes with it. systemd starts the slot again a few seconds
+# later, so every job begins on a clean machine.
+set -euo pipefail
+
+POOL_LIB=${POOL_LIB:-/usr/local/lib/runner-pool}
+# shellcheck source=lib.sh
+. "$POOL_LIB/lib.sh"
+
+slot=${1:?usage: runner-pool-slot SLOT}
+load_config
+# shellcheck source=/dev/null
+. "$POOL_ETC/slots/$slot.env"
+: "${SLOT_REPO:?SLOT_REPO is missing from $POOL_ETC/slots/$slot.env}"
+
+container=runner-pool-$slot
+runner_id=
+
+# A failure here (GitHub unreachable, a revoked token, no image yet) would
+# otherwise have systemd retry every few seconds.
+pause_then_fail() {
+  log "$1; trying again in a minute"
+  sleep 60
+  exit 1
+}
+
+forget_runner() {
+  docker rm --force "$container" >/dev/null 2>&1 || true
+  # A runner that ran its job has already been removed by GitHub. One stopped
+  # while still waiting has not, and would linger offline in the settings.
+  if [[ -n $runner_id ]]; then
+    gh_api DELETE "/repos/$SLOT_REPO/actions/runners/$runner_id" >/dev/null 2>&1 || true
+  fi
+}
+trap forget_runner EXIT
+trap 'exit 143' TERM INT
+
+# Left over if the server lost power mid-job.
+docker rm --force "$container" >/dev/null 2>&1 || true
+
+docker image inspect "$POOL_IMAGE" >/dev/null 2>&1 ||
+  pause_then_fail "image $POOL_IMAGE is not built yet (runner-pool-build)"
+
+name="$(hostname --short)-$slot-$(date +%s)"
+request=$(jq --null-input --compact-output \
+  --arg name "$name" --arg label "$POOL_LABEL" \
+  '{name: $name, runner_group_id: 1, work_folder: "_work",
+    labels: ["self-hosted", "linux", "x64", $label]}')
+reply=$(gh_api POST "/repos/$SLOT_REPO/actions/runners/generate-jitconfig" "$request") ||
+  pause_then_fail "could not register a runner for $SLOT_REPO"
+runner_id=$(jq --raw-output '.runner.id' <<<"$reply")
+
+mirror=()
+if [[ -n ${MIRROR_ADDR-} ]] && [[ $(docker inspect --format '{{.State.Running}}' runner-pool-mirror 2>/dev/null) == true ]]; then
+  mirror=(--env "DOCKER_MIRROR=http://$MIRROR_ADDR")
+fi
+
+log "slot $slot: runner $name is waiting for a job from $SLOT_REPO"
+# Privileged because the job gets a Docker daemon of its own. The runner's
+# one-time registration reaches the container through the environment, not
+# the command line, so it never shows in the process list.
+RUNNER_JIT_CONFIG=$(jq --raw-output '.encoded_jit_config' <<<"$reply") \
+  docker run --rm --init --privileged \
+  --name "$container" --hostname "$name" \
+  --memory-reservation "${SLOT_MEMORY_GB:-4}g" --memory "${MEMORY_CAP_GB:-4}g" \
+  --env RUNNER_JIT_CONFIG "${mirror[@]}" \
+  "$POOL_IMAGE"

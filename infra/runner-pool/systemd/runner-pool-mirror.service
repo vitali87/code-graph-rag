@@ -1,0 +1,27 @@
+[Unit]
+Description=Runner pool Docker Hub cache shared by this server's slots
+Documentation=https://github.com/vitali87/code-graph-rag/tree/main/infra/runner-pool
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+PartOf=runner-pool.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/runner-pool/generated.env
+ExecStartPre=-/usr/bin/docker rm --force runner-pool-mirror
+# Listens only on the Docker bridge, so the slots reach it and the internet
+# does not. Every job starts with an empty Docker, and without this each
+# one would download its images from Docker Hub again.
+ExecStart=/usr/bin/docker run --rm --name runner-pool-mirror \
+  --publish ${MIRROR_ADDR}:5000 \
+  --volume runner-pool-mirror:/var/lib/registry \
+  --env REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io \
+  --env-file /etc/runner-pool/mirror.env \
+  registry:3@sha256:82f6ff4a7f982960c8aa51617fea3aabc485df6e55cce80d22deb1de36f1bc3c
+ExecStop=-/usr/bin/docker stop runner-pool-mirror
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=runner-pool.target

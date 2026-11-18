@@ -1,0 +1,6 @@
+[Unit]
+Description=Runner pool: this server's CI job slots, switch and image cache
+Documentation=https://github.com/vitali87/code-graph-rag/tree/main/infra/runner-pool
+
+[Install]
+WantedBy=multi-user.target

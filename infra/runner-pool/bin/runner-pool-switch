@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Tells CI whether the pool has room. Every few seconds it counts the pool
+# runners sitting idle for each repository and writes "true" or "false" to
+# that repository's OWN_RUNNERS_FREE variable. A Linux job reads the variable
+# when it is queued: "true" sends it to the pool, anything else to GitHub's
+# own machines. GitHub cannot fall back from one to the other by itself.
+set -euo pipefail
+
+POOL_LIB=${POOL_LIB:-/usr/local/lib/runner-pool}
+# shellcheck source=lib.sh
+. "$POOL_LIB/lib.sh"
+load_config
+
+interval=${SWITCH_INTERVAL:-15}
+# Every copy of the switch writes only when its answer changes, so one that
+# went quiet could leave a stale value behind another's. Writing again every
+# couple of minutes regardless bounds how long that can last.
+reassert_after=${SWITCH_REASSERT_POLLS:-8}
+mapfile -t repos < <(unique_repos)
+declare -A last=() polls=()
+
+# idle_runners REPO [SKIP_PREFIX]: the pool runners online and waiting for a
+# job, leaving out any whose name starts with SKIP_PREFIX.
+idle_runners() {
+  local reply
+  reply=$(gh_api GET "/repos/$1/actions/runners?per_page=100") || return 1
+  jq --arg label "$POOL_LABEL" --arg skip "${2-}" '
+    [.runners[]
+     | select(.status == "online" and (.busy | not)
+              and any(.labels[]; .name == $label)
+              and ($skip == "" or (.name | startswith($skip) | not)))]
+    | length' <<<"$reply"
+}
+
+set_switch() {
+  local repo=$1 value=$2 body status=0
+  body=$(jq --null-input --compact-output \
+    --arg name "$SWITCH_VARIABLE" --arg value "$value" '{name: $name, value: $value}')
+  gh_api PATCH "/repos/$repo/actions/variables/$SWITCH_VARIABLE" "$body" >/dev/null || status=$?
+  if ((status == 4)); then
+    status=0
+    gh_api POST "/repos/$repo/actions/variables" "$body" >/dev/null || status=$?
+  fi
+  return "$status"
+}
+
+# On the way down, this server's runners are about to go, so the answer is
+# whether any other server still has one idle. That way the last switch to
+# stop leaves "false" behind and jobs go back to GitHub.
+on_stop() {
+  local repo idle
+  for repo in "${repos[@]}"; do
+    if idle=$(idle_runners "$repo" "$(hostname --short)-"); then
+      if ((idle > 0)); then set_switch "$repo" true || true; else set_switch "$repo" false || true; fi
+    fi
+  done
+  exit 0
+}
+trap on_stop TERM INT
+
+log "switching ${repos[*]} every ${interval}s"
+while true; do
+  for repo in "${repos[@]}"; do
+    if ! idle=$(idle_runners "$repo"); then
+      log "$repo: could not read its runners; leaving $SWITCH_VARIABLE as it is"
+      continue
+    fi
+    want=false
+    if ((idle > 0)); then want=true; fi
+    polls[$repo]=$((${polls[$repo]-0} + 1))
+    if [[ ${last[$repo]-} != "$want" ]] || ((${polls[$repo]} >= reassert_after)); then
+      if set_switch "$repo" "$want"; then
+        [[ ${last[$repo]-} == "$want" ]] || log "$repo: $SWITCH_VARIABLE=$want ($idle idle)"
+        last[$repo]=$want
+        polls[$repo]=0
+      fi
+    fi
+  done
+  # In the background so a stop signal is handled at once, not after the sleep.
+  sleep "$interval" &
+  wait $! || true
+done

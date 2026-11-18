@@ -1,0 +1,17 @@
+[Unit]
+Description=Runner pool switch: tells CI whether the pool has a free slot
+Documentation=https://github.com/vitali87/code-graph-rag/tree/main/infra/runner-pool
+After=network-online.target
+Wants=network-online.target
+PartOf=runner-pool.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/runner-pool/runner-pool-switch
+Restart=always
+RestartSec=10
+TimeoutStopSec=60
+
+[Install]
+WantedBy=runner-pool.target
