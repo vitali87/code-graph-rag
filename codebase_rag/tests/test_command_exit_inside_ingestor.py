@@ -91,7 +91,11 @@ def test_a_refused_rename_prints_the_refusal_and_nothing_else(
 ) -> None:
     refused = RenameRefused(REFUSAL, ambiguous=[], unlocatable=["m.py:7"])
 
-    with patch("codebase_rag.editing.rename.rename", side_effect=refused):
+    with (
+        # No run is outstanding, so the rename gets as far as its refusal.
+        patch.object(MemgraphIngestor, "fetch_all", return_value=[]),
+        patch("codebase_rag.editing.rename.rename", side_effect=refused),
+    ):
         result = CliRunner().invoke(
             app,
             [

@@ -11,7 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from scripts.validate_labels import LabelError, validate_labels
+from scripts.validate_labels import (
+    LabelError,
+    main,
+    validate_labels,
+    validate_template_labels,
+)
 
 VALID = """
 - name: bug
@@ -154,3 +159,51 @@ class TestRejectsMalformed:
         """An empty file would silently sync nothing."""
         with pytest.raises(LabelError, match="empty"):
             validate_labels("\n")
+
+
+class TestTemplateLabels:
+    """GitHub applies an issue form's labels only when they already exist,
+    and drops the others without an error, so every label a template names
+    must be one the manifest creates."""
+
+    def test_defined_labels_pass(self) -> None:
+        """Each label a form applies counts as one checked reference."""
+        templates = {"bug.yml": "name: Bug\nlabels:\n  - bug\n  - needs triage\n"}
+        assert validate_template_labels(templates, ["bug", "needs triage"]) == 2
+
+    def test_label_matching_ignores_case(self) -> None:
+        """GitHub matches label names case-insensitively."""
+        templates = {"bug.yml": "name: Bug\nlabels:\n  - Bug\n"}
+        assert validate_template_labels(templates, ["bug"]) == 1
+
+    def test_form_without_labels_passes(self) -> None:
+        """config.yml sits beside the forms and applies no labels."""
+        templates = {"config.yml": "blank_issues_enabled: false\n"}
+        assert validate_template_labels(templates, ["bug"]) == 0
+
+    def test_undefined_label_is_rejected(self) -> None:
+        """A name the manifest only contains as part of a longer label is
+        still undefined: `triage` is not `needs triage`."""
+        templates = {"bug.yml": "name: Bug\nlabels:\n  - bug\n  - triage\n"}
+        with pytest.raises(LabelError, match=r"bug\.yml.*'triage'"):
+            validate_template_labels(templates, ["bug", "needs triage"])
+
+    def test_undefined_label_in_a_comma_list_is_rejected(self) -> None:
+        """Issue forms also accept labels as one comma-separated string."""
+        templates = {"bug.yml": "name: Bug\nlabels: bug, triage\n"}
+        with pytest.raises(LabelError, match="'triage'"):
+            validate_template_labels(templates, ["bug"])
+
+    def test_non_string_label_is_rejected(self) -> None:
+        """An unquoted number is not a label name GitHub can match."""
+        templates = {"bug.yml": "name: Bug\nlabels:\n  - 123\n"}
+        with pytest.raises(LabelError, match="labels"):
+            validate_template_labels(templates, ["123"])
+
+    def test_main_checks_the_shipped_templates(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The CI entry point checks the real forms, and says so: a pass
+        that never read a template would print nothing about them."""
+        assert main() == 0
+        assert "ISSUE_TEMPLATE" in capsys.readouterr().out

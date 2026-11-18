@@ -29,6 +29,7 @@ from codebase_rag import constants as cs
 from codebase_rag.config import PROVIDER_ENV_KEYS, settings
 from codebase_rag.console_marks import status_mark
 from codebase_rag.schemas import HealthCheckResult
+from codebase_rag.tests.conftest import patch_active_model
 from codebase_rag.tools import health_checker
 from codebase_rag.tools.health_checker import HealthChecker
 
@@ -122,8 +123,8 @@ def bare_model_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, f"{role}_MODEL", "")
         monkeypatch.setattr(settings, f"{role}_API_KEY", None)
         monkeypatch.setattr(settings, f"{role}_PROVIDER_TYPE", None)
-    monkeypatch.setattr(settings, "_active_orchestrator", None)
-    monkeypatch.setattr(settings, "_active_cypher", None)
+    patch_active_model(monkeypatch, "_active_orchestrator", None)
+    patch_active_model(monkeypatch, "_active_cypher", None)
     for name in _KEY_VARIABLES:
         monkeypatch.delenv(name, raising=False)
     # These tests are about credentials; a local model is also probed
@@ -253,7 +254,7 @@ def test_the_remediation_names_a_variable_the_gate_accepts(
         assert provider_var in error, (provider, error)
         # ...and it really is accepted, so the advice is not just plausible.
         monkeypatch.setenv(provider_var, "placeholder-for-test")
-        monkeypatch.setattr(settings, "_active_cypher", None)
+        patch_active_model(monkeypatch, "_active_cypher", None)
         assert HealthChecker().check_model_role(cs.ModelRole.CYPHER).passed
     else:
         # Naming one the gate refuses would send the user in a circle.
