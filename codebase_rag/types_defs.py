@@ -2039,11 +2039,21 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
 # The public surface snapshot (scripts/public_surface.py, issue #3629).
 
 
+class SurfaceBounds(TypedDict):
+    min: JsonValue
+    max: JsonValue
+    min_open: bool
+    max_open: bool
+    clamp: bool
+
+
 class SurfaceParam(TypedDict):
     name: str
     kind: str
     flags: list[str]
     type: str
+    choices: list[str] | None
+    bounds: SurfaceBounds | None
     required: bool
     multiple: bool
     is_flag: bool
@@ -2068,6 +2078,7 @@ class SurfaceMcpTool(TypedDict):
 
 class SurfaceSetting(TypedDict):
     name: str
+    env: list[str]
     type: str
     default: JsonValue
 
@@ -2106,9 +2117,20 @@ class SurfaceProtoMessage(TypedDict):
     fields: list[SurfaceProtoField]
 
 
+class SurfaceProtoEnum(TypedDict):
+    name: str
+    values: dict[str, int]
+
+
+class SurfaceSdkMember(TypedDict):
+    name: str
+    signature: str | None
+
+
 class SurfaceSdkName(TypedDict):
     name: str
     signature: str | None
+    members: list[SurfaceSdkMember]
 
 
 class PublicSurface(TypedDict):
@@ -2121,4 +2143,5 @@ class PublicSurface(TypedDict):
     graph_relationships: list[SurfaceRelationshipSchema]
     export_json: list[SurfaceRecord]
     protobuf_index: list[SurfaceProtoMessage]
+    protobuf_enums: list[SurfaceProtoEnum]
     python_sdk: list[SurfaceSdkName]

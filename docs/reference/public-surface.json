@@ -2,6 +2,46 @@
   "version": 1,
   "cli": [
     {
+      "command": "cgr",
+      "hidden": false,
+      "params": [
+        {
+          "name": "version",
+          "kind": "option",
+          "flags": [
+            "--version",
+            "-v"
+          ],
+          "type": "boolean",
+          "choices": null,
+          "bounds": null,
+          "required": false,
+          "multiple": false,
+          "is_flag": true,
+          "hidden": false,
+          "default": null,
+          "envvar": []
+        },
+        {
+          "name": "quiet",
+          "kind": "option",
+          "flags": [
+            "--quiet",
+            "-q"
+          ],
+          "type": "boolean",
+          "choices": null,
+          "bounds": null,
+          "required": false,
+          "multiple": false,
+          "is_flag": true,
+          "hidden": false,
+          "default": false,
+          "envvar": []
+        }
+      ]
+    },
+    {
       "command": "cgr change-signature",
       "hidden": false,
       "params": [
@@ -12,6 +52,8 @@
             "qualified_name"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -26,6 +68,8 @@
             "new_params"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -40,6 +84,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -54,6 +100,8 @@
             "--project"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -68,6 +116,8 @@
             "--map"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -82,6 +132,8 @@
             "--allow-heuristic"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -96,6 +148,8 @@
             "--dry-run"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -116,6 +170,8 @@
             "--base"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -130,6 +186,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -145,6 +203,8 @@
             "-p"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -159,6 +219,8 @@
             "--fail-on-found"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -173,6 +235,8 @@
             "--isolated"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -193,6 +257,8 @@
             "target"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -207,6 +273,14 @@
             "--budget"
           ],
           "type": "int range",
+          "choices": null,
+          "bounds": {
+            "min": 1,
+            "max": null,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -221,6 +295,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -236,6 +312,8 @@
             "-p"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -262,6 +340,8 @@
             "-f"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -277,6 +357,8 @@
             "-s"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -313,6 +395,8 @@
             "-p"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -328,6 +412,8 @@
             "-n"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -342,6 +428,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -357,6 +445,8 @@
             "-e"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -371,6 +461,8 @@
             "--decorator-root"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -385,6 +477,8 @@
             "--exclude"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -400,6 +494,8 @@
             "--no-include-tests"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -415,6 +511,8 @@
             "--no-classes"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -429,6 +527,11 @@
             "--format"
           ],
           "type": "choice",
+          "choices": [
+            "table",
+            "json"
+          ],
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -444,6 +547,8 @@
             "-o"
           ],
           "type": "path",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -458,6 +563,8 @@
             "--fail-on-found"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -472,6 +579,14 @@
             "--min-resolution"
           ],
           "type": "choice",
+          "choices": [
+            "exact",
+            "overload",
+            "heuristic",
+            "trace_confirmed",
+            "dynamic"
+          ],
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -487,6 +602,8 @@
             "--no-endpoint-roots"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -502,6 +619,8 @@
             "--no-public-roots"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -523,6 +642,8 @@
             "-p"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -538,6 +659,8 @@
             "-n"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -552,6 +675,8 @@
             "--repo-path"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -572,6 +697,8 @@
             "--old"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -586,6 +713,8 @@
             "--new"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -600,6 +729,8 @@
             "--json-out"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -626,6 +757,8 @@
             "-p"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -641,6 +774,8 @@
             "-n"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -655,6 +790,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -669,6 +806,14 @@
             "--threshold"
           ],
           "type": "float range",
+          "choices": null,
+          "bounds": {
+            "min": 0.0,
+            "max": 1.0,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -683,6 +828,14 @@
             "--min-size"
           ],
           "type": "int range",
+          "choices": null,
+          "bounds": {
+            "min": 1,
+            "max": null,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -697,6 +850,8 @@
             "--exact-only"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -711,6 +866,8 @@
             "--exclude"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -725,6 +882,11 @@
             "--format"
           ],
           "type": "choice",
+          "choices": [
+            "table",
+            "json"
+          ],
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -740,6 +902,8 @@
             "-o"
           ],
           "type": "path",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -754,6 +918,8 @@
             "--fail-on-found"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -768,6 +934,14 @@
             "--open"
           ],
           "type": "int range",
+          "choices": null,
+          "bounds": {
+            "min": 1,
+            "max": null,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -789,6 +963,14 @@
             "--count"
           ],
           "type": "integer range",
+          "choices": null,
+          "bounds": {
+            "min": 1,
+            "max": null,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -803,6 +985,8 @@
             "--diff"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -817,6 +1001,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -838,6 +1024,14 @@
             "--count"
           ],
           "type": "integer range",
+          "choices": null,
+          "bounds": {
+            "min": 1,
+            "max": null,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -852,6 +1046,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -867,6 +1063,8 @@
             "-p"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -888,6 +1086,8 @@
             "--output"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -903,6 +1103,8 @@
             "-p"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -918,6 +1120,8 @@
             "-n"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -932,6 +1136,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -946,6 +1152,8 @@
             "--workspace"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -961,6 +1169,8 @@
             "--no-json"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -975,6 +1185,8 @@
             "--batch-size"
           ],
           "type": "int",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -995,6 +1207,8 @@
             "qualified_name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1009,6 +1223,14 @@
             "--depth"
           ],
           "type": "integer range",
+          "choices": null,
+          "bounds": {
+            "min": 1,
+            "max": 5,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1023,6 +1245,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1038,6 +1262,8 @@
             "-p"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1058,6 +1284,8 @@
             "qualified_name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1072,6 +1300,14 @@
             "--depth"
           ],
           "type": "integer range",
+          "choices": null,
+          "bounds": {
+            "min": 1,
+            "max": 5,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1086,6 +1322,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1101,6 +1339,8 @@
             "-p"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1121,6 +1361,8 @@
             "qualified_name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1135,6 +1377,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1150,6 +1394,8 @@
             "-p"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1170,6 +1416,8 @@
             "qualified_name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1184,6 +1432,14 @@
             "--depth"
           ],
           "type": "integer range",
+          "choices": null,
+          "bounds": {
+            "min": 1,
+            "max": 5,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1198,6 +1454,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1213,6 +1471,8 @@
             "-p"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1233,6 +1493,8 @@
             "module_qualified_name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1247,6 +1509,8 @@
             "--through-reexports"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1261,6 +1525,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1276,6 +1542,8 @@
             "-p"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1296,6 +1564,8 @@
             "qualified_name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1310,6 +1580,14 @@
             "--depth"
           ],
           "type": "integer range",
+          "choices": null,
+          "bounds": {
+            "min": 1,
+            "max": 5,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1324,6 +1602,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1339,6 +1619,8 @@
             "-p"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1359,6 +1641,8 @@
             "target"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1373,6 +1657,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1388,6 +1674,8 @@
             "-p"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1408,6 +1696,8 @@
             "qualified_name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1422,6 +1712,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1437,6 +1729,8 @@
             "-p"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1457,6 +1751,8 @@
             "graph_file"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1477,6 +1773,8 @@
             "command"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1497,6 +1795,8 @@
             "--repo-path"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1512,6 +1812,8 @@
             "--output-proto-dir"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1526,6 +1828,8 @@
             "--split-index"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1540,6 +1844,8 @@
             "--exclude"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -1554,6 +1860,8 @@
             "--capture"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -1568,6 +1876,8 @@
             "--interactive-setup"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1588,6 +1898,8 @@
             "language_name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1602,6 +1914,8 @@
             "--grammar-url"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1628,6 +1942,8 @@
             "-v"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1648,6 +1964,8 @@
             "language_name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1662,6 +1980,8 @@
             "--keep-submodule"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1682,6 +2002,11 @@
             "--transport"
           ],
           "type": "choice",
+          "choices": [
+            "stdio",
+            "http"
+          ],
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1696,6 +2021,8 @@
             "--host"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1710,6 +2037,8 @@
             "--port"
           ],
           "type": "int",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1724,6 +2053,8 @@
             "--workspace"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1738,6 +2069,8 @@
             "--read-only"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1758,6 +2091,8 @@
             "qualified_name"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1772,6 +2107,8 @@
             "target_module"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1786,6 +2123,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1800,6 +2139,8 @@
             "--project"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1814,6 +2155,8 @@
             "--keep-alias"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1828,6 +2171,8 @@
             "--dry-run"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1848,6 +2193,8 @@
             "language"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1862,6 +2209,8 @@
             "--repo-path"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1876,6 +2225,8 @@
             "--reference-document"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1890,6 +2241,8 @@
             "--orchestrator"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1904,6 +2257,8 @@
             "--cypher"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1918,6 +2273,8 @@
             "--no-confirm"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1932,6 +2289,8 @@
             "--no-instructions"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -1946,6 +2305,14 @@
             "--batch-size"
           ],
           "type": "int range",
+          "choices": null,
+          "bounds": {
+            "min": 1,
+            "max": null,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -1966,6 +2333,8 @@
             "old_scope"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1980,6 +2349,8 @@
             "new_scope"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -1995,6 +2366,8 @@
             "-p"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2009,6 +2382,8 @@
             "--new-project"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2023,6 +2398,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2037,6 +2414,8 @@
             "--pair"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -2051,6 +2430,8 @@
             "--include-tests"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2065,6 +2446,8 @@
             "--fail-on-found"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2085,6 +2468,8 @@
             "--dry-run"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2100,6 +2485,8 @@
             "-y"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2120,6 +2507,8 @@
             "qualified_name"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -2134,6 +2523,8 @@
             "new_name"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -2148,6 +2539,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2163,6 +2556,8 @@
             "-p"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2177,6 +2572,8 @@
             "--allow-heuristic"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2191,6 +2588,8 @@
             "--dry-run"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2211,6 +2610,8 @@
             "--repo-path"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2225,6 +2626,8 @@
             "--update-graph"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2239,6 +2642,8 @@
             "--clean"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2254,6 +2659,8 @@
             "-y"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2269,6 +2676,8 @@
             "--output"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2283,6 +2692,8 @@
             "--orchestrator"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2297,6 +2708,8 @@
             "--cypher"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2311,6 +2724,8 @@
             "--no-confirm"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2325,6 +2740,8 @@
             "--no-instructions"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2339,6 +2756,14 @@
             "--batch-size"
           ],
           "type": "int range",
+          "choices": null,
+          "bounds": {
+            "min": 1,
+            "max": null,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2353,6 +2778,8 @@
             "--project-name"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2367,6 +2794,8 @@
             "--exclude"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -2381,6 +2810,8 @@
             "--capture"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -2395,6 +2826,8 @@
             "--interactive-setup"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2410,6 +2843,8 @@
             "--ask-agent"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2424,6 +2859,11 @@
             "--output-format"
           ],
           "type": "choice",
+          "choices": [
+            "table",
+            "json"
+          ],
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2438,6 +2878,8 @@
             "--no-start-stack"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2452,6 +2894,8 @@
             "--no-sync"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2466,6 +2910,8 @@
             "--no-embeddings"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -2480,6 +2926,8 @@
             "--projects"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2494,6 +2942,8 @@
             "--workspace"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2515,6 +2965,8 @@
             "-p"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -2530,6 +2982,8 @@
             "-n"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -2544,6 +2998,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2558,6 +3014,8 @@
             "--workspace"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2588,6 +3046,8 @@
             "profile_file"
           ],
           "type": "file",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -2602,6 +3062,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2617,6 +3079,8 @@
             "-o"
           ],
           "type": "file",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2631,6 +3095,8 @@
             "--include"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2645,6 +3111,8 @@
             "--workload"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2659,6 +3127,8 @@
             "--language"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2673,6 +3143,8 @@
             "--format"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2687,6 +3159,8 @@
             "--path-map"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -2701,6 +3175,8 @@
             "--build-id"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2715,6 +3191,8 @@
             "--service"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2729,6 +3207,8 @@
             "--label"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2743,6 +3223,8 @@
             "--commit"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2763,6 +3245,8 @@
             "trace_file"
           ],
           "type": "file",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -2777,6 +3261,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -2791,6 +3277,8 @@
             "--project-name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2811,6 +3299,8 @@
             "url"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -2825,6 +3315,8 @@
             "--repo-path"
           ],
           "type": "directory",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2840,6 +3332,8 @@
             "-o"
           ],
           "type": "file",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2854,6 +3348,8 @@
             "--save"
           ],
           "type": "file",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2868,6 +3364,8 @@
             "--header"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -2882,6 +3380,8 @@
             "--timeout"
           ],
           "type": "float",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2896,6 +3396,8 @@
             "--workload"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2910,6 +3412,8 @@
             "--language"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2924,6 +3428,8 @@
             "--path-map"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": true,
           "is_flag": false,
@@ -2938,6 +3444,8 @@
             "--build-id"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2952,6 +3460,8 @@
             "--service"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2966,6 +3476,8 @@
             "--label"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -2980,6 +3492,8 @@
             "--commit"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3001,6 +3515,8 @@
             "--index-dir"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3015,6 +3531,8 @@
             "--trusted-manifest-sha256"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3035,6 +3553,8 @@
             "--repo-path"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3049,6 +3569,8 @@
             "--project-name"
           ],
           "type": "str",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3064,6 +3586,14 @@
             "-d"
           ],
           "type": "float range",
+          "choices": null,
+          "bounds": {
+            "min": 0,
+            "max": null,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3079,6 +3609,14 @@
             "-m"
           ],
           "type": "float range",
+          "choices": null,
+          "bounds": {
+            "min": 0,
+            "max": null,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3093,6 +3631,14 @@
             "--batch-size"
           ],
           "type": "int range",
+          "choices": null,
+          "bounds": {
+            "min": 1,
+            "max": null,
+            "min_open": false,
+            "max_open": false,
+            "clamp": false
+          },
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3107,6 +3653,8 @@
             "--no-start-stack"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -3122,6 +3670,8 @@
             "-y"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -3142,6 +3692,8 @@
             "name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3156,6 +3708,8 @@
             "repo_path"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3171,6 +3725,8 @@
             "-p"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3191,6 +3747,8 @@
             "name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3206,6 +3764,8 @@
             "-d"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": false,
@@ -3220,6 +3780,8 @@
             "--force"
           ],
           "type": "boolean",
+          "choices": null,
+          "bounds": null,
           "required": false,
           "multiple": false,
           "is_flag": true,
@@ -3240,6 +3802,8 @@
             "name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3265,6 +3829,8 @@
             "name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3279,6 +3845,8 @@
             "repo_path"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -3299,6 +3867,8 @@
             "name"
           ],
           "type": "text",
+          "choices": null,
+          "bounds": null,
           "required": true,
           "multiple": false,
           "is_flag": false,
@@ -4177,7 +4747,7 @@
         "open_world_hint": false
       },
       "served_read_only": false,
-      "needs_extra": null
+      "needs_extra": "ast-grep"
     },
     {
       "name": "structural_search",
@@ -4202,7 +4772,7 @@
         "open_world_hint": false
       },
       "served_read_only": true,
-      "needs_extra": null
+      "needs_extra": "ast-grep"
     },
     {
       "name": "surgical_replace_code",
@@ -4327,476 +4897,761 @@
   "settings": [
     {
       "name": "AGENT_RETRIES",
+      "env": [
+        "AGENT_RETRIES"
+      ],
       "type": "int",
       "default": 3
     },
     {
       "name": "ALLOW_SENSITIVE_READS",
+      "env": [
+        "CGR_ALLOW_SENSITIVE_READS"
+      ],
       "type": "bool",
       "default": false
     },
     {
       "name": "ALLOW_SENSITIVE_WRITES",
+      "env": [
+        "CGR_ALLOW_SENSITIVE_WRITES"
+      ],
       "type": "bool",
       "default": false
     },
     {
       "name": "CACHE_EVICTION_DIVISOR",
+      "env": [
+        "CACHE_EVICTION_DIVISOR"
+      ],
       "type": "int",
       "default": 10
     },
     {
       "name": "CACHE_MAX_ENTRIES",
+      "env": [
+        "CACHE_MAX_ENTRIES"
+      ],
       "type": "int",
       "default": 1000
     },
     {
       "name": "CACHE_MAX_MEMORY_MB",
+      "env": [
+        "CACHE_MAX_MEMORY_MB"
+      ],
       "type": "int",
       "default": 500
     },
     {
       "name": "CACHE_MEMORY_THRESHOLD_RATIO",
+      "env": [
+        "CACHE_MEMORY_THRESHOLD_RATIO"
+      ],
       "type": "float",
       "default": 0.8
     },
     {
       "name": "CAPTURE_FUNCTION_LOCAL_DEFINITIONS",
+      "env": [
+        "CGR_CAPTURE_LOCAL_DEFINITIONS"
+      ],
       "type": "bool",
       "default": true
     },
     {
       "name": "CGR_CAPTURE",
+      "env": [
+        "CGR_CAPTURE"
+      ],
       "type": "str",
       "default": ""
     },
     {
       "name": "CGR_DIFF_COMMAND",
+      "env": [
+        "CGR_DIFF_COMMAND"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "CGR_EDITOR",
+      "env": [
+        "CGR_EDITOR"
+      ],
       "type": "str",
       "default": "auto"
     },
     {
       "name": "CGR_EDITOR_URL_TEMPLATE",
+      "env": [
+        "CGR_EDITOR_URL_TEMPLATE"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "CGR_HOME",
+      "env": [
+        "CGR_HOME"
+      ],
       "type": "Path",
       "default": "<computed>"
     },
     {
       "name": "CONTEXT_COMPACTION_ENABLED",
+      "env": [
+        "CGR_CONTEXT_COMPACTION_ENABLED"
+      ],
       "type": "bool",
       "default": true
     },
     {
       "name": "CPP_FRONTEND",
+      "env": [
+        "CPP_FRONTEND"
+      ],
       "type": "CppFrontend",
       "default": "hybrid"
     },
     {
       "name": "CSHARP_FRONTEND",
+      "env": [
+        "CSHARP_FRONTEND"
+      ],
       "type": "CSharpFrontend",
       "default": "treesitter"
     },
     {
       "name": "CYPHER_API_KEY",
+      "env": [
+        "CYPHER_API_KEY"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "CYPHER_ENDPOINT",
+      "env": [
+        "CYPHER_ENDPOINT"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "CYPHER_MODEL",
+      "env": [
+        "CYPHER_MODEL"
+      ],
       "type": "str",
       "default": ""
     },
     {
       "name": "CYPHER_PROJECT_ID",
+      "env": [
+        "CYPHER_PROJECT_ID"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "CYPHER_PROVIDER",
+      "env": [
+        "CYPHER_PROVIDER"
+      ],
       "type": "str",
       "default": ""
     },
     {
       "name": "CYPHER_PROVIDER_TYPE",
+      "env": [
+        "CYPHER_PROVIDER_TYPE"
+      ],
       "type": "GoogleProviderType | None",
       "default": null
     },
     {
       "name": "CYPHER_REGION",
+      "env": [
+        "CYPHER_REGION"
+      ],
       "type": "str",
       "default": "us-central1"
     },
     {
       "name": "CYPHER_SERVICE_ACCOUNT_FILE",
+      "env": [
+        "CYPHER_SERVICE_ACCOUNT_FILE"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "CYPHER_THINKING_BUDGET",
+      "env": [
+        "CYPHER_THINKING_BUDGET"
+      ],
       "type": "int | None",
       "default": null
     },
     {
       "name": "EMBEDDING_DEVICE",
+      "env": [
+        "CGR_EMBEDDING_DEVICE"
+      ],
       "type": "EmbeddingDevice | None",
       "default": null
     },
     {
       "name": "EMBEDDING_MAX_LENGTH",
+      "env": [
+        "EMBEDDING_MAX_LENGTH"
+      ],
       "type": "int",
       "default": 512
     },
     {
       "name": "EMBEDDING_PROGRESS_INTERVAL",
+      "env": [
+        "EMBEDDING_PROGRESS_INTERVAL"
+      ],
       "type": "int",
       "default": 10
     },
     {
       "name": "EMBEDDING_PROVIDER",
+      "env": [
+        "CGR_EMBEDDING_PROVIDER"
+      ],
       "type": "EmbeddingProvider",
       "default": "unixcoder"
     },
     {
       "name": "FILE_FLUSH_INTERVAL",
+      "env": [
+        "FILE_FLUSH_INTERVAL"
+      ],
       "type": "int",
       "default": 500
     },
     {
       "name": "FLUSH_THREAD_POOL_SIZE",
+      "env": [
+        "FLUSH_THREAD_POOL_SIZE"
+      ],
       "type": "int",
       "default": 4
     },
     {
       "name": "GO_FRONTEND",
+      "env": [
+        "GO_FRONTEND"
+      ],
       "type": "GoFrontend",
       "default": "auto"
     },
     {
       "name": "GRAPH_BACKEND",
+      "env": [
+        "GRAPH_BACKEND"
+      ],
       "type": "str",
       "default": "sqlite"
     },
     {
       "name": "JAVA_FRONTEND",
+      "env": [
+        "JAVA_FRONTEND"
+      ],
       "type": "JavaFrontend",
       "default": "heuristic"
     },
     {
       "name": "LAB_PORT",
+      "env": [
+        "LAB_PORT"
+      ],
       "type": "int",
       "default": 3000
     },
     {
       "name": "LITELLM_HEALTH_TIMEOUT",
+      "env": [
+        "LITELLM_HEALTH_TIMEOUT"
+      ],
       "type": "float",
       "default": 5.0
     },
     {
       "name": "LOMBOK_JAR",
+      "env": [
+        "LOMBOK_JAR"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "MCP_HTTP_AUTH_TOKEN",
+      "env": [
+        "MCP_HTTP_AUTH_TOKEN"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "MCP_HTTP_ENDPOINT_PATH",
+      "env": [
+        "MCP_HTTP_ENDPOINT_PATH"
+      ],
       "type": "str",
       "default": "/mcp"
     },
     {
       "name": "MCP_HTTP_HOST",
+      "env": [
+        "MCP_HTTP_HOST"
+      ],
       "type": "str",
       "default": "127.0.0.1"
     },
     {
       "name": "MCP_HTTP_PORT",
+      "env": [
+        "MCP_HTTP_PORT"
+      ],
       "type": "int",
       "default": 8080
     },
     {
       "name": "MCP_READ_ONLY",
+      "env": [
+        "MCP_READ_ONLY"
+      ],
       "type": "bool",
       "default": false
     },
     {
       "name": "MEMGRAPH_BATCH_SIZE",
+      "env": [
+        "MEMGRAPH_BATCH_SIZE"
+      ],
       "type": "int",
       "default": 1000
     },
     {
       "name": "MEMGRAPH_HOST",
+      "env": [
+        "MEMGRAPH_HOST"
+      ],
       "type": "str",
       "default": "localhost"
     },
     {
       "name": "MEMGRAPH_HTTP_PORT",
+      "env": [
+        "MEMGRAPH_HTTP_PORT"
+      ],
       "type": "int",
       "default": 7444
     },
     {
       "name": "MEMGRAPH_PASSWORD",
+      "env": [
+        "MEMGRAPH_PASSWORD"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "MEMGRAPH_PORT",
+      "env": [
+        "MEMGRAPH_PORT"
+      ],
       "type": "int",
       "default": 7687
     },
     {
       "name": "MEMGRAPH_USERNAME",
+      "env": [
+        "MEMGRAPH_USERNAME"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "MILVUS_COLLECTION_NAME",
+      "env": [
+        "MILVUS_COLLECTION_NAME"
+      ],
       "type": "str",
       "default": "code_embeddings"
     },
     {
       "name": "MILVUS_CONSISTENCY_LEVEL",
+      "env": [
+        "MILVUS_CONSISTENCY_LEVEL"
+      ],
       "type": "str",
       "default": "Strong"
     },
     {
       "name": "MILVUS_DB_NAME",
+      "env": [
+        "MILVUS_DB_NAME"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "MILVUS_TOKEN",
+      "env": [
+        "MILVUS_TOKEN"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "MILVUS_TOP_K",
+      "env": [
+        "MILVUS_TOP_K"
+      ],
       "type": "int",
       "default": 5
     },
     {
       "name": "MILVUS_URI",
+      "env": [
+        "MILVUS_URI"
+      ],
       "type": "str",
       "default": "./.milvus_code_embeddings.db"
     },
     {
       "name": "MILVUS_VECTOR_DIM",
+      "env": [
+        "MILVUS_VECTOR_DIM"
+      ],
       "type": "int",
       "default": 768
     },
     {
       "name": "MODEL_MAX_TOKENS",
+      "env": [
+        "MODEL_MAX_TOKENS"
+      ],
       "type": "int",
       "default": 8192
     },
     {
       "name": "NEO4J_DATABASE",
+      "env": [
+        "NEO4J_DATABASE"
+      ],
       "type": "str",
       "default": "neo4j"
     },
     {
       "name": "NEO4J_PASSWORD",
+      "env": [
+        "NEO4J_PASSWORD"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "NEO4J_URI",
+      "env": [
+        "NEO4J_URI"
+      ],
       "type": "str",
       "default": "bolt://localhost:7687"
     },
     {
       "name": "NEO4J_USERNAME",
+      "env": [
+        "NEO4J_USERNAME"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "OLLAMA_BASE_URL",
+      "env": [
+        "OLLAMA_BASE_URL"
+      ],
       "type": "str",
       "default": "http://localhost:11434"
     },
     {
       "name": "OLLAMA_HEALTH_TIMEOUT",
+      "env": [
+        "OLLAMA_HEALTH_TIMEOUT"
+      ],
       "type": "float",
       "default": 5.0
     },
     {
       "name": "OPENAI_EMBEDDING_API_KEY",
+      "env": [
+        "OPENAI_EMBEDDING_API_KEY"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "OPENAI_EMBEDDING_BASE_URL",
+      "env": [
+        "OPENAI_EMBEDDING_BASE_URL"
+      ],
       "type": "str",
       "default": "https://api.openai.com/v1"
     },
     {
       "name": "OPENAI_EMBEDDING_BATCH_SIZE",
+      "env": [
+        "OPENAI_EMBEDDING_BATCH_SIZE"
+      ],
       "type": "int",
       "default": 128
     },
     {
       "name": "OPENAI_EMBEDDING_DIMENSIONS",
+      "env": [
+        "OPENAI_EMBEDDING_DIMENSIONS"
+      ],
       "type": "int | None",
       "default": null
     },
     {
       "name": "OPENAI_EMBEDDING_MODEL",
+      "env": [
+        "OPENAI_EMBEDDING_MODEL"
+      ],
       "type": "str",
       "default": "text-embedding-3-small"
     },
     {
       "name": "OPENAI_EMBEDDING_TIMEOUT",
+      "env": [
+        "OPENAI_EMBEDDING_TIMEOUT"
+      ],
       "type": "float",
       "default": 60.0
     },
     {
       "name": "ORCHESTRATOR_API_KEY",
+      "env": [
+        "ORCHESTRATOR_API_KEY"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "ORCHESTRATOR_ENDPOINT",
+      "env": [
+        "ORCHESTRATOR_ENDPOINT"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "ORCHESTRATOR_MODEL",
+      "env": [
+        "ORCHESTRATOR_MODEL"
+      ],
       "type": "str",
       "default": ""
     },
     {
       "name": "ORCHESTRATOR_OUTPUT_RETRIES",
+      "env": [
+        "ORCHESTRATOR_OUTPUT_RETRIES"
+      ],
       "type": "int",
       "default": 100
     },
     {
       "name": "ORCHESTRATOR_PROJECT_ID",
+      "env": [
+        "ORCHESTRATOR_PROJECT_ID"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "ORCHESTRATOR_PROVIDER",
+      "env": [
+        "ORCHESTRATOR_PROVIDER"
+      ],
       "type": "str",
       "default": ""
     },
     {
       "name": "ORCHESTRATOR_PROVIDER_TYPE",
+      "env": [
+        "ORCHESTRATOR_PROVIDER_TYPE"
+      ],
       "type": "GoogleProviderType | None",
       "default": null
     },
     {
       "name": "ORCHESTRATOR_REGION",
+      "env": [
+        "ORCHESTRATOR_REGION"
+      ],
       "type": "str",
       "default": "us-central1"
     },
     {
       "name": "ORCHESTRATOR_SERVICE_ACCOUNT_FILE",
+      "env": [
+        "ORCHESTRATOR_SERVICE_ACCOUNT_FILE"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "ORCHESTRATOR_THINKING_BUDGET",
+      "env": [
+        "ORCHESTRATOR_THINKING_BUDGET"
+      ],
       "type": "int | None",
       "default": null
     },
     {
       "name": "PYTHON_FRONTEND",
+      "env": [
+        "PYTHON_FRONTEND"
+      ],
       "type": "PythonFrontend",
       "default": "heuristic"
     },
     {
       "name": "QDRANT_ALLOW_INSECURE_API_KEY",
+      "env": [
+        "QDRANT_ALLOW_INSECURE_API_KEY"
+      ],
       "type": "bool",
       "default": false
     },
     {
       "name": "QDRANT_API_KEY",
+      "env": [
+        "QDRANT_API_KEY"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "QDRANT_BATCH_SIZE",
+      "env": [
+        "QDRANT_BATCH_SIZE"
+      ],
       "type": "int",
       "default": 50
     },
     {
       "name": "QDRANT_COLLECTION_NAME",
+      "env": [
+        "QDRANT_COLLECTION_NAME"
+      ],
       "type": "str",
       "default": "code_embeddings"
     },
     {
       "name": "QDRANT_DB_PATH",
+      "env": [
+        "QDRANT_DB_PATH"
+      ],
       "type": "str",
       "default": "./.qdrant_code_embeddings"
     },
     {
       "name": "QDRANT_RETRY_BASE_DELAY",
+      "env": [
+        "QDRANT_RETRY_BASE_DELAY"
+      ],
       "type": "float",
       "default": 0.5
     },
     {
       "name": "QDRANT_TOP_K",
+      "env": [
+        "QDRANT_TOP_K"
+      ],
       "type": "int",
       "default": 5
     },
     {
       "name": "QDRANT_UPSERT_RETRIES",
+      "env": [
+        "QDRANT_UPSERT_RETRIES"
+      ],
       "type": "int",
       "default": 3
     },
     {
       "name": "QDRANT_URL",
+      "env": [
+        "QDRANT_URL"
+      ],
       "type": "str | None",
       "default": null
     },
     {
       "name": "QDRANT_VECTOR_DIM",
+      "env": [
+        "QDRANT_VECTOR_DIM"
+      ],
       "type": "int",
       "default": 768
     },
     {
       "name": "QUERY_MEMORY_LIMIT_MB",
+      "env": [
+        "QUERY_MEMORY_LIMIT_MB"
+      ],
       "type": "int",
       "default": 4096
     },
     {
       "name": "QUERY_RESULT_MAX_TOKENS",
+      "env": [
+        "QUERY_RESULT_MAX_TOKENS"
+      ],
       "type": "int",
       "default": 16000
     },
     {
       "name": "QUERY_RESULT_ROW_CAP",
+      "env": [
+        "QUERY_RESULT_ROW_CAP"
+      ],
       "type": "int",
       "default": 500
     },
     {
       "name": "QUERY_TIMEOUT_S",
+      "env": [
+        "QUERY_TIMEOUT_S"
+      ],
       "type": "float",
       "default": 60.0
     },
     {
       "name": "QUIET",
+      "env": [
+        "CGR_QUIET"
+      ],
       "type": "bool",
       "default": false
     },
     {
       "name": "SHELL_COMMAND_ALLOWLIST",
+      "env": [
+        "SHELL_COMMAND_ALLOWLIST"
+      ],
       "type": "frozenset[str]",
       "default": [
         "awk",
@@ -4831,11 +5686,17 @@
     },
     {
       "name": "SHELL_COMMAND_TIMEOUT",
+      "env": [
+        "SHELL_COMMAND_TIMEOUT"
+      ],
       "type": "int",
       "default": 30
     },
     {
       "name": "SHELL_NONINTERACTIVE_READ_COMMANDS",
+      "env": [
+        "SHELL_NONINTERACTIVE_READ_COMMANDS"
+      ],
       "type": "frozenset[str]",
       "default": [
         "cat",
@@ -4852,6 +5713,9 @@
     },
     {
       "name": "SHELL_READ_ONLY_COMMANDS",
+      "env": [
+        "SHELL_READ_ONLY_COMMANDS"
+      ],
       "type": "frozenset[str]",
       "default": [
         "echo",
@@ -4861,51 +5725,81 @@
     },
     {
       "name": "SHELL_SAFE_GIT_SUBCOMMANDS",
+      "env": [
+        "SHELL_SAFE_GIT_SUBCOMMANDS"
+      ],
       "type": "frozenset[str]",
       "default": []
     },
     {
       "name": "SKIP_EMBEDDINGS",
+      "env": [
+        "CGR_SKIP_EMBEDDINGS"
+      ],
       "type": "bool",
       "default": false
     },
     {
       "name": "SPONSOR_PLEDGE",
+      "env": [
+        "CGR_SPONSOR_PLEDGE"
+      ],
       "type": "bool",
       "default": true
     },
     {
       "name": "SQLITE_GRAPH_PATH",
+      "env": [
+        "SQLITE_GRAPH_PATH"
+      ],
       "type": "Path | None",
       "default": null
     },
     {
       "name": "SQLITE_VECTOR_DIM",
+      "env": [
+        "SQLITE_VECTOR_DIM"
+      ],
       "type": "int",
       "default": 768
     },
     {
       "name": "SQLITE_VECTOR_PATH",
+      "env": [
+        "SQLITE_VECTOR_PATH"
+      ],
       "type": "Path | None",
       "default": null
     },
     {
       "name": "SQLITE_VECTOR_TOP_K",
+      "env": [
+        "SQLITE_VECTOR_TOP_K"
+      ],
       "type": "int",
       "default": 5
     },
     {
       "name": "TARGET_REPO_PATH",
+      "env": [
+        "TARGET_REPO_PATH"
+      ],
       "type": "str",
       "default": "."
     },
     {
       "name": "TRUST_PROJECT_INSTRUCTIONS",
+      "env": [
+        "CGR_TRUST_PROJECT_INSTRUCTIONS"
+      ],
       "type": "bool",
       "default": false
     },
     {
       "name": "VECTOR_STORE_BACKEND",
+      "env": [
+        "CGR_VECTOR_STORE_BACKEND"
+      ],
       "type": "VectorStoreBackend",
       "default": "sqlite"
     }
@@ -5754,7 +6648,7 @@
         {
           "name": "type",
           "number": 1,
-          "type": "ENUM",
+          "type": "Relationship.RelationshipType",
           "repeated": false
         },
         {
@@ -5772,7 +6666,7 @@
         {
           "name": "properties",
           "number": 4,
-          "type": "Struct",
+          "type": "google.protobuf.Struct",
           "repeated": false
         },
         {
@@ -7312,30 +8206,244 @@
       ]
     }
   ],
+  "protobuf_enums": [
+    {
+      "name": "Relationship.RelationshipType",
+      "values": {
+        "RELATIONSHIP_TYPE_UNSPECIFIED": 0,
+        "CONTAINS_PACKAGE": 1,
+        "CONTAINS_FOLDER": 2,
+        "CONTAINS_FILE": 3,
+        "CONTAINS_MODULE": 4,
+        "DEFINES": 5,
+        "DEFINES_METHOD": 6,
+        "IMPORTS": 7,
+        "INHERITS": 8,
+        "OVERRIDES": 9,
+        "CALLS": 10,
+        "DEPENDS_ON_EXTERNAL": 11,
+        "IMPLEMENTS_MODULE": 12,
+        "IMPLEMENTS": 13,
+        "EXPORTS": 14,
+        "EXPORTS_MODULE": 15,
+        "READS_FROM": 16,
+        "WRITES_TO": 17,
+        "CONTAINS_SECTION": 18,
+        "EXPOSES": 19,
+        "FLOWS_TO": 20,
+        "HAS_SMELL": 21,
+        "HAS_VULNERABILITY": 22,
+        "IMPLEMENTS_PATTERN": 23,
+        "INSTANTIATES": 24,
+        "LINKS_TO": 25,
+        "REFERENCES": 26,
+        "RESOLVES_TO": 27,
+        "RETURNS": 28,
+        "ACCEPTS": 29,
+        "ANNOTATES": 30,
+        "MENTIONS": 31,
+        "HAS_PARAMETER": 32,
+        "OF_TYPE": 33,
+        "HAS_FIELD": 34,
+        "HAS_VARIANT": 35,
+        "DEFINES_CONSTANT": 36
+      }
+    }
+  ],
   "python_sdk": [
     {
       "name": "CypherGenerator",
-      "signature": "(active_projects: 'list[str] | None' = None) -> 'None'"
+      "signature": "(active_projects: 'list[str] | None' = None) -> 'None'",
+      "members": [
+        {
+          "name": "generate",
+          "signature": "(self, natural_language_query: 'str') -> 'str'"
+        },
+        {
+          "name": "repair",
+          "signature": "(self, natural_language_query: 'str', failed_query: 'str', error: 'str') -> 'str'"
+        }
+      ]
     },
     {
       "name": "GraphLoader",
-      "signature": "(file_path: str)"
+      "signature": "(file_path: str)",
+      "members": [
+        {
+          "name": "find_node_by_property",
+          "signature": "(self, property_name: str, value: str | int | float | bool | list[str] | None) -> list[codebase_rag.models.GraphNode]"
+        },
+        {
+          "name": "find_nodes_by_label",
+          "signature": "(self, label: str) -> list[codebase_rag.models.GraphNode]"
+        },
+        {
+          "name": "get_incoming_relationships",
+          "signature": "(self, node_id: int) -> list[codebase_rag.models.GraphRelationship]"
+        },
+        {
+          "name": "get_node_by_id",
+          "signature": "(self, node_id: int) -> codebase_rag.models.GraphNode | None"
+        },
+        {
+          "name": "get_outgoing_relationships",
+          "signature": "(self, node_id: int) -> list[codebase_rag.models.GraphRelationship]"
+        },
+        {
+          "name": "get_relationships_for_node",
+          "signature": "(self, node_id: int) -> list[codebase_rag.models.GraphRelationship]"
+        },
+        {
+          "name": "load",
+          "signature": "(self) -> None"
+        },
+        {
+          "name": "metadata",
+          "signature": "<property>"
+        },
+        {
+          "name": "nodes",
+          "signature": "<property>"
+        },
+        {
+          "name": "relationships",
+          "signature": "<property>"
+        },
+        {
+          "name": "summary",
+          "signature": "(self) -> codebase_rag.types_defs.GraphSummary"
+        }
+      ]
     },
     {
       "name": "MemgraphIngestor",
-      "signature": "(host: 'str', port: 'int', batch_size: 'int' = 1000, username: 'str | None' = None, password: 'str | None' = None, use_merge: 'bool' = True, dialect: 'GraphDialect | None' = None, sqlite_path: 'str | None' = None)"
+      "signature": "(host: 'str', port: 'int', batch_size: 'int' = 1000, username: 'str | None' = None, password: 'str | None' = None, use_merge: 'bool' = True, dialect: 'GraphDialect | None' = None, sqlite_path: 'str | None' = None)",
+      "members": [
+        {
+          "name": "clean_database",
+          "signature": "(self) -> 'None'"
+        },
+        {
+          "name": "close_driver",
+          "signature": "(self) -> 'None'"
+        },
+        {
+          "name": "delete_project",
+          "signature": "(self, project_name: 'str', expected_root: 'str | None' = None, own_run_id: 'str' = '') -> 'bool'"
+        },
+        {
+          "name": "ensure_constraints",
+          "signature": "(self) -> 'None'"
+        },
+        {
+          "name": "ensure_node_batch",
+          "signature": "(self, label: 'str', properties: 'dict[str, PropertyValue]') -> 'None'"
+        },
+        {
+          "name": "ensure_relationship_batch",
+          "signature": "(self, from_spec: 'tuple[str, str, PropertyValue]', rel_type: 'str', to_spec: 'tuple[str, str, PropertyValue]', properties: 'dict[str, PropertyValue] | None' = None) -> 'None'"
+        },
+        {
+          "name": "execute_write",
+          "signature": "(self, query: 'str', params: 'PropertyParams | None' = None) -> 'None'"
+        },
+        {
+          "name": "export_graph_to_dict",
+          "signature": "(self, project_names: 'Sequence[str]' = ()) -> 'GraphData'"
+        },
+        {
+          "name": "fetch_all",
+          "signature": "(self, query: 'str', params: 'PropertyParams | None' = None) -> 'list[ResultRow]'"
+        },
+        {
+          "name": "fetch_read_only",
+          "signature": "(self, query: 'str') -> 'list[ResultRow]'"
+        },
+        {
+          "name": "flush_all",
+          "signature": "(self) -> 'None'"
+        },
+        {
+          "name": "flush_nodes",
+          "signature": "(self) -> 'None'"
+        },
+        {
+          "name": "flush_relationships",
+          "signature": "(self) -> 'None'"
+        },
+        {
+          "name": "list_project_roots",
+          "signature": "(self) -> 'dict[str, str | None]'"
+        },
+        {
+          "name": "list_projects",
+          "signature": "(self) -> 'list[str]'"
+        },
+        {
+          "name": "sqlite_graph_path",
+          "signature": "(self) -> 'str'"
+        }
+      ]
     },
     {
       "name": "embed_code",
-      "signature": "(code: 'str', max_length: 'int | None' = None) -> 'list[float]'"
+      "signature": "(code: 'str', max_length: 'int | None' = None) -> 'list[float]'",
+      "members": []
     },
     {
       "name": "load_graph",
-      "signature": "(file_path: str) -> codebase_rag.graph_loader.GraphLoader"
+      "signature": "(file_path: str) -> codebase_rag.graph_loader.GraphLoader",
+      "members": []
     },
     {
       "name": "settings",
-      "signature": null
+      "signature": null,
+      "members": [
+        {
+          "name": "active_cypher_config",
+          "signature": "<property>"
+        },
+        {
+          "name": "active_orchestrator_config",
+          "signature": "<property>"
+        },
+        {
+          "name": "graph_db_file",
+          "signature": "<property>"
+        },
+        {
+          "name": "memgraph_set_without_backend",
+          "signature": "<property>"
+        },
+        {
+          "name": "ollama_endpoint",
+          "signature": "<property>"
+        },
+        {
+          "name": "parse_model_string",
+          "signature": "(self, model_string: 'str') -> 'tuple[str, str]'"
+        },
+        {
+          "name": "qdrant_set_without_backend",
+          "signature": "<property>"
+        },
+        {
+          "name": "resolve_batch_size",
+          "signature": "(self, batch_size: 'int | None') -> 'int'"
+        },
+        {
+          "name": "set_cypher",
+          "signature": "(self, provider: 'str', model: 'str', **kwargs: 'Unpack[ModelConfigKwargs]') -> 'None'"
+        },
+        {
+          "name": "set_orchestrator",
+          "signature": "(self, provider: 'str', model: 'str', **kwargs: 'Unpack[ModelConfigKwargs]') -> 'None'"
+        },
+        {
+          "name": "vector_db_file",
+          "signature": "<property>"
+        }
+      ]
     }
   ]
 }

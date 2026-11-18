@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Write, or check, the public surface snapshot (issue #3629).
 
-Everything users and agents reach, as data: every command and its options,
-the exit codes, every MCP tool and its input schema, the settings, the graph
-labels and relationships, the JSON export's records, the protobuf index's
-messages and the Python SDK. Prose (help text, descriptions) is left out: it
+Everything users and agents reach, as data: every command and its options
+(with the values they accept), the exit codes, every MCP tool and its input
+schema, the settings and the environment variables they are read from, the
+graph labels and relationships, the JSON export's records, the protobuf
+index's messages and enum numbers, and the Python SDK with its classes'
+public methods. Prose (help text, descriptions) is left out: it
 may change freely, the shape may not. The Rust rewrite is held to this file,
 and `test_public_surface.py` fails when the code drifts from it.
 
@@ -21,7 +23,7 @@ import sys
 import tempfile
 import types
 import typing
-from collections.abc import Callable, Generator, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path, PurePath
@@ -30,7 +32,9 @@ from unittest.mock import MagicMock, patch
 import click
 import typer
 import typer.core
-from google.protobuf.descriptor import Descriptor, FieldDescriptor
+from google.protobuf.descriptor import Descriptor, EnumDescriptor, FieldDescriptor
+from pydantic import AliasChoices
+from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined, PydanticUndefinedType
 
 import cgr
@@ -139,6 +143,28 @@ def _envvars(envvar: str | Sequence[str] | None) -> list[str]:
     return [envvar] if isinstance(envvar, str) else list(envvar)
 
 
+def _choices(param: CliParam) -> list[str] | None:
+    # Read by attribute: typer bundles its own click, so its Choice is not
+    # click.Choice.
+    choices = getattr(param.type, cs.SURFACE_ATTR_CHOICES, None)
+    if choices is None:
+        return None
+    return [str(_json_value(choice)) for choice in choices]
+
+
+def _bounds(param: CliParam) -> td.SurfaceBounds | None:
+    kind = param.type
+    if not hasattr(kind, cs.SURFACE_ATTR_MIN_OPEN):
+        return None
+    return td.SurfaceBounds(
+        min=_json_value(getattr(kind, cs.SURFACE_ATTR_MIN)),
+        max=_json_value(getattr(kind, cs.SURFACE_ATTR_MAX)),
+        min_open=bool(getattr(kind, cs.SURFACE_ATTR_MIN_OPEN)),
+        max_open=bool(getattr(kind, cs.SURFACE_ATTR_MAX_OPEN)),
+        clamp=bool(getattr(kind, cs.SURFACE_ATTR_CLAMP, False)),
+    )
+
+
 def _param(param: CliParam) -> td.SurfaceParam:
     kind = (
         cs.SurfaceParamKind.OPTION
@@ -150,6 +176,8 @@ def _param(param: CliParam) -> td.SurfaceParam:
         kind=kind,
         flags=[*param.opts, *param.secondary_opts],
         type=param.type.name,
+        choices=_choices(param),
+        bounds=_bounds(param),
         required=param.required,
         multiple=param.multiple,
         is_flag=bool(getattr(param, cs.SURFACE_ATTR_IS_FLAG, False)),
@@ -191,19 +219,23 @@ def _walk_click(
     command: click.Command, path: list[str], ctx: click.Context
 ) -> Iterator[td.SurfaceCommand]:
     # A delegated group is the real click, not typer's bundled copy.
-    if isinstance(command, click.Group):
-        for name in command.list_commands(ctx):
-            sub = command.get_command(ctx, name)
-            if sub is not None:
-                child = click.Context(sub, info_name=name, parent=ctx)
-                yield from _walk_click(sub, [*path, name], child)
-        return
     params: list[CliParam] = [
         param
         for param in command.params
         if isinstance(param, click.Option | click.Argument)
     ]
-    yield _surface_command(path, command.hidden, params)
+    if not isinstance(command, click.Group):
+        yield _surface_command(path, command.hidden, params)
+        return
+    # A group's own options (`cgr graph --project`) come before its
+    # subcommand, so they are recorded on the group itself.
+    if params:
+        yield _surface_command(path, command.hidden, params)
+    for name in command.list_commands(ctx):
+        sub = command.get_command(ctx, name)
+        if sub is not None:
+            child = click.Context(sub, info_name=name, parent=ctx)
+            yield from _walk_click(sub, [*path, name], child)
 
 
 def _walk_typer(
@@ -214,19 +246,22 @@ def _walk_typer(
     if (group := _delegated(command, path)) is not None:
         yield from _walk_click(group, path, click.Context(group, info_name=path[-1]))
         return
-    if isinstance(command, typer.core.TyperGroup):
-        for name in command.list_commands(ctx):
-            sub = command.get_command(ctx, name)
-            if isinstance(sub, typer.core.TyperCommand | typer.core.TyperGroup):
-                child = typer.Context(sub, info_name=str(name), parent=ctx)
-                yield from _walk_typer(sub, [*path, str(name)], child)
-        return
     params: list[CliParam] = [
         param
         for param in command.params
         if isinstance(param, typer.core.TyperOption | typer.core.TyperArgument)
     ]
-    yield _surface_command(path, command.hidden, params)
+    if not isinstance(command, typer.core.TyperGroup):
+        yield _surface_command(path, command.hidden, params)
+        return
+    # The root group owns the global options (`--version`, `--quiet`).
+    if params:
+        yield _surface_command(path, command.hidden, params)
+    for name in command.list_commands(ctx):
+        sub = command.get_command(ctx, name)
+        if isinstance(sub, typer.core.TyperCommand | typer.core.TyperGroup):
+            child = typer.Context(sub, info_name=str(name), parent=ctx)
+            yield from _walk_typer(sub, [*path, str(name)], child)
 
 
 def cli_commands() -> list[td.SurfaceCommand]:
@@ -261,19 +296,21 @@ def _without_prose(schema: td.JsonValue) -> td.JsonValue:
 
 
 @contextmanager
-def _semantic(available: bool) -> Generator[None]:
-    # Whether the `semantic` extra is installed decides whether the server
-    # offers semantic_search; both answers are recorded, on any machine.
+def _extras(semantic: bool, ast_grep: bool) -> Generator[None]:
+    # Which optional extras are installed decides which tools the server
+    # offers (`semantic` for semantic_search, `ast-grep` for the structural
+    # tools); every answer is recorded, on any machine.
     with (
-        patch.object(mcp_tools, "has_semantic_dependencies", lambda: available),
+        patch.object(mcp_tools, "has_semantic_dependencies", lambda: semantic),
+        patch.object(mcp_tools, "has_ast_grep", lambda: ast_grep),
         patch.object(semantic_search, "create_semantic_search_tool", MagicMock()),
         patch.object(settings, "MCP_READ_ONLY", False),
     ):
         yield
 
 
-def _served_tools(available: bool) -> dict[str, td.JsonValue]:
-    with _semantic(available), tempfile.TemporaryDirectory() as root:
+def _served_tools(*, semantic: bool, ast_grep: bool) -> dict[str, td.JsonValue]:
+    with _extras(semantic, ast_grep), tempfile.TemporaryDirectory() as root:
         registry = mcp_tools.MCPToolsRegistry(
             project_root=root, ingestor=MagicMock(), cypher_gen=MagicMock()
         )
@@ -284,9 +321,20 @@ def _served_tools(available: bool) -> dict[str, td.JsonValue]:
         }
 
 
+def _needed_extra(
+    name: str, without_semantic: set[str], without_ast_grep: set[str]
+) -> str | None:
+    if name not in without_semantic:
+        return cs.SurfaceExtra.SEMANTIC
+    if name not in without_ast_grep:
+        return cs.SurfaceExtra.AST_GREP
+    return None
+
+
 def mcp_tool_list() -> list[td.SurfaceMcpTool]:
-    every = _served_tools(available=True)
-    without_extra = _served_tools(available=False)
+    every = _served_tools(semantic=True, ast_grep=True)
+    without_semantic = set(_served_tools(semantic=False, ast_grep=True))
+    without_ast_grep = set(_served_tools(semantic=True, ast_grep=False))
     return [
         td.SurfaceMcpTool(
             name=name,
@@ -299,16 +347,28 @@ def mcp_tool_list() -> list[td.SurfaceMcpTool]:
                 if isinstance(value, bool)
             },
             served_read_only=name in cs.MCP_READ_ONLY_TOOLS,
-            needs_extra=None if name in without_extra else cs.SurfaceExtra.SEMANTIC,
+            needs_extra=_needed_extra(name, without_semantic, without_ast_grep),
         )
         for name, schema in sorted(every.items())
     ]
+
+
+def _env_names(name: str, field: FieldInfo) -> list[str]:
+    """The environment variables a setting is read from: its alias when it
+    has one (`CGR_CAPTURE_LOCAL_DEFINITIONS`), else its own name."""
+    alias = field.validation_alias
+    if isinstance(alias, str):
+        return [alias]
+    if isinstance(alias, AliasChoices):
+        return [choice for choice in alias.choices if isinstance(choice, str)]
+    return [name]
 
 
 def setting_list() -> list[td.SurfaceSetting]:
     return [
         td.SurfaceSetting(
             name=name,
+            env=_env_names(name, field),
             type=_type_name(field.annotation),
             default=(
                 cs.SURFACE_COMPUTED_DEFAULT
@@ -361,18 +421,27 @@ def export_records() -> list[td.SurfaceRecord]:
     ]
 
 
+def _proto_name(descriptor: Descriptor | EnumDescriptor) -> str:
+    # Nested types by their path inside the package (`Relationship.RelationshipType`).
+    return descriptor.full_name.removeprefix(f"{schema_pb2.DESCRIPTOR.package}.")
+
+
+def _proto_field_type(field: FieldDescriptor) -> str:
+    if field.message_type is not None:
+        return _proto_name(field.message_type)
+    if field.enum_type is not None:
+        return _proto_name(field.enum_type)
+    return _PROTO_TYPES[field.type]
+
+
 def _proto_message(message: Descriptor) -> td.SurfaceProtoMessage:
     return td.SurfaceProtoMessage(
-        name=message.name,
+        name=_proto_name(message),
         fields=[
             td.SurfaceProtoField(
                 name=field.name,
                 number=field.number,
-                type=(
-                    message_type.name
-                    if (message_type := field.message_type) is not None
-                    else _PROTO_TYPES[field.type]
-                ),
+                type=_proto_field_type(field),
                 repeated=field.is_repeated,
             )
             for field in message.fields
@@ -380,15 +449,44 @@ def _proto_message(message: Descriptor) -> td.SurfaceProtoMessage:
     )
 
 
+def _all_messages(messages: Iterable[Descriptor]) -> Iterator[Descriptor]:
+    for message in messages:
+        yield message
+        yield from _all_messages(message.nested_types)
+
+
 def protobuf_messages() -> list[td.SurfaceProtoMessage]:
     return [
         _proto_message(message)
-        for message in schema_pb2.DESCRIPTOR.message_types_by_name.values()
+        for message in _all_messages(
+            schema_pb2.DESCRIPTOR.message_types_by_name.values()
+        )
     ]
 
 
-def _signature(name: str) -> str | None:
-    value = getattr(cgr, name)
+def protobuf_enums() -> list[td.SurfaceProtoEnum]:
+    """Every enum's names and numbers: a stored index holds the numbers, so
+    reusing one reads an old index as something else."""
+    enums = [
+        *schema_pb2.DESCRIPTOR.enum_types_by_name.values(),
+        *(
+            enum
+            for message in _all_messages(
+                schema_pb2.DESCRIPTOR.message_types_by_name.values()
+            )
+            for enum in message.enum_types
+        ),
+    ]
+    return [
+        td.SurfaceProtoEnum(
+            name=_proto_name(enum),
+            values={value.name: value.number for value in enum.values},
+        )
+        for enum in sorted(enums, key=_proto_name)
+    ]
+
+
+def _signature_of(value: object) -> str | None:
     if not callable(value):
         return None
     try:
@@ -397,9 +495,48 @@ def _signature(name: str) -> str | None:
         return None
 
 
+def _first_party(owner: type) -> bool:
+    return owner.__module__.split(".")[0] in cs.SURFACE_FIRST_PARTY_MODULES
+
+
+def _members(value: object) -> list[td.SurfaceSdkMember]:
+    """The public methods and properties a first-party SDK class defines,
+    including what it inherits from other first-party classes."""
+    owner = value if isinstance(value, type) else type(value)
+    if not _first_party(owner):
+        return []
+    found: dict[str, td.SurfaceSdkMember] = {}
+    for klass in owner.__mro__:
+        if not _first_party(klass):
+            continue
+        for name, member in vars(klass).items():
+            if (
+                name.startswith((cs.SURFACE_PRIVATE_PREFIX, cs.SURFACE_PYDANTIC_PREFIX))
+                or name in found
+            ):
+                continue
+            if isinstance(member, property):
+                found[name] = td.SurfaceSdkMember(
+                    name=name, signature=cs.SURFACE_PROPERTY_SIGNATURE
+                )
+            elif isinstance(member, staticmethod | classmethod):
+                found[name] = td.SurfaceSdkMember(
+                    name=name, signature=_signature_of(member.__func__)
+                )
+            elif inspect.isfunction(member):
+                found[name] = td.SurfaceSdkMember(
+                    name=name, signature=_signature_of(member)
+                )
+    return [found[name] for name in sorted(found)]
+
+
 def python_sdk() -> list[td.SurfaceSdkName]:
     return [
-        td.SurfaceSdkName(name=name, signature=_signature(name))
+        td.SurfaceSdkName(
+            name=name,
+            signature=_signature_of(getattr(cgr, name)),
+            members=_members(getattr(cgr, name)),
+        )
         for name in sorted(cgr.__all__)
     ]
 
@@ -415,6 +552,7 @@ def build_surface() -> td.PublicSurface:
         graph_relationships=graph_relationships(),
         export_json=export_records(),
         protobuf_index=protobuf_messages(),
+        protobuf_enums=protobuf_enums(),
         python_sdk=python_sdk(),
     )
 

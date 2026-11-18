@@ -30,6 +30,20 @@ SURFACE_NOT_REQUIRED_PREFIX = "NotRequired["
 SURFACE_DELEGATE_SETTING = "ignore_unknown_options"
 SURFACE_ATTR_IS_FLAG = "is_flag"
 SURFACE_ATTR_HIDDEN = "hidden"
+# What a click parameter type carries when it limits the accepted values.
+SURFACE_ATTR_CHOICES = "choices"
+SURFACE_ATTR_MIN = "min"
+SURFACE_ATTR_MAX = "max"
+SURFACE_ATTR_MIN_OPEN = "min_open"
+SURFACE_ATTR_MAX_OPEN = "max_open"
+SURFACE_ATTR_CLAMP = "clamp"
+# An SDK class's members are recorded when a first-party class defines them;
+# what pydantic or object supply is theirs, not cgr's.
+SURFACE_FIRST_PARTY_MODULES = ("codebase_rag", "cgr")
+SURFACE_PRIVATE_PREFIX = "_"
+# pydantic reserves this prefix for its own hooks (`model_post_init`).
+SURFACE_PYDANTIC_PREFIX = "model_"
+SURFACE_PROPERTY_SIGNATURE = "<property>"
 
 
 class SurfaceParamKind(StrEnum):
@@ -40,3 +54,4 @@ class SurfaceParamKind(StrEnum):
 class SurfaceExtra(StrEnum):
     # The optional dependency group a tool needs before the server offers it.
     SEMANTIC = "semantic"
+    AST_GREP = "ast-grep"
