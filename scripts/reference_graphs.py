@@ -136,10 +136,17 @@ def fetch(repo: ReferenceRepo, cache: Path) -> Path:
 @cache
 def _setting_env_names() -> frozenset[str]:
     """Every environment variable a cgr setting is read from, upper-cased."""
-    # Imported here, after `_CALLER_ENV` was taken (see there).
+    # Imported here, after `_CALLER_ENV` was taken (see there), and with the
+    # environment put back afterwards, so not even this process keeps what
+    # the import merged in from a `.env`.
     from pydantic import AliasChoices
 
-    from codebase_rag.config import AppConfig
+    before = dict(os.environ)
+    try:
+        from codebase_rag.config import AppConfig
+    finally:
+        os.environ.clear()
+        os.environ.update(before)
 
     names: set[str] = set()
     for name, field in AppConfig.model_fields.items():

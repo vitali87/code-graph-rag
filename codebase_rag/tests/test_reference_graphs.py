@@ -9,7 +9,10 @@ on where or when the index ran, and that every listed repository has a graph.
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -269,6 +272,32 @@ def test_the_git_calls_ignore_a_repository_location_in_the_environment(
 
     assert "GIT_DIR" not in env
     assert env["GIT_CONFIG_GLOBAL"] == "/g"
+
+
+def test_reading_the_setting_names_leaves_the_environment_alone(
+    tmp_path: Path,
+) -> None:
+    # In a process of its own: the settings module is imported once per
+    # process, and this one has imported it already.
+    (tmp_path / ".env").write_text("CGR_REFERENCE_PROBE=1\n", encoding="utf-8")
+    probe = (
+        "import os\n"
+        "from scripts import reference_graphs\n"
+        "reference_graphs._setting_env_names()\n"
+        "print('CGR_REFERENCE_PROBE' in os.environ)\n"
+    )
+    env = {**os.environ, "PYTHONPATH": str(reference_graphs.PROJECT_ROOT)}
+
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout.strip() == "False"
 
 
 def test_a_relative_cgr_program_is_made_absolute() -> None:
