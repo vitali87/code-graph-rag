@@ -773,6 +773,18 @@ class StackManager:
         stack's Memgraph actually listens (issue #2878). StackError when
         Compose cannot tell.
         """
+        binds = [
+            bind
+            for bind, port in self._running_memgraph_bolt()
+            if port == self.memgraph_port
+        ]
+        return bool(binds) and _reaches_published(
+            self.memgraph_host, self.memgraph_port, binds
+        )
+
+    def _running_memgraph_bolt(self) -> list[tuple[str, int]]:
+        """(bind address, port) of each Bolt publisher of this project's
+        running Memgraph. StackError when Compose cannot tell."""
         try:
             result = subprocess.run(
                 self._compose_cmd(
@@ -789,14 +801,28 @@ class StackManager:
             raise StackError(cs.ERR_COMPOSE_PS_FAILED) from e
         if result.returncode != 0:
             raise StackError(cs.ERR_COMPOSE_PS_FAILED)
-        binds = [
-            bind
-            for bind, port in _published_bolt(result.stdout)
-            if port == self.memgraph_port
-        ]
-        return bool(binds) and _reaches_published(
-            self.memgraph_host, self.memgraph_port, binds
-        )
+        return _published_bolt(result.stdout)
+
+    def _raise_if_memgraph_runs_elsewhere(self) -> None:
+        """Refuse to start while this project's Memgraph runs on another port.
+
+        The compose file publishes Bolt on MEMGRAPH_PORT, so `up -d` with
+        another value recreates the running container there, taking it from
+        every client of its port, or leaves it down when that port is taken
+        (issue #3001). Without a compose file there is no project to ask
+        about; Docker is checked first so that its absence is reported as
+        `up` reports it.
+        """
+        if cs.SERVICE_MEMGRAPH not in self.services or not self.compose_file.exists():
+            return
+        self.check_docker()
+        running = sorted({port for _, port in self._running_memgraph_bolt()})
+        if running and self.memgraph_port not in running:
+            raise StackError(
+                cs.ERR_MEMGRAPH_RUNS_ON_ANOTHER_PORT.format(
+                    running=", ".join(map(str, running)), port=self.memgraph_port
+                )
+            )
 
     def raise_if_auth_not_enforced(self) -> None:
         """Refuse a running stack whose authentication differs from the settings.
@@ -1252,7 +1278,14 @@ class StackManager:
             qdrant_endpoint=f"{self.qdrant_host}:{self.qdrant_port}",
         )
 
-    def ensure_running(self) -> StackStatus:
+    def ensure_running(self, *, move_running: bool = False) -> StackStatus:
+        """Start the stack unless it is already up.
+
+        A Memgraph of this project running on another port than MEMGRAPH_PORT,
+        which can come from the .env of whatever directory cgr runs in, is
+        refused rather than moved, unless `move_running` asks for that, as
+        `cgr daemon up` does.
+        """
         self.locate_published_qdrant()
         current = self.status()
         if current.state == cs.StackState.RUNNING:
@@ -1266,6 +1299,8 @@ class StackManager:
         # Starting it again would not help, and waiting for health would only
         # delay the same answer.
         self._raise_if_memgraph_rejects_credentials()
+        if not move_running:
+            self._raise_if_memgraph_runs_elsewhere()
         self.up()
         self.wait_healthy()
         final = self.status()

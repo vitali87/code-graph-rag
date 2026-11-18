@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import json
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from click.testing import CliRunner
+import typer
+from click.testing import CliRunner, Result
 from loguru import logger
 
+from codebase_rag.config import settings
 from codebase_rag.stack import cli as stack_cli
 from codebase_rag.stack import constants as stack_cs
-from codebase_rag.stack.manager import StackError, StackManager
+from codebase_rag.stack.manager import StackError, StackManager, StackStatus
 
 
 def _fake_subprocess_result(
@@ -400,3 +404,162 @@ class TestMaybeStartStackWarns:
             LOOPBACK_COMPOSE, encoding="utf-8"
         )
         assert self._invoke(stack_home, tmp_path) == []
+
+
+def _memgraph_publishing(port: int) -> str:
+    """`docker compose ps --format json` for a Memgraph publishing Bolt on `port`."""
+    return json.dumps(
+        {
+            "Service": stack_cs.SERVICE_MEMGRAPH,
+            "Publishers": [
+                {
+                    "URL": stack_cs.LOOPBACK_HOST,
+                    "TargetPort": stack_cs.MEMGRAPH_CONTAINER_BOLT_PORT,
+                    "PublishedPort": port,
+                    "Protocol": "tcp",
+                }
+            ],
+        }
+    )
+
+
+class TestImplicitStartKeepsRunningMemgraph:
+    """A start with another MEMGRAPH_PORT, such as one a repository's own .env
+    sets, ran `up -d`, and Compose recreated the shared Memgraph on that port,
+    taking it from every client of the old one (#3001). Only `cgr daemon up`
+    and `cgr daemon restart` may move it."""
+
+    RUNNING_PORT = 7687
+    REQUESTED_PORT = 7690
+
+    @pytest.fixture(autouse=True)
+    def _no_credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "MEMGRAPH_USERNAME", None)
+        monkeypatch.setattr(settings, "MEMGRAPH_PASSWORD", None)
+
+    @pytest.fixture
+    def _disable_stack_autostart(self) -> None:
+        # Override the conftest autouse mock of `_maybe_start_stack`, which
+        # one test here runs for real against a patched Compose.
+        return
+
+    def _manager(self, stack_home: Path, tmp_path: Path) -> StackManager:
+        (stack_home / stack_cs.COMPOSE_FILENAME).write_text(
+            LOOPBACK_COMPOSE, encoding="utf-8"
+        )
+        return StackManager(
+            home=stack_home,
+            package_compose=_make_compose_source(tmp_path),
+            memgraph_port=self.REQUESTED_PORT,
+        )
+
+    def _start(
+        self,
+        mgr: StackManager,
+        running_memgraph: str,
+        action: Callable[[], StackStatus | None],
+    ) -> tuple[list[list[str]], Exception | None]:
+        """The `up` commands Compose was given while `action` ran, and its error."""
+        commands: list[list[str]] = []
+
+        def compose(
+            cmd: list[str], **_: bool | str | float | dict[str, str]
+        ) -> subprocess.CompletedProcess[str]:
+            commands.append(cmd)
+            if "ps" in cmd:
+                return _fake_subprocess_result(stdout=running_memgraph)
+            if "config" in cmd:
+                return _fake_subprocess_result(stdout='{"services": {}}')
+            return _fake_subprocess_result()
+
+        error: Exception | None = None
+        with (
+            patch(
+                "codebase_rag.stack.manager.shutil.which",
+                return_value="/usr/bin/docker",
+            ),
+            patch.object(mgr, "check_docker"),
+            patch.object(mgr, "wait_healthy"),
+            patch("codebase_rag.stack.manager.subprocess.run", side_effect=compose),
+            patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=False),
+            patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=False),
+        ):
+            try:
+                action()
+            except (StackError, typer.Exit) as e:
+                error = e
+        return [cmd for cmd in commands if "up" in cmd], error
+
+    def test_refuses_to_move_memgraph_running_on_another_port(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        mgr = self._manager(stack_home, tmp_path)
+
+        ups, error = self._start(
+            mgr, _memgraph_publishing(self.RUNNING_PORT), mgr.ensure_running
+        )
+
+        assert ups == []
+        assert isinstance(error, StackError)
+        assert str(self.RUNNING_PORT) in str(error)
+        assert str(self.REQUESTED_PORT) in str(error)
+        assert "MEMGRAPH_PORT" in str(error)
+        assert "cgr daemon restart" in str(error)
+
+    def test_cgr_start_refuses_without_starting_compose(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        from codebase_rag.cli import _maybe_start_stack
+
+        mgr = self._manager(stack_home, tmp_path)
+
+        with patch("codebase_rag.cli.StackManager", return_value=mgr):
+            ups, error = self._start(
+                mgr, _memgraph_publishing(self.RUNNING_PORT), _maybe_start_stack
+            )
+
+        assert ups == []
+        assert isinstance(error, typer.Exit)
+        assert error.exit_code == 1
+
+    def test_starts_when_memgraph_runs_on_the_configured_port(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        # Its container runs where the settings say, as while it starts or
+        # with Qdrant down, so `up -d` leaves it as it is.
+        mgr = self._manager(stack_home, tmp_path)
+
+        ups, error = self._start(
+            mgr, _memgraph_publishing(self.REQUESTED_PORT), mgr.ensure_running
+        )
+
+        assert error is None
+        assert len(ups) == 1
+
+    def test_starts_when_memgraph_is_not_running(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        mgr = self._manager(stack_home, tmp_path)
+
+        ups, error = self._start(mgr, "", mgr.ensure_running)
+
+        assert error is None
+        assert len(ups) == 1
+
+    @pytest.mark.parametrize("command", ["up", "restart"])
+    def test_daemon_command_moves_it_deliberately(
+        self, stack_home: Path, tmp_path: Path, command: str
+    ) -> None:
+        mgr = self._manager(stack_home, tmp_path)
+        results: list[Result] = []
+
+        with patch.object(stack_cli, "StackManager", return_value=mgr):
+            ups, _ = self._start(
+                mgr,
+                _memgraph_publishing(self.RUNNING_PORT),
+                lambda: results.append(CliRunner().invoke(stack_cli.cli, [command])),
+            )
+
+        (result,) = results
+        assert result.exit_code == 0, result.output
+        assert len(ups) == 1

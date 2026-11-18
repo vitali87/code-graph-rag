@@ -257,6 +257,14 @@ ERR_MEMGRAPH_REJECTS_CREDENTIALS = (
     "MEMGRAPH_PASSWORD back, or log in with it and run "
     "SET PASSWORD FOR <user> TO '<new password>'; and then set the new one."
 )
+ERR_MEMGRAPH_RUNS_ON_ANOTHER_PORT = (
+    "The shared stack's Memgraph is running on port {running}, but "
+    "MEMGRAPH_PORT is {port} (from the environment or the .env file in the "
+    "current directory). Starting the stack here would move Memgraph to port "
+    "{port}, away from everything using port {running}. Unset MEMGRAPH_PORT "
+    "or set it to {running} to use the running stack, or run "
+    "'cgr daemon restart' to move the stack to port {port}."
+)
 ERR_STACK_ACCEPTS_ANONYMOUS = (
     "Credentials are configured, but these running services still accept "
     "connections without them: {services}. Containers take credentials when "
