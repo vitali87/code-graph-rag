@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...types_defs import FunctionLocation, FunctionSpanKey
+from ...types_defs import FunctionLocation, FunctionSpanKey, SpanBinding
 from ..csharp_frontend import CallSiteKey
 from ..frontends.protocol import ResolvedCallSite
 from ..semantic_call_join import call_site_key, resolve_call_site
-from ..utils import safe_decode_text
+from ..utils import conflicting_declaration_spans, safe_decode_text
 from . import utils as go_utils
 from .utils import type_identifier_text, written_type_text
 
@@ -93,14 +93,86 @@ def _range_clauses(body: Node) -> list[Node]:
     return clauses
 
 
-# A span-scoped binding the call processor lays over the flat type map:
-# (start byte, end byte, name, type).
-_SpanBinding = tuple[int, int, str, str]
+def local_span_bindings(
+    caller_node: Node,
+    value_type: Callable[[Node], str | None],
+    span_type: Callable[[str], str],
+) -> list[SpanBinding]:
+    """The span-scoped bindings the call processor lays over the flat type
+    map: the range variables (`range_span_bindings`), and the declarations
+    of a name declared with different types (`redeclared_span_bindings`).
+    `span_type` turns a written type into the one the resolver reads."""
+    bindings = go_utils.local_bindings(caller_node)
+    return [
+        *(
+            (start, end, name, span_type(type_name))
+            for start, end, name, type_name in range_span_bindings(
+                caller_node, value_type, bindings
+            )
+        ),
+        *redeclared_span_bindings(bindings, value_type, span_type),
+    ]
+
+
+def redeclared_span_bindings(
+    bindings: go_utils.GoLocalBindings,
+    value_type: Callable[[Node], str | None],
+    span_type: Callable[[str], str],
+) -> list[SpanBinding]:
+    """Each declaration of a name declared with different types, over the
+    span where the name reads it (issue #3332). `s := Circle{}` and a `s :=
+    Square{}` in a block inside its scope are two variables, and the flat
+    map, keyed by name, gave every `s.Area()` the type of one of them; the
+    innermost span around a call is the declaration in scope there. A
+    declaration is typed as `range_span_bindings` types a local shadowing a
+    range variable, and compared as the resolver reads it: two external
+    interfaces (`w io.Writer`, then `w, ok := w.(io.ReaderFrom)`) both read
+    as untyped, so they do not differ. A range clause's own variables are
+    left to `range_span_bindings`, which types them from the container."""
+    spans: list[SpanBinding] = []
+    for name, found in bindings.items():
+        declarations = _declarations(found)
+        if len(declarations) < 2:
+            continue
+        spans.extend(
+            conflicting_declaration_spans(
+                name,
+                [
+                    (
+                        span[0],
+                        span[1],
+                        span_type(_declared_type(declaration, name, value_type) or ""),
+                    )
+                    for span, declaration in declarations
+                    if declaration.type != cs.TS_GO_RANGE_CLAUSE
+                ],
+            )
+        )
+    return spans
+
+
+def _declarations(
+    found: Sequence[tuple[tuple[int, int], Node]],
+) -> list[tuple[tuple[int, int], Node]]:
+    # In source order, the bindings that declare a variable: a later one in
+    # a block that already declares the name (`b, err := g()` after `a, err
+    # := f()`) assigns it, declaring nothing.
+    scopes: set[int] = set()
+    declarations: list[tuple[tuple[int, int], Node]] = []
+    for span, declaration in sorted(found, key=lambda entry: entry[1].start_byte):
+        scope = go_utils.binding_scope(declaration)
+        if scope is None or scope.id in scopes:
+            continue
+        scopes.add(scope.id)
+        declarations.append((span, declaration))
+    return declarations
 
 
 def range_span_bindings(
-    caller_node: Node, value_type: Callable[[Node], str | None]
-) -> list[_SpanBinding]:
+    caller_node: Node,
+    value_type: Callable[[Node], str | None],
+    bindings: go_utils.GoLocalBindings | None = None,
+) -> list[SpanBinding]:
     """`for _, s := range shapes` with `shapes []Shape` declares a Shape `s`
     for the loop (issue #2483): a binding over the loop after the range
     clause, so a call inside binds through Shape while the name keeps its own
@@ -112,7 +184,7 @@ def range_span_bindings(
     parameter `s`) owns `s` from its declaration on, so the loop's binding
     skips its scope, and the local gets a binding of its own type where one
     can be read (`value_type` types a `:=` value). A loop variable or local
-    whose type cannot be read is bound as untyped (`GO_UNTYPED_BINDING`), so
+    whose type cannot be read is bound as untyped (`UNTYPED_SPAN_BINDING`), so
     an outer `s` of another type never answers for it.
 
     Another package's type keeps its qualifier (`geo.Shape`): only the
@@ -121,8 +193,11 @@ def range_span_bindings(
     clauses = (
         [clause for clause in _range_clauses(body) if _declares(clause)] if body else []
     )
-    bindings = go_utils.local_bindings(caller_node) if clauses else {}
-    spans: list[_SpanBinding] = []
+    if not clauses:
+        return []
+    if bindings is None:
+        bindings = go_utils.local_bindings(caller_node)
+    spans: list[SpanBinding] = []
     for clause in clauses:
         left = clause.child_by_field_name(cs.FIELD_LEFT)
         if left is None or clause.parent is None:
@@ -130,7 +205,7 @@ def range_span_bindings(
         slots = _ranged_slots(clause, bindings) or (None, None)
         scope = (clause.end_byte, clause.parent.end_byte)
         for name, type_name in _bound_types(left, slots):
-            shadows = _shadows(bindings.get(name, []), clause, scope)
+            shadows = _shadows(bindings.get(name, ()), clause, scope)
             spans.extend(_loop_bindings(scope, shadows, name, type_name))
             spans.extend(_shadow_bindings(shadows, name, value_type))
     return spans
@@ -141,13 +216,13 @@ def _loop_bindings(
     shadows: list[tuple[tuple[int, int], Node]],
     name: str,
     type_name: str,
-) -> list[_SpanBinding]:
+) -> list[SpanBinding]:
     holes = [span for span, _declaration in shadows]
     return [(start, end, name, type_name) for start, end in _without(scope, holes)]
 
 
 def _shadows(
-    declarations: list[tuple[tuple[int, int], Node]],
+    declarations: Sequence[tuple[tuple[int, int], Node]],
     clause: Node,
     scope: tuple[int, int],
 ) -> list[tuple[tuple[int, int], Node]]:
@@ -179,13 +254,13 @@ def _shadow_bindings(
     shadows: list[tuple[tuple[int, int], Node]],
     name: str,
     value_type: Callable[[Node], str | None],
-) -> list[_SpanBinding]:
+) -> list[SpanBinding]:
     return [
         (
             span[0],
             span[1],
             name,
-            _declared_type(declaration, name, value_type) or cs.GO_UNTYPED_BINDING,
+            _declared_type(declaration, name, value_type) or cs.UNTYPED_SPAN_BINDING,
         )
         for span, declaration in shadows
     ]
@@ -230,7 +305,7 @@ def _ranged_slots(
 def _bound_types(left: Node, slots: _RangeSlots) -> list[tuple[str, str]]:
     # Every name the clause declares, `_` aside, typed where its slot is.
     return [
-        (name, type_name or cs.GO_UNTYPED_BINDING)
+        (name, type_name or cs.UNTYPED_SPAN_BINDING)
         for bound, type_name in zip(left.named_children, slots, strict=False)
         if bound.type == cs.TS_IDENTIFIER
         and (name := safe_decode_text(bound))
@@ -342,12 +417,13 @@ class GoTypeInferenceEngine:
             self._collect_body_declarations(body, var_types)
         return var_types
 
-    def collect_range_span_bindings(
+    def collect_local_span_bindings(
         self,
         caller_node: Node,
-        value_type: Callable[[Node], str | None] | None = None,
-    ) -> list[tuple[int, int, str, str]]:
-        return range_span_bindings(caller_node, value_type or self.infer_value_type)
+        value_type: Callable[[Node], str | None],
+        span_type: Callable[[str], str],
+    ) -> list[SpanBinding]:
+        return local_span_bindings(caller_node, value_type, span_type)
 
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
         # Map a Go struct's field names to their bare type names (a `type_spec`:

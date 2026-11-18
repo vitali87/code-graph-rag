@@ -12,6 +12,7 @@ from ..types_defs import (
     LanguageQueries,
     NodeType,
     SimpleNameLookup,
+    SpanBinding,
 )
 from .cpp import CppTypeInferenceEngine
 from .csharp.type_inference import CSharpTypeInferenceEngine
@@ -488,14 +489,15 @@ class TypeInferenceEngine:
         caller_node: ASTNode,
         module_qn: str,
         var_types: dict[str, str] | None = None,
-    ) -> list[tuple[int, int, str, str]]:
+    ) -> list[SpanBinding]:
         """Go range variables and the locals shadowing them (issue #2483),
-        each typed as the resolver reads it in `module_qn`. A local bound to
-        a call (`s := makeOther()`) takes the call's return type, as the flat
-        map's does. A qualified `geo.Shape` is the type of the package this
-        file imports as `geo`. One naming no indexed type (an external
-        package's), or no type at all, stays a binding, untyped: its bare
-        name would bind whatever this package calls Shape, and dropping it
+        and the declarations of a name declared with different types (issue
+        #3332), each typed as the resolver reads it in `module_qn`. A local
+        bound to a call (`s := makeOther()`) takes the call's return type, as
+        the flat map's does. A qualified `geo.Shape` is the type of the
+        package this file imports as `geo`. One naming no indexed type (an
+        external package's), or no type at all, stays a binding, untyped: its
+        bare name would bind whatever this package calls Shape, and dropping it
         would let an outer declaration of the name answer for it."""
         engine = self.go_type_inference
 
@@ -513,21 +515,19 @@ class TypeInferenceEngine:
                 else None
             )
 
-        return [
-            (start, end, name, self._go_span_type(type_name, module_qn))
-            for start, end, name, type_name in engine.collect_range_span_bindings(
-                caller_node, value_type
-            )
-        ]
+        def span_type(type_name: str) -> str:
+            return self._go_span_type(type_name, module_qn)
+
+        return engine.collect_local_span_bindings(caller_node, value_type, span_type)
 
     def _go_span_type(self, type_name: str, module_qn: str) -> str:
         # A qn a call's return type resolved to already is one; a written type
         # resolves through this file's imports.
         if not type_name:
-            return cs.GO_UNTYPED_BINDING
+            return cs.UNTYPED_SPAN_BINDING
         if type_name in self.function_registry:
             return type_name
-        return self._go_written_type(type_name, module_qn) or cs.GO_UNTYPED_BINDING
+        return self._go_written_type(type_name, module_qn) or cs.UNTYPED_SPAN_BINDING
 
     def _resolve_go_qualified_locals(
         self, module_qn: str, var_types: dict[str, str]

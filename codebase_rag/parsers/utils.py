@@ -24,6 +24,7 @@ from ..types_defs import (
     PropertyValue,
     ResultValue,
     SimpleNameLookup,
+    SpanBinding,
     TreeSitterNodeProtocol,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
@@ -291,6 +292,28 @@ def get_cached_query(language_obj: Language, query_text: str) -> Query:
 class FunctionCapturesResult(NamedTuple):
     lang_config: LanguageSpec
     captures: dict[str, list[ASTNode]]
+
+
+def conflicting_declaration_spans(
+    name: str, declarations: Sequence[tuple[int, int, str | None]]
+) -> list[SpanBinding]:
+    """Span bindings for the declarations of one local name, each `(start,
+    end, type)` over the part of the body where the name reads it, when they
+    give the name two types or more (issue #3332).
+
+    The flat per-function map holds one of those types for the whole body,
+    so it is wrong wherever another declaration is in scope; each
+    declaration's span then carries its own type, untyped where it has
+    none. Where they agree, or only one has a type, the flat map's type
+    stands: an untyped inner `x, err := f()` under a typed `var err error`
+    is far likelier the same type than a reason to drop it.
+    """
+    if len({type_name for _start, _end, type_name in declarations if type_name}) < 2:
+        return []
+    return [
+        (start, end, name, type_name or cs.UNTYPED_SPAN_BINDING)
+        for start, end, type_name in declarations
+    ]
 
 
 def sorted_captures(cursor: QueryCursor, node: ASTNode) -> dict[str, list[ASTNode]]:
