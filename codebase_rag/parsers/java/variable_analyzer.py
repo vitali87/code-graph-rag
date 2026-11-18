@@ -98,6 +98,12 @@ def _java_array_creation_type(expr_node: ASTNode) -> str | None:
     return None
 
 
+# Methods and constructors, of the method itself or of a class nested in it.
+_JAVA_CALLABLE_TYPES = frozenset(
+    {cs.TS_METHOD_DECLARATION, cs.TS_CONSTRUCTOR_DECLARATION}
+)
+
+
 def _local_scope(declaration: ASTNode, scope_node: ASTNode) -> ASTNode:
     # The innermost block, switch block or for statement around a local
     # variable declaration, else the method itself.
@@ -201,16 +207,16 @@ class JavaVariableAnalyzerMixin:
         """
         found: dict[str, list[tuple[int, int, ASTNode]]] = {}
         assigned: dict[str, list[tuple[ASTNode, int]]] = {}
-        if params := scope_node.child_by_field_name(cs.FIELD_PARAMETERS):
-            for param in params.children:
-                if param.type in (cs.TS_FORMAL_PARAMETER, cs.TS_SPREAD_PARAMETER):
-                    self._scoped_parameter(param, scope_node, found)
         # Each node with the end of the body a write in it can affect: the
         # method's, or that of the class body or lambda nested in it, whose
         # code runs when it is called, if ever.
         pending = [(scope_node, scope_node.end_byte)]
         while pending:
             current, limit = pending.pop()
+            if current.id == scope_node.id or current.type in _JAVA_CALLABLE_TYPES:
+                # A nested class's method has parameters of its own: a write
+                # to one is not a write to the enclosing method's local.
+                self._scoped_parameters(current, found)
             self._scoped_local(current, scope_node, found)
             if current.type == cs.TS_ASSIGNMENT_EXPRESSION and (
                 name := _assigned_local(current)
@@ -250,6 +256,16 @@ class JavaVariableAnalyzerMixin:
                 ],
             )
         ]
+
+    def _scoped_parameters(
+        self,
+        callable_node: ASTNode,
+        found: dict[str, list[tuple[int, int, ASTNode]]],
+    ) -> None:
+        if params := callable_node.child_by_field_name(cs.FIELD_PARAMETERS):
+            for param in params.children:
+                if param.type in (cs.TS_FORMAL_PARAMETER, cs.TS_SPREAD_PARAMETER):
+                    self._scoped_parameter(param, callable_node, found)
 
     @staticmethod
     def _scoped_parameter(

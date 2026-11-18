@@ -93,6 +93,13 @@ public class Main {
 
 _JAVA_MAIN_PATH = "src/main/java/app/Main.java"
 
+# A `later` that only queues its callback, so no callback runs before the
+# statements after it.
+_DEFERRED_QUEUE = (
+    "const queued: Array<() => void> = [];\n"
+    "function later(f: () => void): void { queued.push(f); }\n"
+)
+
 # Indexes the repository given and prints each CALLS edge as `_call_row`
 # reads it, from a process with its own hash seed.
 _CHILD_INDEX = """\
@@ -448,15 +455,17 @@ def test_an_assignment_in_a_callback_retypes_the_rest_of_the_callback(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # The bot review's repro: after `s = new B()` the callback's own `s.m()`
-    # calls B's; the outer `s` the next statement reads is still the A.
+    # calls B's. `later` only queues the callback, so the outer `s` the next
+    # statement reads is still the A.
     source = (
         "class A { m(): number { return 1; } }\n"
         "class B { m(): number { return 2; } }\n"
         "class C { m(): number { return 3; } }\n"
+        f"{_DEFERRED_QUEUE}"
         "\n"
-        "export function run(items: number[]): number {\n"
+        "export function run(): number {\n"
         "  let s = new A();\n"
-        "  items.forEach(() => {\n"
+        "  later(() => {\n"
         "    s = new B();\n"
         "    s.m();\n"
         "  });\n"
@@ -468,23 +477,24 @@ def test_an_assignment_in_a_callback_retypes_the_rest_of_the_callback(
 
     edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
 
-    assert edges[9] == _exact("B.m")
-    assert edges[11] == _exact("A.m")
+    assert edges[11] == _exact("B.m")
+    assert edges[13] == _exact("A.m")
 
 
 def test_an_assignment_in_a_callback_does_not_retype_the_outer_local(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # Neither callback has run when `x.m()` does (one is only stored, the
-    # other handed to `later`): their `x = new B()` says nothing about the
-    # `x` the next statement reads (bot review). A reassignment in the
+    # Neither callback has run when `x.m()` does: one is only stored, and
+    # `later` only queues the other. Their `x = new B()` says nothing about
+    # the `x` the next statement reads (bot review); a reassignment in the
     # function's own body still does.
     source = (
         "class A { m(): number { return 1; } }\n"
         "class B { m(): number { return 2; } }\n"
         "class C { m(): number { return 3; } }\n"
+        f"{_DEFERRED_QUEUE}"
         "\n"
-        "export function run(later: (f: () => void) => void): number {\n"
+        "export function run(): number {\n"
         "  let sum = 0;\n"
         "  {\n"
         "    let x = new A();\n"
@@ -497,6 +507,7 @@ def test_an_assignment_in_a_callback_does_not_retype_the_outer_local(
         "    sum += x.m();\n"
         "    x = new B();\n"
         "    sum += x.m();\n"
+        "    later(reset);\n"
         "  }\n"
         "  {\n"
         "    const x = new C();\n"
@@ -508,28 +519,30 @@ def test_an_assignment_in_a_callback_does_not_retype_the_outer_local(
 
     edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
 
-    assert edges[15] == _exact("A.m")
-    assert edges[17] == _exact("B.m")
-    assert edges[21] == _exact("C.m")
+    assert edges[17] == _exact("A.m")
+    assert edges[19] == _exact("B.m")
+    assert edges[24] == _exact("C.m")
 
 
 def test_a_js_reassignment_from_an_untyped_call_keeps_the_type(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # `x = make()` with `make(): A` keeps `x` an A; `x = other()`, a call with
-    # no type to read, changes nothing rather than typing `x` by the name
-    # `other` (bot review).
+    # `x = make()` with `make(): B` makes `x` a B; `x = other()`, a call with
+    # no type to read, then changes nothing rather than typing `x` by the
+    # name `other` (bot review).
     source = (
         "class A { m(): number { return 1; } }\n"
+        "class B extends A { m(): number { return 2; } }\n"
         "class C { m(): number { return 3; } }\n"
         "\n"
-        "function make(): A { return new A(); }\n"
+        "function make(): B { return new B(); }\n"
         "declare function other(): unknown;\n"
         "\n"
         "export function run(): number {\n"
         "  let sum = 0;\n"
         "  {\n"
-        "    let x = new A();\n"
+        "    let x: A = new A();\n"
+        "    sum += x.m();\n"
         "    x = make();\n"
         "    sum += x.m();\n"
         "    x = other();\n"
@@ -546,8 +559,91 @@ def test_a_js_reassignment_from_an_untyped_call_keeps_the_type(
     edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
 
     assert edges[12] == _exact("A.m")
-    assert edges[14] == _exact("A.m")
-    assert edges[18] == _exact("C.m")
+    assert edges[14] == _exact("B.m")
+    assert edges[16] == _exact("B.m")
+    assert edges[20] == _exact("C.m")
+
+
+def test_a_js_reassignment_from_a_shadowed_factory_keeps_the_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `make()` here calls the parameter `make`, not the file's `make(): B`,
+    # so it says nothing about `x`, which stays the A (bot review).
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class B { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "\n"
+        "function make(): B { return new B(); }\n"
+        "\n"
+        "export function run(make: () => A): number {\n"
+        "  let sum = 0;\n"
+        "  {\n"
+        "    let x = new A();\n"
+        "    x = make();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  {\n"
+        "    const x = new C();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  return sum;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[12] == _exact("A.m")
+    assert edges[16] == _exact("C.m")
+
+
+def test_a_js_reassignment_types_its_variable_as_a_declarator_would(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The bot review's repro: `items = Factory.make()` with `make(): B[]`
+    # makes `items` a B[], so the loop over it calls B's (line 15). A bare
+    # call's array return counts the same way (line 19), and a method's
+    # class return types a receiver (line 21).
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class B { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "class Factory {\n"
+        "  static make(): B[] { return [new B()]; }\n"
+        "  static one(): B { return new B(); }\n"
+        "}\n"
+        "function makeAll(): B[] { return [new B()]; }\n"
+        "\n"
+        "export function run(): number {\n"
+        "  let sum = 0;\n"
+        "  {\n"
+        "    let items: A[] = [new A()];\n"
+        "    items = Factory.make();\n"
+        "    for (const x of items) sum += x.m();\n"
+        "    let more: A[] = [new A()];\n"
+        "    more = makeAll();\n"
+        "    let y = new A();\n"
+        "    for (const y of more) sum += y.m();\n"
+        "    y = Factory.one();\n"
+        "    sum += y.m();\n"
+        "  }\n"
+        "  {\n"
+        "    const items: C[] = [];\n"
+        "    const more: C[] = [];\n"
+        "    const x = new C();\n"
+        "    const y = new C();\n"
+        "    sum += x.m() + y.m() + items.length + more.length;\n"
+        "  }\n"
+        "  return sum;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[15] == _exact("B.m")
+    assert edges[19] == _exact("B.m")
+    assert edges[21] == _exact("B.m")
+    assert edges[28] == {("C.m", cs.EdgeResolution.EXACT.value)}
 
 
 def test_a_java_write_in_an_anonymous_class_stays_there(
@@ -586,6 +682,47 @@ def test_a_java_write_in_an_anonymous_class_stays_there(
 
     edges = _index(temp_repo, {_JAVA_MAIN_PATH: source}, mock_ingestor)
 
+    assert edges[18] == _exact("Circle.area()")
+    assert edges[22] == _exact("Square.area()")
+
+
+def test_a_java_nested_method_s_parameter_is_its_own_variable(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `change` writes its own parameter `s`; the initializer after it reads
+    # the method's Circle `s` (bot review).
+    source = (
+        "package app;\n"
+        "\n"
+        "class Shape { int area() { return 0; } }\n"
+        "class Circle extends Shape { int area() { return 1; } }\n"
+        "class Square extends Shape { int area() { return 2; } }\n"
+        "\n"
+        "public class Main {\n"
+        "  int total() {\n"
+        "    int sum = 0;\n"
+        "    {\n"
+        "      Shape s = new Circle();\n"
+        "      Object o = new Object() {\n"
+        "        void change(Shape s) {\n"
+        "          s = new Square();\n"
+        "        }\n"
+        "        int n = s.area();\n"
+        "      };\n"
+        "      sum += s.area();\n"
+        "    }\n"
+        "    {\n"
+        "      Square s = new Square();\n"
+        "      sum += s.area();\n"
+        "    }\n"
+        "    return sum;\n"
+        "  }\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {_JAVA_MAIN_PATH: source}, mock_ingestor)
+
+    assert edges[16] == _exact("Circle.area()")
     assert edges[18] == _exact("Circle.area()")
     assert edges[22] == _exact("Square.area()")
 

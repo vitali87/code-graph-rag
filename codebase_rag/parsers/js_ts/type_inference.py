@@ -502,13 +502,7 @@ class JsTypeInferenceEngine:
                 (
                     assignment.end_byte,
                     owner.end_byte,
-                    self._scoped_declaration_type(
-                        assignment,
-                        name,
-                        names.module_qn,
-                        names.language,
-                        names.local_var_types,
-                    ),
+                    self._assigned_value_type(assignment, names),
                 )
                 for assignment, owner in names.assigned.get(name, ())
             ],
@@ -599,9 +593,8 @@ class JsTypeInferenceEngine:
         language: cs.SupportedLanguage | None,
         local_var_types: Mapping[str, str],
     ) -> str | None:
-        # Typed as the flat map types the same declaration, and an
-        # assignment as a declarator with that value; a destructured name or
-        # a catch binding has no type it can read.
+        # Typed as the flat map types the same declaration; a destructured
+        # name or a catch binding has no type it can read.
         match node.type:
             case cs.TS_VARIABLE_DECLARATOR:
                 target = node.child_by_field_name(cs.FIELD_NAME)
@@ -615,31 +608,40 @@ class JsTypeInferenceEngine:
                 return self._for_of_element_type(binding[1], local_var_types, module_qn)
             case cs.TS_JS_CATCH_CLAUSE:
                 return None
-            case cs.TS_JS_ASSIGNMENT_EXPRESSION:
-                return self._assigned_value_type(node, module_qn, language)
             case _:
                 return self._interface_parameter_types(node, module_qn).get(name)
 
     def _assigned_value_type(
-        self,
-        assignment: ASTNode,
-        module_qn: str,
-        language: cs.SupportedLanguage | None,
+        self, assignment: ASTNode, names: _ScopedNames
     ) -> str | None:
-        # What `x = value` makes `x`: the class a `new` constructs, or the
-        # return type a call is declared or seen to have. The value
-        # heuristics a declarator falls back to (a bare `make()` is typed by
-        # the name `make`) would replace the type `x` had with a guess; with
-        # no type to read, the assignment changes nothing.
+        # What `x = value` makes `x`: whatever a declarator's value would
+        # make it (a `new`, a method's return type, an array marker the loops
+        # over `x` read), except a bare `make()`, which that typing names
+        # after the callee: that would replace the type `x` had with a
+        # guess. A bare call counts only by the return type it is declared
+        # or seen to have; with no type to read, the assignment changes
+        # nothing.
         value = assignment.child_by_field_name(cs.FIELD_RIGHT)
         if value is None:
             return None
-        if value.type == cs.TS_NEW_EXPRESSION:
-            return self._infer_js_variable_type_from_value(value, module_qn, language)
-        if value.type != cs.TS_CALL_EXPRESSION:
-            return None
-        return_type = self._call_return_type(value, module_qn)
-        return None if _container_element(return_type) else return_type
+        callee = (
+            value.child_by_field_name(cs.FIELD_FUNCTION)
+            if value.type == cs.TS_CALL_EXPRESSION
+            else None
+        )
+        if callee is not None and callee.type == cs.TS_IDENTIFIER:
+            # A local or parameter `make` in scope here is not the file's
+            # `make()`, whose return type the lookup below would read.
+            callee_name = safe_decode_text(callee) or ""
+            if any(
+                start <= callee.start_byte < end
+                for start, end, _node in names.found.get(callee_name, ())
+            ):
+                return None
+            return self._call_return_type(value, names.module_qn)
+        return self._infer_js_variable_type_from_value(
+            value, names.module_qn, names.language
+        )
 
     def _first_party_interface_qn(self, type_name: str, module_qn: str) -> str | None:
         # An import names the symbol or its module, so both spellings are tried
