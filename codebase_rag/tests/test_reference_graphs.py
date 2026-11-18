@@ -197,6 +197,36 @@ def test_the_callers_settings_reach_the_index_in_no_spelling(
     assert env[cs.REFERENCE_HOME_ENV] == str(tmp_path)
 
 
+def test_no_cgr_setting_of_the_caller_reaches_the_index(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CGR_CAPTURE", "-CALLS")
+    monkeypatch.setenv("PYTHON_FRONTEND", "jedi")
+    monkeypatch.setenv("PATH_FOR_THE_INDEX", "kept")
+
+    env = _index_env(tmp_path, seed=None)
+
+    assert "CGR_CAPTURE" not in env
+    assert env["PYTHON_FRONTEND"] == cs.REFERENCE_ENV["PYTHON_FRONTEND"]
+    assert env["PATH_FOR_THE_INDEX"] == "kept"
+
+
+def test_a_forward_slash_spelling_of_the_root_is_replaced_too() -> None:
+    root = Path("/work/checkout/demo")
+    export = _export([1, 2, 3, 4])
+    nodes = export["nodes"]
+    assert isinstance(nodes, list)
+    folder = nodes[2]
+    assert isinstance(folder, dict)
+    properties = folder["properties"]
+    assert isinstance(properties, dict)
+    properties["absolute_path"] = f"{root.as_posix()}/pkg"
+
+    text = "\n".join(canonical(export, root))
+
+    assert root.as_posix() not in text
+
+
 def test_a_relative_cgr_program_is_made_absolute() -> None:
     program, *rest = _command("./target/release/cgr --flag")
 

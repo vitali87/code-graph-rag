@@ -26,13 +26,6 @@ REFERENCE_ENV = {
     "JAVA_FRONTEND": "heuristic",
     "PYTHON_FRONTEND": "heuristic",
 }
-# Settings that would point the index somewhere other than its own home.
-REFERENCE_UNSET_ENV = (
-    "SQLITE_GRAPH_PATH",
-    "SQLITE_VECTOR_PATH",
-    "CGR_VECTOR_STORE_BACKEND",
-    "LOMBOK_JAR",
-)
 REFERENCE_HOME_ENV = "CGR_HOME"
 REFERENCE_SEED_ENV = "PYTHONHASHSEED"
 

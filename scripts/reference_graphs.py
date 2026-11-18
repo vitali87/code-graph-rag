@@ -30,9 +30,13 @@ import sys
 import tempfile
 from collections import Counter
 from collections.abc import Iterable, Sequence
+from functools import cache
 from pathlib import Path
 
+from pydantic import AliasChoices
+
 from codebase_rag import constants as cs
+from codebase_rag.config import AppConfig
 from codebase_rag.types_defs import JsonValue, ReferenceRepo
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -115,12 +119,30 @@ def fetch(repo: ReferenceRepo, cache: Path) -> Path:
     return checkout
 
 
+@cache
+def _setting_env_names() -> frozenset[str]:
+    """Every environment variable a cgr setting is read from, upper-cased."""
+    names: set[str] = set()
+    for name, field in AppConfig.model_fields.items():
+        alias = field.validation_alias
+        if isinstance(alias, str):
+            names.add(alias.upper())
+        elif isinstance(alias, AliasChoices):
+            names.update(
+                choice.upper() for choice in alias.choices if isinstance(choice, str)
+            )
+        else:
+            names.add(name.upper())
+    return frozenset(names)
+
+
 def _index_env(home: Path, seed: int | None) -> dict[str, str]:
-    # Settings are read whatever the case of their name, so `go_frontend` in
-    # the caller's environment would compete with the `GO_FRONTEND` set here.
-    controlled = {
-        name.upper()
-        for name in (*cs.REFERENCE_UNSET_ENV, *cs.REFERENCE_ENV, cs.REFERENCE_HOME_ENV)
+    # None of the caller's cgr settings reach the index: a `CGR_CAPTURE` or a
+    # frontend choice left in a shell would change the graph `record` writes.
+    # Settings are read whatever the case of their name, so `go_frontend`
+    # counts as `GO_FRONTEND`.
+    controlled = _setting_env_names() | {
+        name.upper() for name in (*cs.REFERENCE_ENV, cs.REFERENCE_HOME_ENV)
     }
     env = {
         name: value
@@ -213,7 +235,17 @@ def canonical(export: ExportRecord, source: Path) -> list[str]:
     `node_id`, which is only a row number of this run's database. Duplicate
     lines are kept: an edge recorded twice is a difference.
     """
-    roots = sorted({str(source), str(source.resolve())}, key=len, reverse=True)
+    # Native and forward-slash spellings of both: on Windows the export
+    # writes `C:/cache/x/...` while `str(Path)` gives `C:\cache\x`.
+    roots = sorted(
+        {
+            spelling
+            for path in (source, source.resolve())
+            for spelling in (str(path), path.as_posix())
+        },
+        key=len,
+        reverse=True,
+    )
     sep = cs.REFERENCE_FIELD_SEPARATOR
     names: dict[int, str] = {}
     lines: list[str] = []
