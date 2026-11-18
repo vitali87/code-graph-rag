@@ -2019,6 +2019,30 @@ def _is_async(node: Node) -> bool:
     return any(child.type == cs.TS_PY_ASYNC for child in node.children)
 
 
+def _returns_only_self(method: Node) -> bool:
+    """Whether every `return` of a method's own body returns `self`."""
+    returns: list[Node] = []
+    stack = list(method.children)
+    while stack:
+        node = stack.pop()
+        if node.type in (
+            cs.TS_PY_FUNCTION_DEFINITION,
+            cs.TS_PY_CLASS_DEFINITION,
+            cs.TS_PY_LAMBDA,
+        ):
+            continue
+        if node.type == cs.TS_PY_RETURN_STATEMENT:
+            returns.append(node)
+            continue
+        stack.extend(node.children)
+    return bool(returns) and all(
+        len(values := ret.named_children) == 1
+        and values[0].type == cs.TS_PY_IDENTIFIER
+        and safe_decode_text(values[0]) == cs.PY_KEYWORD_SELF
+        for ret in returns
+    )
+
+
 def _one_known_type(left: set[str], right: set[str]) -> bool:
     """Whether both operands hold one known type, the same, at their site."""
     return len(left) == 1 and left == right
@@ -9817,19 +9841,38 @@ class CallProcessor:
         if not text or any(ch in text for ch in cs.PY_OPERAND_REJECT_CHARS):
             return
         creator, advancer = _iteration_protocol(node)
-        engine = self._resolver.type_inference.python_type_inference
         for view in self._operand_views(
             caller_node, iterable, local_var_types, module_qn
         ):
-            if not view or not view.get(text):
+            if not view or not (receiver := view.get(text)):
                 continue
-            iterator = engine._infer_expression_return_type(
-                f"{text}{cs.SEPARATOR_DOT}{creator}()", module_qn, view
-            )
-            if iterator:
-                self._emit_operator_dunder(
-                    iterable, advancer, caller_spec, module_qn, {text: iterator}
-                )
+            # The `__iter__` the loop runs, its class's own or a base's.
+            for _label, method_qn in sorted(
+                self._resolver.operator_dunder_targets(text, creator, module_qn, view)
+            ):
+                if iterator := self._python_iterator_type(method_qn, receiver):
+                    self._emit_operator_dunder(
+                        iterable, advancer, caller_spec, module_qn, {text: iterator}
+                    )
+
+    def _python_iterator_type(self, method_qn: str, receiver: str) -> str | None:
+        """The type of what an `__iter__`/`__aiter__` returns.
+
+        `return self` is the receiver, whatever class defines the method:
+        a `Child` inheriting `Base.__iter__` iterates as a `Child`.
+        """
+        engine = self._resolver.type_inference.python_type_inference
+        method = engine._find_method_ast_node(method_qn)
+        if method is None:
+            return None
+        if _returns_only_self(method):
+            return receiver
+        returned = engine._get_method_return_type_from_ast(method_qn)
+        if returned and cs.SEPARATOR_DOT not in returned:
+            # A bare name is the one the method's own module sees.
+            declaring = method_qn.rsplit(cs.SEPARATOR_DOT, 2)[0]
+            return engine._resolve_class_name(returned, declaring) or returned
+        return returned
 
     @_site_scoped
     def _emit_truthiness(

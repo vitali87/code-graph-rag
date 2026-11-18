@@ -230,6 +230,27 @@ def loop_opaque():
     o = Opaque()
     for _x in o:
         pass
+
+
+class SelfIterBase:
+    def __iter__(self): return self
+    def __aiter__(self): return self
+
+
+class SelfIterChild(SelfIterBase):
+    def __next__(self): raise StopIteration
+    async def __anext__(self): raise StopAsyncIteration
+
+
+def loop_inherited():
+    c = SelfIterChild()
+    for _x in c:
+        pass
+
+async def loop_inherited_async():
+    c = SelfIterChild()
+    async for _x in c:
+        pass
 """
 
 
@@ -387,6 +408,12 @@ def test_a_comment_between_operands_keeps_the_call(
         # Negative: `iter([])` is no project class, so no `__next__` is
         # guessed, `Opaque.__next__` included.
         ("loop_opaque", {"Opaque.__iter__"}),
+        # An inherited `__iter__` returning `self` iterates as the subclass.
+        ("loop_inherited", {"SelfIterBase.__iter__", "SelfIterChild.__next__"}),
+        (
+            "loop_inherited_async",
+            {"SelfIterBase.__aiter__", "SelfIterChild.__anext__"},
+        ),
     ],
 )
 def test_a_loop_advances_the_iterator_its_iter_returns(
@@ -394,7 +421,7 @@ def test_a_loop_advances_the_iterator_its_iter_returns(
 ) -> None:
     found = {
         c
-        for owner in ("Container", "Cursor", "Opaque")
+        for owner in ("Container", "Cursor", "Opaque", "SelfIterBase", "SelfIterChild")
         for c in _dunders(callees, caller, owner)
     }
     assert found == expected, callees.get(caller)
