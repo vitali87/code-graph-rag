@@ -73,8 +73,8 @@ def test_the_tool_list_is_the_same_whichever_extras_are_installed(
     # Bot review on PR #3636: the structural tools are served only with the
     # `ast-grep` extra, so a machine without it wrote a different list.
     with (
-        patch.object(mcp_tools, "has_ast_grep", lambda: installed),
-        patch.object(mcp_tools, "has_semantic_dependencies", lambda: installed),
+        patch.object(mcp_tools, "has_ast_grep", return_value=installed),
+        patch.object(mcp_tools, "has_semantic_dependencies", return_value=installed),
     ):
         tools = {tool["name"]: tool for tool in mcp_tool_list()}
 
