@@ -1854,7 +1854,15 @@ class Renamer:
             for path in definitions
         ):
             return []
-        uses = {(s.path, s.line, s.col): s for s in sites if s.kind != "definition"}
+        # Proven bindings only: an overload fan-out's guessed sibling is the
+        # ambiguity `allow_heuristic` decides, not a second definition.
+        uses = {
+            (s.path, s.line, s.col): s
+            for s in sites
+            if s.kind != "definition" and s.resolution == cs.EdgeResolution.EXACT
+        }
+        if not uses:
+            return []
         shared: dict[tuple[str, int, int], RenameSite] = {}
         for symbol in graph_query.resolve(self.fetch_all, self.project, old_name):
             other = symbol["qualified_name"]
@@ -1866,7 +1874,11 @@ class Renamer:
                 continue
             for site in other_sites:
                 position = (site.path, site.line, site.col)
-                if site.kind != "definition" and position in uses:
+                if (
+                    site.kind != "definition"
+                    and site.resolution == cs.EdgeResolution.EXACT
+                    and position in uses
+                ):
                     shared.setdefault(position, uses[position])
         return [shared[position] for position in sorted(shared)]
 

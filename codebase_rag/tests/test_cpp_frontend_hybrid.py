@@ -963,3 +963,39 @@ def test_hybrid_rename_of_a_macro_with_uses_of_its_own_still_plans(
     assert "+#define CAP 3" in report.diff, report.message
     assert "+int one() { return CAP; }" in report.diff, report.diff
     assert "two.cpp" not in report.diff, report.diff
+
+
+def test_an_overload_fan_out_is_no_second_binding_of_a_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: `f(1)` fans out to both overloads with `resolution: overload`,
+    # a guess `allow_heuristic` decides, so the shared-site refusal (which
+    # needs both bindings proven) leaves it to that opt-in.
+    from codebase_rag import graph_query
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    def site(owner: str, kind: str, line: int, resolution: str) -> RenameSite:
+        return RenameSite(
+            kind, "m.cpp", line, 4 if kind == "definition" else 17, owner, resolution
+        )
+
+    planned = [
+        site("p.m.f", "definition", 1, cs.EdgeResolution.EXACT),
+        site("p.m.g", "call", 3, cs.EdgeResolution.OVERLOAD),
+    ]
+    sibling = [
+        site("p.m.f@2", "definition", 2, cs.EdgeResolution.EXACT),
+        site("p.m.g", "call", 3, cs.EdgeResolution.OVERLOAD),
+    ]
+    monkeypatch.setattr(
+        graph_query,
+        "resolve",
+        lambda *_args: [{"qualified_name": "p.m.f"}, {"qualified_name": "p.m.f@2"}],
+    )
+    renamer = Renamer(tmp_path, lambda *_args: [], "p")
+    monkeypatch.setattr(renamer, "_collect", lambda _qn: (sibling, [], "f", "Function"))
+    assert renamer._sites_another_namesake_binds(["p.m.f"], "f", planned) == []
+    # The same site proven for both is the macro case, and is refused.
+    proven = [s._replace(resolution=cs.EdgeResolution.EXACT) for s in planned]
+    sibling[:] = [s._replace(resolution=cs.EdgeResolution.EXACT) for s in sibling]
+    assert renamer._sites_another_namesake_binds(["p.m.f"], "f", proven) == [proven[1]]
