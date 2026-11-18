@@ -18,21 +18,22 @@ theme:
   logo: assets/logo-icon.png
   favicon: assets/favicon.png
   font:
-    text: Inter
-    code: JetBrains Mono
+    text: Geist
+    code: Geist Mono
+  # Light first: it is the default, matching code-graph-rag.com.
   palette:
-    - scheme: slate
-      primary: custom
-      accent: custom
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
     - scheme: default
       primary: custom
       accent: custom
       toggle:
-        icon: material/brightness-7
+        icon: material/brightness-4
         name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
   features:
     - navigation.instant
     - navigation.tracking
@@ -111,7 +112,9 @@ nav:
     - Span-Preserving Patchers: architecture/patchers.md
     - Edit Transactions: architecture/edit-transactions.md
     - Rename Operation: architecture/rename.md
+    - Change Signature Operation: architecture/change-signature.md
     - Postcondition Contract: architecture/postcondition-contract.md
+    - Move: architecture/move.md
     - Context Slice: architecture/context-slice.md
   - Advanced:
     - Adding Languages: advanced/adding-languages.md
@@ -122,6 +125,7 @@ nav:
   - Roadmap: roadmap.md
   - Contributing: contributing.md
   - Credits: credits.md
+  - code-graph-rag.com: https://code-graph-rag.com
 
 extra_css:
   - stylesheets/extra.css

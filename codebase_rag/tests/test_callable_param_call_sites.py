@@ -32,6 +32,8 @@ from codebase_rag.tests.conftest import create_and_run_updater
 from codebase_rag.types_defs import PropertyDict, PropertyParams, ResultRow
 from evals.cgr_graph import _StatefulIngestor
 
+pytestmark = pytest.mark.usefixtures("both_callable_scans")
+
 PROJECT = "cbloc"
 DOUBLE = f"{PROJECT}.pkg.main.double"
 
