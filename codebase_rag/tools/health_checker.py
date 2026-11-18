@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import os
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 import httpx
@@ -27,7 +27,7 @@ _MgclientError: type[Exception] = mgclient.Error
 
 
 @contextmanager
-def _backend_connection() -> Iterator[ConnectionProtocol]:
+def _backend_connection() -> Generator[ConnectionProtocol]:
     """Open a connection to whichever graph engine is configured.
 
     Health output must describe the backend actually in use, so this

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from loguru import logger
 from rich.text import Text
 from typer.testing import CliRunner
 
@@ -231,14 +233,18 @@ class TestClickableLocations:
 
     def test_location_cell_is_plain_without_root(self) -> None:
         member = _member(path="b.py", start_line=5, end_line=12)
-        assert _duplicates_location_cell(member, None) == "b.py:5-12"
+        cell = _duplicates_location_cell(member, None)
+        assert cell.plain == "b.py:5-12"
+        assert cell.spans == []
 
     def test_location_cell_is_plain_when_links_disabled(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(settings, "CGR_EDITOR", cs.EDITOR_NONE)
         member = _member(path="b.py", start_line=5, end_line=12)
-        assert _duplicates_location_cell(member, Path("/repo")) == "b.py:5-12"
+        cell = _duplicates_location_cell(member, Path("/repo"))
+        assert cell.plain == "b.py:5-12"
+        assert cell.spans == []
 
     def test_group_cell_links_to_side_by_side_pair(self) -> None:
         # Clicking the group number opens both members side by side in a
@@ -377,3 +383,29 @@ def _group(*members: DuplicateMember) -> DuplicateGroup:
         node_count=24,
         members=list(members),
     )
+
+
+@pytest.fixture
+def quiet_restored(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+    # `--quiet` sets a process-wide flag and swaps loguru's sinks.
+    monkeypatch.setattr(settings, "QUIET", settings.QUIET)
+    yield
+    logger.remove()
+
+
+@pytest.mark.usefixtures("quiet_restored")
+@pytest.mark.parametrize(("flags", "shown"), [([], True), (["--quiet"], False)])
+def test_quiet_hides_the_scanning_line(
+    runner: CliRunner, clone_rows: list[ResultRow], flags: list[str], shown: bool
+) -> None:
+    """--quiet hides the progress line on both streams (issue #3499); the
+    table is printed either way."""
+    mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=clone_rows)
+    with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        result = runner.invoke(app, [*flags, "duplicates"])
+
+    assert result.exit_code == 0
+    # The console wraps long lines, so compare words, not line breaks.
+    output = " ".join(result.output.split())
+    assert (cs.CLI_DUPLICATES_CONNECTING in output) is shown
+    assert "total_price" in result.stdout

@@ -27,6 +27,13 @@ class NameEdge(NamedTuple):
     target_name: str
 
 
+class ColGrepEdges(NamedTuple):
+    edges: set[NameEdge]
+    # (symbol, stderr) of the search that failed, which ends the arm early;
+    # None when every search ran.
+    failure: tuple[str, str] | None
+
+
 class GraphData(NamedTuple):
     nodes: dict[NodeKey, DefNode]
     edges: set[EdgeKey]
