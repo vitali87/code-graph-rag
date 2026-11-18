@@ -27,10 +27,6 @@ from ..utils import (
 )
 from . import utils as ut
 
-# The function values a declarator can bind (`const make = () => ...`).
-_JS_FUNCTION_VALUE_TYPES = frozenset(
-    {cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION}
-)
 # Callable node types whose bodies own their locals and returns; the shared
 # JS_TS_FUNCTION_NODES tuple lacks the generator EXPRESSION form.
 _JS_NESTED_CALLABLE_TYPES = frozenset(cs.JS_TS_FUNCTION_NODES) | {
@@ -64,6 +60,9 @@ _JS_SELF_NAMED_EXPRESSIONS = frozenset(
     {cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION, cs.TS_CLASS_EXPRESSION}
 )
 _JS_CLASS_NODE_TYPES = frozenset(cs.JS_TS_CLASS_NODES) | _JS_BLOCK_SCOPED_DECLARATIONS
+_JS_LOCAL_TYPE_DECLARATIONS = _JS_BLOCK_SCOPED_DECLARATIONS | {
+    cs.TS_JS_ENUM_DECLARATION
+}
 # TypeScript is compiled as strict code; a JS file is a module (always
 # strict) when it has a top-level import or export.
 _JS_STRICT_LANGUAGES = frozenset({cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX})
@@ -97,6 +96,10 @@ class _ScopedNames:
     module_qn: str
     language: cs.SupportedLanguage | None
     local_var_types: Mapping[str, str]
+    # Local class, enum and function declarations by name, with the span
+    # each binds its name over: they hide a module-level one, though they
+    # type no variable.
+    named: dict[str, list[tuple[int, int]]] = dataclass_field(default_factory=dict)
     spans: dict[str, list[SpanBinding]] = dataclass_field(default_factory=dict)
     busy: set[str] = dataclass_field(default_factory=set)
 
@@ -468,8 +471,10 @@ class JsTypeInferenceEngine:
         stack: list[tuple[ASTNode, ASTNode]] = [
             (child, caller_node) for child in reversed(caller_node.children)
         ]
+        named: dict[str, list[tuple[int, int]]] = {}
         while stack:
             node, owner = stack.pop()
+            self._scoped_name(node, owner, named)
             if node.type in _JS_NESTED_CALLABLE_TYPES:
                 owner = node
                 self._scoped_parameters(node, found)
@@ -482,7 +487,9 @@ class JsTypeInferenceEngine:
             else:
                 self._scoped_binding(node, owner, found)
             stack.extend((child, owner) for child in reversed(node.children))
-        names = _ScopedNames(found, assigned, module_qn, language, local_var_types)
+        names = _ScopedNames(
+            found, assigned, module_qn, language, local_var_types, named
+        )
         return [
             binding
             for name, declarations in found.items()
@@ -555,6 +562,25 @@ class JsTypeInferenceEngine:
         if type_name:
             view[iterable] = type_name
         return view
+
+    def _scoped_name(
+        self,
+        node: ASTNode,
+        owner: ASTNode,
+        named: dict[str, list[tuple[int, int]]],
+    ) -> None:
+        # A function declaration is taken as hoisted to its whole function
+        # (strict code scopes one in a block to that block; over-covering
+        # only declines a module-level type); a class or enum binds its
+        # block.
+        if node.type in _JS_HOISTED_DECLARATIONS:
+            span = (owner.start_byte, owner.end_byte)
+        elif node.type in _JS_LOCAL_TYPE_DECLARATIONS:
+            span = self._js_scope_span(node, owner)
+        else:
+            return
+        if declared := self._js_declared_name(node):
+            named.setdefault(declared, []).append(span)
 
     def _scoped_parameters(
         self,
@@ -630,9 +656,9 @@ class JsTypeInferenceEngine:
         # make it (a `new`, a method's return type, an array marker the loops
         # over `x` read), except a bare `make()`, which that typing names
         # after the callee: that would replace the type `x` had with a
-        # guess. A bare call counts only by the return type it is declared
-        # or seen to have; with no type to read, the assignment changes
-        # nothing.
+        # guess. A bare call counts only through the return type of a
+        # module-level function it surely reaches; with no type to read, the
+        # assignment changes nothing.
         value = assignment.child_by_field_name(cs.FIELD_RIGHT)
         if value is None:
             return None
@@ -642,16 +668,19 @@ class JsTypeInferenceEngine:
             else None
         )
         if callee is not None and callee.type == cs.TS_IDENTIFIER:
-            # A `make` declared in this function is the one called, not the
-            # file's `make()` the lookup below reads: only a local function
-            # value says what it returns, a parameter says nothing. Either is
-            # read only while nothing in the function can have replaced it:
-            # `make = () => new A()` anywhere makes every `make()` unknown.
-            if names.assigned.get(safe_decode_text(callee) or ""):
+            # A `make` this function declares (a parameter, a local function
+            # or function value, a hoisted `var`) is not the file's `make()`,
+            # and says nothing about what it returns; nor does the file's
+            # `make` once this function assigns it another value. A write to
+            # a local `make` elsewhere replaces nothing the call reaches.
+            name = safe_decode_text(callee) or ""
+            if self._bound_locally(callee, names) or any(
+                (target := write.child_by_field_name(cs.FIELD_LEFT)) is not None
+                and not self._bound_locally(target, names)
+                for write, _owner in names.assigned.get(name, ())
+            ):
                 return None
-            if (local := self._declared_in_scope(callee, names)) is None:
-                return self._call_return_type(value, names.module_qn)
-            return self._local_function_return_type(local, callee, names.module_qn)
+            return self._module_function_return_type(value, name, names.module_qn)
         receiver = (
             callee.child_by_field_name(cs.FIELD_OBJECT)
             if callee is not None and callee.type == cs.TS_MEMBER_EXPRESSION
@@ -660,53 +689,60 @@ class JsTypeInferenceEngine:
         if (
             receiver is not None
             and receiver.type == cs.TS_IDENTIFIER
-            and self._declared_in_scope(receiver, names) is not None
+            and self._bound_locally(receiver, names)
         ):
-            # `Factory.one()` on a local or parameter `Factory`, not on the
-            # class of that name whose return type the typing below reads.
+            # `Factory.one()` on a local, parameter or local class `Factory`,
+            # not on the module's class of that name, whose return type the
+            # typing below reads.
             return None
         return self._infer_js_variable_type_from_value(
             value, names.module_qn, names.language
         )
 
     @staticmethod
-    def _declared_in_scope(ident: ASTNode, names: _ScopedNames) -> ASTNode | None:
-        # The declaration of `ident`'s name in this function in scope at it,
-        # the innermost one where several are. A `var` is hoisted: the name
-        # is that variable from the top of its function, even on a line
-        # before the declaration.
-        held: list[tuple[int, ASTNode]] = []
-        for start, end, node in names.found.get(safe_decode_text(ident) or "", ()):
+    def _bound_locally(ident: ASTNode, names: _ScopedNames) -> bool:
+        # Whether `ident`'s name is, where it stands, something this function
+        # declares: a parameter, a local, or a local class, enum or function.
+        # A `var` is hoisted: the name is that variable from the top of its
+        # function, even on a line before the declaration.
+        name = safe_decode_text(ident) or ""
+        point = ident.start_byte
+        for start, end, node in names.found.get(name, ()):
             if (parent := node.parent) is not None and (
                 parent.type == cs.TS_VARIABLE_DECLARATION
             ):
                 start = _enclosing_function(node).start_byte
-            if start <= ident.start_byte < end:
-                held.append((end - start, node))
-        return min(held, key=lambda entry: entry[0])[1] if held else None
+            if start <= point < end:
+                return True
+        return any(start <= point < end for start, end in names.named.get(name, ()))
 
-    def _local_function_return_type(
-        self, declaration: ASTNode, callee: ASTNode, module_qn: str
+    def _module_function_return_type(
+        self, call: ASTNode, name: str, module_qn: str
     ) -> str | None:
-        # `const make = (): B => new B()`: the arrow's return type, read as
-        # for a file-level function. A `let` or `var` binding can be given
-        # another function, so it says nothing.
-        kind = (
-            declaration.parent.child_by_field_name(cs.FIELD_KIND)
-            if declaration.type == cs.TS_VARIABLE_DECLARATOR
-            and declaration.parent is not None
-            and declaration.parent.type == cs.TS_LEXICAL_DECLARATION
-            else None
-        )
-        if kind is None or kind.type != cs.JS_CONST_KEYWORD:
+        # The return type of `function make()` declared at the file's top
+        # level, when it is the only function of that name in the file and
+        # no import binds the name: a nested function or an arrow in some
+        # inner block may be what the call reaches, or may not be in scope.
+        root = _tree_root(call)
+        matches = _function_declarations(root).get(name, ())
+        if len(matches) != 1 or name in self.import_processor.import_mapping.get(
+            module_qn, {}
+        ):
             return None
-        value = declaration.child_by_field_name(cs.FIELD_VALUE)
-        if value is None or value.type not in _JS_FUNCTION_VALUE_TYPES:
+        function = matches[0]
+        owner = function.parent
+        if owner is not None and owner.type == cs.TS_EXPORT_STATEMENT:
+            owner = owner.parent
+        if (
+            function.type != cs.TS_FUNCTION_DECLARATION
+            or owner is None
+            or (owner.id != root.id)
+        ):
             return None
-        function_qn = f"{module_qn}{cs.SEPARATOR_DOT}{safe_decode_text(callee)}"
+        function_qn = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
         return self._annotated_return_type_of(
-            value, module_qn
-        ) or self._analyze_return_statements(value, function_qn)
+            function, module_qn
+        ) or self._analyze_return_statements(function, function_qn)
 
     def _first_party_interface_qn(self, type_name: str, module_qn: str) -> str | None:
         # An import names the symbol or its module, so both spellings are tried

@@ -632,11 +632,11 @@ def test_a_js_reassignment_from_a_hoisted_var_factory_keeps_the_type(
     assert edges[18] == _exact("C.m")
 
 
-def test_a_js_reassignment_from_a_local_factory_reads_its_return_type(
+def test_a_js_reassignment_from_a_local_factory_keeps_the_type(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # The `make` called is the function's own arrow, whose return type says
-    # B (bot review).
+    # The `make` called is the function's own arrow. Only a module-level
+    # function's return type is read, so `x` keeps the A it had.
     source = (
         "class A { m(): number { return 1; } }\n"
         "class B extends A { m(): number { return 2; } }\n"
@@ -660,8 +660,132 @@ def test_a_js_reassignment_from_a_local_factory_reads_its_return_type(
 
     edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
 
-    assert edges[11] == _exact("B.m")
+    assert edges[11] == _exact("A.m")
     assert edges[15] == _exact("C.m")
+
+
+def test_a_write_to_another_make_does_not_hide_the_module_factory(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The writes are to the inner block's own `make`; the call still reaches
+    # the module-level `make(): B` (bot review).
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class B extends A { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "\n"
+        "function make(): B { return new B(); }\n"
+        "\n"
+        "export function run(): number {\n"
+        "  let x: A = new A();\n"
+        "  x = make();\n"
+        "  const result = x.m();\n"
+        "  { let x = new C(); }\n"
+        "  { let make = 1; make = 2; }\n"
+        "  return result;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[10] == _exact("B.m")
+
+
+def test_a_local_const_factory_is_not_typed_whatever_else_is_written(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The bot review's example: only a module-level function's return type
+    # is read, so the function's own `const make` leaves `x` the A it was,
+    # as on main, and the other block's writes change nothing.
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class B extends A { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "\n"
+        "export function run(): number {\n"
+        "  const make = (): B => new B();\n"
+        "  let x: A = new A();\n"
+        "  x = make();\n"
+        "  const result = x.m();\n"
+        "  { let x = new C(); }\n"
+        "  { let make = () => new A(); make = () => new C(); }\n"
+        "  return result;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[9] == _exact("A.m")
+
+
+def test_a_js_reassignment_from_a_local_generator_keeps_the_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Calling a generator gives a generator object, not what its body
+    # returns (bot review); a local one says nothing about `x` either way.
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class B { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "\n"
+        "export function run(): number {\n"
+        "  const make = function* () { return new B(); };\n"
+        "  let sum = 0;\n"
+        "  {\n"
+        "    let x: any = new A();\n"
+        "    x = make();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  {\n"
+        "    const x = new C();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  return sum;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[11] == _exact("A.m")
+    assert edges[15] == _exact("C.m")
+
+
+def test_a_js_reassignment_from_an_imported_factory_keeps_the_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `make()` after the inner block calls the import: the arrow named `make`
+    # in that closed block is not in scope there and must not stand in for
+    # it (bot review).
+    source = (
+        'import { make } from "./factory";\n'
+        "\n"
+        "class A { m(): number { return 1; } }\n"
+        "class B { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "\n"
+        "export function run(): number {\n"
+        "  let sum = 0;\n"
+        "  {\n"
+        "    const make = (): B => new B();\n"
+        "    sum += make().m();\n"
+        "  }\n"
+        "  {\n"
+        "    let x = new A();\n"
+        "    x = make();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  {\n"
+        "    const x = new C();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  return sum;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[16] == _exact("A.m")
+    assert edges[20] == _exact("C.m")
 
 
 def test_a_js_reassignment_from_a_replaced_factory_keeps_the_type(
@@ -703,6 +827,39 @@ def test_a_js_reassignment_from_a_shadowed_class_s_method_keeps_the_type(
         "interface Maker { one(): A; }\n"
         "\n"
         "export function run(Factory: Maker): number {\n"
+        "  let sum = 0;\n"
+        "  {\n"
+        "    let x = new A();\n"
+        "    x = Factory.one();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  {\n"
+        "    const x = new C();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  return sum;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[12] == _exact("A.m")
+    assert edges[16] == _exact("C.m")
+
+
+def test_a_js_reassignment_from_a_local_class_s_method_keeps_the_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The bot review's example: the function's own `class Factory` hides the
+    # module's, whose `one()` returns B, so `x` keeps the A it had.
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class B { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "class Factory { static one(): B { return new B(); } }\n"
+        "\n"
+        "export function run(): number {\n"
+        "  class Factory { static one(): A { return new A(); } }\n"
         "  let sum = 0;\n"
         "  {\n"
         "    let x = new A();\n"
