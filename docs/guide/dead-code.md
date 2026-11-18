@@ -24,7 +24,8 @@ registered with `@generic.register` is reachable exactly when its generic is,
 so the implementations of a dead generic are still reported. An
 implementation registered with several generics is reachable when any of them
 is, and another registration decorator on it (such as `@atexit.register`)
-still makes it a root.
+still makes it a root, as does a `--decorator-root` that matches its
+`@generic.register` (`register` or `generic.register`).
 
 The results are **candidates for review, not a guaranteed delete list**. Code
 reached only through dynamic dispatch, reflection, string-keyed lookups, or an

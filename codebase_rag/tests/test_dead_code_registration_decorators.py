@@ -16,17 +16,25 @@ from pathlib import Path
 
 import pytest
 
-from codebase_rag.dead_code import default_dead_code_config
+from codebase_rag.dead_code import default_dead_code_config, normalize_decorator_root
 from evals.dead_code import cgr_dead_code
 
 PROJECT = "proj"
 
 
-def _dead(tmp_path: Path, source: str) -> set[str]:
+def _dead(
+    tmp_path: Path, source: str, decorator_roots: tuple[str, ...] = ()
+) -> set[str]:
     root = tmp_path / PROJECT
     root.mkdir()
     (root / "app.py").write_text(source, encoding="utf-8")
-    dead = cgr_dead_code(root, PROJECT, default_dead_code_config(False, False))
+    config = default_dead_code_config(False, False)
+    # As `--decorator-root` adds them (cli._dead_code_config).
+    config = config._replace(
+        root_decorators=config.root_decorators
+        | {normalize_decorator_root(d) for d in decorator_roots}
+    )
+    dead = cgr_dead_code(root, PROJECT, config)
     return {qn.removeprefix(f"{PROJECT}.app.") for qn in dead}
 
 
@@ -160,6 +168,18 @@ def test_another_register_decorator_still_roots_a_dispatch_implementation(
 
     assert "_gen" in dead
     assert "_cleanup" not in dead
+
+
+@pytest.mark.parametrize("decorator_root", ["register", "@_render.register"])
+def test_an_explicit_decorator_root_still_roots_a_dispatch_implementation(
+    tmp_path: Path, decorator_root: str
+) -> None:
+    # The generic is dead, but the user asked for its registrations to be
+    # roots: only the default rules leave them to the generic.
+    dead = _dead(tmp_path, SINGLEDISPATCH, (decorator_root,))
+
+    assert "_render" in dead
+    assert not {"_render_int", "_render_float"} & dead
 
 
 # Negative: what must not change.

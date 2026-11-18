@@ -558,16 +558,22 @@ def _dispatch_generics(
 
 
 def _without_dispatch_registration(
-    qn: str, props: PropertyDict, generics: frozenset[str]
+    qn: str,
+    props: PropertyDict,
+    generics: frozenset[str],
+    explicit_roots: frozenset[str],
 ) -> PropertyDict:
     """`props` minus the `@generic.register` decorators naming one of
-    `generics`, which must not root a singledispatch implementation on their
-    own: that would keep the implementations of a dead generic alive. Any
-    other `.register` decorator (`@atexit.register`) still roots."""
+    `generics`, which must not root a singledispatch implementation by a
+    default rule: that would keep the implementations of a dead generic
+    alive. Any other `.register` decorator (`@atexit.register`) still roots,
+    and so does one matching a root the user added (`--decorator-root
+    register`), which asks for exactly that."""
     decorators = [
         d
         for d in _str_items(props.get(cs.KEY_DECORATORS))
         if _dispatch_registration(qn, d) not in generics
+        or _is_root_decorator(d, explicit_roots)
     ]
     return {**props, cs.KEY_DECORATORS: decorators}
 
@@ -1394,13 +1400,18 @@ def dead_code_from_graph(
     # priority order, so one membership test replaces a chain of identical
     # branches (Sonar S1871, #1669).
     dispatch_generics = _dispatch_generics(scan.props_by_qn)
+    # The roots the user added: a confirmed dispatch registration is left to
+    # its generic by the default rules only (issue #2736).
+    explicit_roots = config.root_decorators - frozenset(
+        d.lower() for d in cs.DEFAULT_ROOT_DECORATORS
+    )
     roots |= {
         qn
         for qn in scan.candidates - roots
         if _is_root(
             qn,
             _without_dispatch_registration(
-                qn, scan.props_by_qn[qn], dispatch_generics[qn]
+                qn, scan.props_by_qn[qn], dispatch_generics[qn], explicit_roots
             )
             if qn in dispatch_generics
             else scan.props_by_qn[qn],
