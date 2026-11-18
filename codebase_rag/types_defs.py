@@ -2033,3 +2033,91 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         _PARAMETER_TYPE_LABELS,
     ),
 )
+
+
+# The public surface snapshot (scripts/public_surface.py, issue #3629).
+
+
+class SurfaceParam(TypedDict):
+    name: str
+    kind: str
+    flags: list[str]
+    type: str
+    required: bool
+    multiple: bool
+    is_flag: bool
+    hidden: bool
+    default: JsonValue
+    envvar: list[str]
+
+
+class SurfaceCommand(TypedDict):
+    command: str
+    hidden: bool
+    params: list[SurfaceParam]
+
+
+class SurfaceMcpTool(TypedDict):
+    name: str
+    input_schema: JsonValue
+    annotations: dict[str, bool]
+    served_read_only: bool
+    needs_extra: str | None
+
+
+class SurfaceSetting(TypedDict):
+    name: str
+    type: str
+    default: JsonValue
+
+
+class SurfaceNodeSchema(TypedDict):
+    label: str
+    properties: str
+
+
+class SurfaceRelationshipSchema(TypedDict):
+    type: str
+    sources: list[str]
+    targets: list[str]
+
+
+class SurfaceRecordField(TypedDict):
+    name: str
+    type: str
+    required: bool
+
+
+class SurfaceRecord(TypedDict):
+    name: str
+    fields: list[SurfaceRecordField]
+
+
+class SurfaceProtoField(TypedDict):
+    name: str
+    number: int
+    type: str
+    repeated: bool
+
+
+class SurfaceProtoMessage(TypedDict):
+    name: str
+    fields: list[SurfaceProtoField]
+
+
+class SurfaceSdkName(TypedDict):
+    name: str
+    signature: str | None
+
+
+class PublicSurface(TypedDict):
+    version: int
+    cli: list[SurfaceCommand]
+    exit_codes: dict[str, int]
+    mcp_tools: list[SurfaceMcpTool]
+    settings: list[SurfaceSetting]
+    graph_nodes: list[SurfaceNodeSchema]
+    graph_relationships: list[SurfaceRelationshipSchema]
+    export_json: list[SurfaceRecord]
+    protobuf_index: list[SurfaceProtoMessage]
+    python_sdk: list[SurfaceSdkName]
