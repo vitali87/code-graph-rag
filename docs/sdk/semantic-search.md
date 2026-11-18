@@ -54,6 +54,11 @@ order:
    all count). It is used only while `docker compose ps` reports the stack's
    own Qdrant container running and that address answers as Qdrant, so a
    stopped stack never hands the embeddings to another process on its port.
+   It also holds the vectors of the stack's own Memgraph only, so it is used
+   only with `GRAPH_BACKEND=memgraph` and `MEMGRAPH_HOST`/`MEMGRAPH_PORT`
+   reaching the stack's Memgraph: the embedded graph, Neo4j or another
+   Memgraph would mix their vectors into its collection, and their `--clean`
+   would drop it. Set `QDRANT_URL` to share it on purpose.
    No API key is sent to it; a stack Qdrant that requires one is left alone
    with a warning.
 4. Otherwise: an embedded Qdrant in `./.qdrant_code_embeddings`, relative to

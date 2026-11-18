@@ -598,6 +598,11 @@ _PHP_DESCRIPTOR = LanguageDescriptor(
     # wired but unused by any PHP member-read row.
     member_expression_type=cs.TS_PHP_MEMBER_ACCESS_EXPRESSION,
     subscript_type=cs.TS_PHP_SUBSCRIPT_EXPRESSION,
+    # `$_ENV["K"] = v` overwrites the entry and `.=` / `+=` / `++` read and
+    # write it, as for `process.env`; PHP spells these nodes as JS does.
+    assignment_type=cs.TS_PHP_ASSIGNMENT_EXPRESSION,
+    augmented_assignment_type=cs.TS_PHP_AUGMENTED_ASSIGNMENT_EXPRESSION,
+    update_expression_type=cs.TS_PHP_UPDATE_EXPRESSION,
     object_field=cs.FIELD_OBJECT,
     property_field=cs.TS_FIELD_NAME,
     subscript_index_field=cs.TS_FIELD_INDEX,
