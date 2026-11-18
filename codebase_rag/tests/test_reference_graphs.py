@@ -138,8 +138,10 @@ def test_difference_marks_each_side() -> None:
 def test_an_index_runs_with_the_frontends_that_need_no_compiler(
     monkeypatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("GO_FRONTEND", "gotypes")
-    monkeypatch.setenv("SQLITE_GRAPH_PATH", "/somewhere/else.sqlite")
+    monkeypatch.setitem(reference_graphs._CALLER_ENV, "GO_FRONTEND", "gotypes")
+    monkeypatch.setitem(
+        reference_graphs._CALLER_ENV, "SQLITE_GRAPH_PATH", "/somewhere/else.sqlite"
+    )
 
     env = _index_env(tmp_path, seed=3)
 
@@ -186,9 +188,11 @@ def test_a_record_holding_a_unicode_line_separator_reads_back_whole(
 def test_the_callers_settings_reach_the_index_in_no_spelling(
     monkeypatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("sqlite_graph_path", "/somewhere/else.sqlite")
-    monkeypatch.setenv("go_frontend", "gotypes")
-    monkeypatch.setenv("cgr_home", "/somewhere/home")
+    monkeypatch.setitem(
+        reference_graphs._CALLER_ENV, "sqlite_graph_path", "/somewhere/else.sqlite"
+    )
+    monkeypatch.setitem(reference_graphs._CALLER_ENV, "go_frontend", "gotypes")
+    monkeypatch.setitem(reference_graphs._CALLER_ENV, "cgr_home", "/somewhere/home")
 
     env = _index_env(tmp_path, seed=None)
 
@@ -203,9 +207,9 @@ def test_the_callers_settings_reach_the_index_in_no_spelling(
 def test_no_cgr_setting_of_the_caller_reaches_the_index(
     monkeypatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("CGR_CAPTURE", "-CALLS")
-    monkeypatch.setenv("PYTHON_FRONTEND", "jedi")
-    monkeypatch.setenv("PATH_FOR_THE_INDEX", "kept")
+    monkeypatch.setitem(reference_graphs._CALLER_ENV, "CGR_CAPTURE", "-CALLS")
+    monkeypatch.setitem(reference_graphs._CALLER_ENV, "PYTHON_FRONTEND", "jedi")
+    monkeypatch.setitem(reference_graphs._CALLER_ENV, "PATH_FOR_THE_INDEX", "kept")
 
     env = _index_env(tmp_path, seed=None)
 
@@ -253,6 +257,18 @@ def test_a_recording_whose_runs_disagree_writes_nothing(
 
     assert status == cs.REFERENCE_EXIT_DIFFERENT
     assert graph.read_text(encoding="utf-8") == "kept\n"
+
+
+def test_the_git_calls_ignore_a_repository_location_in_the_environment(
+    monkeypatch,
+) -> None:
+    monkeypatch.setitem(reference_graphs._CALLER_ENV, "GIT_DIR", "/elsewhere/.git")
+    monkeypatch.setitem(reference_graphs._CALLER_ENV, "GIT_CONFIG_GLOBAL", "/g")
+
+    env = reference_graphs._git_env()
+
+    assert "GIT_DIR" not in env
+    assert env["GIT_CONFIG_GLOBAL"] == "/g"
 
 
 def test_a_relative_cgr_program_is_made_absolute() -> None:

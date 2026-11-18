@@ -33,11 +33,14 @@ from collections.abc import Iterable, Sequence
 from functools import cache
 from pathlib import Path
 
-from pydantic import AliasChoices
-
 from codebase_rag import constants as cs
-from codebase_rag.config import AppConfig
 from codebase_rag.types_defs import JsonValue, ReferenceRepo
+
+# The environment as the caller set it, read before anything imports cgr's
+# settings: that import merges the working directory's `.env` into
+# `os.environ`, and a `GIT_DIR` or a cgr setting from it must not reach the
+# Git calls or the index.
+_CALLER_ENV = dict(os.environ)
 
 PROJECT_ROOT = Path(__file__).parent.parent
 REFERENCE_DIR = PROJECT_ROOT / cs.REFERENCE_DIR
@@ -69,10 +72,21 @@ def graph_path(repo: ReferenceRepo, directory: Path = REFERENCE_DIR) -> Path:
     return directory / f"{repo['name']}{cs.REFERENCE_GRAPH_SUFFIX}"
 
 
+def _git_env() -> dict[str, str]:
+    # A `GIT_DIR` or `GIT_WORK_TREE` would point every call at another
+    # repository; `GIT_CONFIG*` stay, as in `tools/language.py`.
+    return {
+        name: value
+        for name, value in _CALLER_ENV.items()
+        if name not in cs.GIT_LOCATION_ENV_VARS
+    }
+
+
 def _git(args: Sequence[str], cwd: Path) -> str:
     return subprocess.run(
         ["git", *args],
         cwd=cwd,
+        env=_git_env(),
         check=True,
         capture_output=True,
         text=True,
@@ -122,6 +136,11 @@ def fetch(repo: ReferenceRepo, cache: Path) -> Path:
 @cache
 def _setting_env_names() -> frozenset[str]:
     """Every environment variable a cgr setting is read from, upper-cased."""
+    # Imported here, after `_CALLER_ENV` was taken (see there).
+    from pydantic import AliasChoices
+
+    from codebase_rag.config import AppConfig
+
     names: set[str] = set()
     for name, field in AppConfig.model_fields.items():
         alias = field.validation_alias
@@ -146,7 +165,7 @@ def _index_env(home: Path, seed: int | None) -> dict[str, str]:
     }
     env = {
         name: value
-        for name, value in os.environ.items()
+        for name, value in _CALLER_ENV.items()
         if name.upper() not in controlled
     }
     env.update(cs.REFERENCE_ENV)
