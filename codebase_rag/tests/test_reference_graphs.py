@@ -12,7 +12,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from codebase_rag import constants as cs
+from scripts import reference_graphs
 from scripts.reference_graphs import (
     REFERENCE_DIR,
     ExportRecord,
@@ -225,6 +228,31 @@ def test_a_forward_slash_spelling_of_the_root_is_replaced_too() -> None:
     text = "\n".join(canonical(export, root))
 
     assert root.as_posix() not in text
+
+
+def test_an_export_without_its_lists_is_refused() -> None:
+    with pytest.raises(SystemExit):
+        canonical({"nodes": []}, ROOT)
+    assert canonical({"nodes": [], "relationships": []}, ROOT) == []
+
+
+def test_a_recording_whose_runs_disagree_writes_nothing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = load_manifest()[0]
+    graph = graph_path(repo, tmp_path)
+    graph.write_text("kept\n", encoding="utf-8")
+    monkeypatch.setattr(reference_graphs, "fetch", lambda repo, cache: tmp_path)
+    monkeypatch.setattr(
+        reference_graphs,
+        "_graphs",
+        lambda cgr, repo, checkout, runs: (["a"], [(1, ["b"])]),
+    )
+
+    status = reference_graphs.run("record", [repo], ["cgr"], tmp_path, 2, tmp_path)
+
+    assert status == cs.REFERENCE_EXIT_DIFFERENT
+    assert graph.read_text(encoding="utf-8") == "kept\n"
 
 
 def test_a_relative_cgr_program_is_made_absolute() -> None:

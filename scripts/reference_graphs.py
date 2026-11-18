@@ -249,8 +249,10 @@ def canonical(export: ExportRecord, source: Path) -> list[str]:
     sep = cs.REFERENCE_FIELD_SEPARATOR
     names: dict[int, str] = {}
     lines: list[str] = []
-    nodes = export.get("nodes") or []
-    relationships = export.get("relationships") or []
+    # Both lists must be there, even empty: an export missing one would read
+    # as an empty graph and `record` would write it over a full one.
+    nodes = export.get("nodes")
+    relationships = export.get("relationships")
     if not isinstance(nodes, list) or not isinstance(relationships, list):
         raise SystemExit("export without node and relationship lists")
     for node in nodes:
@@ -359,6 +361,10 @@ def run(
     directory: Path = REFERENCE_DIR,
 ) -> int:
     status = 0
+    # `record` writes nothing until every repository has indexed and every
+    # run agreed: a half-finished or unstable recording must not replace a
+    # good graph.
+    staged: list[tuple[Path, list[str]]] = []
     for repo in repos:
         checkout = fetch(repo, cache)
         first, later = _graphs(cgr, repo, checkout, runs)
@@ -372,7 +378,7 @@ def run(
                 )
         path = graph_path(repo, directory)
         if command == "record":
-            write_graph(path, first)
+            staged.append((path, first))
             continue
         if not path.is_file():
             status = cs.REFERENCE_EXIT_DIFFERENT
@@ -382,6 +388,12 @@ def run(
         if diff:
             status = cs.REFERENCE_EXIT_DIFFERENT
             _report(f"  differs from {path.relative_to(PROJECT_ROOT)}", diff)
+    if command == "record":
+        if status:
+            _say("Runs disagreed, so no graph was written.")
+            return status
+        for path, lines in staged:
+            write_graph(path, lines)
     if command == "check" and status == cs.REFERENCE_EXIT_DIFFERENT:
         _say(
             "If the change is intended, run "
@@ -395,7 +407,9 @@ def _command(text: str) -> list[str]:
     absolute: the index runs from a scratch directory."""
     program, *rest = shlex.split(text)
     if os.sep in program or "/" in program:
-        program = str(Path(program).resolve())
+        # `absolute()`, not `resolve()`: a venv's python is a symlink to the
+        # base interpreter, which cannot import what the venv installed.
+        program = str(Path(program).absolute())
     return [program, *rest]
 
 
