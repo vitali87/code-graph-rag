@@ -446,10 +446,9 @@ class JsTypeInferenceEngine:
         Nested callables are walked too, since their calls are this caller's
         (an anonymous callback is not a caller of its own). An assignment
         whose value has a type (`s = new Square()`) retypes its variable
-        from there to the end of its scope, unless it is written in a nested
-        function and the variable is not that function's own. A name
-        declared once, or always with one type, keeps the flat map's type
-        everywhere.
+        from there to the end of its scope, or of the nested function it is
+        written in, whichever comes first. A name declared once, or always
+        with one type, keeps the flat map's type everywhere.
         """
         found: dict[str, list[tuple[int, int, ASTNode]]] = {}
         assigned: dict[str, list[tuple[ASTNode, ASTNode]]] = {}
@@ -502,7 +501,7 @@ class JsTypeInferenceEngine:
             [
                 (
                     assignment.end_byte,
-                    owner.start_byte,
+                    owner.end_byte,
                     self._scoped_declaration_type(
                         assignment,
                         name,
@@ -617,14 +616,30 @@ class JsTypeInferenceEngine:
             case cs.TS_JS_CATCH_CLAUSE:
                 return None
             case cs.TS_JS_ASSIGNMENT_EXPRESSION:
-                value = node.child_by_field_name(cs.FIELD_RIGHT)
-                if value is None:
-                    return None
-                return self._infer_js_variable_type_from_value(
-                    value, module_qn, language
-                )
+                return self._assigned_value_type(node, module_qn, language)
             case _:
                 return self._interface_parameter_types(node, module_qn).get(name)
+
+    def _assigned_value_type(
+        self,
+        assignment: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+    ) -> str | None:
+        # What `x = value` makes `x`: the class a `new` constructs, or the
+        # return type a call is declared or seen to have. The value
+        # heuristics a declarator falls back to (a bare `make()` is typed by
+        # the name `make`) would replace the type `x` had with a guess; with
+        # no type to read, the assignment changes nothing.
+        value = assignment.child_by_field_name(cs.FIELD_RIGHT)
+        if value is None:
+            return None
+        if value.type == cs.TS_NEW_EXPRESSION:
+            return self._infer_js_variable_type_from_value(value, module_qn, language)
+        if value.type != cs.TS_CALL_EXPRESSION:
+            return None
+        return_type = self._call_return_type(value, module_qn)
+        return None if _container_element(return_type) else return_type
 
     def _first_party_interface_qn(self, type_name: str, module_qn: str) -> str | None:
         # An import names the symbol or its module, so both spellings are tried

@@ -444,24 +444,53 @@ def test_an_uncalled_arrow_does_not_retype_the_local_it_assigns(
     assert edges[8] == _exact("A.m")
 
 
-def test_an_assignment_in_a_callback_does_not_retype_the_outer_local(
+def test_an_assignment_in_a_callback_retypes_the_rest_of_the_callback(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # The callback may never run, and runs later if it does: its `x = new
-    # B()` says nothing about the `x` the next statement reads (bot review).
-    # A reassignment in the function's own body still does.
+    # The bot review's repro: after `s = new B()` the callback's own `s.m()`
+    # calls B's; the outer `s` the next statement reads is still the A.
     source = (
         "class A { m(): number { return 1; } }\n"
         "class B { m(): number { return 2; } }\n"
         "class C { m(): number { return 3; } }\n"
         "\n"
-        "export function run(items: number[], later: (f: () => void) => void): number {\n"
+        "export function run(items: number[]): number {\n"
+        "  let s = new A();\n"
+        "  items.forEach(() => {\n"
+        "    s = new B();\n"
+        "    s.m();\n"
+        "  });\n"
+        "  const result = s.m();\n"
+        "  { let s = new C(); }\n"
+        "  return result;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[9] == _exact("B.m")
+    assert edges[11] == _exact("A.m")
+
+
+def test_an_assignment_in_a_callback_does_not_retype_the_outer_local(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Neither callback has run when `x.m()` does (one is only stored, the
+    # other handed to `later`): their `x = new B()` says nothing about the
+    # `x` the next statement reads (bot review). A reassignment in the
+    # function's own body still does.
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class B { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "\n"
+        "export function run(later: (f: () => void) => void): number {\n"
         "  let sum = 0;\n"
         "  {\n"
         "    let x = new A();\n"
-        "    items.forEach(() => {\n"
+        "    const reset = () => {\n"
         "      x = new B();\n"
-        "    });\n"
+        "    };\n"
         "    later(function () {\n"
         "      x = new B();\n"
         "    });\n"
@@ -482,6 +511,132 @@ def test_an_assignment_in_a_callback_does_not_retype_the_outer_local(
     assert edges[15] == _exact("A.m")
     assert edges[17] == _exact("B.m")
     assert edges[21] == _exact("C.m")
+
+
+def test_a_js_reassignment_from_an_untyped_call_keeps_the_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `x = make()` with `make(): A` keeps `x` an A; `x = other()`, a call with
+    # no type to read, changes nothing rather than typing `x` by the name
+    # `other` (bot review).
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "\n"
+        "function make(): A { return new A(); }\n"
+        "declare function other(): unknown;\n"
+        "\n"
+        "export function run(): number {\n"
+        "  let sum = 0;\n"
+        "  {\n"
+        "    let x = new A();\n"
+        "    x = make();\n"
+        "    sum += x.m();\n"
+        "    x = other();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  {\n"
+        "    const x = new C();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  return sum;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[12] == _exact("A.m")
+    assert edges[14] == _exact("A.m")
+    assert edges[18] == _exact("C.m")
+
+
+def test_a_java_write_in_an_anonymous_class_stays_there(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `s = new Square()` in the Runnable's `run` writes its own field `s`,
+    # and runs when `run` does: the method's `s` is still the Circle.
+    source = (
+        "package app;\n"
+        "\n"
+        "class Shape { int area() { return 0; } }\n"
+        "class Circle extends Shape { int area() { return 1; } }\n"
+        "class Square extends Shape { int area() { return 2; } }\n"
+        "\n"
+        "public class Main {\n"
+        "  int total() {\n"
+        "    int sum = 0;\n"
+        "    {\n"
+        "      Shape s = new Circle();\n"
+        "      Runnable task = new Runnable() {\n"
+        "        Shape s;\n"
+        "        public void run() {\n"
+        "          s = new Square();\n"
+        "        }\n"
+        "      };\n"
+        "      sum += s.area();\n"
+        "    }\n"
+        "    {\n"
+        "      Square s = new Square();\n"
+        "      sum += s.area();\n"
+        "    }\n"
+        "    return sum;\n"
+        "  }\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {_JAVA_MAIN_PATH: source}, mock_ingestor)
+
+    assert edges[18] == _exact("Circle.area()")
+    assert edges[22] == _exact("Square.area()")
+
+
+def test_a_go_call_initializer_reads_a_range_receiver_s_element(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # In the loop `src` is the range's B, so `x := src.Make()` is what
+    # B.Make returns, not what the parameter's A.Make does (bot review).
+    source = (
+        "package main\n"
+        "\n"
+        "type X struct{}\n"
+        "\n"
+        "func (X) Run() int { return 1 }\n"
+        "\n"
+        "type Z struct{}\n"
+        "\n"
+        "func (Z) Run() int { return 2 }\n"
+        "\n"
+        "type Y struct{}\n"
+        "\n"
+        "func (Y) Run() int { return 3 }\n"
+        "\n"
+        "type A struct{}\n"
+        "\n"
+        "func (A) Make() X { return X{} }\n"
+        "\n"
+        "type B struct{}\n"
+        "\n"
+        "func (B) Make() Z { return Z{} }\n"
+        "\n"
+        "func F(src A, bs []B) int {\n"
+        "\tsum := 0\n"
+        "\tfor _, src := range bs {\n"
+        "\t\tx := src.Make()\n"
+        "\t\tsum += x.Run()\n"
+        "\t}\n"
+        "\t{\n"
+        "\t\tx := Y{}\n"
+        "\t\tsum += x.Run()\n"
+        "\t}\n"
+        "\treturn sum\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"recv.go": source}, mock_ingestor)
+
+    assert edges[26] == _exact("B.Make")
+    assert edges[27] == _exact("Z.Run")
+    assert edges[31] == _exact("Y.Run")
 
 
 def test_a_go_reassignment_keeps_the_declared_interface(

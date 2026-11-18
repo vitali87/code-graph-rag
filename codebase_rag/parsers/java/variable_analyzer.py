@@ -194,25 +194,34 @@ class JavaVariableAnalyzerMixin:
         method, a local from its declarator to the end of its block, a loop,
         catch or resource variable over its statement. Each is typed by the
         pass that types it in the flat map, and an assignment the flat map
-        reads (`s = new Square()`) retypes its variable from there on; a name
+        reads (`s = new Square()`) retypes its variable from there on, within
+        the anonymous class or lambda it is written in, if any; a name
         declared once, or always with one type, keeps the flat map's type
         everywhere.
         """
         found: dict[str, list[tuple[int, int, ASTNode]]] = {}
-        assigned: dict[str, list[ASTNode]] = {}
+        assigned: dict[str, list[tuple[ASTNode, int]]] = {}
         if params := scope_node.child_by_field_name(cs.FIELD_PARAMETERS):
             for param in params.children:
                 if param.type in (cs.TS_FORMAL_PARAMETER, cs.TS_SPREAD_PARAMETER):
                     self._scoped_parameter(param, scope_node, found)
-        pending = [scope_node]
+        # Each node with the end of the body a write in it can affect: the
+        # method's, or that of the class body or lambda nested in it, whose
+        # code runs when it is called, if ever.
+        pending = [(scope_node, scope_node.end_byte)]
         while pending:
-            current = pending.pop()
+            current, limit = pending.pop()
             self._scoped_local(current, scope_node, found)
             if current.type == cs.TS_ASSIGNMENT_EXPRESSION and (
                 name := _assigned_local(current)
             ):
-                assigned.setdefault(name, []).append(current)
-            pending.extend(reversed(current.children))
+                assigned.setdefault(name, []).append((current, limit))
+            if current.id != scope_node.id and current.type in (
+                cs.TS_JAVA_CLASS_BODY,
+                cs.TS_JAVA_LAMBDA_EXPRESSION,
+            ):
+                limit = current.end_byte
+            pending.extend((child, limit) for child in reversed(current.children))
         return [
             binding
             for name, declarations in found.items()
@@ -232,12 +241,12 @@ class JavaVariableAnalyzerMixin:
                 [
                     (
                         assignment.end_byte,
-                        scope_node.start_byte,
+                        limit,
                         self._scoped_declaration_type(
                             assignment, name, module_qn, local_var_types
                         ),
                     )
-                    for assignment in assigned.get(name, ())
+                    for assignment, limit in assigned.get(name, ())
                 ],
             )
         ]

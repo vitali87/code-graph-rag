@@ -174,6 +174,13 @@ def declared_type_at(
         return None
     # Go's scopes nest, so the innermost declaration starts last.
     declaration = max(in_scope, key=lambda entry: entry[0])[1]
+    if declaration.type == cs.TS_GO_RANGE_CLAUSE:
+        # `for _, src := range bs`: the element type, as the loop's binding
+        # has it.
+        left = declaration.child_by_field_name(cs.FIELD_LEFT)
+        slots = _ranged_slots(declaration, bindings) or (None, None)
+        bound = dict(_bound_types(left, slots)) if left is not None else {}
+        return bound.get(name) or None
     return _declared_type(declaration, name, value_type)
 
 
