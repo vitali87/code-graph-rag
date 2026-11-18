@@ -9882,8 +9882,10 @@ class GraphUpdater:
         def queue_callers(caller_keys: list[str]) -> list[tuple[Path, str, bytes]]:
             queued: list[tuple[Path, str, bytes]] = []
             for key in caller_keys:
-                path = self.repo_path / key
-                if key in taken or not path.is_file():
+                # The keys come from the graph: a file replaced by a link
+                # since it was indexed must not be read through it, and an
+                # ignored one is not parsed, as for every other re-parsed file.
+                if key in taken or (path := self._member_file_on_disk(key)) is None:
                     continue
                 taken.add(key)
                 passers[key] = path

@@ -289,6 +289,50 @@ def test_reingest_walks_the_passers_of_a_reparsed_receiver(temp_repo: Path) -> N
     assert after == clean, (sorted(clean - after), sorted(after - clean))
 
 
+@pytest.mark.parametrize("ignored", [False, True], ids=["link", "ignored"])
+def test_reingest_never_reads_a_passer_through_a_link_or_an_ignore(
+    temp_repo: Path, ignored: bool
+) -> None:
+    # Greptile review of PR 3020: the passer keys come from the graph, so a
+    # plugins.py replaced by a link to a file outside the checkout after it
+    # was indexed was read through the link and parsed into the project.
+    # A passer the ignore rules now exclude was re-parsed the same way.
+    root = temp_repo / "proj"
+    _write(root)
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+    outside = temp_repo / "outside.py"
+    outside.write_text("def leaked():\n    return 1\n", encoding="utf-8")
+    plugins = root / "plugins.py"
+    exclude: frozenset[str] | None = None
+    if ignored:
+        plugins.write_text(_PLUGINS + _LEAKED, encoding="utf-8")
+        exclude = frozenset({"plugins.py"})
+    else:
+        plugins.unlink()
+        try:
+            plugins.symlink_to(outside)
+        except OSError:
+            pytest.skip("symlinks not available")
+
+    _widen_log(root)
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+        exclude_paths=exclude,
+    ).reingest([root / "util.py"])
+
+    leaked = [uid for (_label, uid) in store.nodes if "leaked" in str(uid)]
+    assert leaked == [], leaked
+
+
+_LEAKED = "\n\ndef leaked():\n    return run_callback(_on_start)\n"
+
+
 def test_an_edited_wrapper_brings_in_its_callers(temp_repo: Path) -> None:
     # A comment keeps wrap.py's interface, so its callers are not its
     # dependents on this run; the receiver it forwards into re-parses as
