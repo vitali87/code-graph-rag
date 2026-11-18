@@ -64,6 +64,7 @@ from .utils import (
     ingest_method,
     is_method_node,
     mark_js_ts_module_private,
+    mark_rust_visibility,
     python_positional_parameter_names,
     record_cpp_definition_span,
     safe_decode_text,
@@ -143,6 +144,9 @@ class FunctionResolution(NamedTuple):
     # (object literal, export, assignment, prototype) may own this same source
     # function, so registration defers until those ran.
     is_anonymous: bool = False
+    # A C++20 module `export`, the only thing a Module -[EXPORTS]-> edge
+    # means; `is_exported` also counts ordinary public API (issue #2707).
+    module_exported: bool = False
 
 
 class _DeferredCppArtifact(NamedTuple):
@@ -599,13 +603,19 @@ class FunctionIngestMixin:
         self, module_qn: str, func_node: Node, label: str, qualified_name: str
     ) -> None:
         # First claim wins; a later pass deriving a different qn for the same
-        # source function skips registration rather than mint a twin.
+        # source function skips registration rather than mint a twin. One
+        # that did register (`X.prototype.m = function m()`) is that span's
+        # twin: a call bound to either name also reaches the other.
         key = function_span_key(module_qn, func_node)
-        if key not in self.function_locations:
+        if (loc := self.function_locations.get(key)) is None:
             self.function_locations[key] = FunctionLocation(
                 label=label,
                 qualified_name=qualified_name,
                 container_qn=None,
+            )
+        elif loc.qualified_name != qualified_name:
+            self.function_registry.mark_same_definition(
+                loc.qualified_name, qualified_name
             )
 
     def _flush_deferred_rust_body_local(self) -> None:
@@ -706,7 +716,13 @@ class FunctionIngestMixin:
         )
 
         is_exported = export_detection.is_exported(func_node, simple_name, language)
-        return FunctionResolution(func_qn, simple_name, is_exported)
+        return FunctionResolution(
+            func_qn,
+            simple_name,
+            is_exported,
+            module_exported=language == cs.SupportedLanguage.CPP
+            and cpp_utils.is_exported(func_node),
+        )
 
     def _fallback_function_resolution(
         self,
@@ -917,6 +933,12 @@ class FunctionIngestMixin:
             cs.KEY_NAME_START_COL: _name_start_point(func_node)[1],
             cs.KEY_END_LINE: func_node.end_point[0] + 1,
             cs.KEY_DOCSTRING: self._get_docstring(func_node, cs.SupportedLanguage.CPP),
+            # `void V::f() {}` with `V` a namespace is a namespace function,
+            # not a member of an unseen class: its linkage decides (bot review
+            # on PR #2952). A real out-of-line member stays unexported.
+            cs.KEY_IS_EXPORTED: export_detection.is_exported(
+                func_node, method_name, cs.SupportedLanguage.CPP
+            ),
         }
         if file_path is not None and self.repo_path is not None:
             props[cs.KEY_PATH] = cached_relative_path(
@@ -1391,8 +1413,13 @@ class FunctionIngestMixin:
                 return None
 
         func_qn = cpp_utils.build_qualified_name(func_node, module_qn, func_name)
-        is_exported = cpp_utils.is_exported(func_node)
-        return FunctionResolution(func_qn, func_name, is_exported)
+        module_exported = cpp_utils.is_exported(func_node)
+        is_exported = module_exported or export_detection.is_exported(
+            func_node, func_name, cs.SupportedLanguage.CPP
+        )
+        return FunctionResolution(
+            func_qn, func_name, is_exported, module_exported=module_exported
+        )
 
     def _resolve_generic_function(
         self,
@@ -1527,6 +1554,11 @@ class FunctionIngestMixin:
             resolution.qualified_name,
             resolution.is_exported,
             language,
+        )
+        mark_rust_visibility(
+            self.function_registry,
+            resolution.qualified_name,
+            func_props.get(cs.KEY_RUST_VISIBILITY),
         )
         # Keyed by the UNIQUE qn, since a collision rename above (issue #1017)
         # is the key Pass-3 will look this up by.
@@ -1702,6 +1734,10 @@ class FunctionIngestMixin:
         props.update(type_facts_props(extract_type_facts(func_node, language)))
         if language == cs.SupportedLanguage.DART and dart_is_top_level_main(func_node):
             props[cs.KEY_IS_PROGRAM_MAIN] = True
+        if language == cs.SupportedLanguage.GO:
+            props.update(go_utils.return_type_props(func_node))
+        if language == cs.SupportedLanguage.RUST:
+            props.update(rs_utils.function_visibility_props(func_node))
         props.update(fingerprint_props(func_node))
         props.update(anchor_hash_props(func_node, decorators))
         props.update(decorated_start_props(func_node))
@@ -1756,7 +1792,7 @@ class FunctionIngestMixin:
                 ),
             )
 
-        if resolution.is_exported and language == cs.SupportedLanguage.CPP:
+        if resolution.module_exported and language == cs.SupportedLanguage.CPP:
             self.ingestor.ensure_relationship_batch(
                 (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                 cs.RelationshipType.EXPORTS,

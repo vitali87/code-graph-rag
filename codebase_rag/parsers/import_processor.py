@@ -3,12 +3,13 @@ import posixpath
 import re
 import tomllib
 from collections.abc import Iterator, Mapping, Sequence
+from enum import Enum, auto
 from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
 
 from loguru import logger
-from tree_sitter import Node, Parser
+from tree_sitter import Language, Node, Parser
 
 from .. import constants as cs
 from .. import logs as ls
@@ -37,7 +38,7 @@ from ..types_defs import (
     ScalaPackageScan,
     StemSiblingModules,
 )
-from ..utils.json_io import loads_json
+from ..utils.json_io import loads_json, strip_jsonc
 from ..utils.path_utils import (
     base_module_qn,
     cached_relative_path,
@@ -51,21 +52,29 @@ from ..utils.source_encoding import grammar_bytes
 from .cpp.utils import cpp_include_local_name
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
+    DartDirective,
     dart_binding_spans,
+    dart_combinators,
     dart_exposes_library,
     dart_extract_uri,
     dart_import_prefix,
+    dart_is_export,
     dart_local_name,
     dart_resolve_import,
     discover_dart_packages,
 )
 from .go import discover_go_module_paths, resolve_go_import_path
-from .js_ts.commonjs_exports import commonjs_export_bindings, is_commonjs_module
+from .js_ts.commonjs_exports import (
+    LocalBindings,
+    commonjs_export_bindings,
+    is_commonjs_module,
+)
 from .js_ts.module_paths import (
     discover_js_workspace_packages,
     resolve_js_workspace_import,
 )
 from .js_ts.reexports import JsExport, follow_js_reexports, js_ts_module_qn
+from .js_ts.utils import get_js_ts_language_obj
 from .lua import utils as lua_utils
 from .php.namespaces import declared_namespace
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
@@ -91,7 +100,9 @@ from .stdlib_extractor import (
     save_persistent_cache,
 )
 from .utils import (
+    PythonStarRules,
     follow_reexports,
+    get_cached_query,
     get_query_cursor,
     node_site_properties,
     safe_decode_text,
@@ -404,16 +415,20 @@ def _rs_top_level_char(c: str, depth: int, in_macro: bool) -> str:
     return c + "\n" if c == ";" else c
 
 
-_JSONC_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-_JSONC_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
-_JSONC_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
-
-
 def _js_destructured_names(pattern: Node) -> list[tuple[str, str]]:
     # (local, imported) name pairs bound by an object destructuring pattern:
     # `{ writeFileSync }` -> (writeFileSync, writeFileSync); `{ x: y }` -> (y, x).
+    # A default stands in only for a missing key, so `{ x = d }` reads `x`
+    # as `{ x }` does (issue #3252).
     out: list[tuple[str, str]] = []
-    for child in pattern.named_children:
+    for entry in pattern.named_children:
+        child = (
+            entry.child_by_field_name(cs.FIELD_LEFT)
+            if entry.type == cs.TS_OBJECT_ASSIGNMENT_PATTERN
+            else entry
+        )
+        if child is None:
+            continue
         if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
             if name := safe_decode_text(child):
                 out.append((name, name))
@@ -423,10 +438,12 @@ def _js_destructured_names(pattern: Node) -> list[tuple[str, str]]:
 
 
 def _js_pair_binding(pair: Node) -> tuple[str, str] | None:
-    # `{ x: y }` binds local `y` to imported `x`; any other value shape
-    # (a nested pattern, a default) binds nothing this reader tracks.
+    # `{ x: y }` and `{ x: y = d }` bind local `y` to imported `x`; any
+    # other value shape (a nested pattern) binds nothing this reader tracks.
     key = pair.child_by_field_name(cs.FIELD_KEY)
     value = pair.child_by_field_name(cs.FIELD_VALUE)
+    if value is not None and value.type == cs.TS_ASSIGNMENT_PATTERN:
+        value = value.child_by_field_name(cs.FIELD_LEFT)
     if key is None or value is None or value.type != cs.TS_IDENTIFIER:
         return None
     imported = safe_decode_text(key)
@@ -434,6 +451,14 @@ def _js_pair_binding(pair: Node) -> tuple[str, str] | None:
     if imported and local:
         return local, imported
     return None
+
+
+def _js_at_module_level(declaration: Node) -> bool:
+    # A declaration at the program's top level, an exported one included.
+    holder = declaration.parent
+    if holder is not None and holder.type == cs.TS_EXPORT_STATEMENT:
+        holder = holder.parent
+    return holder is not None and holder.type == cs.TS_PROGRAM
 
 
 def _js_default_export_local(statement: Node) -> str | None:
@@ -474,27 +499,118 @@ def _names_js_module(site: PropertyDict | None) -> bool:
     return imported is None or imported == cs.IMPORTED_NAME_WILDCARD
 
 
+def _is_js_side_effect_import(site: PropertyDict | None) -> bool:
+    # `import "./x"` and `require("./x");` bind no name and import none: the
+    # only import sites with neither an alias nor an imported name. The
+    # target is then the whole module, never `module.name` (issue #3267).
+    return (
+        site is not None
+        and cs.KEY_ALIAS not in site
+        and cs.KEY_IMPORTED_NAME not in site
+    )
+
+
+def _js_clause_binds(clause: Node) -> bool:
+    # Whether an import clause binds a name: a default, a namespace or a
+    # specifier. `import {} from "./x"` binds none and, like `import "./x"`,
+    # imports the module for its side effects (issue #3267).
+    return any(
+        child.type in (cs.TS_IDENTIFIER, cs.TS_NAMESPACE_IMPORT)
+        or (
+            child.type == cs.TS_NAMED_IMPORTS
+            and any(
+                spec.type == cs.TS_IMPORT_SPECIFIER for spec in child.named_children
+            )
+        )
+        for child in clause.named_children
+    )
+
+
+def _js_side_effect_call(statement: Node) -> tuple[str, Node | None] | None:
+    # (specifier, the `require` callee or None for `import()`) of a statement
+    # that is only `require("./db")` or `import("./cache")`, awaited or not;
+    # None for anything else.
+    if statement.type != cs.TS_EXPRESSION_STATEMENT:
+        return None
+    call = statement.named_child(0)
+    if (
+        call is not None
+        and call.type == cs.TS_JS_UNARY_EXPRESSION
+        and _js_unary_operator(call) == cs.JS_VOID_OPERATOR
+    ):
+        call = call.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+    if call is not None and call.type == cs.TS_AWAIT_EXPRESSION:
+        call = call.named_child(0)
+    if call is None or call.type != cs.TS_CALL_EXPRESSION:
+        return None
+    func = call.child_by_field_name(cs.FIELD_FUNCTION)
+    args = call.child_by_field_name(cs.FIELD_ARGUMENTS)
+    if func is None or args is None:
+        return None
+    is_require = (
+        func.type == cs.TS_IDENTIFIER and safe_decode_text(func) == cs.IMPORT_REQUIRE
+    )
+    if not is_require and func.type != cs.TS_JS_DYNAMIC_IMPORT:
+        return None
+    # The loader reads its first argument; `require(name, "./db")` loads
+    # `name`, whatever string follows (CodeRabbit, PR #3284).
+    arg = next((a for a in args.named_children if a.type != cs.TS_COMMENT), None)
+    if arg is None or arg.type != cs.TS_STRING:
+        return None
+    return safe_decode_with_fallback(arg).strip("'\""), func if is_require else None
+
+
+def _rebased_js_specifier(specifier: str, base: str) -> str:
+    # A relative specifier a loader resolves from `base`, a directory
+    # relative to the importer's own, respelled relative to the importer:
+    # `require("./setup")` from a loader for `../plugins/entry.js` is
+    # `../plugins/./setup`. A package resolves the same from anywhere.
+    if base == cs.PATH_CURRENT_DIR or not specifier.startswith(cs.PATH_CURRENT_DIR):
+        return specifier
+    return f"{base}{cs.SEPARATOR_SLASH}{specifier}"
+
+
+def _js_unary_operator(expression: Node) -> str | None:
+    operator = expression.child_by_field_name(cs.FIELD_OPERATOR)
+    return safe_decode_text(operator) if operator is not None else None
+
+
+def _is_js_whole_module_import(entry: DeferredImportEdge) -> bool:
+    # A JS/TS star re-export, namespace import or side-effect import targets
+    # the module itself.
+    return entry.language in cs.JS_TS_LANGUAGES and (
+        _names_js_module(entry.site) or _is_js_side_effect_import(entry.site)
+    )
+
+
 def _load_jsonc(path: Path) -> dict | None:
-    # tsconfig.json is JSONC (comments, trailing commas). Try strict JSON first,
-    # then fall back to stripping comments/trailing commas. The naive strip can
-    # mangle `//` inside string values, so it is only a fallback; on any failure
-    # return None (aliases simply stay unresolved).
+    # tsconfig.json is JSONC (comments, trailing commas, a BOM), read the way
+    # TypeScript reads it. A config that still is not JSON, or that cannot be
+    # read or decoded, loses its `paths` and `baseUrl`, so every alias import
+    # turns external: say which file.
     try:
-        text = path.read_text(encoding=cs.ENCODING_UTF8)
+        stat = path.stat()
     except OSError:
         return None
-    for candidate in (text, None):
-        source = candidate
-        if source is None:
-            source = _JSONC_BLOCK_COMMENT_RE.sub("", text)
-            source = _JSONC_LINE_COMMENT_RE.sub("", source)
-            source = _JSONC_TRAILING_COMMA_RE.sub(r"\1", source)
+    try:
+        text = path.read_text(encoding=cs.ENCODING_UTF8_SIG)
+    except (OSError, UnicodeDecodeError):
+        _warn_unparseable_tsconfig(path, stat.st_mtime_ns)
+        return None
+    for source in (text, strip_jsonc(text)):
         try:
             parsed = loads_json(source)
         except ValueError:
             continue
         return parsed if isinstance(parsed, dict) else None
+    _warn_unparseable_tsconfig(path, stat.st_mtime_ns)
     return None
+
+
+@lru_cache(maxsize=256)
+def _warn_unparseable_tsconfig(path: Path, _mtime_ns: int) -> None:
+    # Once per file version: each config is read for `paths` and `baseUrl`.
+    logger.warning(ls.TSCONFIG_UNPARSEABLE, path=path)
 
 
 def _child_dirs(path: Path) -> list[Path]:
@@ -630,6 +746,46 @@ def _load_ts_base_urls(repo_path: Path) -> tuple[tuple[str, str | None], ...]:
         )
         if dotted not in governing:
             governing[dotted] = _tsconfig_base_url(cfg, repo_path)
+    return tuple(sorted(governing.items(), key=lambda item: -len(item[0])))
+
+
+def _tsconfig_custom_conditions(
+    cfg: Path, repo_path: Path, seen: frozenset[Path] = frozenset()
+) -> frozenset[str] | None:
+    # `cfg`'s effective `customConditions`: its own list, or one inherited
+    # through `extends`. An array option is replaced, not merged, by the
+    # config that sets it. None when no config in the chain declares one.
+    data = _load_jsonc(cfg) if cfg not in seen else None
+    if not data:
+        return None
+    options = data.get(cs.TS_COMPILER_OPTIONS_KEY)
+    if isinstance(options, dict) and isinstance(
+        declared := options.get(cs.TS_CUSTOM_CONDITIONS_KEY), list
+    ):
+        return frozenset(c for c in declared if isinstance(c, str))
+    for parent in _tsconfig_extends(data, cfg, repo_path):
+        inherited = _tsconfig_custom_conditions(parent, repo_path, seen | {cfg})
+        if inherited is not None:
+            return inherited
+    return None
+
+
+def _load_ts_custom_conditions(
+    repo_path: Path,
+) -> tuple[tuple[str, frozenset[str]], ...]:
+    # (config directory as a repo-relative path prefix, its effective
+    # `customConditions`), deepest directory first, governed like `baseUrl`
+    # above: the nearest config holding a file decides which `exports`
+    # conditions that file's imports select (issue #2935). The prefix keeps
+    # its slashes so it matches whole segments: joined with dots,
+    # `packages/mylib/` would also claim the sibling `packages/mylib.extra/`.
+    governing: dict[str, frozenset[str]] = {}
+    for cfg in _find_tsconfig_files(repo_path):
+        directory = _tsconfig_dir_prefix(cfg, repo_path)
+        if directory not in governing:
+            governing[directory] = _tsconfig_custom_conditions(cfg, repo_path) or (
+                frozenset()
+            )
     return tuple(sorted(governing.items(), key=lambda item: -len(item[0])))
 
 
@@ -848,6 +1004,24 @@ def _js_binds_whole_module(site: PropertyDict | None) -> bool:
     return site.get(cs.KEY_IMPORTED_NAME) in (None, cs.IMPORTED_NAME_WILDCARD)
 
 
+def _js_binding_source(
+    full_name: str, site: PropertyDict | None
+) -> tuple[str, str | None]:
+    """A JS/TS binding's source module and the member it takes from it.
+
+    The member is `""` for a whole-module binding and None where the site
+    does not say, which leaves the split to the modules the name crosses.
+    """
+    if site is None:
+        return full_name, None
+    if _js_binds_whole_module(site):
+        return full_name, ""
+    member = f"{cs.SEPARATOR_DOT}{site.get(cs.KEY_IMPORTED_NAME)}"
+    if full_name.endswith(member):
+        return full_name[: -len(member)], member
+    return full_name, None
+
+
 def _is_known_js_module(qn: str, known_module_paths: Mapping[str, str]) -> bool:
     # A registered module whose FILE is JS/TS. Another language can own the
     # same qn (`pkg/__init__.py` is `proj.pkg`), and a JS/TS import must never
@@ -1061,6 +1235,604 @@ def _import_site_props(
     return site
 
 
+def _site_start(site: PropertyDict | None) -> tuple[int, int]:
+    """Where a recorded import site starts; (0, 0) when none was recorded."""
+    line = site.get(cs.KEY_LINE) if site else None
+    col = site.get(cs.KEY_COL) if site else None
+    return (line, col) if isinstance(line, int) and isinstance(col, int) else (0, 0)
+
+
+def _python_string_literal(node: Node) -> str | None:
+    if node.type != cs.TS_PY_STRING or node.text is None:
+        return None
+    match = re.fullmatch(
+        cs.PY_DUNDER_ALL_ENTRY_PATTERN, node.text.decode(cs.ENCODING_UTF8)
+    )
+    return match.group(cs.KEY_NAME) if match else None
+
+
+def _python_entries(node: Node) -> list[Node]:
+    # A comment between a literal's entries or a call's arguments is a named
+    # child too, and spells no entry (Greptile, PR #2989).
+    return [c for c in node.named_children if c.type != cs.TS_COMMENT]
+
+
+def _python_literal_names(node: Node | None) -> list[str] | None:
+    # The names a `__all__` list or tuple literal spells, None for anything
+    # computed (`base.__all__ + [...]`), whose entries cannot be read here.
+    if node is None or node.type not in (cs.TS_PY_LIST, cs.TS_PY_TUPLE):
+        return None
+    names = [_python_string_literal(c) for c in _python_entries(node)]
+    return None if None in names else [n for n in names if n is not None]
+
+
+def _python_dunder_all_part(statement: Node) -> list[str] | None:
+    """What one module-level statement adds to `__all__`: its assignment, an
+    `+=`, an `.extend([...])` or an `.append("x")`. None when it does not
+    touch `__all__`; raises _UnreadableDunderAll when it sets it to something
+    the source does not spell out."""
+    expression = next(iter(statement.named_children), None)
+    if expression is None:
+        return None
+    if expression.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT):
+        if not _is_dunder_all_target(expression):
+            return None
+        return _readable(
+            _python_literal_names(expression.child_by_field_name(cs.TS_FIELD_RIGHT))
+        )
+    if expression.type != cs.TS_PY_CALL:
+        return None
+    return _python_dunder_all_call_part(expression)
+
+
+def _python_dunder_all_call_part(call: Node) -> list[str] | None:
+    """What an `__all__.extend([...])` or `__all__.append("x")` call adds;
+    None when the call is not on `__all__`, raising _UnreadableDunderAll as
+    _python_dunder_all_part does."""
+    func = call.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    if func is None or func.type != cs.TS_PY_ATTRIBUTE:
+        return None
+    owner = func.child_by_field_name(cs.FIELD_OBJECT)
+    method = func.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+    if owner is None or owner.text != cs.PY_DUNDER_ALL.encode() or method is None:
+        return None
+    args = call.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+    arg = next(iter(_python_entries(args)), None) if args is not None else None
+    if method.text == cs.PY_LIST_APPEND.encode() and arg is not None:
+        name = _python_string_literal(arg)
+        return _readable(None if name is None else [name])
+    if method.text == cs.PY_LIST_EXTEND.encode():
+        return _readable(_python_literal_names(arg))
+    raise _UnreadableDunderAll
+
+
+class _UnreadableDunderAll(Exception):
+    """`__all__` is set in a way the source does not spell out."""
+
+
+class _LateDunderAll(_UnreadableDunderAll):
+    """`__all__` is changed in a def or lambda body, which can run after any
+    later statement, so no later literal settles what it holds."""
+
+
+def _is_dunder_all_target(assignment: Node) -> bool:
+    left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+    return left is not None and left.text == cs.PY_DUNDER_ALL.encode()
+
+
+def _readable(names: list[str] | None) -> list[str]:
+    if names is None:
+        raise _UnreadableDunderAll
+    return names
+
+
+class _NameUse(Enum):
+    """How one occurrence of a name uses it."""
+
+    BIND = auto()
+    MUTATE = auto()
+    GLOBAL = auto()
+    READ = auto()
+
+
+# The field of these nodes that holds what they bind.
+_PY_TARGET_FIELDS = {
+    **dict.fromkeys(cs.PY_LEFT_BINDERS | {cs.TS_PY_FOR_IN_CLAUSE}, cs.TS_FIELD_LEFT),
+    **dict.fromkeys(
+        cs.PY_NAME_BINDERS
+        | {cs.TS_PY_DEFAULT_PARAMETER, cs.TS_PY_TYPED_DEFAULT_PARAMETER},
+        cs.FIELD_NAME,
+    ),
+    cs.TS_PY_AS_PATTERN: cs.FIELD_ALIAS,
+    cs.TS_PY_ALIASED_IMPORT: cs.FIELD_ALIAS,
+}
+# Nodes that bind every name they hold.
+_PY_BINDING_HOLDERS = frozenset(
+    {
+        cs.TS_PY_PARAMETERS,
+        cs.TS_PY_LAMBDA_PARAMETERS,
+        cs.TS_PY_DELETE_STATEMENT,
+        cs.TS_PY_CASE_PATTERN,
+        cs.TS_PY_KEYWORD_PATTERN,
+        cs.TS_PY_SPLAT_PATTERN,
+    }
+)
+# The shapes a target is spelled in, climbed to reach what binds it:
+# `a, *b`, `(a)`, `del a, b`, `from m import a`, `*a: int`, `**a`.
+_PY_TARGET_SHAPES = cs.PY_BINDING_PATTERN_TYPES | {
+    cs.TS_PY_PARENTHESIZED_EXPRESSION,
+    cs.TS_PY_EXPRESSION_LIST,
+    cs.TS_PY_DOTTED_NAME,
+    cs.TS_PY_TYPED_PARAMETER,
+    cs.TS_PY_DICTIONARY_SPLAT_PATTERN,
+}
+
+
+def _is_field(node: Node, field: str, child: Node) -> bool:
+    found = node.child_by_field_name(field)
+    return found is not None and found.id == child.id
+
+
+def _python_name_use(identifier: Node) -> _NameUse:
+    """How one occurrence uses its name: binds it (an assignment, `for`,
+    `as`, walrus, def or class name, parameter, import, `del` or `case`
+    capture), mutates what it holds (a method call, or an item or attribute
+    of it as a target), declares it `global`, or reads it. A `nonlocal`
+    names a binding of an enclosing def, which that def's own uses show."""
+    child, node = identifier, identifier.parent
+    held = False
+    while node is not None:
+        if node.type == cs.TS_PY_ATTRIBUTE and _is_field(node, cs.FIELD_OBJECT, child):
+            call = node.parent
+            if (
+                call is not None
+                and call.type == cs.TS_PY_CALL
+                and _is_field(call, cs.TS_FIELD_FUNCTION, node)
+            ):
+                return _NameUse.MUTATE
+            held = True
+        elif node.type == cs.TS_PY_SUBSCRIPT and _is_field(node, cs.FIELD_VALUE, child):
+            held = True
+        elif node.type not in _PY_TARGET_SHAPES:
+            break
+        child, node = node, node.parent
+    use = _python_binding_use(node, child) if node is not None else _NameUse.READ
+    return _NameUse.MUTATE if held and use is _NameUse.BIND else use
+
+
+def _python_binding_use(node: Node, child: Node) -> _NameUse:
+    """How `node` uses the target shape `child` it holds."""
+    if node.type == cs.TS_PY_GLOBAL_STATEMENT:
+        return _NameUse.GLOBAL
+    if node.type in _PY_BINDING_HOLDERS or (
+        node.type in cs.PY_IMPORT_TYPES
+        and not _is_field(node, cs.FIELD_MODULE_NAME, child)
+    ):
+        return _NameUse.BIND
+    field = _PY_TARGET_FIELDS.get(node.type)
+    if field is not None and _is_field(node, field, child):
+        return _NameUse.BIND
+    return _NameUse.READ
+
+
+def _python_name_scope(node: Node, walrus: bool = False) -> Node:
+    """The def, class body, lambda or comprehension whose names `node` is
+    one of, else the module. A def's or class's own name, decorators and
+    bases are the enclosing scope's, as is a parameter default, which runs
+    when the def or lambda is defined; a walrus target is the scope's around
+    its comprehension, as Python binds them."""
+    child, current = node, node.parent
+    in_default = False
+    while current is not None and current.parent is not None:
+        if current.type in cs.PY_NAMED_PARAMETER_TYPES and _is_field(
+            current, cs.FIELD_VALUE, child
+        ):
+            in_default = True
+        elif in_default and current.type in cs.PY_CALLABLE_CLOSURE_TYPES:
+            # The def or lambda that owns the default is passed over.
+            in_default = False
+        elif (
+            current.type == cs.TS_PY_LAMBDA
+            or (current.type in cs.PY_COMPREHENSION_TYPES and not walrus)
+            or (
+                current.type == cs.TS_PY_FUNCTION_DEFINITION
+                and not _is_field(current, cs.FIELD_NAME, child)
+            )
+            or (
+                current.type == cs.TS_PY_CLASS_DEFINITION
+                and _is_field(current, cs.FIELD_BODY, child)
+            )
+        ):
+            return current
+        child, current = current, current.parent
+    return current if current is not None else node
+
+
+def _python_module_owns(scope: Node, uses: Mapping[int, set[_NameUse]]) -> bool:
+    """Whether the name `scope` reads is the module's, by Python's scope
+    rules: the first scope out that declares it `global` makes it the
+    module's, one that binds it keeps it its own, and a class body is passed
+    over from the scopes inside it."""
+    from_inner = False
+    while scope.parent is not None:
+        if not (from_inner and scope.type == cs.TS_PY_CLASS_DEFINITION):
+            seen = uses.get(scope.id, set())
+            if _NameUse.GLOBAL in seen:
+                return True
+            if _NameUse.BIND in seen:
+                return False
+        from_inner = from_inner or scope.type != cs.TS_PY_CLASS_DEFINITION
+        scope = _python_name_scope(scope)
+    return True
+
+
+def _runs_later(node: Node, statement: Node) -> bool:
+    """Whether `node` sits in a def or lambda body inside `statement`, which
+    runs whenever it is called rather than where it is written."""
+    child, current = node, node.parent
+    while current is not None and child.id != statement.id:
+        if current.type in cs.PY_CALLABLE_CLOSURE_TYPES and _is_field(
+            current, cs.FIELD_BODY, child
+        ):
+            return True
+        child, current = current, current.parent
+    return False
+
+
+def _python_dunder_all_names(statement: Node) -> Iterator[Node]:
+    """Each `__all__` name the statement holds, at any depth; another
+    object's `__all__` (`ns.__all__ = ...`) is not one."""
+    return _python_names(statement, cs.PY_DUNDER_ALL)
+
+
+def _python_names(statement: Node, name: str) -> Iterator[Node]:
+    """Each occurrence of the bare name `name` the statement holds, at any
+    depth; an attribute of that name (`ns.name`) is not one."""
+    text = name.encode()
+    if statement.text is None or text not in statement.text:
+        return
+    stack = [statement]
+    while stack:
+        node = stack.pop()
+        stack.extend(node.children)
+        if node.type != cs.TS_PY_IDENTIFIER or node.text != text:
+            continue
+        owner = node.parent
+        if owner is None or not _is_field(owner, cs.TS_PY_FIELD_ATTRIBUTE, node):
+            yield node
+
+
+def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
+    """Each `__all__` the statement rebinds or mutates that is the module's.
+    One a def, class body, lambda or comprehension binds as its own is not,
+    so a helper's local `__all__` leaves the module's list alone."""
+    found = []
+    uses: dict[int, set[_NameUse]] = {}
+    for name in _python_dunder_all_names(statement):
+        use = _python_name_use(name)
+        walrus = (
+            name.parent is not None and name.parent.type == cs.TS_PY_NAMED_EXPRESSION
+        )
+        scope = _python_name_scope(name, walrus=walrus and use is _NameUse.BIND)
+        uses.setdefault(scope.id, set()).add(use)
+        found.append((name, use, scope))
+    for name, use, scope in found:
+        if use not in (_NameUse.BIND, _NameUse.MUTATE):
+            continue
+        if _python_module_owns(scope, uses):
+            yield name
+            continue
+        # A class body reads a name from the scopes around it until it binds
+        # it, so a mutation there can change the module's list before the
+        # class's own `__all__` exists (CodeRabbit, PR #3624). One after a
+        # plain class-body assignment of `__all__` changes the class's list;
+        # one inside that assignment's value runs before the target binds,
+        # and a `del` of it between them sends the lookup back out.
+        seen = uses.get(scope.id, set())
+        if (
+            use is _NameUse.MUTATE
+            and scope.type == cs.TS_PY_CLASS_DEFINITION
+            and _NameUse.BIND in seen
+            and _NameUse.GLOBAL not in seen
+            and _python_module_owns(_python_name_scope(scope), uses)
+            and not any(
+                bound_scope.id == scope.id
+                and _python_class_assigns(bound, scope)
+                and _python_statement_end(bound) <= name.start_byte
+                and not any(
+                    gone_scope.id == scope.id
+                    and _python_deletes(gone)
+                    and not _python_never_runs(gone, scope)
+                    and _python_statement_end(bound) <= gone.start_byte
+                    and gone.start_byte < name.start_byte
+                    for gone, _, gone_scope in found
+                )
+                for bound, bound_use, bound_scope in found
+                if bound_use is _NameUse.BIND
+            )
+        ):
+            yield name
+
+
+def _python_deletes(name: Node) -> bool:
+    """Whether `name` is a target of a `del`, which unbinds it so a later
+    read looks it up in the scopes around (CodeRabbit, PR #3624)."""
+    current = name.parent
+    while current is not None and current.type in _PY_TARGET_SHAPES:
+        current = current.parent
+    return current is not None and current.type == cs.TS_PY_DELETE_STATEMENT
+
+
+def _python_never_runs(node: Node, scope: Node) -> bool:
+    """Whether `node` sits, inside `scope`, in the body of an `if` whose
+    condition is a literal false constant (`if False:` or `if 0:`), so it
+    cannot run. Any other condition may hold (Greptile, PR #3624)."""
+    child, current = node, node.parent
+    while current is not None and current.id != scope.id:
+        if current.type == cs.TS_PY_IF_STATEMENT and _is_field(
+            current, cs.TS_FIELD_CONSEQUENCE, child
+        ):
+            condition = current.child_by_field_name(cs.TS_FIELD_CONDITION)
+            if condition is not None and (
+                condition.type == cs.TS_PY_FALSE
+                or (condition.type == cs.TS_PY_INTEGER and condition.text == b"0")
+            ):
+                return True
+        child, current = current, current.parent
+    return False
+
+
+def _python_statement_end(node: Node) -> int:
+    """Where the statement holding `node` ends, so a use inside an
+    assignment's value counts as running before its target binds
+    (CodeRabbit, PR #3624)."""
+    current = node
+    while current.parent is not None and current.type != cs.TS_PY_EXPRESSION_STATEMENT:
+        current = current.parent
+    return current.end_byte
+
+
+def _python_class_assigns(name: Node, klass: Node) -> bool:
+    """Whether `name` is the target of a plain assignment that is a
+    statement of `klass`'s body, so it binds a fresh class-local value each
+    time the body runs (`__all__ = []` or `x = __all__ = []`). An augmented
+    assignment or one in a block or expression may not rebind it first, and
+    one whose value is not a new list (`__all__ = __all__`) may still hold
+    the module's (CodeRabbit, PR #3624)."""
+    child, current = name, name.parent
+    if (
+        current is None
+        or current.type != cs.TS_PY_ASSIGNMENT
+        or not _is_field(current, cs.FIELD_LEFT, child)
+    ):
+        return False
+    value = current.child_by_field_name(cs.FIELD_RIGHT)
+    while value is not None and value.type == cs.TS_PY_ASSIGNMENT:
+        value = value.child_by_field_name(cs.FIELD_RIGHT)
+    if value is None or not _python_fresh_list(value):
+        return False
+    while current is not None and current.type == cs.TS_PY_ASSIGNMENT:
+        child, current = current, current.parent
+        if (
+            current is not None
+            and current.type == cs.TS_PY_ASSIGNMENT
+            and not _is_field(current, cs.FIELD_RIGHT, child)
+        ):
+            return False
+    if current is None or current.type != cs.TS_PY_EXPRESSION_STATEMENT:
+        return False
+    block = current.parent
+    return (
+        block is not None
+        and block.type == cs.TS_PY_BLOCK
+        and _is_field(klass, cs.FIELD_BODY, block)
+    )
+
+
+def _python_fresh_list(value: Node) -> bool:
+    """Whether `value` builds a new list each time it runs: a list display
+    or comprehension, in parentheses or not (`([])`), or a call of the
+    builtin `list` (Greptile, PR #3624)."""
+    while value.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
+        inner = next(iter(value.named_children), None)
+        if inner is None:
+            return False
+        value = inner
+    if value.type in (cs.TS_PY_LIST, cs.TS_PY_LIST_COMPREHENSION):
+        return True
+    func = value.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    return (
+        value.type == cs.TS_PY_CALL
+        and func is not None
+        and func.type == cs.TS_PY_IDENTIFIER
+        and func.text == cs.PY_BUILTIN_LIST.encode()
+        and _python_names_builtin(func)
+    )
+
+
+def _python_names_builtin(name: Node) -> bool:
+    """Whether the bare name `name` reads the builtin of that name: no scope
+    its lookup passes through binds it or declares it `global`, and no
+    scope rebinds the module's (`list = lambda: __all__` makes `list()` hand
+    back the module's list, Greptile, PR #3624). A binding that can only run
+    after the read does not count."""
+    root = name
+    while root.parent is not None:
+        root = root.parent
+    uses: dict[int, set[_NameUse]] = {}
+    for found in _python_names(root, (name.text or b"").decode()):
+        use = _python_name_use(found)
+        walrus = (
+            found.parent is not None and found.parent.type == cs.TS_PY_NAMED_EXPRESSION
+        )
+        scope = _python_name_scope(found, walrus=walrus and use is _NameUse.BIND)
+        if use is _NameUse.BIND and _python_binds_after(found, name, scope):
+            continue
+        uses.setdefault(scope.id, set()).add(use)
+    if any({_NameUse.GLOBAL, _NameUse.BIND} <= seen for seen in uses.values()):
+        return False
+    scope = _python_name_scope(name)
+    from_inner = False
+    while True:
+        if not (from_inner and scope.type == cs.TS_PY_CLASS_DEFINITION):
+            seen = uses.get(scope.id, set())
+            if _NameUse.BIND in seen or _NameUse.GLOBAL in seen:
+                return False
+        if scope.parent is None:
+            return True
+        from_inner = from_inner or scope.type != cs.TS_PY_CLASS_DEFINITION
+        scope = _python_name_scope(scope)
+
+
+def _python_binds_after(bound: Node, read: Node, scope: Node) -> bool:
+    """Whether `bound`, a binding in the module or class body `scope`, sits
+    in a later statement of that body than the one holding `read`, which
+    reads the name as its statement runs, so the binding runs only after the
+    read (Greptile, PR #3624). A read in a def or lambda body runs whenever
+    it is called, and a binding in the same statement (a loop) may run
+    before it, so neither counts as after."""
+    if scope.parent is not None and scope.type != cs.TS_PY_CLASS_DEFINITION:
+        return False
+    reading = _python_body_statement(read, scope)
+    binding = _python_body_statement(bound, scope)
+    return (
+        reading is not None
+        and binding is not None
+        and not _runs_later(read, reading)
+        and binding.start_byte >= reading.end_byte
+    )
+
+
+def _python_body_statement(node: Node, scope: Node) -> Node | None:
+    """The statement of the module or class body `scope` that holds `node`,
+    or None when `node` is not inside it."""
+    body = scope if scope.parent is None else scope.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return None
+    child, current = node, node.parent
+    while current is not None:
+        if current.id == body.id:
+            return child
+        child, current = current, current.parent
+    return None
+
+
+def _python_dunder_all_change(statement: Node) -> list[str] | None:
+    """What one top-level statement adds to `__all__`, as
+    _python_dunder_all_part reads it; None when it leaves `__all__` alone.
+    A change the literals do not spell (inside a block, by a function,
+    through `del` or an import) raises _UnreadableDunderAll, or
+    _LateDunderAll when it runs in a def or lambda."""
+    if statement.type == cs.TS_PY_EXPRESSION_STATEMENT and (
+        (part := _python_dunder_all_part(statement)) is not None
+    ):
+        return part
+    writes = list(_python_dunder_all_writes(statement))
+    if any(_runs_later(write, statement) for write in writes):
+        raise _LateDunderAll
+    if not writes:
+        return None
+    # `def f(x=__all__.append("A"))` changes the module's list as the def
+    # runs, and only when that def runs as this statement does; any other
+    # change here is one the literals do not spell.
+    names: list[str] = []
+    for write in sorted(writes, key=lambda w: w.start_byte):
+        names += _python_dunder_all_default_part(write, statement)
+    return names
+
+
+def _python_dunder_all_default_runs(defined: Node, statement: Node) -> bool:
+    """Whether `defined`, the def or lambda a parameter default belongs to,
+    runs exactly once, unconditionally, as `statement` runs."""
+    if defined.type == cs.TS_PY_FUNCTION_DEFINITION:
+        parent = defined.parent
+        return defined.id == statement.id or (
+            parent is not None
+            and parent.type == cs.TS_PY_DECORATED_DEFINITION
+            and parent.id == statement.id
+        )
+    if defined.type != cs.TS_PY_LAMBDA:
+        return False
+    # `name = lambda x=__all__.append("A"): ...`, the statement's expression.
+    assignment = next(iter(statement.named_children), None)
+    return (
+        statement.type == cs.TS_PY_EXPRESSION_STATEMENT
+        and assignment is not None
+        and assignment.type == cs.TS_PY_ASSIGNMENT
+        and _is_field(assignment, cs.TS_FIELD_RIGHT, defined)
+    )
+
+
+def _python_dunder_all_default_part(write: Node, statement: Node) -> list[str]:
+    """What a parameter default that is exactly an `__all__.append("x")` or
+    `__all__.extend([...])` call adds, when its def or lambda runs exactly
+    once as `statement` does; raises _UnreadableDunderAll for any other
+    write of the module's `__all__`."""
+    call = write.parent.parent if write.parent is not None else None
+    if call is None or call.type != cs.TS_PY_CALL:
+        raise _UnreadableDunderAll
+    value = call
+    while (
+        value.parent is not None
+        and value.parent.type == cs.TS_PY_PARENTHESIZED_EXPRESSION
+    ):
+        value = value.parent
+    parameter = value.parent
+    if (
+        parameter is None
+        or parameter.type not in cs.PY_NAMED_PARAMETER_TYPES
+        or not _is_field(parameter, cs.FIELD_VALUE, value)
+    ):
+        raise _UnreadableDunderAll
+    # A default runs when its def or lambda is defined. The parameter's
+    # parent is the parameters node, and that node's parent is the callable;
+    # it counts only when that callable runs as the statement does. A def in
+    # a branch, class body or another callable's default does not (Greptile
+    # and CodeRabbit, PR #3624).
+    parameters = parameter.parent
+    defined = parameters.parent if parameters is not None else None
+    if (
+        parameters is None
+        or defined is None
+        or parameters.type not in (cs.TS_PY_PARAMETERS, cs.TS_PY_LAMBDA_PARAMETERS)
+        or not _python_dunder_all_default_runs(defined, statement)
+    ):
+        raise _UnreadableDunderAll
+    return _readable(_python_dunder_all_call_part(call))
+
+
+def _python_dunder_all(root: Node) -> frozenset[str] | None:
+    """The names a Python module's `__all__` lists, read from its literal.
+
+    None when the module sets none at its top level, or builds it in a way
+    the source does not spell out; a star import then binds every public
+    name, as it does for a module without one. An empty `__all__` binds
+    nothing.
+    """
+    # None once the source no longer spells what `__all__` holds.
+    names: list[str] | None = []
+    defined = False
+    for statement in root.named_children:
+        try:
+            part = _python_dunder_all_change(statement)
+        except _LateDunderAll:
+            return None
+        except _UnreadableDunderAll:
+            defined, names = True, None
+            continue
+        if part is None:
+            continue
+        defined = True
+        # A plain assignment replaces what earlier statements listed; only
+        # `+=`, `.append` and `.extend` add to it (Greptile, PR #2989).
+        first = statement.named_children[0]
+        if first.type == cs.TS_PY_ASSIGNMENT and _is_dunder_all_target(first):
+            names = list(part)
+        elif names is not None:
+            names += part
+    return frozenset(names) if defined and names is not None else None
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -1075,14 +1847,18 @@ class ImportProcessor:
         "csharp_global_static_imports",
         "java_static_imports",
         "commonjs_direct_exports",
+        "esm_default_exports",
         "conditional_imports",
         "python_import_rebinds",
+        "python_module_all",
+        "python_binding_order",
         "php_function_imports",
         "php_module_namespaces",
         "js_ts_bare_imports",
         "js_ts_package_imports",
         "js_path_aliases",
         "js_base_urls",
+        "js_custom_conditions",
         "stdlib_extractor",
         "_is_local_module_cached",
         "_is_local_java_import_cached",
@@ -1111,6 +1887,7 @@ class ImportProcessor:
         "_cpp_declaration_mappings",
         "_cpp_shadowed_include_targets",
         "_cpp_shadowed_include_sites",
+        "_js_side_effect_imports",
         "_dart_packages",
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
@@ -1135,6 +1912,9 @@ class ImportProcessor:
         "rust_block_item_qns",
         "dart_prefix_shadows",
         "dart_import_aliases",
+        "dart_bare_imports",
+        "dart_exports",
+        "dart_part_of",
         "dart_exposed_libraries",
         "rust_block_scope_imports",
         "rust_self_module_imports",
@@ -1202,6 +1982,10 @@ class ImportProcessor:
         # exported function's qn, so a whole-module require alias called
         # directly (`const f = require('./m'); f(x)`) resolves to it.
         self.commonjs_direct_exports: dict[str, str] = {}
+        # JS/TS modules with an `export default`: module qn -> the definition
+        # it names, so a default import (mapped to `<module>.default`) called
+        # directly resolves to it (issue #2724).
+        self.esm_default_exports: dict[str, str] = {}
         # Names bound by a CONDITIONAL Python import (nested under if/try --
         # click's `if WIN: from ._winconsole import X`): the dead-code fan-out
         # treats a same-named local def as the mutually-exclusive fallback
@@ -1215,6 +1999,16 @@ class ImportProcessor:
         # module that is external on every path from one a branch binds to
         # first-party code (issue #2360).
         self.python_import_rebinds: dict[str, dict[str, set[str]]] = {}
+        # A Python module's literal `__all__`, which is every name a
+        # `from module import *` binds when the module defines one (issue
+        # #2928). A module without one, or with one built at run time, is
+        # absent: its star binds every public name.
+        self.python_module_all: dict[str, frozenset[str]] = {}
+        # A Python module's import-map keys in the order they were LAST
+        # bound, kept only where the map's own order differs: the map keeps
+        # a re-bound key where it was first bound, and records plain imports
+        # before from-imports, while Python keeps a name's last binding.
+        self.python_binding_order: dict[str, tuple[str, ...]] = {}
         # Lazy: replayed walk of every eligible repo file, built on the first C++
         # include so non-C++ projects never pay for it.
         self._cpp_module_qn_map: dict[str, str] | None = None
@@ -1391,6 +2185,25 @@ class ImportProcessor:
         # edge (those come from import_mapping's values) while the name the
         # source writes resolves to the aliased library (Greptile, #2033).
         self.dart_import_aliases: dict[str, dict[str, list[str]]] = {}
+        # {module qn: [the `import` / `part` directives that bring a library's
+        # names in WITHOUT a prefix, with their `show` / `hide` clauses]}.
+        # The file-derived import_mapping key is written for a prefixed
+        # import and an `export` too, so only this tells `import 'a.dart';
+        # import 'a.dart' as p;` (bare `A` visible) from the prefixed import
+        # alone, and either from `export 'a.dart';`, which brings in nothing
+        # (#3286).
+        self.dart_bare_imports: dict[str, list[DartDirective]] = {}
+        # {library module qn: its `export` directives}. dart_exposed_libraries
+        # holds their targets beside its parts'; this keeps the `show` /
+        # `hide` clauses deciding which names each one hands on (Greptile,
+        # PR #3292).
+        self.dart_exports: dict[str, list[DartDirective]] = {}
+        # {part file module qn: the library whose `part '...'` directive
+        # names it}. A part brings in nothing: it is a piece of that library
+        # and writes names through the library's imports (#3286). The
+        # library's directive is read, not the part's `part of`, which may
+        # name the library by its `library shop;` name rather than a file.
+        self.dart_part_of: dict[str, str] = {}
         # {library module qn: [module qns it hands to ITS importers]}: the
         # targets of its `export` and `part` directives. import_mapping holds
         # those beside plain imports, which expose nothing, so an extension
@@ -1468,6 +2281,10 @@ class ImportProcessor:
         # edge is located as tree-sitter would place it and libclang's edge
         # for the same `#include` merges into it (issue #2944).
         self._cpp_shadowed_include_sites: dict[tuple[str, str], PropertyDict] = {}
+        # Per JS/TS module, the modules it imports for side effects only
+        # (`import "./instrument"`, `require("./db");`), with each statement's
+        # site. They bind no name, so the map cannot carry them (#3267).
+        self._js_side_effect_imports: dict[str, list[tuple[str, PropertyDict]]] = {}
         # The repo's own Dart packages, pubspec `name:` -> qn of its `lib/`,
         # found on the first `package:` import so a project with no Dart
         # pays no extra walk (issue #3278).
@@ -1509,6 +2326,9 @@ class ImportProcessor:
         )
         self.js_base_urls: tuple[tuple[str, str | None], ...] = _load_ts_base_urls(
             repo_path
+        )
+        self.js_custom_conditions: tuple[tuple[str, frozenset[str]], ...] = (
+            _load_ts_custom_conditions(repo_path)
         )
         self.stdlib_extractor = StdlibExtractor(
             function_registry, repo_path, project_name
@@ -1560,10 +2380,12 @@ class ImportProcessor:
 
         @lru_cache(maxsize=4096)
         def _map_js_workspace_import_cached(
-            import_path: str, require: bool = False
+            import_path: str,
+            require: bool = False,
+            conditions: frozenset[str] = frozenset(),
         ) -> str | None:
             return resolve_js_workspace_import(
-                js_workspace_packages, import_path, repo_path, require
+                js_workspace_packages, import_path, repo_path, require, conditions
             )
 
         self._map_js_workspace_import = _map_js_workspace_import_cached
@@ -1654,6 +2476,7 @@ class ImportProcessor:
         nothing the edited file no longer says.
         """
         self.import_mapping[module_qn] = {}
+        self._js_side_effect_imports.pop(module_qn, None)
         # Re-recorded once the Scala parse completes; a parse that fails
         # midway must not leave the previous imports to be restored.
         self._scala_imports.pop(module_qn, None)
@@ -1695,6 +2518,16 @@ class ImportProcessor:
         # PR #2040).
         self.dart_prefix_shadows.pop(module_qn, None)
         self.dart_import_aliases.pop(module_qn, None)
+        self.dart_bare_imports.pop(module_qn, None)
+        self.dart_exports.pop(module_qn, None)
+        # Keyed by the part but written by its LIBRARY's parse: the library's
+        # re-parse drops the links it wrote, and the part's keeps them, as
+        # the library still names it.
+        self.dart_part_of = {
+            part: library
+            for part, library in self.dart_part_of.items()
+            if library != module_qn
+        }
         self.dart_exposed_libraries.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
@@ -1752,6 +2585,16 @@ class ImportProcessor:
                         site=sites.get(local_name),
                     )
                 )
+        # Side-effect imports bind no name, so the map above never lists them.
+        for target, site in self._js_side_effect_imports.get(module_qn, ()):
+            self._deferred_import_edges.append(
+                DeferredImportEdge(
+                    module_qn=module_qn,
+                    full_name=target,
+                    language=language,
+                    site=site,
+                )
+            )
         # Includes whose local binding a later include took over: the
         # file includes them, so they keep their edge even though the
         # map no longer names them (issue #1758), at the site each had
@@ -1809,6 +2652,7 @@ class ImportProcessor:
         # A re-parsed module that no longer directly exports one function
         # must not leave the stale whole-module alias mapping behind.
         self.commonjs_direct_exports.pop(module_qn, None)
+        self.esm_default_exports.pop(module_qn, None)
         # Reset per-module PHP use-function state too, so a re-index that drops a
         # `use function` import does not leave a stale exemption behind.
         self.php_function_imports.pop(module_qn, None)
@@ -1820,6 +2664,12 @@ class ImportProcessor:
         # A re-parse that drops a fallback import must not leave the binding
         # it removed standing beside the one that remains.
         self.python_import_rebinds.pop(module_qn, None)
+        self.python_module_all.pop(module_qn, None)
+        self.python_binding_order.pop(module_qn, None)
+        if language == cs.SupportedLanguage.PYTHON and (
+            (exported := _python_dunder_all(root_node)) is not None
+        ):
+            self.python_module_all[module_qn] = exported
         # A re-parse re-derives these from the current source, so the previous
         # run's specifiers must not survive: an import the edit removed, or one
         # whose target now exists, would otherwise keep nominating this file
@@ -1843,6 +2693,9 @@ class ImportProcessor:
                     | cs.SupportedLanguage.TSX
                 ):
                     self._parse_js_ts_imports(captures, module_qn, root_node)
+                    self._parse_js_side_effect_calls(
+                        root_node, module_qn, get_js_ts_language_obj(language, queries)
+                    )
                 case cs.SupportedLanguage.JAVA:
                     self._parse_java_imports(captures, module_qn)
                 case cs.SupportedLanguage.RUST:
@@ -2449,7 +3302,7 @@ class ImportProcessor:
         self,
         entry: DeferredImportEdge,
         known_module_paths: dict[str, str],
-        module_aliases: dict[str, str],
+        module_aliases: dict[str, list[str]],
         siblings: StemSiblingModules,
     ) -> int:
         # A crate::/super::/self:: use path was rewritten to a project
@@ -2490,9 +3343,11 @@ class ImportProcessor:
         self,
         entry: DeferredImportEdge,
         known_module_paths: dict[str, str],
-        module_aliases: dict[str, str],
+        module_aliases: dict[str, list[str]],
         siblings: StemSiblingModules,
     ) -> int:
+        if self._flush_js_whole_package_import(entry):
+            return 1
         module_path = self._resolve_module_path(
             entry.full_name, entry.language, known_module_paths, entry.site
         )
@@ -2530,7 +3385,7 @@ class ImportProcessor:
                 self.note_unresolved(entry.module_qn, entry.full_name)
                 return 0
             module_path = verified
-        if entry.language in cs.JS_TS_LANGUAGES and _names_js_module(entry.site):
+        if _is_js_whole_module_import(entry):
             # `export * from "./add"` in `math/index.ts` stores the module
             # `math.add`, which the resolution above reads as the name `add`
             # of the `math` barrel: the barrel itself (issue #2464). A
@@ -2559,6 +3414,21 @@ class ImportProcessor:
             full_name=entry.full_name,
         )
         return 1
+
+    def _flush_js_whole_package_import(self, entry: DeferredImportEdge) -> bool:
+        if not (
+            _is_js_whole_module_import(entry)
+            and self._module_label(entry.full_name) == cs.NodeLabel.EXTERNAL_MODULE
+        ):
+            return False
+        # `import "@scope/pkg"`, `export * from "zone.js"`: the package
+        # itself, every segment of its name. The resolution in
+        # `_flush_resolved_import` reads the last one as an imported name
+        # (`@scope`, `zone`), where `import x from` the same specifier
+        # reaches the package.
+        self._ensure_external_module_node(entry.full_name, entry.full_name)
+        self._emit_import_edge(entry, cs.NodeLabel.EXTERNAL_MODULE, entry.full_name)
+        return True
 
     def stem_sibling_modules(
         self, module_paths: Mapping[str, Path | str]
@@ -2601,26 +3471,80 @@ class ImportProcessor:
         family: LanguageFamily,
         module_paths: Mapping[str, Path | str],
         siblings: StemSiblingModules,
+        *,
+        names_module: bool = False,
     ) -> str:
         """`name` re-rooted on its stem's module of the importer's family.
 
-        The longest prefix that names a module decides: one the importer can
-        reach keeps the name as written, and a stem whose module is missing or
-        in another family is swapped for the family's own sibling. A name
-        under a real submodule (`proj.util.sub.f`) therefore stays put.
+        The longest prefix that names a module the importer can reach decides,
+        and keeps the name as written: a name under a real submodule
+        (`proj.util.sub.f`) therefore stays put. A stem whose module is missing
+        or in another family is swapped for the family's own sibling, or for
+        its own directory index (`pkg/index.js` beside `pkg.py`). A name that
+        only modules of other families hold reaches nothing (issue #2756).
+
+        `names_module` says the name is an import's source, never a member of
+        one: `./util/helper` is then the directory, whatever `util.js` exports.
         """
         parts = name.split(cs.SEPARATOR_DOT)
+        blocked = False
+        through_index: str | None = None
         for end in range(len(parts), 1, -1):
             prefix = cs.SEPARATOR_DOT.join(parts[:end])
             holder = module_paths.get(prefix)
             if holder is not None and self._reachable_module(holder, family):
-                return name
-            own = siblings.get(prefix, {}).get(family)
-            if own is not None:
-                return f"{own}{name[len(prefix) :]}"
-            if holder is not None:
-                return name
-        return name
+                # A directory with an index, met on the way here, is the
+                # target of an import's source. Any other name may be what
+                # this module exports or re-exports: `helper` of `util.js`
+                # beside `util/helper/index.js`.
+                return (names_module and through_index) or name
+            rest = name[len(prefix) :]
+            if own := siblings.get(prefix, {}).get(family):
+                return f"{own}{rest}"
+            # Not final: `util/helper.py` beside a `util.js` that exports
+            # `helper` holds the full name, and the shorter prefix reaches.
+            blocked = blocked or holder is not None
+            # Held back for the same reason: the shorter prefix may be a
+            # module that defines this very name.
+            if through_index is None and (
+                index := self._own_language_index(
+                    prefix, family, module_paths, siblings, bare=blocked
+                )
+            ):
+                through_index = f"{index}{rest}"
+        if through_index is not None:
+            return through_index
+        return cs.IMPORT_TARGET_UNREACHABLE if blocked else name
+
+    def _own_language_index(
+        self,
+        directory_qn: str,
+        family: LanguageFamily,
+        module_paths: Mapping[str, Path | str],
+        siblings: StemSiblingModules,
+        *,
+        bare: bool,
+    ) -> str | None:
+        """The index module of the importer's family in `directory_qn`.
+
+        An index whose stem is shared across families carries its extension
+        (`pkg/index.js` beside `pkg/index.py`) and no alias names it. A `bare`
+        one is only asked for where a module of another family holds the name
+        as written; everywhere else the alias map already leads to it.
+        """
+        for stem in sorted(cs.MODULE_INDEX_FILE_STEMS):
+            index = f"{directory_qn}{cs.SEPARATOR_DOT}{stem}"
+            own = siblings.get(index, {}).get(family) or (index if bare else None)
+            path = module_paths.get(own) if own else None
+            if (
+                path
+                and self._reachable_module(path, family)
+                # `pkg/init.js` is no entry point of `pkg`: each language
+                # has its own index stem.
+                and cs.DIRECTORY_MODULE_STEM_BY_EXT.get(Path(path).suffix, stem) == stem
+            ):
+                return own
+        return None
 
     @staticmethod
     def _reachable_module(path: Path | str, family: LanguageFamily) -> bool:
@@ -2643,8 +3567,6 @@ class ImportProcessor:
         reach, so CALLS and the edges resolved through the map follow it.
         """
         siblings = self.stem_sibling_modules(module_paths)
-        if not siblings:
-            return
         for importer in self.import_mapping:
             self.point_module_imports_at_own_language_siblings(
                 importer, module_paths, siblings
@@ -2659,16 +3581,31 @@ class ImportProcessor:
         """`point_imports_at_own_language_siblings` for one importer's map."""
         mapping = self.import_mapping.get(importer)
         importer_path = module_paths.get(importer)
-        if not mapping or not siblings or importer_path is None:
+        if not mapping or importer_path is None:
             return
         language = get_language_for_extension(importer_path.suffix)
         if language is None:
             return
         family = language_family(language)
+        sites = self._import_sites.get(importer, {})
         for local_name, full_name in mapping.items():
-            target = self._own_language_target(
-                full_name, family, module_paths, siblings
-            )
+            source, member = full_name, None
+            if language in cs.JS_TS_LANGUAGES:
+                source, member = _js_binding_source(full_name, sites.get(local_name))
+            if member is None:
+                target = self._own_language_target(
+                    full_name, family, module_paths, siblings
+                )
+            else:
+                # The site says where the source module ends, so a member is
+                # never read as a directory, nor a directory as a member.
+                target = self._own_language_target(
+                    source, family, module_paths, siblings, names_module=True
+                )
+                if target not in (source, cs.IMPORT_TARGET_UNREACHABLE):
+                    target = f"{target}{member}"
+                elif target == source:
+                    target = full_name
             if target != full_name:
                 mapping[local_name] = target
 
@@ -2977,15 +3914,17 @@ class ImportProcessor:
                     found[qn] = self.repo_path / rel
         return found
 
-    def _module_alias_map(self, known_module_qns: set[str]) -> dict[str, str]:
+    def _module_alias_map(self, known_module_qns: set[str]) -> dict[str, list[str]]:
         # A module reached through its container's name: pkg/__init__.py,
         # shared/index.js, utils/mod.rs. Importers write the container qn; the real
-        # Module node lives at the index-file leaf.
-        aliases: dict[str, str] = {}
-        for qn in known_module_qns:
+        # Module node lives at the index-file leaf. One directory can hold an
+        # index per language (pkg/__init__.py beside pkg/index.js), and each
+        # importer takes the one it can reach.
+        aliases: dict[str, list[str]] = {}
+        for qn in sorted(known_module_qns):
             base, _, leaf = qn.rpartition(cs.SEPARATOR_DOT)
             if base and leaf in cs.MODULE_INDEX_FILE_STEMS:
-                aliases[base] = qn
+                aliases.setdefault(base, []).append(qn)
         return aliases
 
     def _python_absolute_fallback(self, module_path: str, module_qn: str) -> str | None:
@@ -3008,18 +3947,22 @@ class ImportProcessor:
         self,
         module_path: str,
         known_module_paths: dict[str, str],
-        module_aliases: dict[str, str],
+        module_aliases: dict[str, list[str]],
         language: cs.SupportedLanguage,
         siblings: StemSiblingModules | None = None,
     ) -> str | None:
-        if siblings:
-            module_path = self._own_language_target(
-                module_path, language_family(language), known_module_paths, siblings
-            )
+        family = language_family(language)
+
+        def reachable(qn: str) -> bool:
+            return self._reachable_module(known_module_paths.get(qn, ""), family)
+
+        module_path = self._own_language_target(
+            module_path, family, known_module_paths, siblings or {}, names_module=True
+        )
         if module_path in known_module_paths:
-            return module_path
-        if alias := module_aliases.get(module_path):
-            return alias
+            return module_path if reachable(module_path) else None
+        if aliases := module_aliases.get(module_path):
+            return next(filter(reachable, aliases), None)
         # A path resolved from the wrong root (`use crate::utils` written outside
         # src/) still names a unique real module; a whole-segment suffix match
         # recovers it. Ambiguity means no edge, not a guess.
@@ -3030,9 +3973,15 @@ class ImportProcessor:
         if not tail:
             return None
         suffix = f"{cs.SEPARATOR_DOT}{tail}"
-        matches = {qn for qn in known_module_paths if qn.endswith(suffix)}
+        matches = {
+            qn for qn in known_module_paths if qn.endswith(suffix) and reachable(qn)
+        }
         matches.update(
-            real for base, real in module_aliases.items() if base.endswith(suffix)
+            real
+            for base, aliases in module_aliases.items()
+            if base.endswith(suffix)
+            for real in aliases
+            if reachable(real)
         )
         if len(matches) > 1:
             # A polyglot repo can hold same-named modules in several
@@ -3075,6 +4024,19 @@ class ImportProcessor:
                         new_names
                     )
             self._record_python_rebinds(module_qn, before)
+        self._record_python_binding_order(module_qn)
+
+    def _record_python_binding_order(self, module_qn: str) -> None:
+        # Each key's import site is the statement that bound it last.
+        mapping = self.import_mapping[module_qn]
+        sites = self._import_sites.get(module_qn, {})
+        order = tuple(sorted(mapping, key=lambda key: _site_start(sites.get(key))))
+        if order != tuple(mapping):
+            self.python_binding_order[module_qn] = order
+
+    @property
+    def python_star_rules(self) -> PythonStarRules:
+        return PythonStarRules(self.python_module_all, self.python_binding_order)
 
     def _record_python_rebinds(self, module_qn: str, before: dict[str, str]) -> None:
         mapping = self.import_mapping[module_qn]
@@ -3901,6 +4863,16 @@ class ImportProcessor:
             else None
         )
         return deps.get(key) if isinstance(deps, dict) else None
+
+    def rust_crate_is_external(self, crate: str, module_qn: str) -> bool:
+        """Whether a use head provably names a crate outside the repo: a
+        toolchain crate, or a dependency the importer's manifest fetches from
+        outside the repo that no crate of the repo answers to."""
+        return crate in cs.RS_STDLIB_CRATES or (
+            not self.rust_head_is_repo_crate(crate)
+            and not self.rust_head_is_member_dep(crate, module_qn)
+            and self.rust_head_is_external_dep(crate, module_qn)
+        )
 
     def rust_head_is_repo_crate(self, head: str) -> bool:
         """Whether this use head names a lib crate the repo itself holds.
@@ -4854,9 +5826,60 @@ class ImportProcessor:
 
         return cs.SEPARATOR_DOT.join(target_parts)
 
+    def _record_js_side_effect_import(
+        self, module_qn: str, target: str, statement: Node
+    ) -> None:
+        self._js_side_effect_imports.setdefault(module_qn, []).append(
+            (target, _import_site_props(statement, cs.IMPORTED_NAME_WILDCARD, None))
+        )
+
+    def _parse_js_side_effect_calls(
+        self, root_node: Node, module_qn: str, language_obj: Language | None
+    ) -> None:
+        # A statement that is only `require("./db")` or `import("./cache")`
+        # (awaited or not), at any depth: the call's value is dropped, so it
+        # is imported for its side effects (issue #3267). One under
+        # `if (flag)` or in a function body loads the module as surely as a
+        # bound `require` there, which the imports query already reads.
+        # Statements binding the result are `_parse_js_require`'s.
+        statements = (
+            sorted_captures(
+                get_query_cursor(
+                    get_cached_query(language_obj, cs.JS_CALL_STATEMENT_QUERY)
+                ),
+                root_node,
+            ).get(cs.CAPTURE_JS_CALL_STATEMENT, [])
+            if language_obj is not None
+            else root_node.named_children
+        )
+        bindings: LocalBindings | None = None
+        for statement in statements:
+            if (call := _js_side_effect_call(statement)) is None:
+                continue
+            specifier, require = call
+            if require is not None:
+                # The global loader, or one Node's `createRequire` makes for
+                # a file the module names, imports from where it resolves;
+                # any other binding of `require` (a parameter, a local
+                # helper, a replaced loader) is whatever it holds (Greptile
+                # and CodeRabbit, PR #3284).
+                bindings = bindings or LocalBindings(root_node)
+                if (base := bindings.loader_base(require)) is None:
+                    continue
+                specifier = _rebased_js_specifier(specifier, base)
+            target = self._resolve_js_import_target(
+                specifier, module_qn, require is not None
+            )
+            self._note_unresolved_js_specifier(module_qn, specifier)
+            if target.module_qn:
+                self._record_js_side_effect_import(
+                    module_qn, target.module_qn, statement
+                )
+
     def _parse_js_ts_imports(
         self, captures: dict, module_qn: str, root_node: Node
     ) -> None:
+        declarations: list[Node] = []
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_IMPORT_STATEMENT:
                 self._parse_js_import_statement(import_node, module_qn)
@@ -4866,11 +5889,48 @@ class ImportProcessor:
                 cs.TS_VARIABLE_DECLARATION,
             ):
                 self._parse_js_require(import_node, module_qn)
+                declarations.append(import_node)
 
             elif import_node.type == cs.TS_EXPORT_STATEMENT:
                 self._parse_js_reexport(import_node, module_qn)
                 self._record_js_export_bindings(import_node, module_qn)
+        # Once every namespace of the file is bound, wherever it was written.
+        for decl_node in declarations:
+            self._parse_js_namespace_destructure(decl_node, module_qn)
+
         self._record_commonjs_export_bindings(root_node, module_qn)
+
+    def _parse_js_namespace_destructure(
+        self, decl_node: Node, current_module: str
+    ) -> None:
+        # `const { pad } = U` with `U` an imported binding reads `pad` out
+        # of what `U` names: out of a whole module (`import * as U`,
+        # `const U = require(...)`) that is the export, as `import { pad }`
+        # would bind it (issue #3252); out of an imported object, its member.
+        # Only at module level is `U` sure to be the import: in a function a
+        # parameter or local can shadow it (`function run(U) {...}`), and a
+        # function's locals would leak into the one map the module keeps.
+        if not _js_at_module_level(decl_node):
+            return
+        bindings = self.import_mapping[current_module]
+        for declarator in decl_node.children:
+            if declarator.type != cs.TS_VARIABLE_DECLARATOR:
+                continue
+            name_node = declarator.child_by_field_name(cs.FIELD_NAME)
+            value_node = declarator.child_by_field_name(cs.FIELD_VALUE)
+            if name_node is None or value_node is None:
+                continue
+            # A plain name (`const x = U`) or an array pattern destructures
+            # no key, and only a bare `U` can be the imported name itself.
+            namespace = safe_decode_text(value_node)
+            module = bindings.get(namespace) if namespace else None
+            if module is None:
+                continue
+            is_package = namespace in self.js_ts_package_imports.get(current_module, ())
+            for local, imported in _js_destructured_names(name_node):
+                bindings[local] = f"{module}{cs.SEPARATOR_DOT}{imported}"
+                self._record_import_site(current_module, local, decl_node, imported)
+                self._note_js_package_import(current_module, local, is_package)
 
     def _record_commonjs_export_bindings(self, root_node: Node, module_qn: str) -> None:
         """Record what a CommonJS module publishes as its export table.
@@ -4938,16 +5998,31 @@ class ImportProcessor:
                 return import_path[: -len(ext)]
         return import_path
 
-    def _js_base_url_names_file(self, import_path: str, current_module: str) -> bool:
+    def _js_base_url_module_qn(
+        self, import_path: str, current_module: str
+    ) -> str | None:
         # A bare specifier the importing file's own `baseUrl` resolves to a
-        # project file is first-party even though no `paths` alias maps it.
-        # Its qn stays the bare path it always had; only the package flag
-        # needs the disk's answer, so resolution beyond this flag is unchanged.
+        # project file is first-party even though no `paths` alias maps it,
+        # and it names THAT module: with `"baseUrl": "src"`, `lib/format` is
+        # `src/lib/format.ts`. Keeping the bare path as the qn pointed the
+        # import at an ExternalModule `lib.format` and dropped every call
+        # through it (issue #2808).
         base = self._js_governing_base_url(current_module)
-        return (
-            base is not None
-            and self._js_module_rel_on_disk(f"{base}{import_path}") is not None
-        )
+        if base is None:
+            return None
+        # `"baseUrl": "./src"` or a nested config's `"../shared"` spell dot
+        # segments a module qn must not keep (#2808 review); a path that
+        # leaves the repo names no project file.
+        joined = posixpath.normpath(f"{base}{import_path}")
+        if joined == cs.PATH_PARENT_DIR or joined.startswith(
+            f"{cs.PATH_PARENT_DIR}{cs.SEPARATOR_SLASH}"
+        ):
+            return None
+        module_rel = self._js_module_rel_on_disk(joined)
+        if module_rel is None:
+            return None
+        dotted = module_rel.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+        return f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}"
 
     def _js_governing_base_url(self, current_module: str) -> str | None:
         # The `baseUrl` of the nearest tsconfig whose directory holds the
@@ -4962,6 +6037,25 @@ class ImportProcessor:
                 if relative.startswith(directory)
             ),
             None,
+        )
+
+    def _js_governing_custom_conditions(self, current_module: str) -> frozenset[str]:
+        # The `customConditions` of the nearest tsconfig whose directory
+        # holds the module, read the way `_js_governing_base_url` reads its
+        # `baseUrl`. The importer's DIRECTORY is matched, as a path, not its
+        # qualified name: `packages/app.test.ts` is `packages.app.test`, which
+        # reads as though it sat inside `packages/app/`.
+        importer_dir = "".join(
+            f"{part}{cs.SEPARATOR_SLASH}"
+            for part in self._js_module_directory_parts(current_module)[1:]
+        )
+        return next(
+            (
+                conditions
+                for directory, conditions in self.js_custom_conditions
+                if importer_dir.startswith(directory)
+            ),
+            frozenset(),
         )
 
     def _js_module_rel_on_disk(self, normalized: str) -> str | None:
@@ -5060,21 +6154,35 @@ class ImportProcessor:
             import_path, current_module, require
         ).module_qn
 
+    def _resolve_js_bare_import_target(
+        self, import_path: str, current_module: str, require: bool
+    ) -> JsImportTarget:
+        if aliased := self._ts_alias_module_qn(import_path):
+            return JsImportTarget(aliased, False)
+        # TypeScript tries `baseUrl` after `paths` and before node_modules,
+        # which the workspace mapping stands in for.
+        if based := self._js_base_url_module_qn(import_path, current_module):
+            return JsImportTarget(based, False)
+        if workspace := self._map_js_workspace_import(
+            import_path,
+            require,
+            self._js_governing_custom_conditions(current_module),
+        ):
+            dotted = workspace.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+            return JsImportTarget(
+                f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}", False
+            )
+        return JsImportTarget(
+            import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT),
+            not _has_aliased_scheme(import_path),
+        )
+
     def _resolve_js_import_target(
         self, import_path: str, current_module: str, require: bool = False
     ) -> JsImportTarget:
         if not import_path.startswith(cs.PATH_CURRENT_DIR):
-            if aliased := self._ts_alias_module_qn(import_path):
-                return JsImportTarget(aliased, False)
-            if workspace := self._map_js_workspace_import(import_path, require):
-                dotted = workspace.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
-                return JsImportTarget(
-                    f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}", False
-                )
-            return JsImportTarget(
-                import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT),
-                not _has_aliased_scheme(import_path)
-                and not self._js_base_url_names_file(import_path, current_module),
+            return self._resolve_js_bare_import_target(
+                import_path, current_module, require
             )
         return JsImportTarget(
             cs.SEPARATOR_DOT.join(
@@ -5274,6 +6382,14 @@ class ImportProcessor:
         if not target.module_qn:
             return
         is_aliased_scheme = _has_aliased_scheme(source_text)
+        if not any(
+            child.type == cs.TS_IMPORT_CLAUSE and _js_clause_binds(child)
+            for child in import_node.children
+        ):
+            # `import "./instrument"` or `import {} from "./instrument"`:
+            # still an import of the module.
+            self._record_js_side_effect_import(module_qn, target.module_qn, import_node)
+            return
         for child in import_node.children:
             if child.type == cs.TS_IMPORT_CLAUSE:
                 self._parse_js_import_clause(
@@ -5335,6 +6451,24 @@ class ImportProcessor:
             module=source_module,
             original=original_name,
         )
+
+    def binds_js_whole_module(self, module_qn: str, local_name: str) -> bool:
+        """Whether `local_name` in `module_qn` is a JS/TS whole-module binding.
+
+        A bare `require` or a namespace import maps the local to the module's
+        own qn, not to an export of the module that qn's prefix names.
+        """
+        site = self._import_sites.get(module_qn, {}).get(local_name)
+        return site is not None and _js_binds_whole_module(site)
+
+    @staticmethod
+    def names_js_aliased_scheme(qn: str) -> bool:
+        """Whether a JS/TS import's target qn is a non-standard scheme's.
+
+        `ext:alias/util.ts` keeps its scheme in the qn it maps to
+        (`ext:alias.util.ts`), and names first-party code no file path does.
+        """
+        return _has_aliased_scheme(qn)
 
     def follow_js_reexports(
         self,
@@ -5912,9 +7046,15 @@ class ImportProcessor:
         path = rs_utils.use_visibility_path(use_node)
         if path is None:
             return None
+        return self.rust_visibility_root(path, effective_qn)
+
+    def rust_visibility_root(self, path: str, scope_qn: str) -> str | None:
+        """The module whose subtree alone sees an item declared in `scope_qn`
+        with its visibility restricted to `path` (`self`, `crate`, `super`,
+        an `in` path); None for a path that leaves the project."""
         if path == cs.KEYWORD_SELF:
-            return effective_qn
-        root = self._rewrite_rust_local_use_path(path, effective_qn)
+            return scope_qn
+        root = self._rewrite_rust_local_use_path(path, scope_qn)
         project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
         if root == self.project_name or root.startswith(project_prefix):
             return root
@@ -6702,6 +7842,8 @@ class ImportProcessor:
                         module_qn, prefix, full_name, import_node, uri
                     )
                     prefixes.add(prefix)
+                else:
+                    self._record_dart_unprefixed(module_qn, import_node, full_name)
         # A local or parameter of the same name SHADOWS the prefix inside its
         # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
         # local_var_types, so the type map cannot answer this. The binding is
@@ -6711,6 +7853,25 @@ class ImportProcessor:
             self.dart_prefix_shadows[module_qn] = dart_binding_spans(
                 root_node, frozenset(prefixes)
             )
+
+    def _record_dart_unprefixed(
+        self, module_qn: str, directive: Node, full_name: str
+    ) -> None:
+        # `part of 'shop.dart';` brings nothing in: the file is a piece of
+        # that library and writes names in its scope (#3286). The link comes
+        # from the library's `part 'shop_model.dart';`, which a `part of
+        # shop;` naming no file has too. An `export` hands its target to
+        # importers only; a plain `import` or a `part` brings the target's
+        # names in bare.
+        if directive.type == cs.TS_DART_PART_OF_DIRECTIVE:
+            return
+        if directive.type == cs.TS_DART_PART_DIRECTIVE:
+            self.dart_part_of[full_name] = module_qn
+        recorded = DartDirective(full_name, dart_combinators(directive))
+        if dart_is_export(directive):
+            self.dart_exports.setdefault(module_qn, []).append(recorded)
+        else:
+            self.dart_bare_imports.setdefault(module_qn, []).append(recorded)
 
     def dart_import_target(self, uri: str, module_qn: str) -> str:
         # What `uri` resolves to under the package map as it is on disk now;
