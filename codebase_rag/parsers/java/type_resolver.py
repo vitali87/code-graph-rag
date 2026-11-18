@@ -184,8 +184,9 @@ class JavaTypeResolverMixin:
     def _find_registry_entries_under(self, prefix: str) -> Iterable[tuple[str, str]]:
         finder = getattr(self.function_registry, cs.METHOD_FIND_WITH_PREFIX, None)
         if callable(finder):
-            if matches := list(finder(prefix)):
-                return matches
+            # The trie answers prefix lookups, so its result stands empty
+            # or not; the scan below stays only for registries without it.
+            return finder(prefix)
 
         items = getattr(self.function_registry, cs.METHOD_ITEMS, None)
         if callable(items):

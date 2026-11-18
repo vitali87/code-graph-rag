@@ -2,7 +2,7 @@ name: PR Split Score
 
 # pull_request, never pull_request_target: scoring needs no privilege, so a
 # fork's read-only token is enough, and GitHub disables pull_request_target
-# by default in public repositories from 2026-11-02. Fork runs wait for
+# by default in public repositories from 2026-12-02. Fork runs wait for
 # approval only for a first-time contributor (the repository's
 # fork-PR approval policy); a returning contributor is scored at once.
 on:
