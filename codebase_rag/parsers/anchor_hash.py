@@ -28,6 +28,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from ..types_defs import PropertyDict
 from .dart.utils import dart_body_node
+from .native_trees import NotBorrowed, tree_bridge
 
 _SEPARATOR = b"\x00"
 _OPEN = b"\x01"
@@ -36,6 +37,20 @@ _CLOSE = b"\x02"
 
 def anchor_hash(definition: Node, decorators: Sequence[str] = ()) -> str:
     """Versioned hex digest of the definition's named-node tree with leaf text.
+
+    Computed in Rust when the extension's tree bridge is on
+    (`native_trees`), which returns what `python_anchor_hash` does.
+    """
+    if (bridge := tree_bridge()) is not None:
+        try:
+            return bridge.anchor_hash(definition, decorators)
+        except NotBorrowed:
+            pass
+    return python_anchor_hash(definition, decorators)
+
+
+def python_anchor_hash(definition: Node, decorators: Sequence[str] = ()) -> str:
+    """`anchor_hash` in Python, the reference the Rust walk is tested against.
 
     `decorators` are the already-extracted decorator / annotation names. In
     Python and TypeScript they are siblings or parents of the definition
