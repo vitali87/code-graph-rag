@@ -660,7 +660,12 @@ class CallResolver:
         return self._rust_scope_type(followed) or followed
 
     def _try_resolve_method(
-        self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
+        self,
+        class_qn: str,
+        method_name: str,
+        separator: str = cs.SEPARATOR_DOT,
+        *,
+        build_copies: bool = True,
     ) -> tuple[str, str] | None:
         # A class-body alias of the name (issue #2620) lists every method
         # the member may hold, its own `def` included when that survives.
@@ -669,7 +674,9 @@ class CallResolver:
         method_qn = f"{class_qn}{separator}{method_name}"
         if method_qn in self.function_registry:
             return self.function_registry[method_qn], method_qn
-        return self._resolve_inherited_method(class_qn, method_name)
+        return self._resolve_inherited_method(
+            class_qn, method_name, build_copies=build_copies
+        )
 
     def reset_resolution_caches(self) -> None:
         # The watch pass deletes EVERY CALLS edge and recomputes them
@@ -1897,7 +1904,11 @@ class CallResolver:
                     method_name, ()
                 )
             ]
-            if result := self._try_resolve_method(implementer, method_name):
+            # The implementer is one build's copy of its type: another copy's
+            # method runs in another build, never for this one.
+            if result := self._try_resolve_method(
+                implementer, method_name, build_copies=False
+            ):
                 found.append(result)
             for target in found:
                 targets.setdefault(target, {})[implementer] = guessed
@@ -7872,7 +7883,12 @@ class CallResolver:
         return order
 
     def _resolve_inherited_method(
-        self, class_qn: str, method_name: str, own_members: bool = True
+        self,
+        class_qn: str,
+        method_name: str,
+        own_members: bool = True,
+        *,
+        build_copies: bool = True,
     ) -> tuple[str, str] | None:
         # Every caller has already looked for a def of the name on class_qn
         # itself. A class-body alias there (`run = _plain`, issue #2620) is
@@ -7887,15 +7903,71 @@ class CallResolver:
                 return None
         if found := self._go_variant_method(class_qn, method_name):
             return found
-        if class_qn not in self.class_inheritance:
+        if class_qn in self.class_inheritance:
+            # Which class binds the name first decides whether a value hides
+            # it, and that order is the C3 MRO, not this walk's breadth-first
+            # order: `class C(A, B)` reaches a `run` that A inherits before B's
+            # `run = None` or `run = _impl`.
+            if (order := self._binding_aware_mro(class_qn, method_name)) is not None:
+                return self._resolve_inherited_along_mro(order, method_name)
+            if found := self._resolve_inherited_breadth_first(class_qn, method_name):
+                return found
+        return (
+            self._go_build_copy_method(class_qn, method_name) if build_copies else None
+        )
+
+    def _go_build_copy_method(
+        self, type_qn: str, method_name: str
+    ) -> tuple[str, str] | None:
+        # A Go type each build declares again (`Iovec` in `ztypes_linux.go`
+        # and in `ztypes_darwin.go`) is one type, but a receiver resolves to
+        # one of its copies and each method sits on the copy its own file
+        # builds with. A copy without the method left the call to the
+        # name-only fallback, which bound `var v Iovec; v.SetLen()` to
+        # `Cmsghdr.SetLen` (#3148). Copies go by qn, so the answer does not
+        # depend on registration order. An interface's copies were searched
+        # already (`_go_variant_method`).
+        if type_qn in self.go_declaration_variants:
             return None
-        # Which class binds the name first decides whether a value hides
-        # it, and that order is the C3 MRO, not this walk's breadth-first
-        # order: `class C(A, B)` reaches a `run` that A inherits before B's
-        # `run = None` or `run = _impl`.
-        if (order := self._binding_aware_mro(class_qn, method_name)) is not None:
-            return self._resolve_inherited_along_mro(order, method_name)
-        return self._resolve_inherited_breadth_first(class_qn, method_name)
+        for copy_qn in self._go_build_copies(type_qn):
+            method_qn = f"{copy_qn}{cs.SEPARATOR_DOT}{method_name}"
+            if method_qn in self.function_registry:
+                return self.function_registry[method_qn], method_qn
+            if found := self._resolve_inherited_breadth_first(copy_qn, method_name):
+                return found
+        return None
+
+    def _go_build_copies(self, type_qn: str) -> list[str]:
+        # The other declarations of Go type `type_qn`'s name in its package
+        # that no build compiles with it, by qn.
+        builds = self.go_builds
+        if (
+            builds is None
+            or self.function_registry.get(type_qn)
+            not in go_utils.TYPE_DECLARATION_TYPES
+        ):
+            return []
+        module_qn, _, name = type_qn.rpartition(cs.SEPARATOR_DOT)
+        package_dir = self._go_declaring_dir(type_qn)
+        if (
+            package_dir is None
+            or self._definition_language(type_qn, module_qn) != cs.SupportedLanguage.GO
+        ):
+            return []
+        own_file = self.go_declaring_rel(type_qn)
+        return [
+            qn
+            for qn in go_utils.package_level_definitions(
+                self.function_registry,
+                name,
+                go_utils.TYPE_DECLARATION_TYPES,
+                lambda qn: qn != type_qn and self._go_declaring_dir(qn) == package_dir,
+            )
+            if self._definition_language(qn, self._parent_qn(qn))
+            == cs.SupportedLanguage.GO
+            and self.go_declaration_is_visible(qn, module_qn)
+            and builds.apart((own_file, self.go_declaring_rel(qn)))
+        ]
 
     def _go_variant_method(
         self, class_qn: str, method_name: str
