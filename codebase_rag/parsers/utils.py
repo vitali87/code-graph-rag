@@ -500,7 +500,8 @@ def node_site_properties(node: Node) -> PropertyDict:
 
     1-based lines, 0-based columns, end exclusive, matching the node
     `start_line`/`start_col` convention so a site can be sliced straight
-    out of the file.
+    out of the bytes the grammar parsed. tree-sitter counts a column in
+    UTF-8 bytes, not characters (issue #3162).
     """
     return {
         cs.KEY_LINE: node.start_point[0] + 1,

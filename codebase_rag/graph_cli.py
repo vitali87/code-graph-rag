@@ -166,7 +166,12 @@ def _depth_option[F: Callable[..., None]](fn: F) -> F:
     )(fn)
 
 
-@cli.command("callers", help=ch.CMD_GRAPH_CALLERS, short_help=ch.CMD_GRAPH_CALLERS)
+@cli.command(
+    "callers",
+    help=ch.CMD_GRAPH_CALLERS,
+    short_help=ch.CMD_GRAPH_CALLERS,
+    epilog=ch.EPILOG_GRAPH_COLUMNS,
+)
 @click.argument("qualified_name")
 @_depth_option
 @_graph_options
@@ -176,12 +181,19 @@ def callers_cmd(
     _run_query_and_emit(
         project,
         repo_path,
-        lambda f, n: graph_query.callers(f, n, qualified_name, depth),
+        lambda f, n: graph_query.callers(
+            f, n, qualified_name, depth, graph_query.source_root_for(f, n, repo_path)
+        ),
         target=qualified_name,
     )
 
 
-@cli.command("callees", help=ch.CMD_GRAPH_CALLEES, short_help=ch.CMD_GRAPH_CALLEES)
+@cli.command(
+    "callees",
+    help=ch.CMD_GRAPH_CALLEES,
+    short_help=ch.CMD_GRAPH_CALLEES,
+    epilog=ch.EPILOG_GRAPH_COLUMNS,
+)
 @click.argument("qualified_name")
 @_depth_option
 @_graph_options
@@ -191,7 +203,9 @@ def callees_cmd(
     _run_query_and_emit(
         project,
         repo_path,
-        lambda f, n: graph_query.callees(f, n, qualified_name, depth),
+        lambda f, n: graph_query.callees(
+            f, n, qualified_name, depth, graph_query.source_root_for(f, n, repo_path)
+        ),
         target=qualified_name,
     )
 
@@ -231,7 +245,10 @@ def overrides_cmd(
 
 
 @cli.command(
-    "importers", help=ch.CMD_GRAPH_IMPORTERS, short_help=ch.CMD_GRAPH_IMPORTERS
+    "importers",
+    help=ch.CMD_GRAPH_IMPORTERS,
+    short_help=ch.CMD_GRAPH_IMPORTERS,
+    epilog=ch.EPILOG_GRAPH_COLUMNS,
 )
 @click.argument("module_qualified_name")
 @click.option("--through-reexports", is_flag=True, help=ch.HELP_GRAPH_THROUGH_REEXPORTS)
@@ -247,7 +264,10 @@ def importers_cmd(
             project,
             repo_path,
             lambda f, n: graph_query.importers_through_reexports(
-                f, n, module_qualified_name
+                f,
+                n,
+                module_qualified_name,
+                graph_query.source_root_for(f, n, repo_path),
             ),
             target=module_qualified_name,
         )
@@ -255,7 +275,9 @@ def importers_cmd(
     _run_query_and_emit(
         project,
         repo_path,
-        lambda f, n: graph_query.importers(f, n, module_qualified_name),
+        lambda f, n: graph_query.importers(
+            f, n, module_qualified_name, graph_query.source_root_for(f, n, repo_path)
+        ),
         target=module_qualified_name,
     )
 

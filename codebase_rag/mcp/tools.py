@@ -3194,7 +3194,11 @@ class MCPToolsRegistry:
             cs.MCPToolName.CALLERS,
             project,
             lambda name: graph_query.callers(
-                self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
+                self.ingestor.fetch_all,
+                name,
+                qualified_name,
+                self._depth(depth),
+                self._source_root_for(name),
             ),
             target=qualified_name,
         )
@@ -3206,7 +3210,11 @@ class MCPToolsRegistry:
             cs.MCPToolName.CALLEES,
             project,
             lambda name: graph_query.callees(
-                self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
+                self.ingestor.fetch_all,
+                name,
+                qualified_name,
+                self._depth(depth),
+                self._source_root_for(name),
             ),
             target=qualified_name,
         )
@@ -3251,7 +3259,12 @@ class MCPToolsRegistry:
                 graph_query.importers_through_reexports
                 if through_reexports
                 else graph_query.importers
-            )(self.ingestor.fetch_all, name, module_qualified_name),
+            )(
+                self.ingestor.fetch_all,
+                name,
+                module_qualified_name,
+                self._source_root_for(name),
+            ),
             target=module_qualified_name,
         )
 
