@@ -175,7 +175,7 @@ REGISTRY_REHYDRATED = "Rehydrated {count} definitions from the graph for resolut
 IMPORT_STATE_RESTORED = (
     "Restored the imports of {count} unchanged modules the re-parsed files reach"
 )
-INCREMENTAL_REBUILD_INBOUND = "Rebuilding inbound edges from {count} dependent files"
+INCREMENTAL_REBUILD_INBOUND = "Restored {count} inbound edges from unchanged files"
 MARKDOWN_BROKEN_LINKS = (
     "{count} relative Markdown link(s) in {documents} document(s) point at files "
     "that do not exist; each document lists them in its Module's broken_links"
@@ -1348,6 +1348,7 @@ INTERFACE_FLOW_SOURCES_UNREAD = (
     "in; every dependent caller is re-parsed."
 )
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
+PRIOR_FLOWS_UNREAD = "Could not read the prior resource flows of {path}: {error}"
 DEPENDENCIES_RESYNC = (
     "A dependency manifest changed; rebuilding the external dependencies of "
     "'{project}' from every manifest"

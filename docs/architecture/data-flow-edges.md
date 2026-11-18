@@ -178,7 +178,13 @@ recorded once per pair and scope.
 the module's for top-level code. Both endpoints are shared Resource nodes, so
 the edge is owned through it. Two functions that leak the same value give two
 edges. Each edge is removed when its function's file is re-parsed or its
-project is deleted, so a fixed leak does not stay in the graph.
+project is deleted, so a fixed leak does not stay in the graph. An edge that
+runs through a function in a file the incremental run leaves alone
+(`log(os.getenv("K"))`, where an unchanged `log` prints) cannot be rebuilt
+from the re-parsed caller. Such a composed edge lists in `through` the
+functions it was derived through, and it is put back as long as the caller
+still makes a call through one of them with the same origin, or prints what
+one of them returns. A direct edge, with no `through`, is never put back.
 
 ### Shape 2 — caller to callee (`kind = arg`)
 

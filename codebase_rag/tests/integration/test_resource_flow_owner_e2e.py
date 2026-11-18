@@ -257,3 +257,93 @@ def test_deleting_one_project_keeps_another_projects_same_leak(
     ingestor.delete_project("billing")
 
     assert [dst for dst, _ in _token_flows(ingestor)] == [STDOUT]
+
+
+# The leak runs through another file: `main` hands the token to `log`, whose
+# body prints it, or prints what `fetch` returns. An edit to app.py alone
+# re-parses only app.py, so `log` and `fetch` are not walked again.
+CALLER = 'import os\n\nfrom sink import log\n\n\ndef main():\n    log(os.getenv("BILLING_TOKEN"))\n'
+SINK = "def log(value):\n    print(value)\n"
+RETURNER = 'import os\n\n\ndef fetch():\n    return os.getenv("BILLING_TOKEN")\n'
+PRINTS_RETURN = "from source import fetch\n\n\ndef main():\n    print(fetch())\n"
+UNRELATED = "\n\ndef other():\n    return 1\n"
+
+
+@pytest.mark.parametrize(
+    ("files", "untainted"),
+    [
+        (
+            {"app.py": CALLER, "sink.py": SINK},
+            CALLER.replace('os.getenv("BILLING_TOKEN")', '"plain"'),
+        ),
+        (
+            {"app.py": PRINTS_RETURN, "source.py": RETURNER},
+            PRINTS_RETURN.replace("print(fetch())", 'print("plain")'),
+        ),
+    ],
+    ids=["through-a-parameter", "through-a-return"],
+)
+def test_an_edit_to_the_caller_alone_keeps_a_flow_through_another_file(
+    ingestor: MemgraphIngestor,
+    tmp_path: Path,
+    files: dict[str, str],
+    untainted: str,
+) -> None:
+    root = _write(tmp_path / "billing", files)
+    _index(ingestor, root, "billing", force=True)
+    composed = [(STDOUT, "billing.app.main")]
+    assert _token_flows(ingestor) == composed
+
+    _write(root, {"app.py": files["app.py"] + UNRELATED})
+    _index(ingestor, root, "billing")
+    assert _token_flows(ingestor) == composed
+
+    # Negative: once the caller no longer makes the tainted call, the flow
+    # goes with the re-parse.
+    _write(root, {"app.py": untainted})
+    _index(ingestor, root, "billing")
+    assert _token_flows(ingestor) == []
+
+
+DIRECT_AND_HANDOFF = (
+    "import os\n\nfrom noop import helper\n\n\ndef main():\n"
+    '    token = os.getenv("BILLING_TOKEN")\n    print(token)\n    helper(token)\n'
+)
+NOOP = "def helper(value):\n    return None\n"
+
+
+def test_a_fixed_direct_leak_stays_gone_beside_a_call_to_an_unchanged_file(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # The flow came from `print(token)` in main's own body. `helper(token)`
+    # still hands the token to an unchanged file, but the flow never went
+    # through `helper`, so removing the print removes the flow.
+    root = _write(tmp_path / "billing", {"app.py": DIRECT_AND_HANDOFF, "noop.py": NOOP})
+    _index(ingestor, root, "billing", force=True)
+    assert _token_flows(ingestor) == [(STDOUT, "billing.app.main")]
+
+    _write(root, {"app.py": DIRECT_AND_HANDOFF.replace("    print(token)\n", "")})
+    _index(ingestor, root, "billing")
+    assert _token_flows(ingestor) == []
+
+
+PASSES_THROUGH = (
+    "from source import fetch\n\n\ndef identity(value):\n    return value\n\n\n"
+    "def main():\n    print(identity(fetch()))\n"
+)
+
+
+def test_an_edit_above_a_pass_through_call_keeps_its_flow(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # `identity(fetch())` hands the unchanged `fetch`'s return through a
+    # function of app.py; a comment above main shifts the call but keeps it.
+    root = _write(
+        tmp_path / "billing", {"app.py": PASSES_THROUGH, "source.py": RETURNER}
+    )
+    _index(ingestor, root, "billing", force=True)
+    assert _token_flows(ingestor) == [(STDOUT, "billing.app.main")]
+
+    _write(root, {"app.py": "# a comment\n" + PASSES_THROUGH})
+    _index(ingestor, root, "billing")
+    assert _token_flows(ingestor) == [(STDOUT, "billing.app.main")]
