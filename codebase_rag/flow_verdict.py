@@ -48,9 +48,11 @@ RETURN r.scope AS source, b.qualified_name AS target, NULL AS scope
 # flow belongs to the function that read the value, so `send(v)` printing
 # the `v` its caller read owns none, and a literal write (`print("hi")`)
 # makes no flow at all; without these edges both answered NO_FLOW with no
-# gaps (bot review on PR #2762). Read apart from CYPHER_FLOW_EDGES, which
-# explain_traceback reads too: a write is no FLOWS_TO evidence there, and a
-# project with writes but no flows must keep reporting `flow_used` false.
+# gaps (bot review on PR #2762). Only the walk's source takes them: a write
+# records no value (_FlowGraph.writes). Read apart from CYPHER_FLOW_EDGES,
+# which explain_traceback reads too: a write is no FLOWS_TO evidence there,
+# and a project with writes but no flows must keep reporting `flow_used`
+# false.
 CYPHER_FLOW_WRITE_EDGES = f"""MATCH (f)-[:{cs.RelationshipType.WRITES_TO.value}]->(b:{cs.NodeLabel.RESOURCE.value})
 WHERE f.qualified_name STARTS WITH $project_prefix
    OR f.qualified_name = $project_name
@@ -91,14 +93,20 @@ RETURN e.qualified_name AS source, h.qualified_name AS target
 
 
 class _FlowGraph(NamedTuple):
-    # Edges any walk may take: code flows, a function into the sink it
-    # wrote, and the hops from a resource into the handler exposing it.
+    # Edges any walk may take: code flows, and the hops from a resource into
+    # the handler exposing it.
     shared: dict[str, list[str]]
     # Resource-to-resource flows, by the project whose code produced them.
     # Resource names carry no project (`resource::ENV::TOKEN` of one service
     # and of another are one node), so the walk takes such an edge only
     # inside the project it is in (bot review on PR #2762).
     owned: dict[tuple[str, str], list[str]]
+    # A function's links to the resources it wrote: its own writes, and the
+    # sinks of the resource flows it produced. Neither records which value
+    # was written, so only a walk that starts at the function takes them. A
+    # handler that prints "ok" also writes STDOUT, and a value sent to it
+    # reached that sink only by name (CodeRabbit review on PR #2762).
+    writes: dict[str, list[str]]
 
 
 class QueryFn(Protocol):
@@ -110,14 +118,16 @@ class QueryFn(Protocol):
 class FlowVerdict(NamedTuple):
     """The answer to "can data flow from source to sink?".
 
-    FOUND carries the qn path. UNKNOWN means no path was found but part of
-    the project sat outside flow-analysis coverage, and `gaps` names those
-    files; treating it as NO_FLOW would read an analysis ceiling as a
-    verified absence. The coverage read is deliberately project-wide rather
-    than reachable-surface-only: without path sensitivity, a flow through an
-    uncovered file cannot be ruled out from the covered part of the graph.
-    The same holds for every project the walk entered through a service
-    boundary (issue #1603): its gaps count too.
+    FOUND carries the qn path. UNKNOWN means no path was found but one
+    cannot be ruled out, and `gaps` says where: the files outside flow-
+    analysis coverage, and, for a question with a resource at either end,
+    the functions past which the walk cannot follow the value (see
+    _unfollowed). Treating it as NO_FLOW would read an analysis ceiling as
+    a verified absence. The coverage read is deliberately project-wide
+    rather than reachable-surface-only: without path sensitivity, a flow
+    through an uncovered file cannot be ruled out from the covered part of
+    the graph. The same holds for every project the walk entered through a
+    service boundary (issue #1603): its gaps count too.
     """
 
     verdict: str
@@ -136,7 +146,7 @@ def flow_reachability_verdict(
     sink_qn: str,
 ) -> FlowVerdict:
     projects = _registered_projects(fetch_all, project_name)
-    graph = _FlowGraph({}, {})
+    graph = _FlowGraph({}, {}, {})
     _load_project(graph, fetch_all, project_name, projects)
     # Resource-to-handler hops join the graph up front (one read of edges
     # only); a handler project's own flow edges load when the walk reaches
@@ -149,14 +159,15 @@ def flow_reachability_verdict(
             graph.shared.setdefault(source, []).append(target)
             remote.setdefault(source, set()).add(target)
     loaded = {project_name}
-    while (
-        entered := {
+    while True:
+        reached = _reachable(graph, source_qn, project_name, projects)
+        entered = {
             _project_of(target, projects)
-            for resource in _reachable(graph, source_qn, project_name, projects)
+            for resource in reached
             for target in remote.get(resource, ())
-        }
-        - loaded
-    ):
+        } - loaded
+        if not entered:
+            break
         for other in sorted(entered):
             _load_project(graph, fetch_all, other, projects)
         loaded |= entered
@@ -189,6 +200,7 @@ def flow_reachability_verdict(
         gaps.update(
             path for row in gap_rows if isinstance(path := row.get(cs.KEY_PATH), str)
         )
+    gaps |= _unfollowed(graph, reached, remote, source_qn, sink_qn)
     if gaps:
         return FlowVerdict(FLOW_VERDICT_UNKNOWN, (), tuple(sorted(gaps)))
     return FlowVerdict(FLOW_VERDICT_NO_FLOW, (), ())
@@ -223,21 +235,67 @@ def _is_resource(qn: str) -> bool:
     return qn.startswith(_RESOURCE_QN_PREFIX)
 
 
+def _unfollowed(
+    graph: _FlowGraph,
+    reached: set[str],
+    remote: dict[str, set[str]],
+    source_qn: str,
+    sink_qn: str,
+) -> set[str]:
+    """The functions past which a walk with no path cannot rule the value
+    out (CodeRabbit review on PR #2762). A code-to-code question has none:
+    it keeps the function-level walk it always had."""
+    if not (_is_resource(source_qn) or _is_resource(sink_qn)):
+        return set()
+    # A handler takes the value as its request, and no edge records where a
+    # request goes on to.
+    unfollowed = {handler for qn in reached for handler in remote.get(qn, ())}
+    if _is_resource(sink_qn):
+        # A function other than the source that writes the sink may write
+        # the value or something else, and no edge says which.
+        unfollowed |= {
+            qn
+            for qn in reached
+            if qn != source_qn and sink_qn in graph.writes.get(qn, ())
+        }
+    else:
+        # A resource asked about a function: no edge links a resource to the
+        # code that reads it (a reader would join every source it reads to
+        # every sink it writes), so its absence proves nothing.
+        unfollowed.add(sink_qn)
+    return unfollowed
+
+
 def _successors(
-    graph: _FlowGraph, qn: str, project: str, projects: tuple[str, ...]
+    graph: _FlowGraph,
+    qn: str,
+    project: str,
+    projects: tuple[str, ...],
+    source_qn: str,
 ) -> list[tuple[str, str]]:
     # (next node, the project the walk is in there): a code node is in its
     # own project, and a resource stays in the project of the code that
     # reached it, or of the walk when another resource did.
-    out: list[tuple[str, str]] = []
-    for target in graph.shared.get(qn, ()):
-        if not _is_resource(target):
-            out.append((target, _project_of(target, projects)))
-        elif not _is_resource(qn):
-            out.append((target, _project_of(qn, projects)))
-        else:
-            out.append((target, project))
-    out += [(target, project) for target in graph.owned.get((project, qn), ())]
+    if _is_resource(qn):
+        out = [
+            (target, project if _is_resource(target) else _project_of(target, projects))
+            for target in graph.shared.get(qn, ())
+        ]
+        return out + [
+            (target, project) for target in graph.owned.get((project, qn), ())
+        ]
+    # A walk from a resource follows that resource's value, and once the
+    # value is in code (the handler it was sent to) no edge says where it
+    # goes: the handler's own flows and writes carry other values.
+    if _is_resource(source_qn):
+        return []
+    here = _project_of(qn, projects)
+    out = [
+        (target, here if _is_resource(target) else _project_of(target, projects))
+        for target in graph.shared.get(qn, ())
+    ]
+    if qn == source_qn:
+        out += [(target, here) for target in graph.writes.get(qn, ())]
     return out
 
 
@@ -248,7 +306,7 @@ def _reachable(
     seen = {start}
     queue: deque[tuple[str, str]] = deque([start])
     while queue:
-        for state in _successors(graph, *queue.popleft(), projects):
+        for state in _successors(graph, *queue.popleft(), projects, source_qn):
             if state not in seen:
                 seen.add(state)
                 queue.append(state)
@@ -273,7 +331,8 @@ def _add_edges(
     projects: tuple[str, ...],
 ) -> None:
     # Only the rows `project` owns exactly: a code edge with an endpoint in
-    # it, a resource-to-resource flow whose scope is in it.
+    # it, a resource-to-resource flow whose scope is in it. A function's
+    # link to a resource is a write, whichever query read it.
     for row in rows:
         source, target = row.get("source"), row.get("target")
         if not isinstance(source, str) or not isinstance(target, str):
@@ -283,7 +342,12 @@ def _add_edges(
             if _project_of(scope, projects) == project:
                 graph.owned.setdefault((project, source), []).append(target)
         elif project in (_project_of(source, projects), _project_of(target, projects)):
-            graph.shared.setdefault(source, []).append(target)
+            edges = (
+                graph.writes
+                if _is_resource(target) and not _is_resource(source)
+                else graph.shared
+            )
+            edges.setdefault(source, []).append(target)
 
 
 def _bfs_path(
@@ -302,7 +366,7 @@ def _bfs_path(
     seen = {start}
     while queue:
         current = queue.popleft()
-        for state in _successors(graph, *current, projects):
+        for state in _successors(graph, *current, projects, source_qn):
             if state[0] == sink_qn:
                 chain = [current]
                 while chain[-1] != start:

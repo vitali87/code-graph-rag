@@ -21,6 +21,7 @@ from codebase_rag.capture import resolve_capture
 from codebase_rag.flow_verdict import (
     FLOW_VERDICT_FOUND,
     FLOW_VERDICT_NO_FLOW,
+    FLOW_VERDICT_UNKNOWN,
     flow_reachability_verdict,
 )
 from codebase_rag.graph_updater import GraphUpdater
@@ -77,6 +78,10 @@ def create_item(item):
     print(item)
 """
 
+# The same endpoint, with a handler that ignores what it was sent.
+SERVER_OK = SERVER.replace("print(item)", 'print("ok")')
+HANDLER = "server.api.create_item"
+
 
 def _index(ingestor: MemgraphIngestor, root: Path, project: str) -> None:
     parsers, queries = load_parsers()
@@ -111,11 +116,17 @@ def notify(ingestor: MemgraphIngestor, tmp_path: Path) -> MemgraphIngestor:
     return ingestor
 
 
-@pytest.fixture
-def services(ingestor: MemgraphIngestor, tmp_path: Path) -> MemgraphIngestor:
-    _index(ingestor, _project(tmp_path, "server", "api.py", SERVER), "server")
+def _services(
+    ingestor: MemgraphIngestor, tmp_path: Path, server: str
+) -> MemgraphIngestor:
+    _index(ingestor, _project(tmp_path, "server", "api.py", server), "server")
     _index(ingestor, _project(tmp_path, "client", "client.py", CLIENT), "client")
     return ingestor
+
+
+@pytest.fixture
+def services(ingestor: MemgraphIngestor, tmp_path: Path) -> MemgraphIngestor:
+    return _services(ingestor, tmp_path, SERVER)
 
 
 def test_an_env_value_printed_is_a_flow_to_stdout(notify: MemgraphIngestor) -> None:
@@ -153,15 +164,26 @@ def test_a_function_reaches_the_sink_its_own_body_writes(
     assert result.path == (function, STDOUT)
 
 
-def test_a_client_env_value_reaches_the_sink_the_handler_writes(
-    services: MemgraphIngestor,
+@pytest.mark.parametrize("source", [CLIENT_TOKEN, "client.client.push_plain"])
+@pytest.mark.parametrize(
+    "server",
+    [SERVER, SERVER_OK],
+    ids=["the-handler-prints-its-request", "the-handler-prints-a-constant"],
+)
+def test_what_a_handler_prints_is_unknown_for_the_value_sent_to_it(
+    ingestor: MemgraphIngestor, tmp_path: Path, source: str, server: str
 ) -> None:
-    result = flow_reachability_verdict(
-        services.fetch_all, "client", CLIENT_TOKEN, STDOUT
-    )
+    # The graph records that `create_item` writes STDOUT, not what it
+    # writes: printing "ok" and printing the request leave the same edge.
+    # So neither is FOUND, and neither is a verified absence (CodeRabbit
+    # review on PR #2762).
+    services = _services(ingestor, tmp_path, server)
 
-    assert result.verdict == FLOW_VERDICT_FOUND
-    assert result.path == (CLIENT_TOKEN, NETWORK, "server.api.create_item", STDOUT)
+    result = flow_reachability_verdict(services.fetch_all, "client", source, STDOUT)
+
+    assert result.verdict == FLOW_VERDICT_UNKNOWN
+    assert result.path == ()
+    assert result.gaps == (HANDLER,)
 
 
 def test_a_client_function_reaches_the_handler_of_another_service(
@@ -171,27 +193,41 @@ def test_a_client_function_reaches_the_handler_of_another_service(
         services.fetch_all,
         "client",
         "client.client.push_plain",
-        "server.api.create_item",
+        HANDLER,
     )
 
     assert result.verdict == FLOW_VERDICT_FOUND
     assert result.path == (
         "client.client.push_plain",
         NETWORK,
-        "server.api.create_item",
+        HANDLER,
     )
-    assert result.remote_hops == ((NETWORK, "server.api.create_item"),)
+    assert result.remote_hops == ((NETWORK, HANDLER),)
 
 
 def test_a_client_env_value_reaches_the_handler_of_another_service(
     services: MemgraphIngestor,
 ) -> None:
     result = flow_reachability_verdict(
-        services.fetch_all, "client", CLIENT_TOKEN, "server.api.create_item"
+        services.fetch_all, "client", CLIENT_TOKEN, HANDLER
     )
 
     assert result.verdict == FLOW_VERDICT_FOUND
-    assert result.path == (CLIENT_TOKEN, NETWORK, "server.api.create_item")
+    assert result.path == (CLIENT_TOKEN, NETWORK, HANDLER)
+
+
+def test_an_env_value_asked_about_the_function_reading_it_is_unknown(
+    notify: MemgraphIngestor,
+) -> None:
+    # `notify` reads SLACK_TOKEN, but no edge links a resource to the code
+    # that reads it: NO_FLOW would be a verified absence that is not one
+    # (CodeRabbit review on PR #2762).
+    result = flow_reachability_verdict(
+        notify.fetch_all, "notify", SLACK, "notify.app.notify"
+    )
+
+    assert result.verdict == FLOW_VERDICT_UNKNOWN
+    assert result.gaps == ("notify.app.notify",)
 
 
 # Negative: what must not change.

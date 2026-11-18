@@ -168,7 +168,10 @@ that handler's project's own flow edges once the walk reaches the hop, and
 reports the pairs where the path crossed into another project as
 `remote_hops` (a service calling itself over HTTP is not a boundary). A
 `NO_FLOW` verdict needs full coverage of every project the walk entered,
-not only the asked one. The structural delta after a write lists, on a
+not only the asked one. The graph does not record where a handler sends
+the request it receives, so a question with a resource sink names every
+handler the walk entered and answers `UNKNOWN` rather than `NO_FLOW`, and
+a walk from a resource stops at the handler. The structural delta after a write lists, on a
 signature change, the `remote_callers`: call sites in other projects
 reaching the changed handler's endpoint, which no `CALLS` edge would ever
 name.
