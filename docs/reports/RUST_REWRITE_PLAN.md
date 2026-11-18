@@ -109,6 +109,16 @@ Live registry data for 77 languages:
 - A grammar compiled from its crate and handed to py-tree-sitter parsed all
   883 files of Django's `django/` package to identical trees, at the same speed (1.94 s
   against 1.98 s). Rust grammars do not have to wait for the rewrite.
+- C and C++ run on patched forks. Upstream `tree-sitter-c` drops the
+  declaration that follows a `#define` whose body holds a block comment
+  (#555). The forks are pinned by commit, and both commits are tagged
+  `code-graph-rag-pin` (#2424). PyPI rejects dependencies fetched from git,
+  so only installs from a checkout get the fix today; the PyPI package gets
+  the unpatched upstream grammars. crates.io has the same rule, so the Rust
+  engine builds these two grammars from the forks' sources at the pinned
+  commits and compiles them into the program. Every install then gets the
+  fix, whatever channel it comes from. Once upstream releases the fix, the
+  engine moves to the published crates.
 
 ### What Python costs users today
 
@@ -291,7 +301,9 @@ pull request.
    code is deleted. The porting rate measured here sizes the rest.
 4. **The other languages**, one release each: JS/TS, Python, Java, Rust, C#,
    C/C++ (libclang through `clang-sys`), PHP, Scala, Lua, Dart, Julia, SQL.
-   Families move together (JS with TS, C with C++).
+   Families move together (JS with TS, C with C++). C/C++ use the patched
+   grammars built in (see Grammars), so PyPI installs gain the #555 fix with
+   that release.
 5. **The rest of indexing**: cross-language linking (endpoints, routes, RPC,
    imports, trace edges), data flow and I/O, the Markdown tier, the ast-grep
    tier, incremental sync and the watcher. Then py-tree-sitter, the 16 grammar
