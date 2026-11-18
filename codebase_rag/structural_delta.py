@@ -496,8 +496,14 @@ def snapshot(
     paths: Iterable[str],
     *,
     longer_project_prefixes: tuple[str, ...] | None = None,
+    chain_callers: Iterable[str] = (),
 ) -> Snapshot:
-    """Read the subgraph of `paths` (repo-relative) and the module imports."""
+    """Read the subgraph of `paths` (repo-relative) and the module imports.
+
+    `chain_callers` are callers whose class hierarchy is read as well as
+    that of the snapshot's own sites: those of the snapshot before an
+    edit, which the graph after it may no longer draw.
+    """
     path_list = sorted(set(paths))
     longer_prefixes = (
         _longer_project_prefixes(fetch_all, project_name)
@@ -551,7 +557,9 @@ def snapshot(
         callers=callers,
         modules=_touched_modules(fetch_all, params),
         module_bindings=_module_import_bindings(fetch_all, params),
-        bases=_bases_above(fetch_all, params, {site.caller for site in sites}),
+        bases=_bases_above(
+            fetch_all, params, {site.caller for site in sites} | set(chain_callers)
+        ),
     )
 
 
@@ -2952,11 +2960,12 @@ def _calls_into(
     # A definite binding a call had still names what it runs while the call
     # is the call it was and goes through its caller's own `this`: that
     # names the caller's class, so the binding holds while no class above
-    # it changed its bases (`extends Cart` can now read `extends Tart`
-    # though every method keeps its shape). Any other receiver can come to
-    # name something else through an edit the graph keeps no trace of, a
-    # local renamed or a factory's new return type (bot reviews on PR
-    # #3632).
+    # it changed its bases. Once one did (`extends Cart` can now read
+    # `extends Tart` though every method keeps its shape), the binding is
+    # a guess: the call may now run another class's method. Any other
+    # receiver can come to name something else through an edit the graph
+    # keeps no trace of, a local renamed or a factory's new return type
+    # (bot reviews on PR #3632).
     unchanged: set[CallSite] = set()
     for site in before.sites:
         if not _reaches(site, qn, was_accessor):
@@ -2968,13 +2977,12 @@ def _calls_into(
         )
         if current is None:
             continue
+        if _through_own_receiver(current, name, trees):
+            if _chain(site.caller, before.bases) != _chain(current.caller, after.bases):
+                current = current._replace(resolution=cs.EdgeResolution.HEURISTIC.value)
+            elif site.resolution in _DEFINITE_RESOLUTIONS:
+                unchanged.add(current)
         drawn.append(current)
-        if (
-            site.resolution in _DEFINITE_RESOLUTIONS
-            and _through_own_receiver(current, name, trees)
-            and _chain(site.caller, before.bases) == _chain(current.caller, after.bases)
-        ):
-            unchanged.add(current)
     # One site per position: a call the edit left alone is drawn before and
     # after it, and a Python property read as a call and a reference both;
     # the call edge is the one judged. Of the two drawings of an unchanged
@@ -3606,6 +3614,7 @@ def observe(
         project_name,
         path_list,
         longer_project_prefixes=longer_prefixes,
+        chain_callers=[site.caller for site in before.sites],
     )
     delta = structural_delta(
         fetch_all,

@@ -993,6 +993,29 @@ def test_a_class_the_call_does_not_sit_under_may_change_its_bases(
     assert _verdicts(delta, "scale")["viaScale"] == cs.DELTA_CONVENTION_NEEDS_CLASS
 
 
+def test_a_call_whose_class_changed_its_base_is_not_judged_by_its_old_binding(
+    temp_repo: Path,
+) -> None:
+    # Negative, bot review on PR #3632: `Sub` now extends `Tart`, which has
+    # a `scale` of its own, so `this.scale(2)` runs `Tart.scale` and the
+    # re-bound graph draws no call into `Cart.scale` there. The binding
+    # before the edit is all that is left, and it names the wrong method.
+    source = (
+        "export class Cart {\n  scale(x: number): number {\n    return x * 2;\n  }\n}\n\n"
+        "export class Tart {\n  scale(x: number): number {\n    return x * 3;\n  }\n}\n\n"
+        "export class Sub extends Cart {\n  via(): number {\n"
+        "    return this.scale(2);\n  }\n}\n"
+    )
+    edited = source.replace(
+        "  scale(x: number): number {\n    return x * 2;",
+        "  static scale(x: number): number {\n    return x * 2;",
+    ).replace("Sub extends Cart", "Sub extends Tart")
+
+    delta = _edit(temp_repo, {"cart.ts": source}, "cart.ts", edited)
+
+    assert _verdicts(delta, "scale") == {"via": cs.DELTA_ARITY_UNKNOWN}
+
+
 def test_a_call_whose_receiver_the_edit_swapped_is_judged_by_its_binding_after(
     temp_repo: Path,
 ) -> None:
