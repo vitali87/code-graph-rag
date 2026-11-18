@@ -101,6 +101,13 @@ _RESERVED_WORDS: dict[cs.SupportedLanguage, frozenset[str]] = {
 _RESERVED_METHOD_NAME_LANGUAGES = frozenset(
     {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX}
 )
+# An ES module by its extension alone; any other JS/TS file is one when it
+# has a top-level `import` or `export`.
+_JS_MODULE_SUFFIXES = frozenset({cs.EXT_MJS, cs.EXT_MTS})
+_JS_MODULE_STATEMENTS = frozenset({cs.TS_IMPORT_STATEMENT, cs.TS_EXPORT_STATEMENT})
+_JS_GENERATOR_TYPES = frozenset(
+    {cs.TS_GENERATOR_FUNCTION_DECLARATION, cs.TS_GENERATOR_FUNCTION}
+)
 # Languages whose identifiers may contain `$` (`$emit`, jQuery's `$`).
 _DOLLAR_IDENTIFIER_LANGUAGES = frozenset(
     {
@@ -115,6 +122,27 @@ _DOLLAR_IDENTIFIER_LANGUAGES = frozenset(
 # Languages whose identifiers are ASCII alone: Lua's lexer reads letters and
 # digits as the C locale does, so `数据`, `Größe` and `x٣` do not load.
 _ASCII_IDENTIFIER_LANGUAGES = frozenset({cs.SupportedLanguage.LUA})
+
+
+def _js_opens_with_use_strict(scope: Node, source: bytes) -> bool:
+    """Whether a program or function body's directive prologue, the string
+    statements that open it, holds `'use strict'`."""
+    for statement in scope.named_children:
+        if statement.type == cs.TS_COMMENT:
+            continue
+        values = [c for c in statement.named_children if c.type != cs.TS_COMMENT]
+        if (
+            statement.type != cs.TS_EXPRESSION_STATEMENT
+            or len(values) != 1
+            or values[0].type != cs.TS_STRING
+        ):
+            return False
+        text = source[values[0].start_byte : values[0].end_byte]
+        if text.decode(cs.ENCODING_UTF8, errors="replace") in (
+            cs.JS_USE_STRICT_DIRECTIVES
+        ):
+            return True
+    return False
 
 
 def _is_go_identifier(name: str) -> bool:
@@ -1724,15 +1752,101 @@ class Renamer:
         ):
             return cs.RENAME_BAD_NAME.format(name=new_name)
         if (
-            language is not None
-            and new_name in _RESERVED_WORDS.get(language, frozenset())
-            and not (
-                language in _RESERVED_METHOD_NAME_LANGUAGES
-                and found["label"] == cs.NodeLabel.METHOD.value
+            language == cs.SupportedLanguage.PYTHON
+            and (
+                normal := unicodedata.normalize(cs.PY_IDENTIFIER_NORMAL_FORM, new_name)
             )
+            != new_name
         ):
+            # Python binds the normalised name, but `__all__`, a patch target
+            # or a keyword argument keep the spelling: `K` (Kelvin) binds
+            # `K`, and `__all__ = ["K"]` names nothing.
+            return cs.RENAME_PY_NORMALISED_NAME.format(name=new_name, normal=normal)
+        if language is None or (
+            language in _RESERVED_METHOD_NAME_LANGUAGES
+            and found["label"] == cs.NodeLabel.METHOD.value
+        ):
+            return None
+        reserved = _RESERVED_WORDS.get(language, frozenset())
+        if language in _RESERVED_METHOD_NAME_LANGUAGES and path is not None:
+            reserved = reserved | self._js_reserved_here(found, language, path)
+        if new_name in reserved:
             return cs.RENAME_RESERVED_WORD.format(name=new_name, language=language)
         return None
+
+    def _js_reserved_here(
+        self,
+        found: graph_query.DefinitionRow,
+        language: cs.SupportedLanguage,
+        path: str,
+    ) -> frozenset[str]:
+        """The JS/TS words reserved only in some code that the definition's
+        name sits in.
+
+        Strict code (a module, a class, a "use strict" prologue, TypeScript)
+        reserves `let`, `static`, `yield` and the rest; a module or an async
+        body reserves `await`; a generator body `yield`; a `let`/`const`
+        declaration `let`. A CommonJS script may name a function `await` or
+        `let`, so those were refused there before they could fail.
+        """
+        try:
+            source = (self.repo_root / path).read_bytes()
+        except OSError:
+            source = b""
+        parser = load_parsers()[0].get(language)
+        if parser is None:
+            return frozenset()
+        root = parser.parse(source).root_node
+        module = Path(path).suffix in _JS_MODULE_SUFFIXES or any(
+            child.type in _JS_MODULE_STATEMENTS for child in root.named_children
+        )
+        strict = (
+            module
+            or language != cs.SupportedLanguage.JS
+            or found["label"] == cs.NodeLabel.CLASS.value
+            or _js_opens_with_use_strict(root, source)
+        )
+        words: set[str] = set()
+        token = (
+            _name_token(
+                source,
+                language,
+                found["start_line"],
+                found["end_line"] or found["start_line"],
+                found["name"],
+            )
+            if found["name"] and found["start_line"]
+            else None
+        )
+        node: Node | None = None
+        if token is not None:
+            point = (token[0] - 1, token[1])
+            node = root.descendant_for_point_range(point, point)
+        definition = node.parent if node is not None else None
+        declaration = definition.parent if definition is not None else None
+        current = definition
+        while current is not None:
+            outer = current != definition
+            if current.type == cs.TS_CLASS_BODY:
+                strict = True
+            elif current.type in cs.JS_TS_FUNCTION_NODES:
+                body = current.child_by_field_name(cs.FIELD_BODY)
+                if body is not None and _js_opens_with_use_strict(body, source):
+                    strict = True
+                if outer and any(
+                    child.type == cs.TS_JS_ASYNC_KEYWORD for child in current.children
+                ):
+                    words.add(cs.JS_AWAIT)
+                if outer and current.type in _JS_GENERATOR_TYPES:
+                    words.add(cs.JS_YIELD)
+            elif current.type == cs.TS_LEXICAL_DECLARATION and current == declaration:
+                words.add(cs.JS_LET)
+            current = current.parent
+        if strict:
+            words |= cs.JS_STRICT_RESERVED_WORDS
+        if module:
+            words.add(cs.JS_AWAIT)
+        return frozenset(words)
 
     def _go_sites_losing_visibility(
         self, qn: str, sites: list[RenameSite], old_name: str, new_name: str

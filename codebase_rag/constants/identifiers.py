@@ -13,11 +13,11 @@ UNICODE_LETTER_CATEGORY_PREFIX = "L"
 UNICODE_DECIMAL_DIGIT_CATEGORY = "Nd"
 
 PY_RESERVED_WORDS = frozenset(keyword.kwlist)
-# ECMAScript reserved words, strict mode included, plus `await` (reserved in
-# modules) and the literals.
+# ECMAScript reserved words everywhere, literals included. The words reserved
+# only in some code are below: a CommonJS script may name a function `let` or
+# `await` (`function await() {}` is legal outside modules and async bodies).
 JS_RESERVED_WORDS = frozenset(
     {
-        "await",
         "break",
         "case",
         "catch",
@@ -37,20 +37,12 @@ JS_RESERVED_WORDS = frozenset(
         "for",
         "function",
         "if",
-        "implements",
         "import",
         "in",
         "instanceof",
-        "interface",
-        "let",
         "new",
         "null",
-        "package",
-        "private",
-        "protected",
-        "public",
         "return",
-        "static",
         "super",
         "switch",
         "this",
@@ -62,9 +54,33 @@ JS_RESERVED_WORDS = frozenset(
         "void",
         "while",
         "with",
+    }
+)
+# Reserved in strict code alone: modules, class bodies, a "use strict"
+# prologue, and TypeScript, which is compiled as strict code.
+JS_STRICT_RESERVED_WORDS = frozenset(
+    {
+        "implements",
+        "interface",
+        "let",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "static",
         "yield",
     }
 )
+# Reserved in a module and inside an async function's body.
+JS_AWAIT = "await"
+# Reserved inside a generator's body.
+JS_YIELD = "yield"
+# No `let` or `const` declaration may bind `let`.
+JS_LET = "let"
+# How Python reads an identifier: NFKC-normalised, so `K` (the Kelvin sign)
+# binds `K` (PEP 3131).
+PY_IDENTIFIER_NORMAL_FORM = "NFKC"
+
 JAVA_RESERVED_WORDS = frozenset(
     {
         "_",

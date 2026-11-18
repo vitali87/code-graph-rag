@@ -194,3 +194,121 @@ def test_an_ascii_lua_name_is_accepted(
     graph = _index(temp_repo, mock_ingestor)
     report = _plan(temp_repo, graph, "mod.helper", "_fetch2")
     assert "local function _fetch2(a)" in report.diff, report.message
+
+
+@pytest.mark.parametrize(
+    ("new", "normal"), [("K", "K"), ("ｆoo", "foo"), ("aﬁ", "afi")]
+)
+def test_a_python_name_python_reads_differently_is_refused(
+    temp_repo: Path, py_graph: RecordedGraph, new: str, normal: str
+) -> None:
+    # Python binds an identifier NFKC-normalised: `K` (the Kelvin sign) binds
+    # `K`, so an `__all__` or patch string kept in the typed spelling would
+    # name nothing.
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, py_graph, "pkg.util.helper", new)
+    assert str(refused.value) == cs.RENAME_PY_NORMALISED_NAME.format(
+        name=new, normal=normal
+    )
+
+
+@pytest.mark.parametrize("new", ["await", "let", "static", "yield", "interface"])
+def test_a_script_function_may_take_a_word_only_strict_code_reserves(
+    temp_repo: Path, js_graph: RecordedGraph, new: str
+) -> None:
+    # `api.js` is a CommonJS script: `function await(url) {}` and
+    # `function let(url) {}` load there.
+    report = _plan(temp_repo, js_graph, "api.fetch", new)
+    assert f"function {new}(url)" in report.diff, report.message
+
+
+@pytest.mark.parametrize(
+    ("rel", "source", "member", "new"),
+    [
+        (
+            "mod.js",
+            "export function fetch(url) { return url; }\n",
+            "mod.fetch",
+            "await",
+        ),
+        (
+            "mod.js",
+            "export function fetch(url) { return url; }\n",
+            "mod.fetch",
+            "let",
+        ),
+        (
+            "mod.mjs",
+            "function fetch(url) { return url; }\nfetch(1);\n",
+            "mod.fetch",
+            "await",
+        ),
+        (
+            "strict.js",
+            "'use strict';\nfunction fetch(url) { return url; }\n"
+            "module.exports = { fetch };\n",
+            "strict.fetch",
+            "static",
+        ),
+        (
+            "own.js",
+            "function fetch(url) { 'use strict'; return url; }\n"
+            "module.exports = { fetch };\n",
+            "own.fetch",
+            "yield",
+        ),
+        (
+            "nested.js",
+            "async function outer() {\n  function fetch(url) { return url; }\n"
+            "  return fetch(1);\n}\nmodule.exports = { outer };\n",
+            "nested.outer.fetch",
+            "await",
+        ),
+        (
+            "gen.js",
+            "function* outer() {\n  function fetch(url) { return url; }\n"
+            "  yield fetch(1);\n}\nmodule.exports = { outer };\n",
+            "gen.fetch",
+            "yield",
+        ),
+        (
+            "cls.js",
+            "class Store {}\nmodule.exports = { Store };\n",
+            "cls.Store",
+            "let",
+        ),
+        (
+            "api.ts",
+            "function fetch(url: string) { return url; }\nfetch('x');\n",
+            "api.fetch",
+            "let",
+        ),
+    ],
+    ids=[
+        "module-await",
+        "module-let",
+        "mjs-await",
+        "use-strict-file",
+        "use-strict-function",
+        "inside-async",
+        "inside-generator",
+        "class-name",
+        "typescript",
+    ],
+)
+def test_a_word_reserved_where_the_name_sits_is_refused(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    rel: str,
+    source: str,
+    member: str,
+    new: str,
+) -> None:
+    # Negatives: strict code (a module, a "use strict" prologue, a class,
+    # TypeScript) reserves `let`, `static` and `yield`; a module or an async
+    # body `await`; a generator body `yield`.
+    _write(temp_repo, rel, source)
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, member, new)
+    assert "is a reserved word in" in str(refused.value), str(refused.value)
