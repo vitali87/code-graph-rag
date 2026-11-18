@@ -2647,8 +2647,21 @@ class _StatefulIngestor:
     def _inbound_edge_rows(self, params: PropertyDict) -> list[ResultRow]:
         raw_paths = params.get(cs.CYPHER_PARAM_PATHS)
         changed: set[str] = set(raw_paths) if isinstance(raw_paths, list) else set()
+        # Mirrors the real query: the edges into what the module delete is
+        # about to take, this project's modules at those paths and their
+        # subtrees, not every node at a path (#2918).
+        project_name = _text(params.get(cs.KEY_PROJECT_NAME))
+        project_prefix = _text(params.get(cs.KEY_PROJECT_PREFIX))
+        targets: set[_NodeId] = set()
+        for changed_path in sorted(changed):
+            targets |= self._module_subtree(
+                changed_path,
+                project_name,
+                project_prefix,
+                params.get(cs.KEY_NESTED_PROJECTS),
+            )
         inbound: list[ResultRow] = []
-        for edge in self._edges_into(changed):
+        for edge in (e for t in targets for e in self._in.get(t, ())):
             from_label, from_val, rel_type, to_label, to_val, _site = edge
             if rel_type not in _INBOUND_DEPENDENT_RELS:
                 continue

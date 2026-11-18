@@ -1,5 +1,11 @@
 # Indexer Rust Port: Measured Plan
 
+> **Superseded by [RUST_REWRITE_PLAN.md](RUST_REWRITE_PLAN.md).** The stages
+> below landed and stay. What this plan kept in Python (call resolution, the
+> registries every language shares, the passes' control flow) moves to Rust
+> too, so that indexing can use every core. Its step 5 rested on
+> py-tree-sitter releasing the GIL while parsing; it does not (see that step).
+
 The embedded graph already runs its hot paths in Rust (`rust/cgr_graph_rs`,
 shipped as the `cgr-graph-rs` wheels). This plan covers the next question:
 should the indexing pipeline that fills the graph move to Rust too, and in
@@ -470,9 +476,15 @@ once in the pre-parse stage (`_pre_parse_changed_files`), with the GIL
 released: the bridge only reads trees nothing else mutates, and holding the
 Python nodes across the release keeps the trees alive. The serial passes
 then look the results up. On N cores this divides what is left of the
-ported share by about N. py-tree-sitter already releases the GIL while
-parsing (`Parser.parse`), so the first parse can move onto a thread pool
-before any of this.
+ported share by about N.
+
+Correction: py-tree-sitter does not release the GIL while parsing. In the
+pinned 0.26.0, and in 0.26.1, `parser_parse` and the query cursor hold it
+throughout (`tree_sitter/binding/parser.c` releases it only around
+`print_dot_graphs`), and on a free-threaded interpreter the module turns the
+GIL back on (`Py_MOD_GIL_USED`). Parsing django's 2,818 Python files on four
+threads took 2.16 s against 1.68 s on one. The first parse cannot move onto a
+thread pool; see [RUST_REWRITE_PLAN.md](RUST_REWRITE_PLAN.md).
 
 ### 6. The AST cache
 
