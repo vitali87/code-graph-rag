@@ -318,6 +318,7 @@ def _graphs_under_seed(seed: str, out: Path, roots: list[Path]) -> list[_DumpedG
         },
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         timeout=_SUBPROCESS_TIMEOUT_SECONDS,
         check=False,
     )
