@@ -294,6 +294,7 @@ def test_reading_the_setting_names_leaves_the_environment_alone(
         env=env,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=True,
     )
 
