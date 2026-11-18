@@ -58,7 +58,16 @@ from ..utils.path_utils import (
     python_stub_implementations,
 )
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
-from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
+from .imports import (
+    _JS_DECLARATIONS,
+    ANY_MODULE,
+    ImportRewriter,
+    ImportSite,
+    SymbolMove,
+    _imported,
+    _js_destructured_keys,
+    _node_text,
+)
 from .occurrences import (
     Occurrence,
     Target,
@@ -116,6 +125,19 @@ _JS_VALUE_REFERENCE_TYPES = frozenset(
 )
 # A script by its extension, whatever its package.json says.
 _JS_SCRIPT_SUFFIXES = frozenset({cs.EXT_CJS, cs.EXT_CTS})
+# The statements an import site is: `import`, `export ... from` and a
+# `require` destructure (`const { fetch } = require("./api")`).
+_JS_IMPORTING_STATEMENTS = _JS_MODULE_STATEMENTS | _JS_DECLARATIONS
+# The patterns between a destructured binding and its declarator.
+_JS_BINDING_PATTERNS = frozenset(
+    {
+        cs.TS_OBJECT_PATTERN,
+        cs.TS_ARRAY_PATTERN,
+        cs.TS_PAIR_PATTERN,
+        cs.TS_ASSIGNMENT_PATTERN,
+        cs.TS_OBJECT_ASSIGNMENT_PATTERN,
+    }
+)
 # The words reserved only in some code, which a use site is checked for.
 _JS_CONTEXT_RESERVED_WORDS = cs.JS_STRICT_RESERVED_WORDS | {cs.JS_AWAIT}
 # Languages whose identifiers may contain `$` (`$emit`, jQuery's `$`).
@@ -143,6 +165,15 @@ class _JsFile(NamedTuple):
     def token_at(self, line: int, col: int) -> Node | None:
         point = (line - 1, col)
         return self.root.descendant_for_point_range(point, point)
+
+    def statement_at(self, site: ImportSite) -> Node | None:
+        """The import, re-export or declaration an import site spans."""
+        node = self.root.descendant_for_point_range(
+            (site.line - 1, site.col), (site.end_line - 1, site.end_col)
+        )
+        while node is not None and node.type not in _JS_IMPORTING_STATEMENTS:
+            node = node.parent
+        return node
 
 
 def _js_is_member_name(node: Node) -> bool:
@@ -187,11 +218,14 @@ def _js_words_at(
             words.add(cs.JS_AWAIT)
         if enclosing.type in _JS_GENERATOR_TYPES or cs.JS_GENERATOR_STAR in keywords:
             words.add(cs.JS_YIELD)
+    declarator = holder if binding else None
+    # `const { fetch } = ...` binds in a pattern inside the declarator.
+    while declarator is not None and declarator.type in _JS_BINDING_PATTERNS:
+        declarator = declarator.parent
     if (
-        binding
-        and holder is not None
-        and holder.parent is not None
-        and holder.parent.type == cs.TS_LEXICAL_DECLARATION
+        declarator is not None
+        and declarator.parent is not None
+        and declarator.parent.type == cs.TS_LEXICAL_DECLARATION
     ):
         words.add(cs.JS_LET)
     if strict:
@@ -204,16 +238,43 @@ def _js_words_at(
     return frozenset(words)
 
 
-def _js_has_top_level_await(root: Node) -> bool:
-    stack = list(root.children)
+def _js_has_module_syntax(root: Node) -> bool:
+    """Whether the file holds syntax only a module parses, by which Node
+    loads an untyped `.js` file as one: an `await` outside any function, or
+    `import.meta` anywhere, a function body included."""
+    stack = [(child, False) for child in root.children]
     while stack:
-        node = stack.pop()
-        if node.type in cs.JS_TS_FUNCTION_NODES or node.type == cs.TS_CLASS_BODY:
-            continue
-        if node.type == cs.TS_JS_AWAIT_EXPRESSION:
+        node, nested = stack.pop()
+        if (
+            node.type == cs.TS_META_PROPERTY
+            and node.child_count
+            and node.children[0].type == cs.TS_JS_IMPORT_META_KEYWORD
+        ):
             return True
-        stack.extend(node.children)
+        if node.type == cs.TS_JS_AWAIT_EXPRESSION and not nested:
+            return True
+        nested = (
+            nested
+            or node.type in cs.JS_TS_FUNCTION_NODES
+            or node.type == cs.TS_CLASS_BODY
+        )
+        stack.extend((child, nested) for child in node.children)
     return False
+
+
+def _js_destructured_local(statement: Node, name: str) -> Node | None:
+    """The local a destructure (`const { fetch } = require("./api")`) binds
+    the export `name` to under that same name, or None."""
+    if statement.type not in _JS_DECLARATIONS:
+        return None
+    for declarator in statement.named_children:
+        pattern = declarator.child_by_field_name(cs.FIELD_NAME)
+        if pattern is None or pattern.type != cs.TS_OBJECT_PATTERN:
+            continue
+        for key, local, _shorthand in _js_destructured_keys(pattern):
+            if _node_text(key) == name == _node_text(local):
+                return local
+    return None
 
 
 def _js_opens_with_use_strict(scope: Node, source: bytes) -> bool:
@@ -253,8 +314,9 @@ def _is_go_identifier(name: str) -> bool:
 def _is_spelled_for(language: cs.SupportedLanguage | None, name: str) -> bool:
     """Whether `name` is an identifier of the definition's language.
 
-    Python's rule (`isidentifier`) is the base: JS/TS also take `$` and a
-    ZWNJ/ZWJ after the first character, Scala, Dart and Java `$`. Go is
+    Python's rule (`isidentifier`) is the base: JS/TS also take `$`, a
+    ZWNJ/ZWJ after the first character and the few ID_Start characters
+    XID leaves out (`aͺ`), Scala, Dart and Java `$`. Go is
     held to its letters and digits as well, Lua to ASCII. A name another
     language's own rule takes beyond these (`aͺ` in Go, `€total` in Java)
     is one its tree-sitter grammar refuses too, so the rewrite could not be
@@ -264,6 +326,10 @@ def _is_spelled_for(language: cs.SupportedLanguage | None, name: str) -> bool:
         name.replace("$", "_") if language in _DOLLAR_IDENTIFIER_LANGUAGES else name
     )
     if language in _RESERVED_METHOD_NAME_LANGUAGES and spelled:
+        # Each ID-only character is an ID_Start, so `_` stands in for it.
+        spelled = "".join(
+            cs.CHAR_UNDERSCORE if c in cs.JS_ID_ONLY_CHARACTERS else c for c in spelled
+        )
         spelled = spelled[0] + "".join(
             c for c in spelled[1:] if c not in cs.JS_IDENTIFIER_JOINERS
         )
@@ -1950,11 +2016,11 @@ class Renamer:
             or any(child.type in _JS_MODULE_STATEMENTS for child in root.named_children)
             or package_type == cs.JS_PACKAGE_TYPE_MODULE
             # Node detects a module from module-only syntax in a file no
-            # extension or package type calls CommonJS: a top-level `await`.
+            # extension or package type calls CommonJS.
             or (
                 suffix not in _JS_SCRIPT_SUFFIXES
                 and package_type != cs.JS_PACKAGE_TYPE_COMMONJS
-                and _js_has_top_level_await(root)
+                and _js_has_module_syntax(root)
             )
         )
         strict = (
@@ -1991,8 +2057,10 @@ class Renamer:
     ) -> list[RenameSite]:
         """JS/TS imports that bind the symbol under its own name, where the
         new name may not be bound: `import { fetch }` would become
-        `import { await }`, which no module accepts. One with an alias
-        (`import { fetch as run }`) keeps its local name and is not one."""
+        `import { await }`, which no module accepts, and `const { fetch } =
+        require(...)` `const { let }`, which no code does. One with an alias
+        (`import { fetch as run }`, `{ fetch: run }`) keeps its local name
+        and is not one, nor is a re-export, which binds none."""
         if (
             new_name
             not in _JS_CONTEXT_RESERVED_WORDS | cs.JS_STRICT_RESTRICTED_BINDINGS
@@ -2010,9 +2078,25 @@ class Renamer:
             if site.path not in files:
                 files[site.path] = self._js_file(site.path, language)
             file = files[site.path]
-            if file is not None and new_name in _js_words_at(
-                file, None, binding=True, is_class=False
+            if file is None:
+                continue
+            statement = file.statement_at(site)
+            if (
+                statement is not None
+                and statement.type == cs.TS_EXPORT_STATEMENT
+                and statement.child_by_field_name(cs.FIELD_SOURCE) is not None
             ):
+                # `export { await } from "./api"` is valid: an export name
+                # may be any IdentifierName when it forwards one.
+                continue
+            # A destructure's words depend on its declaration (`let` in a
+            # `const` one) and the function it sits in.
+            token = (
+                _js_destructured_local(statement, old_name)
+                if statement is not None
+                else None
+            )
+            if new_name in _js_words_at(file, token, binding=True, is_class=False):
                 found.append(
                     RenameSite("import", site.path, site.line, site.col, module, None)
                 )

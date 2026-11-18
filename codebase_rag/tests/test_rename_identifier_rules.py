@@ -476,3 +476,96 @@ def test_a_js_name_with_a_zero_width_joiner_is_accepted(
     # identifier rule does not.
     report = _plan(temp_repo, js_graph, "api.fetch", "a\u200cb")
     assert "function a\u200cb(url)" in report.diff, report.message
+
+
+_API_CJS = "function fetch(url) { return url; }\nmodule.exports = { fetch };\n"
+
+
+def test_a_re_export_binds_no_local_name_so_may_forward_a_reserved_word(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `export { await } from "./api.cjs"` forwards an export without binding
+    # a local name, so a reserved word is legal there (PR #3239 review).
+    _write(temp_repo, "api.cjs", _API_CJS)
+    _write(temp_repo, "main.mjs", 'export { fetch } from "./api.cjs";\n')
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "api.fetch", "await")
+    assert "function await(url)" in report.diff, report.message
+    assert 'export { await } from "./api.cjs";' in report.diff, report.diff
+
+
+def test_import_meta_in_a_function_makes_an_untyped_js_file_a_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Node loads an untyped `.js` file with `import.meta` anywhere in it as
+    # an ES module, which is strict and may not bind `eval`.
+    _write(
+        temp_repo,
+        "meta.js",
+        "function fetch() { return import.meta.url; }\nfetch();\n",
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "meta.fetch", "eval")
+    assert "is a reserved word in" in str(refused.value), str(refused.value)
+
+
+def test_import_meta_in_an_explicit_commonjs_file_keeps_it_a_script(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `.cjs` is CommonJS whatever syntax it holds.
+    _write(
+        temp_repo,
+        "meta.cjs",
+        "function fetch() { return import.meta.url; }\nmodule.exports = { fetch };\n",
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "meta.fetch", "eval")
+    assert "function eval()" in report.diff, report.message
+
+
+def test_a_js_name_with_an_id_but_not_xid_character_is_accepted(
+    temp_repo: Path, js_graph: RecordedGraph
+) -> None:
+    # U+037A is in ECMAScript's ID_Start and ID_Continue but not in the
+    # XID sets Python's `isidentifier` uses.
+    report = _plan(temp_repo, js_graph, "api.fetch", "a\u037a")
+    assert "function a\u037a(url)" in report.diff, report.message
+
+
+def test_a_python_name_with_an_id_but_not_xid_character_is_refused(
+    temp_repo: Path, py_graph: RecordedGraph
+) -> None:
+    # Negative: Python identifiers are XID, which excludes U+037A.
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, py_graph, "pkg.util.helper", "a\u037a")
+    assert str(refused.value) == cs.RENAME_BAD_NAME.format(name="a\u037a")
+
+
+def test_a_destructured_const_require_may_not_bind_let(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `const { let } = require(...)` is an early error even in sloppy code.
+    _write(temp_repo, "api.cjs", _API_CJS)
+    _write(temp_repo, "main.cjs", 'const { fetch } = require("./api.cjs");\n')
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "api.fetch", "let")
+    assert "main.cjs" in str(refused.value), str(refused.value)
+
+
+def test_an_aliased_destructured_require_may_take_let(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `const { let: run } = ...` binds `run`, and `let` as a key
+    # is an IdentifierName.
+    _write(temp_repo, "api.cjs", _API_CJS)
+    _write(
+        temp_repo,
+        "main.cjs",
+        'const { fetch: run } = require("./api.cjs");\nrun(1);\n',
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "api.fetch", "let")
+    assert "function let(url)" in report.diff, report.message
+    assert "const { let: run } = require" in report.diff, report.diff

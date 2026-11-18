@@ -89,6 +89,15 @@ JS_STRICT_RESTRICTED_BINDINGS = frozenset({"eval", "arguments"})
 TS_JS_HASH_BANG_LINE = "hash_bang_line"
 # ZWNJ and ZWJ, which a JS name may hold after its first character.
 JS_IDENTIFIER_JOINERS = frozenset({"\u200c", "\u200d"})
+# The characters in Unicode's ID_Start, which a JS name may begin and
+# continue with, that its XID_Start leaves out, as NFKC does not keep them
+# (UAX #31). Python's `isidentifier` reads XID, so `aͺ` (U+037A)
+# failed it.
+JS_ID_ONLY_CHARACTERS = frozenset(
+    "\u037a\u0e33\u0eb3\u309b\u309c"
+    "\ufc5e\ufc5f\ufc60\ufc61\ufc62\ufc63\ufdfa\ufdfb"
+    "\ufe70\ufe72\ufe74\ufe76\ufe78\ufe7a\ufe7c\ufe7e\uff9e\uff9f"
+)
 # How Python reads an identifier: NFKC-normalised, so `K` (the Kelvin sign)
 # binds `K` (PEP 3131).
 PY_IDENTIFIER_NORMAL_FORM = "NFKC"
