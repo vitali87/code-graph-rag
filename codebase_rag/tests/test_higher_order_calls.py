@@ -9,10 +9,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
+
+pytestmark = pytest.mark.usefixtures("both_callable_scans")
 
 PROJECT = "proj"
 
