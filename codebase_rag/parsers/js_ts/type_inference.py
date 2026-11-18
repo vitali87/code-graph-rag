@@ -60,6 +60,12 @@ _JS_SELF_NAMED_EXPRESSIONS = frozenset(
     {cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION, cs.TS_CLASS_EXPRESSION}
 )
 _JS_CLASS_NODE_TYPES = frozenset(cs.JS_TS_CLASS_NODES) | _JS_BLOCK_SCOPED_DECLARATIONS
+# The `const` values whose written return type types a call through them; a
+# generator's call gives a generator, whatever its annotation names.
+_JS_CONST_FACTORY_TYPES = frozenset({cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION})
+# The nodes a call's return type may name to type the variable it is
+# assigned to.
+_JS_RETURNED_TYPE_NODES = frozenset({NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM})
 _JS_LOCAL_TYPE_DECLARATIONS = _JS_BLOCK_SCOPED_DECLARATIONS | {
     cs.TS_JS_ENUM_DECLARATION
 }
@@ -668,19 +674,29 @@ class JsTypeInferenceEngine:
             else None
         )
         if callee is not None and callee.type == cs.TS_IDENTIFIER:
-            # A `make` this function declares (a parameter, a local function
-            # or function value, a hoisted `var`) is not the file's `make()`,
-            # and says nothing about what it returns; nor does the file's
+            # A `make` this function declares is not the file's `make()`. Of
+            # those, only a `const` arrow or function expression with a
+            # written return type says what the call returns: it is the
+            # nearest binding at the call and nothing can replace it. Any
+            # other (a parameter, a `let` or `var`, a local function or
+            # class, an unannotated value) says nothing; nor does the file's
             # `make` once this function assigns it another value. A write to
             # a local `make` elsewhere replaces nothing the call reaches.
             name = safe_decode_text(callee) or ""
-            if self._bound_locally(callee, names) or any(
+            bound, declaration = self._local_binding(callee, names)
+            if bound:
+                return self._registered_type(
+                    self._const_function_return_type(declaration, names.module_qn)
+                )
+            if any(
                 (target := write.child_by_field_name(cs.FIELD_LEFT)) is not None
-                and not self._bound_locally(target, names)
+                and not self._local_binding(target, names)[0]
                 for write, _owner in names.assigned.get(name, ())
             ):
                 return None
-            return self._module_function_return_type(value, name, names.module_qn)
+            return self._registered_type(
+                self._module_function_return_type(value, name, names.module_qn)
+            )
         receiver = (
             callee.child_by_field_name(cs.FIELD_OBJECT)
             if callee is not None and callee.type == cs.TS_MEMBER_EXPRESSION
@@ -689,7 +705,7 @@ class JsTypeInferenceEngine:
         if (
             receiver is not None
             and receiver.type == cs.TS_IDENTIFIER
-            and self._bound_locally(receiver, names)
+            and self._local_binding(receiver, names)[0]
         ):
             # `Factory.one()` on a local, parameter or local class `Factory`,
             # not on the module's class of that name, whose return type the
@@ -700,21 +716,65 @@ class JsTypeInferenceEngine:
         )
 
     @staticmethod
-    def _bound_locally(ident: ASTNode, names: _ScopedNames) -> bool:
+    def _local_binding(
+        ident: ASTNode, names: _ScopedNames
+    ) -> tuple[bool, ASTNode | None]:
         # Whether `ident`'s name is, where it stands, something this function
-        # declares: a parameter, a local, or a local class, enum or function.
+        # declares (a parameter, a local, or a local class, enum or
+        # function), and the nearest such declaration when it is a variable.
         # A `var` is hoisted: the name is that variable from the top of its
         # function, even on a line before the declaration.
         name = safe_decode_text(ident) or ""
         point = ident.start_byte
+        held: list[tuple[int, ASTNode | None]] = []
         for start, end, node in names.found.get(name, ()):
             if (parent := node.parent) is not None and (
                 parent.type == cs.TS_VARIABLE_DECLARATION
             ):
                 start = _enclosing_function(node).start_byte
             if start <= point < end:
-                return True
-        return any(start <= point < end for start, end in names.named.get(name, ()))
+                held.append((end - start, node))
+        held.extend(
+            (end - start, None)
+            for start, end in names.named.get(name, ())
+            if start <= point < end
+        )
+        if not held:
+            return False, None
+        return True, min(held, key=lambda entry: entry[0])[1]
+
+    def _registered_type(self, type_name: str | None) -> str | None:
+        # A return type that names a class, interface or enum the project
+        # defines, or an array of one. The return reader answers for methods,
+        # and for a free function's `return new B()` it names the module, not
+        # B; that, or a name nothing defines, would replace the type the
+        # variable had with no type at all.
+        named = _container_element(type_name) or type_name
+        if named is None or self.function_registry.get(named) not in (
+            _JS_RETURNED_TYPE_NODES
+        ):
+            return None
+        return type_name
+
+    def _const_function_return_type(
+        self, declaration: ASTNode | None, module_qn: str
+    ) -> str | None:
+        # `const make = (): B => new B()`: the written return type only, no
+        # reading of the body.
+        kind = (
+            declaration.parent.child_by_field_name(cs.FIELD_KIND)
+            if declaration is not None
+            and declaration.type == cs.TS_VARIABLE_DECLARATOR
+            and declaration.parent is not None
+            and declaration.parent.type == cs.TS_LEXICAL_DECLARATION
+            else None
+        )
+        if declaration is None or kind is None or kind.type != cs.JS_CONST_KEYWORD:
+            return None
+        value = declaration.child_by_field_name(cs.FIELD_VALUE)
+        if value is None or value.type not in _JS_CONST_FACTORY_TYPES:
+            return None
+        return self._annotated_return_type_of(value, module_qn)
 
     def _module_function_return_type(
         self, call: ASTNode, name: str, module_qn: str

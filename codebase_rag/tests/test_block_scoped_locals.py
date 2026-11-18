@@ -632,18 +632,18 @@ def test_a_js_reassignment_from_a_hoisted_var_factory_keeps_the_type(
     assert edges[18] == _exact("C.m")
 
 
-def test_a_js_reassignment_from_a_local_factory_keeps_the_type(
+def test_an_unannotated_local_factory_keeps_the_type(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # The `make` called is the function's own arrow. Only a module-level
-    # function's return type is read, so `x` keeps the A it had.
+    # The `make` called is the function's own arrow, with no written return
+    # type: its body is not read, so `x` keeps the A it had.
     source = (
         "class A { m(): number { return 1; } }\n"
         "class B extends A { m(): number { return 2; } }\n"
         "class C { m(): number { return 3; } }\n"
         "\n"
         "export function run(): number {\n"
-        "  const make = (): B => new B();\n"
+        "  const make = () => new B();\n"
         "  let sum = 0;\n"
         "  {\n"
         "    let x: A = new A();\n"
@@ -691,12 +691,12 @@ def test_a_write_to_another_make_does_not_hide_the_module_factory(
     assert edges[10] == _exact("B.m")
 
 
-def test_a_local_const_factory_is_not_typed_whatever_else_is_written(
+def test_an_annotated_const_factory_types_the_reassignment(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # The bot review's example: only a module-level function's return type
-    # is read, so the function's own `const make` leaves `x` the A it was,
-    # as on main, and the other block's writes change nothing.
+    # The bot review's example: the call reaches the function's own `const
+    # make`, which nothing can replace, and its written return type says B;
+    # the other block's writes are to another `make`.
     source = (
         "class A { m(): number { return 1; } }\n"
         "class B extends A { m(): number { return 2; } }\n"
@@ -715,7 +715,44 @@ def test_a_local_const_factory_is_not_typed_whatever_else_is_written(
 
     edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
 
-    assert edges[9] == _exact("A.m")
+    assert edges[9] == _exact("B.m")
+
+
+def test_an_unannotated_module_factory_never_types_by_the_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The bot review's example: reading `function make() { return new B(); }`
+    # names the module rather than B, which would leave `x` with no type.
+    # Only a type the project defines counts, so `x` keeps the type it had:
+    # B in `run`, A in `run2`.
+    source = (
+        "class A { m() { return 1; } }\n"
+        "class B { m() { return 2; } }\n"
+        "class C { m() { return 3; } }\n"
+        "\n"
+        "function make() { return new B(); }\n"
+        "\n"
+        "export function run() {\n"
+        "  let x = new B();\n"
+        "  x = make();\n"
+        "  const result = x.m();\n"
+        "  { const x = new C(); x.m(); }\n"
+        "  return result;\n"
+        "}\n"
+        "\n"
+        "export function run2() {\n"
+        "  let x = new A();\n"
+        "  x = make();\n"
+        "  const result = x.m();\n"
+        "  { const x = new C(); x.m(); }\n"
+        "  return result;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.js": source}, mock_ingestor)
+
+    assert edges[10] == _exact("B.m")
+    assert edges[18] == _exact("A.m")
 
 
 def test_a_js_reassignment_from_a_local_generator_keeps_the_type(
