@@ -637,7 +637,8 @@ def test_a_header_alias_reaches_the_nested_class_on_an_incremental_run(
     _index_stateful(store, root, force=False)
 
     assert _run_methods(store) == {"proj.lib.lib.Outer.Inner.run"}
-    assert (frozenset(store.nodes), frozenset(store.edges)) == clean
+    reindexed = (frozenset(store.nodes), frozenset(store.edges))
+    assert reindexed == clean
 
 
 def _run_methods(store: _StatefulIngestor) -> set[str]:
