@@ -644,7 +644,11 @@ class JsTypeInferenceEngine:
         if callee is not None and callee.type == cs.TS_IDENTIFIER:
             # A `make` declared in this function is the one called, not the
             # file's `make()` the lookup below reads: only a local function
-            # value says what it returns, a parameter says nothing.
+            # value says what it returns, a parameter says nothing. Either is
+            # read only while nothing in the function can have replaced it:
+            # `make = () => new A()` anywhere makes every `make()` unknown.
+            if names.assigned.get(safe_decode_text(callee) or ""):
+                return None
             if (local := self._declared_in_scope(callee, names)) is None:
                 return self._call_return_type(value, names.module_qn)
             return self._local_function_return_type(local, callee, names.module_qn)
@@ -685,12 +689,18 @@ class JsTypeInferenceEngine:
         self, declaration: ASTNode, callee: ASTNode, module_qn: str
     ) -> str | None:
         # `const make = (): B => new B()`: the arrow's return type, read as
-        # for a file-level function.
-        value = (
-            declaration.child_by_field_name(cs.FIELD_VALUE)
+        # for a file-level function. A `let` or `var` binding can be given
+        # another function, so it says nothing.
+        kind = (
+            declaration.parent.child_by_field_name(cs.FIELD_KIND)
             if declaration.type == cs.TS_VARIABLE_DECLARATOR
+            and declaration.parent is not None
+            and declaration.parent.type == cs.TS_LEXICAL_DECLARATION
             else None
         )
+        if kind is None or kind.type != cs.JS_CONST_KEYWORD:
+            return None
+        value = declaration.child_by_field_name(cs.FIELD_VALUE)
         if value is None or value.type not in _JS_FUNCTION_VALUE_TYPES:
             return None
         function_qn = f"{module_qn}{cs.SEPARATOR_DOT}{safe_decode_text(callee)}"

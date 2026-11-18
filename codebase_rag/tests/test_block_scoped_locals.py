@@ -664,6 +664,32 @@ def test_a_js_reassignment_from_a_local_factory_reads_its_return_type(
     assert edges[15] == _exact("C.m")
 
 
+def test_a_js_reassignment_from_a_replaced_factory_keeps_the_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The bot review's repro: `make` is a `let` given another arrow before
+    # the call, so its first arrow's B says nothing; `x` keeps its C.
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class B { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "\n"
+        "export function run(): number {\n"
+        "  let make = (): B => new B();\n"
+        "  make = (): C => new C();\n"
+        "  let x = new C();\n"
+        "  x = make();\n"
+        "  const result = x.m();\n"
+        "  { let x = new A(); }\n"
+        "  return result;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[10] == _exact("C.m")
+
+
 def test_a_js_reassignment_from_a_shadowed_class_s_method_keeps_the_type(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
