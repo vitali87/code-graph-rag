@@ -461,3 +461,293 @@ def test_removing_the_other_language_sibling_restores_the_original_graph(
         "extra": sorted(map(str, after[0] - before[0] | after[1] - before[1])),
         "missing": sorted(map(str, before[0] - after[0] | before[1] - after[1])),
     }
+
+
+def test_lone_other_language_file_takes_no_cross_language_imports_or_calls(
+    tmp_path: Path,
+) -> None:
+    # A JS require("./util") and a TS import from "./util" must not bind to
+    # a lone Python util.py (#2756).
+    root = tmp_path / "proj"
+    _write(
+        root,
+        {
+            "util.py": PY_UTIL,
+            "main.js": JS_APP,
+            "boot.ts": (
+                "import { helper } from './util';\n"
+                "export function boot(): number {\n"
+                "  return helper();\n"
+                "}\n"
+            ),
+        },
+    )
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    calls = _edges(store, cs.RelationshipType.CALLS)
+    assert not any(
+        "util.py" in dst for src, dst in calls if "main.js" in src or "boot.ts" in src
+    ), calls
+
+    imports = _edges(store, cs.RelationshipType.IMPORTS)
+    assert not any(
+        "util.py" in dst for src, dst in imports if "main.js" in src or "boot.ts" in src
+    ), imports
+
+
+@pytest.mark.parametrize("reuse", [False, True], ids=["fresh", "reused"])
+def test_deleting_sibling_on_incremental_path_drops_cross_language_calls(
+    tmp_path: Path, reuse: bool
+) -> None:
+    # Index util.py + util.js + main.js, then delete util.js: main.js must
+    # not re-point its CALLS or IMPORTS at util.py (#2756).
+    root = tmp_path / "proj"
+    _write(root, {"util.py": PY_UTIL, "util.js": JS_UTIL, "main.js": JS_APP})
+    store = _StatefulIngestor()
+    updater = _updater(store, root)
+    updater.run(force=True)
+
+    calls = _edges(store, cs.RelationshipType.CALLS)
+    assert ("main.js:proj.main.go", "util.js:proj.util.js.helper") in calls
+
+    (root / "util.js").unlink()
+    _bump(root)
+    (updater if reuse else _updater(store, root)).run(force=False)
+
+    calls_after = _edges(store, cs.RelationshipType.CALLS)
+    assert not any("util.py" in dst for src, dst in calls_after if "main.js" in src), (
+        calls_after
+    )
+
+    imports_after = _edges(store, cs.RelationshipType.IMPORTS)
+    assert not any(
+        "util.py" in dst for src, dst in imports_after if "main.js" in src
+    ), imports_after
+
+
+JS_PKG_APP = (
+    "const { helper } = require('./pkg');\nfunction go() {\n  return helper();\n}\n"
+)
+
+
+@pytest.mark.parametrize(
+    "others",
+    [
+        pytest.param({"pkg.py": PY_UTIL}, id="module-named-as-the-directory"),
+        pytest.param({"pkg/__init__.py": PY_UTIL}, id="package-in-the-directory"),
+        pytest.param({"pkg/index.py": PY_UTIL}, id="index-of-the-same-stem"),
+    ],
+)
+def test_a_directory_import_reaches_its_own_languages_index(
+    tmp_path: Path, others: dict[str, str]
+) -> None:
+    # Another language's module on the directory's name must not cost the JS
+    # importer its `pkg/index.js` (#2774 review).
+    root = tmp_path / "proj"
+    _write(root, {"pkg/index.js": JS_UTIL, "main.js": JS_PKG_APP, **others})
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    index_qn = _module_qns(store)["pkg/index.js"]
+    assert ("main.js:proj.main", f"pkg/index.js:{index_qn}") in _edges(
+        store, cs.RelationshipType.IMPORTS
+    )
+    calls = {
+        dst
+        for src, dst in _edges(store, cs.RelationshipType.CALLS)
+        if src == "main.js:proj.main.go"
+    }
+    assert calls == {f"pkg/index.js:{index_qn}.helper"}
+
+
+def test_an_export_named_as_another_languages_file_is_reached_through_the_index(
+    tmp_path: Path,
+) -> None:
+    # `pkg/helper.py` holds `proj.pkg.helper`, the name `pkg/index.js`
+    # exports: the directory import still lands on the index (#3601 review).
+    root = tmp_path / "proj"
+    _write(
+        root,
+        {"pkg/index.js": JS_UTIL, "pkg/helper.py": PY_UTIL, "main.js": JS_PKG_APP},
+    )
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    assert ("main.js:proj.main", "pkg/index.js:proj.pkg.index") in _edges(
+        store, cs.RelationshipType.IMPORTS
+    )
+    assert ("main.js:proj.main.go", "pkg/index.js:proj.pkg.index.helper") in _edges(
+        store, cs.RelationshipType.CALLS
+    )
+
+
+@pytest.mark.parametrize(
+    ("exporter", "target"),
+    [
+        pytest.param({"util.js": JS_UTIL}, "util.js:proj.util.helper", id="defined"),
+        pytest.param(
+            {
+                "util.js": "export { helper } from './impl';\n",
+                "impl.js": "export function helper() {\n  return 6;\n}\n",
+            },
+            "impl.js:proj.impl.helper",
+            id="re-exported",
+        ),
+        pytest.param(
+            {
+                "util.js": (
+                    "function impl() {\n  return 8;\n}\n"
+                    "module.exports = { helper: impl };\n"
+                ),
+                "util/helper.py": PY_UTIL,
+            },
+            "util.js:proj.util.impl",
+            id="aliased-beside-another-languages-file",
+        ),
+    ],
+)
+def test_an_export_named_as_a_directory_with_an_index_stays_with_its_exporter(
+    tmp_path: Path, exporter: dict[str, str], target: str
+) -> None:
+    # `util/helper/` has an index in each language, yet `helper` is what
+    # `util.js` exports, its own or another module's: the import names
+    # `./util`, and the call follows the export (#3601 review).
+    root = tmp_path / "proj"
+    _write(
+        root,
+        {
+            **exporter,
+            "util/helper/index.js": (
+                "module.exports = function other() {\n  return 7;\n};\n"
+            ),
+            "util/helper/index.py": PY_UTIL,
+            "main.js": (
+                "import { helper } from './util';\n"
+                "export function go() {\n  return helper();\n}\n"
+            ),
+        },
+    )
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    assert ("main.js:proj.main", "util.js:proj.util") in _edges(
+        store, cs.RelationshipType.IMPORTS
+    )
+    calls = {
+        dst
+        for src, dst in _edges(store, cs.RelationshipType.CALLS)
+        if src == "main.js:proj.main.go"
+    }
+    assert calls == {target}
+
+
+@pytest.mark.parametrize(
+    "importer",
+    [
+        pytest.param(
+            "const { other } = require('./util/helper');\n"
+            "function go() {\n  return other();\n}\n",
+            id="named",
+        ),
+        pytest.param(
+            "const m = require('./util/helper');\n"
+            "function go() {\n  return m.other();\n}\n",
+            id="whole-module",
+        ),
+    ],
+)
+def test_a_directory_import_is_not_taken_for_an_export_of_the_module_above(
+    tmp_path: Path, importer: str
+) -> None:
+    # The same tree, importing the directory itself: `util.js` exporting a
+    # `helper` must not cost `./util/helper` its index (#3601 review).
+    root = tmp_path / "proj"
+    _write(
+        root,
+        {
+            "util.js": JS_UTIL,
+            "util/helper/index.js": (
+                "function other() {\n  return 5;\n}\nmodule.exports = { other };\n"
+            ),
+            "util/helper/index.py": PY_UTIL,
+            "main.js": importer,
+        },
+    )
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    index_qn = _module_qns(store)["util/helper/index.js"]
+    assert ("main.js:proj.main", f"util/helper/index.js:{index_qn}") in _edges(
+        store, cs.RelationshipType.IMPORTS
+    )
+    assert (
+        "main.js:proj.main.go",
+        f"util/helper/index.js:{index_qn}.other",
+    ) in _edges(store, cs.RelationshipType.CALLS)
+
+
+def test_another_languages_index_stem_is_no_entry_point(tmp_path: Path) -> None:
+    # Node enters a directory through `index.js` only: `pkg/init.js` (Lua's
+    # stem) beside `pkg.py` leaves `require('./pkg')` reaching nothing.
+    root = tmp_path / "proj"
+    _write(root, {"pkg.py": PY_UTIL, "pkg/init.js": JS_UTIL, "main.js": JS_PKG_APP})
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    for rel in (cs.RelationshipType.IMPORTS, cs.RelationshipType.CALLS):
+        assert not [
+            edge for edge in _edges(store, rel) if edge[0].startswith("main.js:")
+        ], rel
+
+
+def test_a_name_another_languages_submodule_holds_stays_with_its_exporter(
+    tmp_path: Path,
+) -> None:
+    # `util/helper.py` holds `proj.util.helper`, the very name `util.js`
+    # exports: the import still reaches the JS module (#2774 review).
+    root = tmp_path / "proj"
+    _write(
+        root,
+        {"util.js": JS_UTIL, "util/helper.py": PY_UTIL, "main.js": JS_APP},
+    )
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    # The function and the Python module share the name, so the endpoints are
+    # told apart by label.
+    targets = {
+        (str(rel), str(label), str(qn))
+        for (_fl, src, rel, label, qn) in store.edges
+        if str(src) in ("proj.main", "proj.main.go")
+        and rel in (cs.RelationshipType.IMPORTS, cs.RelationshipType.CALLS)
+    }
+    assert targets == {
+        (cs.RelationshipType.IMPORTS, cs.NodeLabel.MODULE.value, "proj.util"),
+        (cs.RelationshipType.CALLS, cs.NodeLabel.FUNCTION.value, "proj.util.helper"),
+    }
+
+
+@pytest.mark.parametrize("reuse", [False, True], ids=["fresh", "reused"])
+def test_an_import_that_reached_nothing_binds_once_its_module_arrives(
+    tmp_path: Path, reuse: bool
+) -> None:
+    # Held off a lone `util.py`, the import must not stay unreachable after a
+    # `util.js` is added.
+    root = tmp_path / "proj"
+    _write(root, {"util.py": PY_UTIL, "main.js": JS_APP})
+    store = _StatefulIngestor()
+    updater = _updater(store, root)
+    updater.run(force=True)
+
+    _write(root, {"util.js": JS_UTIL})
+    _bump(root)
+    (updater if reuse else _updater(store, root)).run(force=False)
+
+    assert (root, _snapshot(store, root)) == (
+        root,
+        _clean(tmp_path, {"util.py": PY_UTIL, "util.js": JS_UTIL, "main.js": JS_APP}),
+    )
+    assert ("main.js:proj.main.go", "util.js:proj.util.js.helper") in _edges(
+        store, cs.RelationshipType.CALLS
+    )
