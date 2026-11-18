@@ -389,6 +389,15 @@ MCP_WORKSPACE_NOT_INDEXED = (
 MCP_WORKSPACE_INDEX_COMMAND = (
     " 'cgr start --repo-path {path} --project-name {project} --update-graph'."
 )
+# On Windows the command is quoted with double quotes, which cmd.exe,
+# PowerShell and Git Bash all read literally except for these characters; a
+# path or name holding one gets no pasteable command (Greptile, PR #2964).
+MCP_WINDOWS_SHELL_UNQUOTABLE = frozenset('"%!$`\\')
+MCP_WORKSPACE_INDEX_UNQUOTABLE = (
+    " Index {path!r} as project {project!r}: its path or project name holds a "
+    "character a Windows shell expands even inside quotes, so quote both "
+    "yourself."
+)
 MCP_WORKSPACE_REPO_INDEXED_AS = (
     " {path} is indexed as project {project!r}, not {expected!r}."
 )

@@ -10,12 +10,13 @@ them) left every workspace project unindexed, and `list_projects` answered
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag.mcp.tools import MCPToolsRegistry
+from codebase_rag.mcp.tools import MCPToolsRegistry, _shell_argument
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo
 
 ALPHA = "alpha__1111"
@@ -177,3 +178,49 @@ async def test_the_index_command_quotes_a_project_name_for_the_shell(
     hint = str(result.get("hint"))
     assert "--project-name 'alpha; touch pwned' --update-graph" in hint
     assert f"--project-name {hostile} " not in hint
+
+
+@pytest.mark.parametrize(
+    ("value", "quoted"),
+    [
+        ("alpha & whoami & rem ", '"alpha & whoami & rem "'),
+        ("alpha|calc", '"alpha|calc"'),
+        ("C:/Users/John Doe/a", '"C:/Users/John Doe/a"'),
+        ("alpha__1111", '"alpha__1111"'),
+        ("a%PATH%", None),
+        ("a!x!", None),
+        ("$(whoami)", None),
+        ("a`b", None),
+        ('a"&calc&"', None),
+        ("a\\", None),
+        ("a\nb", None),
+    ],
+)
+def test_a_windows_argument_is_double_quoted_or_refused(
+    value: str, quoted: str | None
+) -> None:
+    # Greptile review of PR #2964: cmd.exe reads `shlex.quote`'s single
+    # quotes as ordinary characters, leaving `&` active. Double quotes keep
+    # it literal in cmd.exe, PowerShell and Git Bash; a character one of
+    # them expands even inside them gets no quoting at all.
+    assert _shell_argument(value, windows=True) == quoted
+
+
+@pytest.mark.anyio
+async def test_on_windows_the_index_command_keeps_a_hostile_name_one_argument(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hostile = "alpha & whoami & rem "
+    registry, _ingestor = _registry(root, {}, ("a", hostile), ("b", "beta%PATH%"))
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    result = await registry.list_projects()
+    monkeypatch.undo()
+
+    hint = str(result.get("hint"))
+    assert f'--project-name "{hostile}" --update-graph' in hint, hint
+    assert f"'{hostile}'" not in hint, hint
+    # Negative: no command at all for the name a Windows shell would expand.
+    assert "--project-name beta" not in hint, hint
+    assert '--project-name "beta' not in hint, hint
+    assert "'beta%PATH%'" in hint, hint

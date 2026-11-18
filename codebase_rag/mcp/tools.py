@@ -293,15 +293,19 @@ def _not_indexed_hint(
         workspace=workspace.name,
         names=cs.SEPARATOR_COMMA_SPACE.join(r.project_name for r in missing),
     )
+    windows = sys.platform == cs.PLATFORM_WINDOWS
     for repo in missing:
-        # Forward slashes: shlex quotes a Windows path's backslashes into a
-        # form cmd.exe does not read, while `C:/...` runs in every shell. The
-        # project name is quoted too: a workspace file does not constrain it,
-        # and the command is meant to be pasted into a shell (PR #2964 review).
-        hint += cs.MCP_WORKSPACE_INDEX_COMMAND.format(
-            path=shlex.quote(repo.repo_path().as_posix()),
-            project=shlex.quote(repo.project_name),
-        )
+        # Forward slashes: `C:/...` reads the same in every shell. The project
+        # name is quoted too: a workspace file does not constrain it, and the
+        # command is meant to be pasted into a shell (PR #2964 review).
+        path = _shell_argument(repo.repo_path().as_posix(), windows)
+        project = _shell_argument(repo.project_name, windows)
+        if path is None or project is None:
+            hint += cs.MCP_WORKSPACE_INDEX_UNQUOTABLE.format(
+                path=repo.repo_path().as_posix(), project=repo.project_name
+            )
+            continue
+        hint += cs.MCP_WORKSPACE_INDEX_COMMAND.format(path=path, project=project)
     for repo in missing:
         holder = _project_holding(repo.repo_path(), roots)
         if holder is None:
@@ -319,6 +323,23 @@ def _not_indexed_hint(
             expected=repo.project_name,
         )
     return hint
+
+
+def _shell_argument(value: str, windows: bool) -> str | None:
+    """`value` as one argument of a command pasted into this host's shell,
+    or None when no quoting keeps it one.
+
+    `shlex.quote` quotes for a POSIX shell only: cmd.exe reads its single
+    quotes as ordinary characters, so a project named `alpha & whoami & rem `
+    ran `whoami` there (Greptile review of PR #2964). Double quotes keep `&`,
+    `|` and spaces literal in cmd.exe, PowerShell and Git Bash alike, but
+    not the characters each still expands inside them.
+    """
+    if not windows:
+        return shlex.quote(value)
+    if any(c in cs.MCP_WINDOWS_SHELL_UNQUOTABLE or not c.isprintable() for c in value):
+        return None
+    return f'"{value}"'
 
 
 def _project_holding(
