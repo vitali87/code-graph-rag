@@ -3293,16 +3293,11 @@ def _notice_single_project_endpoint_roots() -> None:
     )
 
 
-def _refuse_without_endpoint_data(
-    error: ex.EndpointDataMissingError, show_progress: bool
-) -> NoReturn:
-    """No verdict, rather than one that reads as nothing unreachable. A
-    machine format owns stdout, so the refusal goes to stderr there, as the
-    single-project notice does."""
-    if show_progress:
-        app_context.console.print(style(str(error), cs.Color.RED))
-    else:
-        typer.echo(str(error), err=True)
+def _refuse_without_endpoint_data(error: ex.EndpointDataMissingError) -> NoReturn:
+    """No verdict, rather than one that reads as nothing unreachable. Stdout
+    carries the report, so the refusal goes to stderr, as the single-project
+    notice and the command's other errors do (issue #2642)."""
+    app_context.err_console.print(style(str(error), cs.Color.RED))
     raise typer.Exit(1)
 
 
@@ -3418,7 +3413,7 @@ def dead_code(
         raise typer.Exit(1) from e
 
     if endpoint_gap is not None:
-        _refuse_without_endpoint_data(endpoint_gap, show_progress)
+        _refuse_without_endpoint_data(endpoint_gap)
     resolved = _require_project(choice)
 
     candidates = [
