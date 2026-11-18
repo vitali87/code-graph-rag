@@ -10,9 +10,6 @@ REFERENCE_GRAPH_SUFFIX = ".graph"
 REFERENCE_REGENERATE = "uv run python scripts/reference_graphs.py record"
 REFERENCE_CACHE_DIRNAME = "cgr-reference-repos"
 REFERENCE_GIT_URL = "https://github.com/{repository}"
-# A checkout is complete once this file exists in it; an interrupted fetch
-# leaves none, and the next run starts it over.
-REFERENCE_READY_MARKER = ".cgr-reference-ready"
 REFERENCE_INDEX_TIMEOUT_S = 900
 REFERENCE_FETCH_TIMEOUT_S = 300
 REFERENCE_DIFF_LINES = 200
@@ -48,6 +45,11 @@ REFERENCE_NODE_TAG = "N"
 REFERENCE_EDGE_TAG = "E"
 REFERENCE_FIELD_SEPARATOR = "\t"
 REFERENCE_LABEL_SEPARATOR = ":"
+
+# Languages with no repository of their own yet: TSX is the TypeScript
+# grammar's JSX dialect, and the SQL indexer reads only stored routines,
+# which none of the small repositories chosen so far has.
+REFERENCE_EXEMPT_LANGUAGES = frozenset({"tsx", "sql"})
 
 REFERENCE_EXIT_DIFFERENT = 1
 REFERENCE_EXIT_FAILED = 2

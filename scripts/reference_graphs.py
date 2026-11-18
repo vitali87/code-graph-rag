@@ -77,31 +77,56 @@ def _git(args: Sequence[str], cwd: Path) -> str:
 
 
 def fetch(repo: ReferenceRepo, cache: Path) -> Path:
-    """The repository checked out at its pinned commit, fetched once per cache."""
-    # The directory is named after the repository: its name is part of the
-    # graph (the root Package node's `name`).
-    checkout = cache / repo["commit"] / repo["name"]
-    # The marker sits in .git so the index never sees it.
-    ready = checkout / ".git" / cs.REFERENCE_READY_MARKER
-    if ready.is_file():
+    """The repository checked out at its pinned commit, fetched once per cache.
+
+    The fetch happens in a staging directory of its own, which is renamed into
+    place only once it holds the verified commit: two runs sharing a cache
+    never see each other's half-done checkout, and an interrupted one leaves
+    nothing a later run would take for complete.
+    """
+    # Named after the repository: the directory's name is part of the graph
+    # (the root Package node's `name`).
+    pinned = cache.resolve() / repo["commit"]
+    checkout = pinned / repo["name"]
+    if checkout.is_dir():
         return checkout
-    shutil.rmtree(checkout, ignore_errors=True)
-    checkout.mkdir(parents=True)
-    url = cs.REFERENCE_GIT_URL.format(repository=repo["repository"])
-    _git(["init", "-q"], checkout)
-    _git(["fetch", "-q", "--depth", "1", url, repo["commit"]], checkout)
-    _git(["-c", "advice.detachedHead=false", "checkout", "-q", "FETCH_HEAD"], checkout)
-    head = _git(["rev-parse", "HEAD"], checkout)
-    if head != repo["commit"]:
-        raise SystemExit(f"{repo['name']}: fetched {head}, expected {repo['commit']}")
-    ready.touch()
+    pinned.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="staging-", dir=pinned) as tmp:
+        staging = Path(tmp) / repo["name"]
+        staging.mkdir()
+        url = cs.REFERENCE_GIT_URL.format(repository=repo["repository"])
+        _git(["init", "-q"], staging)
+        _git(["fetch", "-q", "--depth", "1", url, repo["commit"]], staging)
+        _git(
+            ["-c", "advice.detachedHead=false", "checkout", "-q", "FETCH_HEAD"],
+            staging,
+        )
+        head = _git(["rev-parse", "HEAD"], staging)
+        if head != repo["commit"]:
+            raise SystemExit(
+                f"{repo['name']}: fetched {head}, expected {repo['commit']}"
+            )
+        try:
+            staging.rename(checkout)
+        except OSError:
+            # Another run published the same commit first; keep that one.
+            if not checkout.is_dir():
+                raise
     return checkout
 
 
 def _index_env(home: Path, seed: int | None) -> dict[str, str]:
-    env = dict(os.environ)
-    for name in cs.REFERENCE_UNSET_ENV:
-        env.pop(name, None)
+    # Settings are read whatever the case of their name, so `go_frontend` in
+    # the caller's environment would compete with the `GO_FRONTEND` set here.
+    controlled = {
+        name.upper()
+        for name in (*cs.REFERENCE_UNSET_ENV, *cs.REFERENCE_ENV, cs.REFERENCE_HOME_ENV)
+    }
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name.upper() not in controlled
+    }
     env.update(cs.REFERENCE_ENV)
     env[cs.REFERENCE_HOME_ENV] = str(home)
     if seed is not None:
@@ -123,7 +148,8 @@ def index(
             "-q",
             "start",
             "--repo-path",
-            str(source),
+            # Absolute: the index runs from the scratch directory.
+            str(source.resolve()),
             "--update-graph",
             "--no-embeddings",
             "--no-start-stack",
@@ -244,7 +270,10 @@ def canonical(export: ExportRecord, source: Path) -> list[str]:
 
 
 def read_graph(path: Path) -> list[str]:
-    return path.read_text(encoding=cs.ENCODING_UTF8).splitlines()
+    # Split on the newlines `write_graph` writes, not `splitlines()`'s wider
+    # set: a docstring may hold U+2028, which JSON leaves unescaped.
+    text = path.read_text(encoding=cs.ENCODING_UTF8)
+    return [line.removesuffix("\r") for line in text.split("\n") if line]
 
 
 def write_graph(path: Path, lines: Iterable[str]) -> None:
@@ -329,6 +358,15 @@ def run(
     return status
 
 
+def _command(text: str) -> list[str]:
+    """`--cgr` as an argument list, with a relative program path made
+    absolute: the index runs from a scratch directory."""
+    program, *rest = shlex.split(text)
+    if os.sep in program or "/" in program:
+        program = str(Path(program).resolve())
+    return [program, *rest]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("command", choices=("record", "check"))
@@ -342,9 +380,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if unknown:
         parser.error(f"unknown repositories: {', '.join(sorted(unknown))}")
     chosen = [repo for repo in repos if not args.names or repo["name"] in args.names]
-    return run(
-        args.command, chosen, shlex.split(args.cgr), args.cache, max(args.runs, 1)
-    )
+    return run(args.command, chosen, _command(args.cgr), args.cache, max(args.runs, 1))
 
 
 if __name__ == "__main__":

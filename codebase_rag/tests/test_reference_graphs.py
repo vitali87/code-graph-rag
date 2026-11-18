@@ -16,12 +16,14 @@ from codebase_rag import constants as cs
 from scripts.reference_graphs import (
     REFERENCE_DIR,
     ExportRecord,
+    _command,
     _index_env,
     canonical,
     difference,
     graph_path,
     load_manifest,
     read_graph,
+    write_graph,
 )
 
 ROOT = Path("/work/checkout/demo")
@@ -154,6 +156,53 @@ def test_every_listed_repository_is_pinned_and_has_a_recorded_graph() -> None:
         assert _COMMIT.fullmatch(repo["commit"]), repo["name"]
         assert repo["language"] in languages, repo["name"]
         assert graph_path(repo).is_file(), repo["name"]
+
+
+def test_every_language_has_a_reference_repository() -> None:
+    # Checked against the languages cgr supports, not the manifest, so
+    # dropping a language's entry and its graph together still fails.
+    covered = {repo["language"] for repo in load_manifest()}
+    required = {
+        str(language) for language in cs.SupportedLanguage
+    } - cs.REFERENCE_EXEMPT_LANGUAGES
+
+    assert required <= covered, sorted(required - covered)
+
+
+def test_a_record_holding_a_unicode_line_separator_reads_back_whole(
+    tmp_path: Path,
+) -> None:
+    lines = ['N\tFunction\t"demo.f"\t{"docstring":"one\u2028two"}', "N\tx"]
+    path = tmp_path / "demo.graph"
+
+    write_graph(path, lines)
+
+    assert read_graph(path) == lines
+
+
+def test_the_callers_settings_reach_the_index_in_no_spelling(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("sqlite_graph_path", "/somewhere/else.sqlite")
+    monkeypatch.setenv("go_frontend", "gotypes")
+    monkeypatch.setenv("cgr_home", "/somewhere/home")
+
+    env = _index_env(tmp_path, seed=None)
+
+    assert {name.upper() for name in env if name.islower()} & {
+        "SQLITE_GRAPH_PATH",
+        "GO_FRONTEND",
+        "CGR_HOME",
+    } == set()
+    assert env[cs.REFERENCE_HOME_ENV] == str(tmp_path)
+
+
+def test_a_relative_cgr_program_is_made_absolute() -> None:
+    program, *rest = _command("./target/release/cgr --flag")
+
+    assert Path(program).is_absolute()
+    assert rest == ["--flag"]
+    assert _command("cgr") == ["cgr"]
 
 
 def test_no_recorded_graph_names_a_directory_outside_its_checkout() -> None:
