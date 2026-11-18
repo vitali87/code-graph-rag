@@ -303,3 +303,25 @@ def test_an_edit_to_the_caller_alone_keeps_a_flow_through_another_file(
     _write(root, {"app.py": untainted})
     _index(ingestor, root, "billing")
     assert _token_flows(ingestor) == []
+
+
+DIRECT_AND_HANDOFF = (
+    "import os\n\nfrom noop import helper\n\n\ndef main():\n"
+    '    token = os.getenv("BILLING_TOKEN")\n    print(token)\n    helper(token)\n'
+)
+NOOP = "def helper(value):\n    return None\n"
+
+
+def test_a_fixed_direct_leak_stays_gone_beside_a_call_to_an_unchanged_file(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # The flow came from `print(token)` in main's own body. `helper(token)`
+    # still hands the token to an unchanged file, but the flow never went
+    # through `helper`, so removing the print removes the flow.
+    root = _write(tmp_path / "billing", {"app.py": DIRECT_AND_HANDOFF, "noop.py": NOOP})
+    _index(ingestor, root, "billing", force=True)
+    assert _token_flows(ingestor) == [(STDOUT, "billing.app.main")]
+
+    _write(root, {"app.py": DIRECT_AND_HANDOFF.replace("    print(token)\n", "")})
+    _index(ingestor, root, "billing")
+    assert _token_flows(ingestor) == []

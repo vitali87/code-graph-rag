@@ -98,6 +98,7 @@ from ..utils import (
 from .constants import (
     KEY_KIND,
     KEY_SCOPE,
+    KEY_THROUGH,
     KEY_VIA,
     VIA_ARG_FORMAT,
     VIA_KW_FORMAT,
@@ -279,7 +280,8 @@ def _rust_tail_expression(func_node: Node) -> Node | None:
 
 
 class PriorResourceFlow(NamedTuple):
-    """A resource-to-resource flow as the graph held it, with its owner."""
+    """A resource-to-resource flow as the graph held it, with its owner and
+    the functions it was composed through (none for a direct one)."""
 
     scope: str
     src: str
@@ -288,6 +290,18 @@ class PriorResourceFlow(NamedTuple):
     dst: str
     dst_name: str
     dst_kind: str
+    through: tuple[str, ...] = ()
+
+
+@dataclass
+class _ComposedFlow:
+    """A resource flow derived through other functions' summaries, gathered
+    so one edge carries every function it came through."""
+
+    src: tuple[str, str, str]
+    dst: tuple[str, str, str]
+    scope: str
+    through: set[str]
 
 
 class Taint(NamedTuple):
@@ -318,6 +332,18 @@ type _TaintMap = dict[str, Taint]
 # handles it may hold. Set-valued so a name bound to different handles on
 # different branches writes to ALL of them at a later method call (issue #1204).
 type _HandleMap = dict[str, frozenset[HandleBinding]]
+# (function, parameter) -> every (callee, via) the parameter is handed to.
+type _HandoffIndex = dict[tuple[str, str], list[tuple[str, str]]]
+
+
+class _UndecidedCall(NamedTuple):
+    """A call this run cannot finish deriving flows for: the unwalked
+    functions it goes through, and the known end of what it may carry
+    (None: any)."""
+
+    through: frozenset[str]
+    sources: frozenset[str] | None
+    sinks: frozenset[str] | None
 
 
 class _LeanState(NamedTuple):
@@ -1163,6 +1189,7 @@ class FlowProcessor:
         # while its scope still makes the call (review of PR #2759).
         self._walked: set[str] = set()
         self._prior_flows: dict[str, set[PriorResourceFlow]] = defaultdict(set)
+        self._composed: dict[tuple[str, str, str], _ComposedFlow] = {}
         self._pending_captures: dict[str, _PendingCapture] = {}
         # Per-function positional parameter slots so a call site's arg:<index>
         # resolves to the right callee parameter. The Python path truncates at
@@ -4818,11 +4845,14 @@ class FlowProcessor:
         # resource flow from every origin the argument resolves to (its own plus
         # any pending callee's return origins) into every sink the matched
         # parameter reaches.
-        self._emit_param_call_site_flows(resolved)
-        self._restore_undecided_prior_flows()
+        handoffs = self._handoff_index()
+        self._emit_param_call_site_flows(resolved, handoffs)
+        self._restore_undecided_prior_flows(handoffs)
+        self._flush_composed_flows()
         # One-shot per run: clear so a reused processor never re-emits.
         self._walked.clear()
         self._prior_flows.clear()
+        self._composed.clear()
         self._return_edge_candidates.clear()
         self._deferred_resource_flows.clear()
         self._deferred_arg_edges.clear()
@@ -4839,61 +4869,139 @@ class FlowProcessor:
             for flow in flows:
                 self._prior_flows[flow.scope].add(flow)
 
-    def _restore_undecided_prior_flows(self) -> None:
-        # A walked caller's flow through a callee this run did not walk is
+    def _restore_undecided_prior_flows(self, handoffs: _HandoffIndex) -> None:
+        # A walked caller's flow through a function this run did not walk is
         # neither re-derived nor known gone: `log(os.getenv("K"))` whose `log`
-        # prints sits in an unchanged file. The prior flow comes back when
-        # its scope still makes such a call, and its known end still matches
-        # (the argument's origin, or the sink a pending return reaches), so a
-        # call removed or retargeted in the edit does not keep it.
+        # prints sits in an unchanged file. A prior flow comes back when its
+        # scope still makes a call that goes through an unwalked function it
+        # was composed through, and its known end still matches (the
+        # argument's origin, or the sink a pending return reaches). A direct
+        # flow, or one through a call the edit removed, does not come back.
         if not self._prior_flows:
             return
-        patterns: dict[str, list[tuple[frozenset[str] | None, frozenset[str] | None]]]
-        patterns = defaultdict(list)
+        patterns: dict[str, list[_UndecidedCall]] = defaultdict(list)
         walked = self._walked
-        for taint, callee_qn, _via, _token, scope in self._param_call_sites:
-            pending_unwalked = any(p not in walked for p in taint.pending)
-            if callee_qn in walked and not pending_unwalked:
+        for taint, callee_qn, via, _token, scope in self._param_call_sites:
+            returned = self._return_chain(taint.pending)
+            chain = self._param_chain(callee_qn, via, handoffs) | returned
+            if not (unwalked := chain - walked):
                 continue
             sources = (
                 None
-                if pending_unwalked
+                if returned - walked
                 else frozenset(self._resource_qn(o) for o in taint.origins)
             )
-            patterns[scope].append((sources, None))
+            patterns[scope].append(_UndecidedCall(frozenset(unwalked), sources, None))
         for pending, kind, identity, scope in self._deferred_resource_flows:
-            if any(p not in walked for p in pending):
+            if unwalked := self._return_chain(pending) - walked:
                 sink = resource_qn(kind, identity, self._project_name)
-                patterns[scope].append((None, frozenset({sink})))
+                patterns[scope].append(
+                    _UndecidedCall(frozenset(unwalked), None, frozenset({sink}))
+                )
         for scope, flows in self._prior_flows.items():
             if scope not in walked or not (scope_patterns := patterns.get(scope)):
                 continue
             for flow in sorted(flows):
                 if any(
-                    (sources is None or flow.src in sources)
-                    and (sinks is None or flow.dst in sinks)
-                    for sources, sinks in scope_patterns
+                    call.through & set(flow.through)
+                    and (call.sources is None or flow.src in call.sources)
+                    and (call.sinks is None or flow.dst in call.sinks)
+                    for call in scope_patterns
                 ):
-                    self._re_emit_prior_flow(flow)
+                    self._add_composed(
+                        (flow.src, flow.src_name, flow.src_kind),
+                        (flow.dst, flow.dst_name, flow.dst_kind),
+                        flow.scope,
+                        set(flow.through),
+                    )
 
     def _resource_qn(self, binding: HandleBinding) -> str:
         return resource_qn(binding.kind, binding.identity, self._project_name)
 
-    def _re_emit_prior_flow(self, flow: PriorResourceFlow) -> None:
-        for qn, name, kind in (
-            (flow.src, flow.src_name, flow.src_kind),
-            (flow.dst, flow.dst_name, flow.dst_kind),
-        ):
-            self.ingestor.ensure_node_batch(
-                cs.NodeLabel.RESOURCE,
-                {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_NAME: name, KEY_KIND: kind},
-            )
-        self.ingestor.ensure_relationship_batch(
-            (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, flow.src),
-            cs.RelationshipType.FLOWS_TO,
-            (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, flow.dst),
-            properties={KEY_KIND: FlowKind.RESOURCE.value, KEY_SCOPE: flow.scope},
+    def _handoff_index(self) -> _HandoffIndex:
+        index: _HandoffIndex = defaultdict(list)
+        for f_qn, p_name, c_qn, via in self._param_flow_edges:
+            index[(f_qn, p_name)].append((c_qn, via))
+        return index
+
+    def _param_chain(
+        self, callee_qn: str, via: str, handoffs: _HandoffIndex
+    ) -> set[str]:
+        """The callee and every function its parameter is handed on to."""
+        chain = {callee_qn}
+        pname = self._param_name_for_via(callee_qn, via)
+        stack = [(callee_qn, pname)] if pname is not None else []
+        seen = set(stack)
+        while stack:
+            for c_qn, c_via in handoffs.get(stack.pop(), ()):
+                chain.add(c_qn)
+                param = self._param_name_for_via(c_qn, c_via)
+                if param is not None and (c_qn, param) not in seen:
+                    seen.add((c_qn, param))
+                    stack.append((c_qn, param))
+        return chain
+
+    def _return_chain(self, pending: frozenset[str]) -> set[str]:
+        """The pending callees and every callee whose return they forward."""
+        chain = set(pending)
+        stack = list(pending)
+        while stack:
+            summary = self._summaries.get(stack.pop())
+            for callee in summary.pending if summary is not None else ():
+                if callee not in chain:
+                    chain.add(callee)
+                    stack.append(callee)
+        return chain
+
+    def _compose_flow(
+        self,
+        source: HandleBinding,
+        dst_kind: ResourceKind,
+        dst_identity: str,
+        scope: str,
+        through: set[str],
+    ) -> None:
+        self._add_composed(
+            (self._resource_qn(source), source.identity, source.kind.value),
+            (
+                resource_qn(dst_kind, dst_identity, self._project_name),
+                dst_identity,
+                dst_kind.value,
+            ),
+            scope,
+            through,
         )
+
+    def _add_composed(
+        self,
+        src: tuple[str, str, str],
+        dst: tuple[str, str, str],
+        scope: str,
+        through: set[str],
+    ) -> None:
+        key = (src[0], dst[0], scope)
+        if (flow := self._composed.get(key)) is None:
+            self._composed[key] = _ComposedFlow(src, dst, scope, set(through))
+        else:
+            flow.through |= through
+
+    def _flush_composed_flows(self) -> None:
+        for _key, flow in sorted(self._composed.items()):
+            for qn, name, kind in (flow.src, flow.dst):
+                self.ingestor.ensure_node_batch(
+                    cs.NodeLabel.RESOURCE,
+                    {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_NAME: name, KEY_KIND: kind},
+                )
+            self.ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, flow.src[0]),
+                cs.RelationshipType.FLOWS_TO,
+                (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, flow.dst[0]),
+                properties={
+                    KEY_KIND: FlowKind.RESOURCE.value,
+                    KEY_SCOPE: flow.scope,
+                    KEY_THROUGH: sorted(flow.through),
+                },
+            )
 
     def _pass_through_extras(
         self, return_params: set[tuple[str, str]]
@@ -4919,8 +5027,9 @@ class FlowProcessor:
             origins: set[HandleBinding] = set()
             for callee_qn in pending:
                 origins |= resolved.get(callee_qn, frozenset())
+            through = self._return_chain(pending) if origins else set()
             for origin in origins:
-                self._emit_resource_flow(origin, sink_kind, sink_identity, scope)
+                self._compose_flow(origin, sink_kind, sink_identity, scope, through)
 
     def _emit_deferred_arg_edges(self, is_tainted: dict[str, bool]) -> None:
         for (
@@ -4939,7 +5048,7 @@ class FlowProcessor:
                 )
 
     def _emit_param_call_site_flows(
-        self, resolved: dict[str, frozenset[HandleBinding]]
+        self, resolved: dict[str, frozenset[HandleBinding]], handoffs: _HandoffIndex
     ) -> None:
         param_sink_closure = self._resolve_param_sinks()
         for arg_taint, callee_qn, via, _token, scope in self._param_call_sites:
@@ -4952,9 +5061,12 @@ class FlowProcessor:
             origins = set(arg_taint.origins)
             for p in arg_taint.pending:
                 origins |= resolved.get(p, frozenset())
+            through = self._param_chain(callee_qn, via, handoffs) | self._return_chain(
+                arg_taint.pending
+            )
             for origin in origins:
                 for sink_kind, sink_identity in reached:
-                    self._emit_resource_flow(origin, sink_kind, sink_identity, scope)
+                    self._compose_flow(origin, sink_kind, sink_identity, scope, through)
 
     def _resolve_summaries(
         self,

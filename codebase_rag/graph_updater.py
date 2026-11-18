@@ -7250,8 +7250,17 @@ class GraphUpdater:
         flows: list[PriorResourceFlow] = []
         for row in rows:
             values = [row.get(key) for key in cs.PRIOR_FLOW_COLUMNS]
+            through = row.get(cs.PRIOR_FLOW_THROUGH)
             if all(isinstance(value, str) for value in values):
-                flows.append(PriorResourceFlow(*(str(value) for value in values)))
+                flows.append(
+                    PriorResourceFlow(
+                        *(str(value) for value in values),
+                        through=tuple(
+                            str(qn)
+                            for qn in (through if isinstance(through, list) else ())
+                        ),
+                    )
+                )
         self.factory.call_processor.remember_prior_flows(flows)
 
     def _nested_project_names(self) -> list[str]:

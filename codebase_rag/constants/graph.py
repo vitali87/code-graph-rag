@@ -1109,9 +1109,11 @@ CYPHER_MODULE_RESOURCE_FLOWS = (
     + "WHERE rf.scope IN owners "
     + "RETURN rf.scope AS scope, a.qualified_name AS src, a.name AS src_name, "
     + "a.kind AS src_kind, b.qualified_name AS dst, b.name AS dst_name, "
-    + "b.kind AS dst_kind"
+    + "b.kind AS dst_kind, rf.through AS through"
 )
-# Its columns, in PriorResourceFlow's field order.
+# The functions a composed flow came through, a list column of the read.
+PRIOR_FLOW_THROUGH = "through"
+# Its text columns, in PriorResourceFlow's field order.
 PRIOR_FLOW_COLUMNS = (
     "scope",
     "src",

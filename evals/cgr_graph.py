@@ -7,7 +7,7 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.flow_access.constants import KEY_SCOPE
+from codebase_rag.parsers.flow_access.constants import KEY_SCOPE, KEY_THROUGH
 from codebase_rag.types_defs import (
     PropertyDict,
     PropertyValue,
@@ -3035,6 +3035,9 @@ class _StatefulIngestor:
                     cs.PRIOR_FLOW_COLUMNS[4]: _result(edge[4]),
                     cs.PRIOR_FLOW_COLUMNS[5]: _result(dst.get(cs.KEY_NAME)),
                     cs.PRIOR_FLOW_COLUMNS[6]: _result(dst.get(cs.KEY_KIND)),
+                    cs.PRIOR_FLOW_THROUGH: _result(
+                        self.edge_props.get(edge, {}).get(KEY_THROUGH)
+                    ),
                 }
             )
         return rows
