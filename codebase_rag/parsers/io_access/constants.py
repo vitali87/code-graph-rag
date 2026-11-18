@@ -56,6 +56,12 @@ class IODirection(StrEnum):
     READ_WRITE = "READ_WRITE"
 
 
+# Member-read resources an assignment to the member writes: `process.env.K = v`
+# changes the environment children inherit, while `$_GET["q"] = v` only
+# rewrites the script's copy of a request already received.
+WRITABLE_MEMBER_KINDS = frozenset({ResourceKind.ENV})
+
+
 # Synthetic qualified name for a Resource node: resource::<kind>::<identity>.
 RESOURCE_QN_FORMAT = "resource::{kind}::{identity}"
 # How a project scopes a resource identity it alone can reach.

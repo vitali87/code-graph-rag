@@ -12,15 +12,16 @@ from __future__ import annotations
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.config import ModelConfig, settings
+from codebase_rag.config import ModelConfig
+from codebase_rag.tests.conftest import patch_active_model
 from codebase_rag.tests.integration.orchestrator_gate import (
     orchestrator_reliably_tool_calls,
 )
 
 
 def _set_orchestrator(monkeypatch: pytest.MonkeyPatch, provider: str) -> None:
-    monkeypatch.setattr(
-        settings,
+    patch_active_model(
+        monkeypatch,
         "_active_orchestrator",
         ModelConfig(provider=provider, model_id="some-model"),
     )
