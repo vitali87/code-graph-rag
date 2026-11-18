@@ -172,8 +172,10 @@ def _hotness(fetch_all: QueryFn, project: str, qn: str) -> dict[str, int]:
     ):
         caller = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
         count = row.get(cs.TRACE_PROP_CALL_COUNT)
+        # One row per call site, each carrying the pair's whole observation
+        # (issue #2429), so a caller counts once, not once per site (#3532).
         if caller and isinstance(count, int):
-            out[caller] = out.get(caller, 0) + count
+            out[caller] = max(out.get(caller, 0), count)
     return out
 
 
@@ -410,13 +412,13 @@ def _fit(
             if candidate.distance == 0 and not pieces:
                 # The target itself must fit: keep as many of its lines as
                 # the budget allows and say so. A budget too small for even
-                # its first line leaves it out rather than padding with
-                # nothing.
+                # its first line returns nothing, since its neighbours alone
+                # would read as context for it (issue #3005).
                 source, tokens = _trim(source, budget)
                 truncated = True
                 if not source:
                     omitted.append(f"{candidate.qualified_name} ({candidate.why})")
-                    continue
+                    return [], omitted, 0, truncated
             else:
                 omitted.append(f"{candidate.qualified_name} ({candidate.why})")
                 continue
