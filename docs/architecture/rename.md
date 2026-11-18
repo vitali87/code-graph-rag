@@ -99,8 +99,10 @@ shows it. That covers a method the graph marks `overrides_external`
 method (or a module's `__getattr__`/`__dir__` hook), and a method carrying
 `@Override` or the `override` modifier (Java, C#, TypeScript, Dart) that
 overrides no method in the project, or whose class also extends or
-implements a type outside the project that may declare it
-(`Task extends Base implements Runnable`). Pass
+implements a type outside the project that may declare it, directly
+(`Task extends Base implements Runnable`) or through a project class up its
+chain that does not define the method itself
+(`Task extends Bridge`, `Bridge extends Base implements Runnable`). Pass
 `--allow-external-override` (`allow_external_override: true`) when renaming
 it is the intent (issue #3226).
 

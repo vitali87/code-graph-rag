@@ -48,7 +48,7 @@ from ..parsers.go.builds import GoBuilds
 from ..parsers.go.module_paths import read_package_clause
 from ..parsers.js_ts.overloads import overload_signatures
 from ..parsers.py.overloads import overload_stub_names
-from ..types_defs import PropertyParams, ResultRow
+from ..types_defs import PropertyParams, ResultRow, ResultScalar
 from ..utils import qn_markers
 from ..utils.path_utils import (
     base_module_qn,
@@ -1677,18 +1677,32 @@ class Renamer:
         protocol method is called by code outside the project under its old
         name: after the rename nothing calls it, and no site shows why.
         """
-        reasons = [
-            reason
+        prefix = f"{self.project}{cs.SEPARATOR_DOT}"
+        facts = {
+            member: row
             for member in members
             for row in self.fetch_all(
                 cq.CYPHER_RENAME_OVERRIDE_FACTS,
-                {
-                    cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
-                    cs.KEY_QN: member,
-                },
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: member},
             )[:1]
-            if (reason := _external_override_reason(member, row)) is not None
-        ]
+        }
+        # A class that defines a member of the hierarchy answers for the
+        # supertypes above it through that member's own facts.
+        owners = {
+            owner
+            for row in facts.values()
+            if isinstance(owner := row.get(cs.RENAME_FACT_OWNER), str)
+        }
+        reasons: list[str] = []
+        for member, row in facts.items():
+            owner = row.get(cs.RENAME_FACT_OWNER)
+            if isinstance(owner, str):
+                row = dict(row)
+                row[cs.RENAME_FACT_OUTSIDE_SUPERTYPES] = list[ResultScalar](
+                    sorted(self._outside_supertypes(owner, owners, prefix))
+                )
+            if (reason := _external_override_reason(member, row)) is not None:
+                reasons.append(reason)
         if reasons:
             raise RenameRefused(
                 cs.RENAME_EXTERNAL_OVERRIDE.format(
@@ -1699,6 +1713,39 @@ class Renamer:
                 [],
                 [],
             )
+
+    def _outside_supertypes(self, owner: str, stops: set[str], prefix: str) -> set[str]:
+        """The supertypes outside the project that `owner` extends or
+        implements, directly or through project classes up its chain.
+
+        `Task extends Bridge` and `Bridge implements Runnable`: renaming
+        `Task.run` with its project base `Base.run` leaves `Task` owing
+        `Runnable.run`. The walk does not climb past a class in `stops`,
+        which defines a member of the hierarchy itself.
+        """
+        outside: set[str] = set()
+        seen = {owner}
+        frontier = [owner]
+        while frontier:
+            step: list[str] = []
+            for row in self.fetch_all(
+                cq.CYPHER_RENAME_SUPERTYPES,
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: frontier},
+            ):
+                supertype = row.get(cs.RENAME_FACT_SUPERTYPE)
+                if not isinstance(supertype, str) or supertype in seen:
+                    continue
+                seen.add(supertype)
+                labels = row.get(cs.KEY_LABELS)
+                if not supertype.startswith(prefix) or (
+                    isinstance(labels, list)
+                    and cs.NodeLabel.EXTERNAL_MODULE.value in labels
+                ):
+                    outside.add(supertype)
+                elif supertype not in stops:
+                    step.append(supertype)
+            frontier = step
+        return outside
 
     def _go_sites_losing_visibility(
         self, qn: str, sites: list[RenameSite], old_name: str, new_name: str

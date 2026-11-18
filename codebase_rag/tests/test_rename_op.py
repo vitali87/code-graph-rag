@@ -110,10 +110,34 @@ class RecordedGraph:
                             for src, rel, dst, _props in self.edges
                             if src in owners
                             and rel in ("INHERITS", "IMPLEMENTS")
-                            and not dst.startswith(prefix)
+                            and (
+                                not dst.startswith(prefix)
+                                or cs.NodeLabel.EXTERNAL_MODULE.value
+                                in self.labels.get(dst, set())
+                            )
                         }
                     ),
+                    cs.RENAME_FACT_OWNER: min(owners) if owners else None,
                 }
+            ]
+        if query == cq.CYPHER_RENAME_SUPERTYPES:
+            prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
+            wanted = {str(q) for q in p.get(cs.KEY_QNS) or []}
+            return [
+                {
+                    cs.KEY_QUALIFIED_NAME: src,
+                    cs.RENAME_FACT_SUPERTYPE: dst,
+                    cs.KEY_LABELS: sorted(self.labels.get(dst, set())),
+                }
+                for src, dst in sorted(
+                    {
+                        (src, dst)
+                        for src, rel, dst, _props in self.edges
+                        if src in wanted
+                        and src.startswith(prefix)
+                        and rel in ("INHERITS", "IMPLEMENTS")
+                    }
+                )
             ]
         if query == cq.CYPHER_GRAPH_RESOLVE_NAME:
             # The rename's cross-check asks for the symbol's namesakes, whose

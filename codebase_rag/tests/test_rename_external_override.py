@@ -301,3 +301,62 @@ def test_a_module_getattr_hook_is_refused(
     with pytest.raises(RenameRefused) as refused:
         _plan(temp_repo, graph, "d.__getattr__", "lookup")
     assert "is the Python protocol method __getattr__" in str(refused.value)
+
+
+# `Leaf.run()` overrides the project's `Base.run()` through `Bridge`, which
+# declares no `run()` but implements Runnable: the rename would leave the
+# concrete `Leaf` without `Runnable.run()`.
+_JAVA_BRIDGE = {
+    "Base.java": "public class Base {\n    public void run() {}\n}\n",
+    "Bridge.java": (
+        "public abstract class Bridge extends Base implements Runnable {\n}\n"
+    ),
+    "Leaf.java": (
+        "public class Leaf extends Bridge {\n    @Override\n    public void run() {}\n}\n"
+    ),
+}
+
+
+def _java_repo(root: Path, mock: MagicMock, files: dict[str, str]) -> RecordedGraph:
+    if cs.SupportedLanguage.JAVA not in load_parsers()[0]:
+        pytest.skip("java parser not available")
+    for rel, text in files.items():
+        _write(root, rel, text)
+    return _index(root, mock)
+
+
+@pytest.mark.parametrize(
+    "member", ["Leaf.Leaf.run()", "Base.Base.run()"], ids=["override", "its-base"]
+)
+def test_an_outside_contract_further_up_the_chain_is_refused(
+    temp_repo: Path, mock_ingestor: MagicMock, member: str
+) -> None:
+    graph = _java_repo(temp_repo, mock_ingestor, _JAVA_BRIDGE)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, member, "execute")
+    assert "java.lang.Runnable" in str(refused.value), refused.value
+
+
+def test_a_chain_of_project_classes_alone_still_renames(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: the same chain without `implements Runnable`.
+    files = dict(_JAVA_BRIDGE)
+    files["Bridge.java"] = "public abstract class Bridge extends Base {\n}\n"
+    graph = _java_repo(temp_repo, mock_ingestor, files)
+    report = _plan(temp_repo, graph, "Leaf.Leaf.run()", "execute")
+    assert "public void execute()" in report.diff, report.diff
+
+
+def test_a_library_supertype_counts_in_a_project_named_like_its_package(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A project named `java` spells its qualified names `java.…`, as
+    # `java.lang.Runnable` is spelled; the library type is still outside.
+    root = temp_repo / "java"
+    files = {rel: _JAVA_MIXED[rel] for rel in ("Base.java", "Task.java")}
+    graph = _java_repo(root, mock_ingestor, files)
+    assert graph.project == "java", graph.project
+    with pytest.raises(RenameRefused) as refused:
+        _plan(root, graph, "Task.Task.run()", "execute")
+    assert "java.lang.Runnable" in str(refused.value), refused.value

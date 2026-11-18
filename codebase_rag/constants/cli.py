@@ -1018,6 +1018,9 @@ RENAME_OVERRIDE_ALSO_OUTSIDE = (
 # The columns of CYPHER_RENAME_OVERRIDE_FACTS that are no node property.
 RENAME_FACT_BASES = "bases"
 RENAME_FACT_OUTSIDE_SUPERTYPES = "outside_supertypes"
+RENAME_FACT_OWNER = "owner"
+# The column of CYPHER_RENAME_SUPERTYPES naming the supertype.
+RENAME_FACT_SUPERTYPE = "supertype"
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
 RENAME_RESOLUTION_BAD_POSITION = "position outside its file"
 RENAME_RESOLUTION_CLASS_VIA_PARAM = (

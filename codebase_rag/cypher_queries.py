@@ -1703,20 +1703,31 @@ RETURN labels(impl)[0] AS label, impl.qualified_name AS qualified_name,
        impl.path AS path, type(r) AS rel_type"""
 # What a rename must not silently break (issue #3226): whether a method
 # overrides something outside the project, the override markers it carries,
-# how many project methods it overrides, and the supertypes outside the
-# project its class extends or implements, any of which may declare it too.
+# how many project methods it overrides, its class, and the supertypes outside
+# the project that class extends or implements, any of which may declare it
+# too. A library type is an ExternalModule even when its name starts like the
+# project's (`java.lang.Runnable` in a project named `java`).
 CYPHER_RENAME_OVERRIDE_FACTS = f"""MATCH (n)
 WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 OPTIONAL MATCH (n)-[:OVERRIDES]->(base)
 WITH n, count(base) AS bases
 OPTIONAL MATCH (owner)-[:DEFINES_METHOD]->(n)
 OPTIONAL MATCH (owner)-[:INHERITS|IMPLEMENTS]->(outside)
-WHERE NOT outside.qualified_name STARTS WITH $project_prefix
-WITH n, bases, collect(DISTINCT outside.qualified_name) AS outside_supertypes
+WHERE outside:{NodeLabel.EXTERNAL_MODULE.value}
+   OR NOT outside.qualified_name STARTS WITH $project_prefix
+WITH n, bases, owner, collect(DISTINCT outside.qualified_name) AS outside_supertypes
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.name AS name, n.path AS path,
        n.overrides_external AS overrides_external, n.decorators AS decorators,
-       n.modifiers AS modifiers, bases, outside_supertypes"""
+       n.modifiers AS modifiers, bases, outside_supertypes,
+       owner.qualified_name AS owner"""
+# The direct supertypes of project classes, a step of the rename's walk up a
+# class chain for contracts declared further up (`Task extends Bridge`, where
+# `Bridge implements Runnable`).
+CYPHER_RENAME_SUPERTYPES = """MATCH (c)-[:INHERITS|IMPLEMENTS]->(s)
+WHERE c.qualified_name IN $qns AND c.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT c.qualified_name AS qualified_name,
+       s.qualified_name AS supertype, labels(s) AS labels"""
 CYPHER_GRAPH_OVERRIDES = """MATCH (a)-[r:OVERRIDES]-(b)
 WHERE b.qualified_name = $qn AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS label, a.qualified_name AS qualified_name, a.path AS path,
