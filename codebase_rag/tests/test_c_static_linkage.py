@@ -154,6 +154,21 @@ _SAME_STEM = {
         "int main(void) { return first() + second(); }\n"
     ),
 }
+# A header is compiled inside the file that includes it: util.h's `wrap()`
+# reaches main.c's `static helper()` and a.h's `static inline early()`, which
+# main.c defines and includes before util.h. lone.h is compiled only into
+# user.c, which has neither.
+_INCLUDER = {
+    "a.h": "static inline int early(void) { return 2; }\n",
+    "util.h": "static inline int wrap(void) { return helper() + early(); }\n",
+    "main.c": (
+        "static int helper(void) { return 1; }\n"
+        '#include "a.h"\n#include "util.h"\n'
+        "int main(void) { return wrap(); }\n"
+    ),
+    "lone.h": "static inline int solo(void) { return helper() + early(); }\n",
+    "user.c": '#include "lone.h"\nint use(void) { return solo(); }\n',
+}
 
 _Calls = dict[tuple[str, str], str]
 
@@ -351,3 +366,31 @@ def test_an_incremental_sync_keeps_an_unchanged_files_static_private(
         e for e in fresh if e[0].startswith(caller)
     }, after
     assert not [e for e in after if e[0].startswith(caller) and e[1] == private]
+
+
+def test_a_header_reaches_the_statics_of_the_file_that_includes_it(
+    tmp_path: Path,
+) -> None:
+    calls = _calls(tmp_path / "includer", _INCLUDER, "c")
+    assert ("util.wrap", "main.helper") in calls, calls
+    assert ("util.wrap", "a.early") in calls, calls
+    # Negative: no file compiling lone.h defines or includes either static.
+    assert ("lone.solo", "main.helper") not in calls, calls
+    assert ("lone.solo", "a.early") not in calls, calls
+
+
+@pytest.mark.parametrize("edited", ["util.h", "lone.h"])
+def test_an_incremental_sync_of_a_header_keeps_its_includers_statics(
+    tmp_path: Path, edited: str
+) -> None:
+    # Only the header is re-parsed; the files that include it come back
+    # from the graph and still decide what its calls may reach.
+    if "c" not in load_parsers()[0]:
+        pytest.skip("c parser not available")
+    root = tmp_path / "repo"
+    _write(root, _INCLUDER)
+    store = _StatefulIngestor()
+    fresh = _sync(root, store, force=True)
+    _write(root, {edited: _INCLUDER[edited] + "\n"})
+    after = _sync(root, store, force=False)
+    assert after == fresh, (after, fresh)

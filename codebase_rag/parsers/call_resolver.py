@@ -343,6 +343,8 @@ class CallResolver:
         "_ctor_param_attrs",
         "_pending_field_bindings",
         "_module_language_cache",
+        "_c_includers_cache",
+        "_c_unit_reach_cache",
         "rehydrated_definition_paths",
         "rust_function_modules",
         "declared_module_qns",
@@ -471,6 +473,11 @@ class CallResolver:
         self._ctor_param_attrs: dict[tuple[str, str], str] = {}
         self._pending_field_bindings: list[tuple[str, int | str, str]] = []
         self._module_language_cache: dict[str, cs.SupportedLanguage | None] = {}
+        # {included C/C++ module qn: the modules that `#include` it}, built
+        # once per call pass from the include map, and {module qn: every
+        # module a translation unit compiling it includes}.
+        self._c_includers_cache: dict[str, set[str]] | None = None
+        self._c_unit_reach_cache: dict[str, frozenset[str]] = {}
         # {PHP module qn: {class qn: folded namespace it is declared in}},
         # read off each file's declarations on first use (issue #2466).
         self._php_class_namespaces: dict[str, dict[str, PhpClassPath]] = {}
@@ -693,6 +700,9 @@ class CallResolver:
         # makes `_languages_can_call` drop the candidate a clean index
         # resolves (issue #1575).
         self._module_language_cache.clear()
+        # A re-parsed C file may include other headers.
+        self._c_includers_cache = None
+        self._c_unit_reach_cache.clear()
         # A re-parsed PHP file may have moved a class between namespaces.
         self._php_class_namespaces.clear()
         self._php_cased_index = None
@@ -5404,6 +5414,12 @@ class CallResolver:
         if not private:
             return candidates
         units = self._include_closure(module_qn)
+        if any(unit not in units for unit in private.values()):
+            # A header is compiled inside each file that includes it: a
+            # `wrap()` in util.h may call the `static helper()` main.c
+            # defines before `#include "util.h"`, or one an earlier header
+            # of main.c defines.
+            units = self._translation_unit_reach(module_qn)
         return [qn for qn in candidates if private.get(qn, module_qn) in units]
 
     def _include_closure(self, module_qn: str) -> set[str]:
@@ -5424,6 +5440,36 @@ class CallResolver:
                     seen.add(target)
                     pending.append(target)
         return seen
+
+    def _translation_unit_reach(self, module_qn: str) -> frozenset[str]:
+        """Every module compiled together with `module_qn`: what each file
+        that includes it, directly or through other headers, includes."""
+        if (reach := self._c_unit_reach_cache.get(module_qn)) is not None:
+            return reach
+        includers = self._c_includers()
+        units = {module_qn}
+        pending = [module_qn]
+        while pending:
+            for includer in includers.get(pending.pop(), ()):
+                if includer not in units:
+                    units.add(includer)
+                    pending.append(includer)
+        reach = frozenset(
+            reached for unit in units for reached in self._include_closure(unit)
+        )
+        self._c_unit_reach_cache[module_qn] = reach
+        return reach
+
+    def _c_includers(self) -> dict[str, set[str]]:
+        if self._c_includers_cache is None:
+            imports = self.import_processor
+            includers: dict[str, set[str]] = {}
+            displaced = imports.displaced_include_targets()
+            for module_qn, mapping in imports.import_mapping.items():
+                for target in (*mapping.values(), *displaced.get(module_qn, ())):
+                    includers.setdefault(target, set()).add(module_qn)
+            self._c_includers_cache = includers
+        return self._c_includers_cache
 
     def _in_python_module(self, qn: str, module_qn: str) -> bool:
         # Defined in the module itself, not in a module under it: a package's
