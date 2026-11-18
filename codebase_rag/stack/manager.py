@@ -191,14 +191,25 @@ def _bolt_endpoint(publisher: JsonValue) -> tuple[str, int] | None:
     return None
 
 
+def _is_one_off(container: dict[str, JsonValue]) -> bool:
+    labels = container.get(cs.COMPOSE_PS_LABELS_KEY)
+    return isinstance(labels, str) and cs.COMPOSE_ONE_OFF_LABEL in labels.split(
+        cs.COMPOSE_PS_LABEL_SEPARATOR
+    )
+
+
 def _published_bolt(ps_output: str) -> list[tuple[str, int]]:
     """(bind address, port) of every Bolt publisher in `docker compose ps`
-    JSON output: an object per line, or one array on older Compose."""
+    JSON output: an object per line, or one array on older Compose.
+
+    A container `docker compose run` made is not the service's own, and
+    `up -d` leaves it alone, so it is passed over.
+    """
     endpoints: list[tuple[str, int]] = []
     for container in _ps_containers(ps_output):
         publishers = (
             container.get(cs.COMPOSE_PS_PUBLISHERS_KEY)
-            if isinstance(container, dict)
+            if isinstance(container, dict) and not _is_one_off(container)
             else None
         )
         for publisher in publishers if isinstance(publishers, list) else []:
@@ -806,21 +817,39 @@ class StackManager:
     def _raise_if_memgraph_runs_elsewhere(self) -> None:
         """Refuse to start while this project's Memgraph runs on another port.
 
-        The compose file publishes Bolt on MEMGRAPH_PORT, so `up -d` with
-        another value recreates the running container there, taking it from
-        every client of its port, or leaves it down when that port is taken
-        (issue #3001). Without a compose file there is no project to ask
-        about; Docker is checked first so that its absence is reported as
-        `up` reports it.
+        `up -d` recreates a running container whose port mapping now resolves
+        differently, taking it from every client of its port, or leaving it
+        down when the new port is taken (issue #3001). Compose fills in
+        `${MEMGRAPH_PORT}` from its environment or the .env beside the compose
+        file, which the app's own setting need not match, so the running port
+        is compared with Compose's resolved mapping. A deleted compose file or
+        a new CGR_HOME leaves the project's containers running, and `up`
+        renders the file again for the same project, so it is rendered first.
+        Docker is checked first so that its absence is reported as `up`
+        reports it.
         """
-        if cs.SERVICE_MEMGRAPH not in self.services or not self.compose_file.exists():
+        if cs.SERVICE_MEMGRAPH not in self.services:
             return
         self.check_docker()
+        # Not ensure_compose_file on an existing file: `up` checks and warns
+        # about that one itself.
+        if not self.compose_file.exists():
+            self.ensure_compose_file()
         running = sorted({port for _, port in self._running_memgraph_bolt()})
-        if running and self.memgraph_port not in running:
+        if not running:
+            return
+        published = _published_port(
+            self._resolved_config(cs.ERR_COMPOSE_CONFIG_FAILED),
+            cs.SERVICE_MEMGRAPH,
+            cs.MEMGRAPH_CONTAINER_BOLT_PORT,
+        )
+        port = published[1] if published else ""
+        if _fixed_port(port) not in running:
             raise StackError(
                 cs.ERR_MEMGRAPH_RUNS_ON_ANOTHER_PORT.format(
-                    running=", ".join(map(str, running)), port=self.memgraph_port
+                    running=", ".join(map(str, running)),
+                    port=port or cs.COMPOSE_PORT_UNSET,
+                    path=self.compose_file,
                 )
             )
 
@@ -1281,10 +1310,10 @@ class StackManager:
     def ensure_running(self, *, move_running: bool = False) -> StackStatus:
         """Start the stack unless it is already up.
 
-        A Memgraph of this project running on another port than MEMGRAPH_PORT,
-        which can come from the .env of whatever directory cgr runs in, is
-        refused rather than moved, unless `move_running` asks for that, as
-        `cgr daemon up` does.
+        A Memgraph of this project running on another port than the one
+        Compose would now publish it on, as with a MEMGRAPH_PORT from the .env
+        of whatever directory cgr runs in, is refused rather than moved,
+        unless `move_running` asks for that, as `cgr daemon up` does.
         """
         self.locate_published_qdrant()
         current = self.status()

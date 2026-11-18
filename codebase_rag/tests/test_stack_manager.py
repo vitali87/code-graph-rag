@@ -193,6 +193,7 @@ def test_ensure_running_starts_when_stopped(stack_home: Path, tmp_path: Path) ->
             "codebase_rag.stack.manager.wait_for_memgraph", side_effect=memgraph_check
         ),
         patch("codebase_rag.stack.manager.wait_for_qdrant", side_effect=qdrant_check),
+        patch.object(mgr, "_raise_if_memgraph_runs_elsewhere"),
         patch.object(mgr, "up", side_effect=fake_up) as mock_up,
         patch.object(mgr, "wait_healthy") as mock_wait,
     ):
@@ -406,11 +407,20 @@ class TestMaybeStartStackWarns:
         assert self._invoke(stack_home, tmp_path) == []
 
 
-def _memgraph_publishing(port: int) -> str:
-    """`docker compose ps --format json` for a Memgraph publishing Bolt on `port`."""
+def _memgraph_publishing(port: int, one_off: bool = False) -> str:
+    """`docker compose ps --format json` for a Memgraph publishing Bolt on `port`.
+
+    Compose prints a container's labels as one string; `docker compose run`
+    marks the containers it makes as one-off.
+    """
     return json.dumps(
         {
             "Service": stack_cs.SERVICE_MEMGRAPH,
+            "Labels": (
+                f"com.docker.compose.oneoff={one_off},"
+                "com.docker.compose.project=cgr,"
+                f"com.docker.compose.service={stack_cs.SERVICE_MEMGRAPH}"
+            ),
             "Publishers": [
                 {
                     "URL": stack_cs.LOOPBACK_HOST,
@@ -458,9 +468,29 @@ class TestImplicitStartKeepsRunningMemgraph:
         mgr: StackManager,
         running_memgraph: str,
         action: Callable[[], StackStatus | None],
+        published: int = REQUESTED_PORT,
     ) -> tuple[list[list[str]], Exception | None]:
-        """The `up` commands Compose was given while `action` ran, and its error."""
+        """The `up` commands Compose was given while `action` ran, and its error.
+
+        Compose resolves the Memgraph port mapping to `published`.
+        """
         commands: list[list[str]] = []
+        config = json.dumps(
+            {
+                "services": {
+                    stack_cs.SERVICE_MEMGRAPH: {
+                        "ports": [
+                            {
+                                "mode": "ingress",
+                                "host_ip": stack_cs.LOOPBACK_HOST,
+                                "target": stack_cs.MEMGRAPH_CONTAINER_BOLT_PORT,
+                                "published": str(published),
+                            }
+                        ]
+                    }
+                }
+            }
+        )
 
         def compose(
             cmd: list[str], **_: bool | str | float | dict[str, str]
@@ -469,7 +499,7 @@ class TestImplicitStartKeepsRunningMemgraph:
             if "ps" in cmd:
                 return _fake_subprocess_result(stdout=running_memgraph)
             if "config" in cmd:
-                return _fake_subprocess_result(stdout='{"services": {}}')
+                return _fake_subprocess_result(stdout=config)
             return _fake_subprocess_result()
 
         error: Exception | None = None
@@ -505,6 +535,57 @@ class TestImplicitStartKeepsRunningMemgraph:
         assert str(self.REQUESTED_PORT) in str(error)
         assert "MEMGRAPH_PORT" in str(error)
         assert "cgr daemon restart" in str(error)
+
+    def test_refuses_when_compose_would_publish_another_port(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        # The app's own setting matches the running port, but MEMGRAPH_PORT
+        # is not in the environment Compose runs in, so Compose takes it from
+        # the .env beside the compose file, which moved on.
+        mgr = self._manager(stack_home, tmp_path)
+        mgr.memgraph_port = self.RUNNING_PORT
+
+        ups, error = self._start(
+            mgr,
+            _memgraph_publishing(self.RUNNING_PORT),
+            mgr.ensure_running,
+            published=self.REQUESTED_PORT,
+        )
+
+        assert ups == []
+        assert isinstance(error, StackError)
+        assert str(self.REQUESTED_PORT) in str(error)
+
+    def test_refuses_without_the_saved_compose_file(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        # A deleted file or a new CGR_HOME leaves the project's containers
+        # running, and `up` renders the file again for the same project.
+        mgr = self._manager(stack_home, tmp_path)
+        mgr.compose_file.unlink()
+
+        ups, error = self._start(
+            mgr, _memgraph_publishing(self.RUNNING_PORT), mgr.ensure_running
+        )
+
+        assert ups == []
+        assert isinstance(error, StackError)
+
+    def test_one_off_container_does_not_decide_the_port(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        # `docker compose run --service-ports memgraph` is not the stack's
+        # Memgraph, and `up -d` leaves it alone.
+        mgr = self._manager(stack_home, tmp_path)
+
+        ups, error = self._start(
+            mgr,
+            _memgraph_publishing(self.RUNNING_PORT, one_off=True),
+            mgr.ensure_running,
+        )
+
+        assert error is None
+        assert len(ups) == 1
 
     def test_cgr_start_refuses_without_starting_compose(
         self, stack_home: Path, tmp_path: Path

@@ -106,6 +106,11 @@ COMPOSE_PS_PUBLISHER_PORT_KEY = "PublishedPort"
 COMPOSE_PS_PUBLISHER_PROTOCOL_KEY = "Protocol"
 # Bolt runs over TCP, Docker's default for a port mapping that names none.
 COMPOSE_PS_PUBLISHER_TCP = "tcp"
+# A container's labels, printed as one `key=value,...` string. The label
+# marks a container `docker compose run` made, which `ps` lists too.
+COMPOSE_PS_LABELS_KEY = "Labels"
+COMPOSE_PS_LABEL_SEPARATOR = ","
+COMPOSE_ONE_OFF_LABEL = "com.docker.compose.oneoff=True"
 # How long a start that did not finish waits for the services it started to
 # answer, so that one still initialising is checked too before it returns.
 STARTED_SERVICES_CHECK_TIMEOUT_S = 15.0
@@ -259,11 +264,12 @@ ERR_MEMGRAPH_REJECTS_CREDENTIALS = (
 )
 ERR_MEMGRAPH_RUNS_ON_ANOTHER_PORT = (
     "The shared stack's Memgraph is running on port {running}, but "
-    "MEMGRAPH_PORT is {port} (from the environment or the .env file in the "
-    "current directory). Starting the stack here would move Memgraph to port "
-    "{port}, away from everything using port {running}. Unset MEMGRAPH_PORT "
-    "or set it to {running} to use the running stack, or run "
-    "'cgr daemon restart' to move the stack to port {port}."
+    "MEMGRAPH_PORT now resolves to {port} (from the environment, the .env "
+    "file in the current directory, or the .env file next to {path}). "
+    "Starting the stack here would move Memgraph to port {port}, away from "
+    "everything using port {running}. Unset MEMGRAPH_PORT or set it to "
+    "{running} to use the running stack, or run 'cgr daemon restart' to move "
+    "the stack to port {port}."
 )
 ERR_STACK_ACCEPTS_ANONYMOUS = (
     "Credentials are configured, but these running services still accept "
