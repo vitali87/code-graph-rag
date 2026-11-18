@@ -3,9 +3,11 @@
 `int Writer::AddRecord() {}` written inside `namespace ns { namespace log {`
 names the `Writer` C++ finds from `ns::log`: `ns::log::Writer`, else the same
 name in each enclosing namespace out to `::Writer`. A same-leaf class nested
-in another class (`ns::Impl::Writer`) is not what a bare `Writer::` names. A
-type alias or using-declaration in scope (`using Inner = Outer::Inner;`)
-stands for the name it introduces, looked up from where it is declared.
+in another class (`ns::Impl::Writer`) is not what a bare `Writer::` names,
+while `SkipList<K, C>::Iterator::Valid` names `SkipList`'s nested `Iterator`
+and no top-level one. A type alias or using-declaration in scope (`using
+Inner = Outer::Inner;`) stands for the name it introduces, looked up from
+where it is declared.
 
 Everything here is read from the definition's own file, so the paths a
 definition may name do not depend on which other files were parsed first.
@@ -22,10 +24,20 @@ from ...types_defs import CppClassLookup
 from ..utils import safe_decode_text
 from . import utils as cpp_utils
 
-# What holds a declaration visible at namespace scope: the file, a namespace
-# body, an `extern "C++"` block, a preprocessor branch, a template.
-_DECLARATION_SCOPE_TYPES = (
-    cs.CPP_NAMESPACE_SCOPE_TYPES | cs.CPP_DECLARATION_CONTAINER_TYPES
+# What holds declarations at namespace scope: the file, a namespace and its
+# body, an `extern "C++"` block, a preprocessor branch, a template, and a
+# stretch the parser could not read.
+_NAMESPACE_SCOPE_CONTAINER_TYPES = (
+    cs.CPP_NAMESPACE_SCOPE_TYPES
+    | cs.CPP_DECLARATION_CONTAINER_TYPES
+    | {cs.TS_NAMESPACE_DEFINITION, cs.TS_ERROR}
+)
+# What can hold a class, struct, union or enum specifier as its type.
+_SPECIFIER_HOLDER_TYPES = frozenset(
+    {cs.CppNodeType.DECLARATION, cs.CppNodeType.TYPE_DEFINITION}
+)
+_NAMESPACE_DECLARATION_TYPES = frozenset(
+    {cs.TS_NAMESPACE_DEFINITION, cs.TS_CPP_NAMESPACE_ALIAS_DEFINITION}
 )
 # What an alias can stand for and still name a class.
 _TYPE_NAME_TYPES = frozenset(
@@ -44,39 +56,61 @@ class _WrittenName(NamedTuple):
     anchored: bool
 
 
+class _Declaration(NamedTuple):
+    # One namespace-scope declaration of a name. `target` is what an alias
+    # stands for; None for a class, struct, union, enum or namespace, and for
+    # an alias of something no qualifier can name. Either way it hides an
+    # alias of the same name further out.
+    start_byte: int
+    end_byte: int
+    target: _WrittenName | None
+
+
+# {(dotted namespace path, name): its declarations there}. Keyed by namespace
+# rather than by syntax node, so an alias in an earlier `namespace lib {}`
+# block is still found from a later one.
+type _FileDeclarations = dict[tuple[str, str], list[_Declaration]]
+
+# 1-slot memo of the last file's declarations: every out-of-line definition
+# of a file asks, and the answer is per file.
+_last_file_declarations: tuple[Node, _FileDeclarations] | None = None
+
+
 def class_lookup(func_node: Node, class_name: str) -> CppClassLookup:
     """Where the class of the out-of-line definition `func_node` is looked up.
 
     `class_name` is the qualifier as `extract_class_name_from_out_of_class_method`
-    reads it, which drops a template's name (`SkipList<K, C>::Iterator::m`
-    reads as `Iterator`). It stays the name looked up unless an alias in scope
-    replaces it, so such a definition binds where it did before; the
-    qualifier as written only lets the leaf match reach the nested class it
-    names.
+    reads it, used only when the declarator holds none this module can read.
     """
-    read = class_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
     written = _qualifier(func_node)
     if written is None:
-        return CppClassLookup(read, _namespace_scope(func_node), read)
+        return CppClassLookup(
+            class_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT),
+            _namespace_scope(func_node),
+        )
     if written.anchored:
         return CppClassLookup(
-            read, cs.CPP_GLOBAL_NAMESPACE_PATH, cs.SEPARATOR_DOT.join(written.parts)
+            cs.SEPARATOR_DOT.join(written.parts), cs.CPP_GLOBAL_NAMESPACE_PATH
         )
-    parts, scope_node = written.parts, func_node
-    # An alias of an alias is followed from where the first one is declared;
+    declarations = _file_declarations(func_node)
+    parts, scope, position = (
+        written.parts,
+        _namespace_scope(func_node),
+        func_node.start_byte,
+    )
+    # An alias of an alias is looked up from where the first one is declared;
     # the hop limit ends a cycle in broken code.
     for _ in range(cs.CPP_MAX_ALIAS_HOPS):
-        found = _alias_before(scope_node, parts[0])
+        found = _alias_at(declarations, position, scope, parts[0])
         if found is None:
             break
-        scope_node, target = found
+        scope, target, position = found
         parts = target.parts + parts[1:]
-        read = cs.SEPARATOR_DOT.join(parts)
         if target.anchored:
-            return CppClassLookup(read, cs.CPP_GLOBAL_NAMESPACE_PATH, read)
-    return CppClassLookup(
-        read, _namespace_scope(scope_node), cs.SEPARATOR_DOT.join(parts)
-    )
+            return CppClassLookup(
+                cs.SEPARATOR_DOT.join(parts), cs.CPP_GLOBAL_NAMESPACE_PATH
+            )
+    return CppClassLookup(cs.SEPARATOR_DOT.join(parts), scope)
 
 
 def scope_candidates(lookup: CppClassLookup) -> list[str]:
@@ -93,9 +127,9 @@ def _namespace_scope(node: Node) -> str:
 
 
 def _qualifier(func_node: Node) -> _WrittenName | None:
-    # `SkipList<K, C>::Iterator::Valid` is qualified by
-    # `("SkipList", "Iterator")`: the template's name is kept, which is what
-    # lets the definition reach the nested class it names.
+    # Read part by part, so `SkipList<K, C>::Iterator::Valid` is qualified by
+    # `("SkipList", "Iterator")` and `Reader::Reporter::~Reporter` by
+    # `("Reader", "Reporter")`: the definition names the nested class.
     qualified = cpp_utils.out_of_class_qualified_name(func_node)
     if qualified is None:
         return None
@@ -132,54 +166,101 @@ def _plain_name(node: Node) -> str:
     return "".join((safe_decode_text(node) or "").split())
 
 
-def _alias_before(node: Node, name: str) -> tuple[Node, _WrittenName] | None:
-    # The nearest alias of `name` declared before `node` in a scope around
-    # it, innermost scope first, so a later declaration shadows an earlier
-    # one as C++ lookup does.
-    current = node
-    while (parent := current.parent) is not None:
-        if parent.type in _DECLARATION_SCOPE_TYPES:
-            for sibling in reversed(parent.children):
-                if sibling.end_byte > current.start_byte:
-                    continue
-                if (target := _alias_target(sibling, name)) is not None:
-                    return sibling, target
-        current = parent
+def _alias_at(
+    declarations: _FileDeclarations, position: int, scope: str, name: str
+) -> tuple[str, _WrittenName, int] | None:
+    # The alias `name` stands for at byte `position` in namespace `scope`:
+    # its namespace, its target and where it starts. As C++ lookup does, the
+    # innermost namespace declaring `name` before `position` decides; a
+    # class or namespace there hides any alias further out.
+    parts = scope.split(cs.SEPARATOR_DOT) if scope else []
+    for depth in range(len(parts), -1, -1):
+        level = cs.SEPARATOR_DOT.join(parts[:depth])
+        visible = [
+            declaration
+            for declaration in declarations.get((level, name), ())
+            if declaration.end_byte <= position
+        ]
+        if not visible:
+            continue
+        nearest = max(visible, key=lambda declaration: declaration.start_byte)
+        if nearest.target is None:
+            return None
+        return level, nearest.target, nearest.start_byte
     return None
 
 
-def _alias_target(node: Node, name: str) -> _WrittenName | None:
-    # What `node` makes `name` stand for: `using name = T;`, `typedef T
-    # name;`, or `using N::name;`. A using-directive brings in a whole
-    # namespace and declares no name.
+def _file_declarations(node: Node) -> _FileDeclarations:
+    global _last_file_declarations
+    root = node
+    while root.parent is not None:
+        root = root.parent
+    if _last_file_declarations is not None and _last_file_declarations[0] == root:
+        return _last_file_declarations[1]
+    found: _FileDeclarations = {}
+    # Function and class bodies are not walked: what they declare is local
+    # to them and never names an out-of-line definition's class.
+    pending = [root]
+    while pending:
+        current = pending.pop()
+        for name, target in _declared_names(current):
+            found.setdefault((_namespace_scope(current), name), []).append(
+                _Declaration(current.start_byte, current.end_byte, target)
+            )
+        if current.type in _NAMESPACE_SCOPE_CONTAINER_TYPES:
+            pending.extend(current.named_children)
+    _last_file_declarations = (root, found)
+    return found
+
+
+def _declared_names(node: Node) -> list[tuple[str, _WrittenName | None]]:
+    # The names `node` declares at namespace scope, each with what it aliases
+    # (None when it is no alias of a nameable class). A using-directive
+    # brings in a whole namespace and declares no name.
     match node.type:
         case cs.CppNodeType.ALIAS_DECLARATION:
             named = node.child_by_field_name(cs.FIELD_NAME)
-            if named is None or safe_decode_text(named) != name:
-                return None
             target = node.child_by_field_name(cs.FIELD_TYPE)
             if target is not None and target.type == cs.CppNodeType.TYPE_DESCRIPTOR:
                 target = target.child_by_field_name(cs.FIELD_TYPE)
-            return _type_name(target)
+            return [(_plain_name(named), _type_name(target))] if named else []
         case cs.CppNodeType.TYPE_DEFINITION:
-            if not any(
-                declarator.type == cs.CppNodeType.TYPE_IDENTIFIER
-                and safe_decode_text(declarator) == name
+            target = _type_name(node.child_by_field_name(cs.FIELD_TYPE))
+            return _specifier_names(node) + [
+                (_plain_name(declarator), target)
                 for declarator in node.children_by_field_name(cs.FIELD_DECLARATOR)
-            ):
-                return None
-            return _type_name(node.child_by_field_name(cs.FIELD_TYPE))
+                if declarator.type == cs.CppNodeType.TYPE_IDENTIFIER
+            ]
         case cs.TS_CPP_USING_DECLARATION:
             if not node.named_child_count or any(
                 child.type == cs.CPP_KEYWORD_NAMESPACE for child in node.children
             ):
-                return None
+                return []
             written = _written_name(node.named_children[-1])
-            if written is None or written.parts[-1] != name:
-                return None
-            return written
+            return [(written.parts[-1], written)] if written else []
+        case _ if node.type in _NAMESPACE_DECLARATION_TYPES:
+            named = node.child_by_field_name(cs.FIELD_NAME)
+            if named is None:
+                return []
+            first = _plain_name(named).split(cs.SEPARATOR_DOUBLE_COLON)[0]
+            return [(first, None)] if first else []
         case _:
-            return None
+            return _specifier_names(node)
+
+
+def _specifier_names(node: Node) -> list[tuple[str, _WrittenName | None]]:
+    # The class, struct, union or enum `node` declares, alone or as the type
+    # of a declaration: `class X {};`, `class X;`, `struct X {} x;`.
+    specifier: Node | None = node
+    if node.type in _SPECIFIER_HOLDER_TYPES:
+        specifier = node.child_by_field_name(cs.FIELD_TYPE)
+    if specifier is None or specifier.type not in cs.CPP_COMPOUND_TYPES:
+        return []
+    named = specifier.child_by_field_name(cs.FIELD_NAME)
+    # `class Outer::Inner {}` declares nothing in the namespace it sits in.
+    if named is None or named.type != cs.CppNodeType.TYPE_IDENTIFIER:
+        return []
+    return [(_plain_name(named), None)]
 
 
 def _type_name(node: Node | None) -> _WrittenName | None:

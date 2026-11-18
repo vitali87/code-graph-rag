@@ -267,8 +267,8 @@ _GO_TYPE_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.TYPE, NodeType.INTERFA
 # What a C++ qualifier can name as a class: a class/struct, or a type node.
 _CPP_CLASS_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.TYPE})
 # Registered definitions a C++ class can be declared inside. One of these
-# among a class qn's prefixes makes it a nested or local class, which a bare
-# out-of-line `X::` at namespace scope never names (issue #3137).
+# among a class qn's prefixes makes it a nested or local class, which an
+# out-of-line `X::` names only by writing the enclosing class (issue #3137).
 _CPP_ENCLOSING_DEFINITION_TYPES = frozenset(
     {
         NodeType.CLASS,
@@ -810,32 +810,16 @@ class FunctionIngestMixin:
         # Nothing at a looked-up path. A using-directive, an alias in a header,
         # or a namespace the parse lost can still put the class elsewhere, so
         # the leaf match stands in, on the innermost and the bare spelling as
-        # before. A bare name reaches no nested class unless the qualifier as
-        # written names its enclosing class (`SkipList<K, C>::Iterator::Valid`):
-        # `Writer` is not `Impl::Writer`, and no class at all leaves the
-        # definition unattached rather than misattached (#3137).
-        nested_suffix = (
-            f"{cs.SEPARATOR_DOT}{class_lookup.written}"
-            if cs.SEPARATOR_DOT in class_lookup.written
-            else None
-        )
+        # before, but only for a class nested no deeper than the qualifier
+        # written says: `Writer` is not `Impl::Writer` or `Outer::log::Writer`.
+        # No class at all leaves the definition unattached rather than
+        # misattached (#3137).
         for candidate in dict.fromkeys((candidates[0], candidates[-1])):
-            bare = cs.SEPARATOR_DOT not in candidate
             for class_qn in self._cpp_classes_ending_with(candidate):
-                if not self._is_cpp_class_visible_from(class_qn, module_qn):
-                    continue
-                if (
-                    bare
-                    and self._is_nested_cpp_class(class_qn)
-                    and not (
-                        nested_suffix
-                        and class_qn.replace(
-                            cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
-                        ).endswith(nested_suffix)
-                    )
-                ):
-                    continue
-                return class_qn
+                if self._is_cpp_class_visible_from(
+                    class_qn, module_qn
+                ) and not self._nests_beyond(class_qn, class_lookup.name):
+                    return class_qn
         return None
 
     def _find_namespace_scoped_cpp_class(
@@ -898,13 +882,22 @@ class FunctionIngestMixin:
         rehydrated = self.rehydrated_definition_paths.get(class_qn)
         return rehydrated is None or not rehydrated.endswith(cs.C_CPP_SOURCE_EXTENSIONS)
 
-    def _is_nested_cpp_class(self, class_qn: str) -> bool:
-        # A class defined out of line as `struct Outer::Inner {}` keeps its
-        # qualifier in its own segment; whether `Outer` is a class or a
-        # namespace is not recorded, so it counts as nested.
-        if cs.SEPARATOR_DOUBLE_COLON in class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]:
+    def _nests_beyond(self, class_qn: str, written: str) -> bool:
+        """Whether *class_qn* sits in a class or function *written* does not name.
+
+        *written* is the dotted qualifier the definition wrote: `Iterator`
+        reaches no `SkipList.Iterator`, while `SkipList.Iterator` does.
+        """
+        segments = class_qn.split(cs.SEPARATOR_DOT)
+        wanted = written.count(cs.SEPARATOR_DOT) + 1
+        named = 0
+        while segments and named < wanted:
+            named += segments.pop().count(cs.SEPARATOR_DOUBLE_COLON) + 1
+        # `struct Outer::Inner {}` keeps its qualifier in its own segment;
+        # one the definition did not write may name a class, so it counts.
+        if named > wanted:
             return True
-        scope = class_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        scope = cs.SEPARATOR_DOT.join(segments)
         while scope:
             if self.function_registry.get(scope) in _CPP_ENCLOSING_DEFINITION_TYPES:
                 return True
@@ -977,12 +970,13 @@ class FunctionIngestMixin:
     def _resolve_cpp_scoped_class(
         self, class_lookup: CppClassLookup, class_name: str, module_qn: str
     ) -> tuple[str, bool]:
-        # Only a class at a path C++ looks up binds here. Anything looser
-        # waits for resolve_deferred_cpp_methods: the class it names may sit
-        # in a header parsed later, and which same-leaf class happens to be
-        # registered by now depends on file names (#3137).
+        # Only a class at the innermost path C++ looks up binds here.
+        # Anything else waits for resolve_deferred_cpp_methods: a closer class
+        # than the one registered by now may sit in a header parsed later, so
+        # binding to an outer namespace's class, or a same-leaf class, would
+        # depend on file names (#3137).
         if class_qn := self._find_namespace_scoped_cpp_class(
-            out_of_line.scope_candidates(class_lookup), module_qn
+            out_of_line.scope_candidates(class_lookup)[:1], module_qn
         ):
             return class_qn, True
         normalized = class_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
