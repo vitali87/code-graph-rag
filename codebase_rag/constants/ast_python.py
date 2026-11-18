@@ -42,7 +42,6 @@ TS_PY_IMPORT_STATEMENT = "import_statement"
 TS_PY_IMPORT_FROM_STATEMENT = "import_from_statement"
 TS_PY_WITH_STATEMENT = "with_statement"
 TS_PY_AS_PATTERN = "as_pattern"
-TS_PY_WITH_CLAUSE = "with_clause"
 TS_PY_AS_PATTERN_TARGET = "as_pattern_target"
 # The keyword child of an `async with` (and of `async for` / `async def`).
 TS_PY_ASYNC = "async"
@@ -357,10 +356,12 @@ PY_DUNDER_LEN = "__len__"
 PY_DUNDER_BOOL = "__bool__"
 # `obj(...)` on an instance runs `type(obj).__call__`.
 PY_DUNDER_CALL = "__call__"
+# A `for` calls `__iter__` once, then `__next__` on what it returned each
+# step; `async for` awaits `__aiter__` and `__anext__`.
 PY_DUNDER_ITER = "__iter__"
+PY_DUNDER_NEXT = "__next__"
 PY_DUNDER_AITER = "__aiter__"
-PY_DUNDER_EXIT = "__exit__"
-PY_DUNDER_AEXIT = "__aexit__"
+PY_DUNDER_ANEXT = "__anext__"
 # `a < b` calls `a.__lt__(b)`, else the reflection `b.__gt__(a)`.
 PY_COMPARISON_DUNDERS: dict[str, tuple[str, str]] = {
     "<": ("__lt__", "__gt__"),

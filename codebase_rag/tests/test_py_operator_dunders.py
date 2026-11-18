@@ -128,6 +128,62 @@ def identity():
 def opened(path):
     with open(path) as f:
         return f
+
+
+class Walker:
+    def __iter__(self): return self
+    def __next__(self): raise StopIteration
+    def __aiter__(self): return self
+    async def __anext__(self): raise StopAsyncIteration
+
+
+def walk():
+    w = Walker()
+    for _x in w:
+        pass
+
+def walk_comprehension():
+    w = Walker()
+    return [x for x in w]
+
+async def walk_async():
+    w = Walker()
+    async for _x in w:
+        pass
+
+
+class Base:
+    def __add__(self, o): return NotImplemented
+    def __radd__(self, o): return self
+    def __iadd__(self, o): return NotImplemented
+    def __lt__(self, o): return NotImplemented
+    def __gt__(self, o): return True
+    def __eq__(self, o): return NotImplemented
+
+
+class Child(Base):
+    def __radd__(self, o): return self
+
+
+def mixed_add():
+    b = Base(); c = Child()
+    return b + c
+
+def mixed_augmented():
+    b = Base(); c = Child()
+    b += c
+
+def same_type_add():
+    b = Base(); b2 = Base()
+    return b + b2
+
+def same_type_equality():
+    b = Base(); b2 = Base()
+    return b == b2
+
+def same_type_ordering():
+    b = Base(); b2 = Base()
+    return b < b2
 """
 
 
@@ -153,8 +209,8 @@ def callees(tmp_path_factory: pytest.TempPathFactory) -> dict[str, set[str]]:
     return found
 
 
-def _dunders(callees: dict[str, set[str]], caller: str) -> set[str]:
-    return {c for c in callees.get(caller, set()) if c.startswith("Box.__")}
+def _dunders(callees: dict[str, set[str]], caller: str, owner: str = "Box") -> set[str]:
+    return {c for c in callees.get(caller, set()) if c.startswith(f"{owner}.__")}
 
 
 @pytest.mark.parametrize(
@@ -162,9 +218,13 @@ def _dunders(callees: dict[str, set[str]], caller: str) -> set[str]:
     [
         ("binary", {"Box.__add__"}),
         ("reflected", {"Box.__radd__"}),
-        ("augmented", {"Box.__iadd__"}),
+        # `__iadd__` may return NotImplemented, and `+=` then runs `__add__`;
+        # `__radd__` never runs on operands of one type.
+        ("augmented", {"Box.__iadd__", "Box.__add__"}),
         ("equality", {"Box.__eq__"}),
-        ("ordering", {"Box.__lt__"}),
+        # `__lt__` may return NotImplemented, and `<` then runs the right
+        # operand's `__gt__`.
+        ("ordering", {"Box.__lt__", "Box.__gt__"}),
         ("reflected_ordering", {"Box.__gt__"}),
         ("negate", {"Box.__neg__"}),
         ("call_instance", {"Box.__call__"}),
@@ -202,3 +262,58 @@ def test_no_dunder_is_invented(callees: dict[str, set[str]], caller: str) -> Non
 
 def test_the_existing_subscript_edge_is_kept(callees: dict[str, set[str]]) -> None:
     assert _dunders(callees, "subscript") == {"Box.__getitem__"}
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("walk", {"Walker.__iter__", "Walker.__next__"}),
+        ("walk_comprehension", {"Walker.__iter__", "Walker.__next__"}),
+        ("walk_async", {"Walker.__aiter__", "Walker.__anext__"}),
+    ],
+)
+def test_a_loop_calls_the_advancing_dunder_too(
+    callees: dict[str, set[str]], caller: str, expected: set[str]
+) -> None:
+    # A `for` calls `__iter__` once and then `__next__` on what it returned
+    # each step; an iterator that returns itself has both.
+    assert _dunders(callees, caller, "Walker") == expected, callees.get(caller)
+
+
+def _operator_dunders(callees: dict[str, set[str]], caller: str) -> set[str]:
+    return _dunders(callees, caller, "Base") | _dunders(callees, caller, "Child")
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        # `Base.__add__` returns NotImplemented, so Python goes on to the
+        # right operand's `__radd__`; a right operand of a subclass has its
+        # `__radd__` tried first. Either way both run.
+        ("mixed_add", {"Base.__add__", "Child.__radd__"}),
+        # `+=` falls back from `__iadd__` to `__add__`, then to `__radd__`.
+        ("mixed_augmented", {"Base.__iadd__", "Base.__add__", "Child.__radd__"}),
+        # A comparison falls back to the reflection whatever the types.
+        ("same_type_ordering", {"Base.__lt__", "Base.__gt__"}),
+    ],
+)
+def test_a_fallback_python_may_take_is_recorded(
+    callees: dict[str, set[str]], caller: str, expected: set[str]
+) -> None:
+    assert _operator_dunders(callees, caller) == expected, callees.get(caller)
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        # Python never tries `__radd__` when both operands have one type.
+        ("same_type_add", {"Base.__add__"}),
+        # The reflection of `==` on the same type is the method already
+        # recorded.
+        ("same_type_equality", {"Base.__eq__"}),
+    ],
+)
+def test_a_fallback_python_never_takes_is_not_recorded(
+    callees: dict[str, set[str]], caller: str, expected: set[str]
+) -> None:
+    assert _operator_dunders(callees, caller) == expected, callees.get(caller)
