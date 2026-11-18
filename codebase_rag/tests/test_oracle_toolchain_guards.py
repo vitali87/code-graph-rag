@@ -152,19 +152,33 @@ class TestCsharpGuard:
         monkeypatch.setenv("PATH", str(tmp_path))
         assert csharp_oracle_available() is False
 
+    @staticmethod
+    def _sdk_whose_build_succeeds(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sdk_line: str
+    ) -> None:
+        # The stub's `dotnet build` writes no Oracle.dll, so the real build
+        # step would report it incomplete unless a real SDK had already built
+        # the oracle in this checkout (issue #3631). The version check is what
+        # these tests judge; the build is stubbed as succeeding.
+        _stub(tmp_path, "dotnet", stdout=sdk_line)
+        monkeypatch.setenv("PATH", str(tmp_path))
+        monkeypatch.setattr(csharp_oracle, "_ensure_built", lambda _dotnet: True)
+
     def test_an_sdk_at_least_the_csproj_is_available(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _stub(tmp_path, "dotnet", stdout="10.0.400 [/usr/share/dotnet/sdk]")
-        monkeypatch.setenv("PATH", str(tmp_path))
+        self._sdk_whose_build_succeeds(
+            tmp_path, monkeypatch, "10.0.400 [/usr/share/dotnet/sdk]"
+        )
         assert csharp_oracle_available() is True
 
     def test_a_newer_sdk_is_available(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # An exact-TFM check would wrongly skip here: SDK 11 builds net10.0.
-        _stub(tmp_path, "dotnet", stdout="11.0.100 [/usr/share/dotnet/sdk]")
-        monkeypatch.setenv("PATH", str(tmp_path))
+        self._sdk_whose_build_succeeds(
+            tmp_path, monkeypatch, "11.0.100 [/usr/share/dotnet/sdk]"
+        )
         assert csharp_oracle_available() is True
 
     def test_a_runtime_only_install_is_not_available(
