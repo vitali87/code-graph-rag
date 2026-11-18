@@ -1096,6 +1096,15 @@ class GraphQueryClient(Protocol):
     ) -> list[ResultRow]: ...
 
 
+class ReferenceRepo(TypedDict):
+    """One pinned repository of the reference graphs (scripts/reference_graphs.py)."""
+
+    name: str
+    language: str
+    repository: str
+    commit: str
+
+
 class ReingestToolResult(TypedDict, total=False):
     """MCP ``reingest`` payload: what was re-parsed and how long it took."""
 

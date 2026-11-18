@@ -656,6 +656,56 @@ jobs:
           echo "${#files[@]} test files"
           uv run --no-sync pytest -n auto -m "not integration" --tb=short -rs "${files[@]}"
 
+  # The graphs of pinned public repositories, one or more per language
+  # (fixtures/reference_graphs, issue #3629). A change to what the indexer
+  # records must come with the regenerated graph, so it shows in the pull
+  # request; the second and third runs index a copy at another path under
+  # another hash seed and must give the same graph.
+  reference-graphs:
+    name: Reference Graphs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --extra treesitter-full
+
+      # Keyed on the manifest: a pinned commit never changes, so a hit is
+      # always the same checkout.
+      - name: Cache the pinned repositories
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/cgr-reference-repos
+          key: reference-repos-${{ hashFiles('fixtures/reference_graphs/repos.json') }}
+
+      - name: Check the reference graphs
+        run: uv run --no-sync python scripts/reference_graphs.py check --runs 3
+
   rust-graph-core:
     name: Rust Graph Core
     runs-on: ubuntu-latest
@@ -870,6 +920,7 @@ jobs:
         wheel-fresh-resolution,
         go-frontend,
         toolchain-tests,
+        reference-graphs,
         rust-graph-core,
         sonar-gate,
         greptile-gate,
@@ -887,6 +938,7 @@ jobs:
           echo "Wheel Smoke: ${{ needs.wheel-fresh-resolution.result }}"
           echo "Go Frontend: ${{ needs.go-frontend.result }}"
           echo "Toolchain Tests: ${{ needs.toolchain-tests.result }}"
+          echo "Reference Graphs: ${{ needs.reference-graphs.result }}"
           echo "Rust Graph Core: ${{ needs.rust-graph-core.result }}"
 
           if [[ "${{ needs.lint.result }}" != "success" ]]; then
@@ -923,6 +975,10 @@ jobs:
           fi
           if [[ "${{ needs.toolchain-tests.result }}" != "success" ]]; then
             echo "❌ Toolchain tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.reference-graphs.result }}" != "success" ]]; then
+            echo "❌ Reference graphs differ: see the job's log"
             exit 1
           fi
           if [[ "${{ needs.rust-graph-core.result }}" != "success" ]]; then

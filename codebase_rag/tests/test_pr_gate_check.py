@@ -1180,6 +1180,7 @@ REAL_ROLLUP_ALL_CONCLUDED = [
     },
     {"__typename": "CheckRun", "name": "Go Frontend", "conclusion": "SUCCESS"},
     {"__typename": "CheckRun", "name": "Toolchain Tests", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "Reference Graphs", "conclusion": "SUCCESS"},
     {
         "__typename": "CheckRun",
         "name": "Sonar Zero Issues Gate",
@@ -1830,6 +1831,7 @@ class TestAggregatedJobsCoversEveryDeclaredDependency:
         "Wheel Smoke (unlocked resolution)",
         "Go Frontend",
         "Toolchain Tests",
+        "Reference Graphs",
         "Sonar Zero Issues Gate",
         "Greptile 5/5 Gate",
     )
