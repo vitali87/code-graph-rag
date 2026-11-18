@@ -232,6 +232,7 @@ class JavaVariableAnalyzerMixin:
                 [
                     (
                         assignment.end_byte,
+                        scope_node.start_byte,
                         self._scoped_declaration_type(
                             assignment, name, module_qn, local_var_types
                         ),

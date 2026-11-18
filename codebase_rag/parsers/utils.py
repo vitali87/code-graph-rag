@@ -297,7 +297,7 @@ class FunctionCapturesResult(NamedTuple):
 def conflicting_declaration_spans(
     name: str,
     declarations: Sequence[tuple[int, int, str | None]],
-    assignments: Sequence[tuple[int, str | None]] = (),
+    assignments: Sequence[tuple[int, int, str | None]] = (),
 ) -> list[SpanBinding]:
     """Span bindings for the declarations of one local name, each `(start,
     end, type)` over the part of the body where the name reads it, when they
@@ -310,20 +310,26 @@ def conflicting_declaration_spans(
     stands: an untyped inner `x, err := f()` under a typed `var err error`
     is far likelier the same type than a reason to drop it.
 
-    `assignments` are `(site, type)` for each `name = value`: the variable
-    it assigns (the narrowest declaration holding the site) holds that type
-    from the site to the end of its scope. So `Shape s = new Circle(); s =
-    new Square(); s.area()` calls Square's, as the flat map has it, and of
-    two assignments the later one's span is the narrower, so it wins. An
-    assignment with no type it can read changes nothing, as in the flat map.
+    `assignments` are `(site, function start, type)` for each `name =
+    value`: the variable it assigns (the narrowest declaration holding the
+    site) holds that type from the site to the end of its scope. So `Shape s
+    = new Circle(); s = new Square(); s.area()` calls Square's, as the flat
+    map has it, and of two assignments the later one's span is the
+    narrower, so it wins. An assignment with no type it can read changes
+    nothing, as in the flat map, and neither does one written in a nested
+    function (one starting after the variable's declaration) to a variable
+    of the function around it: `later(() => { s = new B(); })` may run
+    later or never, and says nothing about the `s` the next line reads.
     """
     spans = list(declarations)
-    for site, type_name in assignments:
+    for site, function_start, type_name in assignments:
         owners = [
             (start, end) for start, end, _type in declarations if start <= site < end
         ]
-        if owners and type_name:
-            _start, end = min(owners, key=lambda span: span[1] - span[0])
+        if not owners or not type_name:
+            continue
+        start, end = min(owners, key=lambda span: span[1] - span[0])
+        if start >= function_start:
             spans.append((site, end, type_name))
     if len({type_name for _start, _end, type_name in spans if type_name}) < 2:
         return []

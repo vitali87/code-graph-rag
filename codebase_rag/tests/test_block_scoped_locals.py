@@ -421,6 +421,69 @@ def test_a_ts_reassignment_retypes_its_variable_from_there_on(
     assert edges[14] == _exact("Circle.area")
 
 
+def test_an_uncalled_arrow_does_not_retype_the_local_it_assigns(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The bot review's repro: `later` is never called, so `s` is still the A.
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class B { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "\n"
+        "export function run(): number {\n"
+        "  let s = new A();\n"
+        "  const later = () => { s = new B(); };\n"
+        "  const result = s.m();\n"
+        "  { let s = new C(); }\n"
+        "  return result;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[8] == _exact("A.m")
+
+
+def test_an_assignment_in_a_callback_does_not_retype_the_outer_local(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The callback may never run, and runs later if it does: its `x = new
+    # B()` says nothing about the `x` the next statement reads (bot review).
+    # A reassignment in the function's own body still does.
+    source = (
+        "class A { m(): number { return 1; } }\n"
+        "class B { m(): number { return 2; } }\n"
+        "class C { m(): number { return 3; } }\n"
+        "\n"
+        "export function run(items: number[], later: (f: () => void) => void): number {\n"
+        "  let sum = 0;\n"
+        "  {\n"
+        "    let x = new A();\n"
+        "    items.forEach(() => {\n"
+        "      x = new B();\n"
+        "    });\n"
+        "    later(function () {\n"
+        "      x = new B();\n"
+        "    });\n"
+        "    sum += x.m();\n"
+        "    x = new B();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  {\n"
+        "    const x = new C();\n"
+        "    sum += x.m();\n"
+        "  }\n"
+        "  return sum;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"run.ts": source}, mock_ingestor)
+
+    assert edges[15] == _exact("A.m")
+    assert edges[17] == _exact("B.m")
+    assert edges[21] == _exact("C.m")
+
+
 def test_a_go_reassignment_keeps_the_declared_interface(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

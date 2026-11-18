@@ -89,7 +89,7 @@ class _ScopedNames:
     # bindings worked out so far; `busy` holds the names being worked out, so
     # `for (const items of items)` reads the flat map rather than itself.
     found: dict[str, list[tuple[int, int, ASTNode]]]
-    assigned: dict[str, list[ASTNode]]
+    assigned: dict[str, list[tuple[ASTNode, ASTNode]]]
     module_qn: str
     language: cs.SupportedLanguage | None
     local_var_types: Mapping[str, str]
@@ -446,11 +446,13 @@ class JsTypeInferenceEngine:
         Nested callables are walked too, since their calls are this caller's
         (an anonymous callback is not a caller of its own). An assignment
         whose value has a type (`s = new Square()`) retypes its variable
-        from there to the end of its scope. A name declared once, or always
-        with one type, keeps the flat map's type everywhere.
+        from there to the end of its scope, unless it is written in a nested
+        function and the variable is not that function's own. A name
+        declared once, or always with one type, keeps the flat map's type
+        everywhere.
         """
         found: dict[str, list[tuple[int, int, ASTNode]]] = {}
-        assigned: dict[str, list[ASTNode]] = {}
+        assigned: dict[str, list[tuple[ASTNode, ASTNode]]] = {}
         self._scoped_parameters(caller_node, found)
         stack: list[tuple[ASTNode, ASTNode]] = [
             (child, caller_node) for child in reversed(caller_node.children)
@@ -465,7 +467,7 @@ class JsTypeInferenceEngine:
                 and target.type == cs.TS_IDENTIFIER
                 and (name := safe_decode_text(target))
             ):
-                assigned.setdefault(name, []).append(node)
+                assigned.setdefault(name, []).append((node, owner))
             else:
                 self._scoped_binding(node, owner, found)
             stack.extend((child, owner) for child in reversed(node.children))
@@ -500,6 +502,7 @@ class JsTypeInferenceEngine:
             [
                 (
                     assignment.end_byte,
+                    owner.start_byte,
                     self._scoped_declaration_type(
                         assignment,
                         name,
@@ -508,7 +511,7 @@ class JsTypeInferenceEngine:
                         names.local_var_types,
                     ),
                 )
-                for assignment in names.assigned.get(name, ())
+                for assignment, owner in names.assigned.get(name, ())
             ],
         )
         names.busy.discard(name)
