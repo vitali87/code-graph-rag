@@ -92,6 +92,20 @@ def _output_budget(model_id: str) -> int:
     return min(settings.MODEL_MAX_TOKENS, ceiling)
 
 
+def _anthropic_output_budget(model_id: str) -> int:
+    """`_output_budget`, raised to a floor that leaves room for thinking.
+
+    Applies only while MODEL_MAX_TOKENS is at its default: a value the user set
+    is kept, and so are the claude-3 snapshots' ceilings.
+    """
+    budget = _output_budget(model_id)
+    if cs.MODEL_MAX_TOKENS_FIELD in settings.model_fields_set:
+        return budget
+    if model_id.split(":", 1)[-1].startswith(cs.ANTHROPIC_PRE_THINKING_PREFIX):
+        return budget
+    return max(budget, cs.ANTHROPIC_MIN_OUTPUT_TOKENS)
+
+
 class GoogleProvider(ModelProvider):
     __slots__ = (
         "api_key",
@@ -274,7 +288,7 @@ class AnthropicProvider(ApiKeyProvider):
             anthropic_cache_messages=True,
             # Explicit, because the provider default is small enough that a
             # long answer fails before the model emits anything (issue #1498).
-            max_tokens=_output_budget(model_id),
+            max_tokens=_anthropic_output_budget(model_id),
         )
         return AnthropicModel(model_id, provider=provider, settings=model_settings)
 
