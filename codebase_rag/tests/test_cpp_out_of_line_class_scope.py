@@ -535,6 +535,53 @@ def test_without_a_visible_header_alias_the_nested_class_is_not_reached(
     assert qn in _module_children(mock_ingestor)
 
 
+# Greptile's example on #3645: `lib::detail::Inner` in the source is nearer
+# than the header's `lib::Inner` alias, so `Inner::run` is not
+# `lib::Outer::Inner::run` however `Inner` is declared there.
+@pytest.mark.parametrize(
+    "nearer",
+    [
+        pytest.param("namespace Inner { void run(); }", id="namespace"),
+        pytest.param("struct Inner;", id="forward-declaration"),
+        pytest.param("struct Inner { void run(); };", id="class"),
+    ],
+)
+def test_a_nearer_declaration_in_the_source_hides_a_header_alias(
+    temp_repo: Path, mock_ingestor: MagicMock, nearer: str
+) -> None:
+    (temp_repo / "lib.h").write_text(HEADER_ALIAS_LIB_H)
+    (temp_repo / "use.cc").write_text(
+        f'#include "lib.h"\nnamespace lib::detail {{\n{nearer}\n'
+        "void Inner::run() {}\n}  // namespace lib::detail\n"
+    )
+    run_updater(temp_repo, mock_ingestor)
+    graph = _Graph(mock_ingestor)
+
+    qn = graph.methods[("use.cc", 4)]
+    assert not graph.owners.get(qn, "").endswith(".lib.Outer.Inner"), (
+        qn,
+        graph.owners,
+    )
+    assert graph.owner_path("use.cc", 4) in (None, "use.cc")
+
+
+def test_a_header_alias_in_a_nearer_namespace_still_applies(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The source declares `Inner` only at global scope; the header's alias in
+    # `lib`, nearer to the definition, is the one C++ finds.
+    (temp_repo / "lib.h").write_text(HEADER_ALIAS_LIB_H)
+    (temp_repo / "use.cc").write_text(
+        '#include "lib.h"\nstruct Inner;\nnamespace lib {\n'
+        "void Inner::run() {}\n}  // namespace lib\n"
+    )
+    run_updater(temp_repo, mock_ingestor)
+    graph = _Graph(mock_ingestor)
+
+    qn = graph.methods[("use.cc", 4)]
+    assert graph.owners.get(qn, "").endswith(".lib.Outer.Inner"), (qn, graph.owners)
+
+
 def test_an_anchored_qualifier_follows_a_global_alias(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -687,31 +734,36 @@ def _lookup_of_last_definition(cpp_parser, code: str) -> CppClassLookup:
         pytest.param(
             "namespace a { using X = lib::X;\n"
             "namespace b { class X { void f(); }; void X::f() {} } }",
-            CppClassLookup("X", "a.b"),
+            CppClassLookup("X", "a.b", "a.b"),
             id="nearer-class-hides-alias",
         ),
         pytest.param(
             "using W = other::W;\nnamespace n { struct W; void W::f() {} }",
-            CppClassLookup("W", "n"),
+            CppClassLookup("W", "n", "n"),
             id="nearer-forward-declaration-hides-alias",
         ),
         pytest.param(
             "namespace a { using X = lib::X;\n"
             "namespace b { namespace X { struct Y { void f(); }; }\n"
             "void X::Y::f() {} } }",
-            CppClassLookup("X.Y", "a.b"),
+            CppClassLookup("X.Y", "a.b", "a.b"),
             id="nearer-namespace-hides-alias",
         ),
         pytest.param(
             "namespace a { using X = lib::X;\n"
             "namespace b { template <class T> struct X; void X::f() {} } }",
-            CppClassLookup("X", "a.b"),
+            CppClassLookup("X", "a.b", "a.b"),
             id="nearer-template-hides-alias",
         ),
         pytest.param(
             "using Alias = lib::Owner;\nvoid ::Alias::run() {}",
             CppClassLookup("lib.Owner", ""),
             id="anchored-through-a-global-alias",
+        ),
+        pytest.param(
+            "using Base = lib::Owner;\nusing Alias = ::Base;\nvoid ::Alias::run() {}",
+            CppClassLookup("lib.Owner", ""),
+            id="anchored-alias-target-is-an-alias",
         ),
         pytest.param(
             "namespace x { using Alias = lib::Owner; void ::Alias::run() {} }",

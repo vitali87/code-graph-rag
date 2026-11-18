@@ -115,19 +115,25 @@ def header_alias_lookup(path: Path, lookup: CppClassLookup) -> CppClassLookup | 
     an incremental run did not re-parse answers as it does on a full run.
     """
     try:
-        stat = path.stat()
+        source = path.read_bytes()
     except OSError:
         return None
-    declarations = _header_declarations(str(path), stat.st_mtime_ns, stat.st_size)
-    if declarations is None:
+    if (declarations := _header_declarations(source, path)) is None:
         return None
+    # What the definition's own file declares under that name hides any
+    # header alias in the same or an enclosing namespace, so only namespaces
+    # nested inside it are searched.
+    innermost_hidden = (
+        0 if lookup.declared_in is None else _depth(lookup.declared_in) + 1
+    )
     through = _follow_aliases(
         declarations,
         tuple(lookup.name.split(cs.SEPARATOR_DOT)),
         lookup.scope,
         _WHOLE_FILE,
+        innermost_hidden,
     )
-    return None if through == lookup else through
+    return None if through.name == lookup.name else through
 
 
 def scope_candidates(lookup: CppClassLookup) -> list[str]:
@@ -141,6 +147,10 @@ def scope_candidates(lookup: CppClassLookup) -> list[str]:
 
 def _namespace_scope(node: Node) -> str:
     return cs.SEPARATOR_DOT.join(cpp_utils.extract_namespace_path(node))
+
+
+def _depth(path: str) -> int:
+    return len(path.split(cs.SEPARATOR_DOT)) if path else 0
 
 
 def _qualifier(func_node: Node) -> _WrittenName | None:
@@ -188,43 +198,49 @@ def _follow_aliases(
     parts: tuple[str, ...],
     scope: str,
     position: int,
+    outermost_depth: int = 0,
 ) -> CppClassLookup:
     # An alias of an alias is looked up from where the first one is declared;
     # the hop limit ends a cycle in broken code.
     for _ in range(cs.CPP_MAX_ALIAS_HOPS):
-        found = _alias_at(declarations, position, scope, parts[0])
+        found = _nearest_declaration(
+            declarations, position, scope, parts[0], outermost_depth
+        )
         if found is None:
             break
-        scope, target, position = found
-        parts = target.parts + parts[1:]
-        if target.anchored:
-            return CppClassLookup(
-                cs.SEPARATOR_DOT.join(parts), cs.CPP_GLOBAL_NAMESPACE_PATH
-            )
+        level, declaration = found
+        if declaration.target is None:
+            return CppClassLookup(cs.SEPARATOR_DOT.join(parts), scope, level)
+        parts = declaration.target.parts + parts[1:]
+        # A target written `::Base` is looked up from the global namespace,
+        # and may be an alias itself.
+        scope = cs.CPP_GLOBAL_NAMESPACE_PATH if declaration.target.anchored else level
+        position, outermost_depth = declaration.start_byte, 0
     return CppClassLookup(cs.SEPARATOR_DOT.join(parts), scope)
 
 
-def _alias_at(
-    declarations: _FileDeclarations, position: int, scope: str, name: str
-) -> tuple[str, _WrittenName, int] | None:
-    # The alias `name` stands for at byte `position` in namespace `scope`:
-    # its namespace, its target and where it starts. As C++ lookup does, the
-    # innermost namespace declaring `name` before `position` decides; a
-    # class or namespace there hides any alias further out.
+def _nearest_declaration(
+    declarations: _FileDeclarations,
+    position: int,
+    scope: str,
+    name: str,
+    outermost_depth: int,
+) -> tuple[str, _Declaration] | None:
+    # The declaration `name` finds at byte `position` in namespace `scope`,
+    # and its namespace. As C++ lookup does, the innermost namespace
+    # declaring `name` before `position` decides: an alias there stands for
+    # its target, and a class or namespace hides any alias further out.
+    # Namespaces shallower than `outermost_depth` are not searched.
     parts = scope.split(cs.SEPARATOR_DOT) if scope else []
-    for depth in range(len(parts), -1, -1):
+    for depth in range(len(parts), outermost_depth - 1, -1):
         level = cs.SEPARATOR_DOT.join(parts[:depth])
         visible = [
             declaration
             for declaration in declarations.get((level, name), ())
             if declaration.end_byte <= position
         ]
-        if not visible:
-            continue
-        nearest = max(visible, key=lambda declaration: declaration.start_byte)
-        if nearest.target is None:
-            return None
-        return level, nearest.target, nearest.start_byte
+        if visible:
+            return level, max(visible, key=lambda declaration: declaration.start_byte)
     return None
 
 
@@ -240,25 +256,19 @@ def _file_declarations(node: Node) -> _FileDeclarations:
     return found
 
 
-# Keyed by modification time and size as well as path, so an edited header
-# is read again by a long-lived process.
+# Keyed by the header's content, so an edited header is parsed again by a
+# long-lived process whatever its timestamps say.
 @functools.lru_cache(maxsize=64)
-def _header_declarations(
-    path: str, mtime_ns: int, size: int
-) -> _FileDeclarations | None:
+def _header_declarations(source: bytes, path: Path) -> _FileDeclarations | None:
     # Imported here: the loader imports the parsers package this module is in.
     from ...parser_loader import load_parsers
 
     parsers, _queries = load_parsers()
     if cs.SupportedLanguage.CPP not in parsers:
         return None
-    try:
-        source = Path(path).read_bytes()
-    except OSError:
-        return None
     language = cs.SupportedLanguage.CPP
     tree = parse_with_preproc_recovery(
-        parsers[language], grammar_bytes(source, language, Path(path)), language
+        parsers[language], grammar_bytes(source, language, path), language
     )
     return _collect_declarations(tree.root_node)
 

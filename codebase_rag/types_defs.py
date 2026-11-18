@@ -1299,10 +1299,15 @@ class CppClassLookup(NamedTuple):
     stands for. `scope` is the dotted namespace path the lookup starts from:
     the definition's own, or the alias's when the name came through one.
     Each enclosing namespace is tried out to the global one (issue #3137).
+
+    `declared_in` is the namespace where the definition's own file declares
+    the name's first part as a class, namespace or the like, which hides any
+    alias of it in that namespace or further out; None when it declares none.
     """
 
     name: str
     scope: str
+    declared_in: str | None = None
 
 
 class CppDefinitionSpan(NamedTuple):
