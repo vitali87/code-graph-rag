@@ -54,6 +54,24 @@ rename cannot rewrite that import, so rewriting the use would leave it naming
 what the barrel no longer exports. Any other use with no such import is
 reported as `heuristic` and refuses like a guessed site (issue #2464).
 
+A destructure that reads the name out of the module is such an import:
+`const { pad } = U` after `import * as U from "./u"` (or
+`const U = require("./u")`) binds `pad` exactly, so the rename rewrites the
+key with its uses (`const { padLeft } = U`), and `{ pad: p }` keeps its own
+local (`{ padLeft: p }`). A default (`{ pad = f }`, `{ pad: p = f }`) or a
+comment beside the key changes nothing, and in a declaration that also
+destructures another object (`const { pad: p } = other, { pad: q } = U`)
+only the namespace's key moves. Only a module-level destructure binds: in a
+function, a parameter or local may shadow `U`. An object literal's
+shorthand property keeps its key: `export default { pad }` becomes
+`{ pad: padLeft }`, so every consumer reading `.pad` keeps working. The
+exception is the CommonJS export object, whose key moves with the
+`require("./u").pad` readers the rename rewrites (issue #3252). It is told
+by its syntax, however spaced: `module.exports = { pad }`, wrapped
+(`({ pad })`), chained (`module.exports = exports = { pad }`), frozen
+(`Object.freeze({ pad })`) or copied on (`Object.assign(module.exports,
+{ pad })`).
+
 ## Refusal
 
 The graph tags each call edge with how it was resolved (issue #1526). A
@@ -222,7 +240,7 @@ left to be checked by hand.
 
 An applied rename is measured through the [structural
 delta](structural-delta.md) and held to its
-[contract](postcondition-contract.md): the symbol set and call-site count
+[contract](postcondition-contract.md): the symbol set and call/reference site count
 must be unchanged apart from the renamed hierarchy, no caller may be left
 dangling, no site resolved by guesswork may have been rewritten without
 `--allow-heuristic`, and no duplicate group or import cycle may appear.
