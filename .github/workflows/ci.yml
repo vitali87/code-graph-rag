@@ -576,6 +576,86 @@ jobs:
         run: |
           uv run --no-sync pytest codebase_rag/tests/test_go_frontend.py -v --tb=short
 
+  # Tests that need a toolchain skip where it is missing, and the unit jobs
+  # install only Go: `tsc`, a .NET 10 SDK and Lua were absent on every runner,
+  # so a test that needs one never ran, and #3628 failed only off CI. This job
+  # installs them and runs every test file that probes for one.
+  toolchain-tests:
+    name: Toolchain Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ">=1.27.2"
+          cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
+
+      # The C# oracle targets net10.0 (evals/oracles/csharp_oracle/Oracle.csproj).
+      - name: Set up .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: "10.0.x"
+
+      # `tsc` from the TypeScript oracle's lockfile, the version the evals
+      # already pin, rather than an unpinned global install.
+      - name: Install the TypeScript compiler and Lua
+        run: |
+          npm ci --prefix evals/oracles/ts_oracle
+          echo "$GITHUB_WORKSPACE/evals/oracles/ts_oracle/node_modules/.bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends lua5.4
+
+      - name: Show the toolchains
+        run: |
+          go version
+          dotnet --list-sdks
+          node --version
+          tsc --version
+          javac -version
+          lua5.4 -v
+          cargo --version
+
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv sync --extra treesitter-full --extra test --group dev
+
+      # Every test file that looks for a toolchain before running. `-rs`
+      # prints why anything still skipped, so a toolchain the job lost shows.
+      - name: Run the toolchain-dependent tests
+        run: |
+          mapfile -t files < <(grep -rlE \
+            'shutil\.which\("(go|dotnet|dotnet-trace|tsc|node|javac|java|lua|php|phpunit|cargo|dart)"|needs_tsc|needs_javac|oracle_available|go_available|java_available|cargo_available|lua_available|dotnet' \
+            codebase_rag/tests --include='test_*.py' | sort)
+          echo "${#files[@]} test files"
+          uv run --no-sync pytest -n auto -m "not integration" --tb=short -rs "${files[@]}"
+
   rust-graph-core:
     name: Rust Graph Core
     runs-on: ubuntu-latest
@@ -789,6 +869,7 @@ jobs:
         binary-smoke,
         wheel-fresh-resolution,
         go-frontend,
+        toolchain-tests,
         rust-graph-core,
         sonar-gate,
         greptile-gate,
@@ -805,6 +886,7 @@ jobs:
           echo "Binary Smoke: ${{ needs.binary-smoke.result }}"
           echo "Wheel Smoke: ${{ needs.wheel-fresh-resolution.result }}"
           echo "Go Frontend: ${{ needs.go-frontend.result }}"
+          echo "Toolchain Tests: ${{ needs.toolchain-tests.result }}"
           echo "Rust Graph Core: ${{ needs.rust-graph-core.result }}"
 
           if [[ "${{ needs.lint.result }}" != "success" ]]; then
@@ -837,6 +919,10 @@ jobs:
           fi
           if [[ "${{ needs.go-frontend.result }}" != "success" ]]; then
             echo "❌ Go frontend job failed"
+            exit 1
+          fi
+          if [[ "${{ needs.toolchain-tests.result }}" != "success" ]]; then
+            echo "❌ Toolchain tests failed"
             exit 1
           fi
           if [[ "${{ needs.rust-graph-core.result }}" != "success" ]]; then
