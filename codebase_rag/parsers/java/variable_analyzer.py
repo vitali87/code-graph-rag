@@ -109,6 +109,15 @@ def _local_scope(declaration: ASTNode, scope_node: ASTNode) -> ASTNode:
     return scope_node
 
 
+def _assigned_local(assignment: ASTNode) -> str | None:
+    # `s = ...` assigns a local (or a field, which no local span holds);
+    # `this.s = ...` is the field's.
+    left = assignment.child_by_field_name(cs.FIELD_LEFT)
+    if left is None or left.type != cs.TS_IDENTIFIER:
+        return None
+    return safe_decode_text(left)
+
+
 def _try_body_end(resource: ASTNode) -> int:
     # resource -> resource_specification -> try_with_resources_statement.
     statement = resource.parent.parent if resource.parent is not None else None
@@ -184,10 +193,13 @@ class JavaVariableAnalyzerMixin:
         another, so these spans never nest: a parameter holds over the
         method, a local from its declarator to the end of its block, a loop,
         catch or resource variable over its statement. Each is typed by the
-        pass that types it in the flat map; a name declared once, or always
-        with one type, keeps the flat map's type everywhere.
+        pass that types it in the flat map, and an assignment the flat map
+        reads (`s = new Square()`) retypes its variable from there on; a name
+        declared once, or always with one type, keeps the flat map's type
+        everywhere.
         """
         found: dict[str, list[tuple[int, int, ASTNode]]] = {}
+        assigned: dict[str, list[ASTNode]] = {}
         if params := scope_node.child_by_field_name(cs.FIELD_PARAMETERS):
             for param in params.children:
                 if param.type in (cs.TS_FORMAL_PARAMETER, cs.TS_SPREAD_PARAMETER):
@@ -196,6 +208,10 @@ class JavaVariableAnalyzerMixin:
         while pending:
             current = pending.pop()
             self._scoped_local(current, scope_node, found)
+            if current.type == cs.TS_ASSIGNMENT_EXPRESSION and (
+                name := _assigned_local(current)
+            ):
+                assigned.setdefault(name, []).append(current)
             pending.extend(reversed(current.children))
         return [
             binding
@@ -212,6 +228,15 @@ class JavaVariableAnalyzerMixin:
                         ),
                     )
                     for start, end, node in declarations
+                ],
+                [
+                    (
+                        assignment.end_byte,
+                        self._scoped_declaration_type(
+                            assignment, name, module_qn, local_var_types
+                        ),
+                    )
+                    for assignment in assigned.get(name, ())
                 ],
             )
         ]
@@ -280,9 +305,9 @@ class JavaVariableAnalyzerMixin:
         module_qn: str,
         local_var_types: Mapping[str, str],
     ) -> str | None:
-        # The declaration typed alone, by the pass that types it in the flat
-        # map, against the rest of the map: nothing another declaration of
-        # the name wrote can answer for it.
+        # The declaration or assignment typed alone, by the pass that types
+        # it in the flat map, against the rest of the map: nothing another
+        # write of the name can answer for it.
         scratch = {key: value for key, value in local_var_types.items() if key != name}
         match node.type:
             case cs.TS_FORMAL_PARAMETER:
@@ -301,6 +326,8 @@ class JavaVariableAnalyzerMixin:
                 self._process_catch_formal_parameter(node, scratch, module_qn)
             case cs.TS_JAVA_RESOURCE:
                 self._process_java_resource(node, scratch, module_qn)
+            case cs.TS_ASSIGNMENT_EXPRESSION:
+                self._process_java_assignment(node, scratch, module_qn)
         return scratch.get(name)
 
     def _analyze_java_parameters(

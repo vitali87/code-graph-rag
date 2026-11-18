@@ -318,6 +318,129 @@ def test_an_anonymous_callback_s_own_const_stays_inside_it(
     assert edges[10] == _exact("Edit.applyTo")
 
 
+SHAPES_JAVA = """\
+package app;
+
+class Shape { int area() { return 0; } }
+class Circle extends Shape { int area() { return 1; } }
+class Square extends Shape { int area() { return 2; } }
+
+public class Main {
+  int total(boolean round) {
+    int sum = 0;
+    {
+      Shape s = new Circle();
+      sum += s.area();
+      s = new Square();
+      sum += s.area();
+    }
+    {
+      Shape s = new Circle();
+      if (round) {
+        s = new Square();
+      }
+      sum += s.area();
+    }
+    {
+      Square s = new Square();
+      sum += s.area();
+    }
+    return sum;
+  }
+}
+"""
+
+
+def test_a_java_reassignment_retypes_its_variable_from_there_on(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The flat map reads `s = new Square()` as well as the declarations, and
+    # a block's span must not undo that: after the assignment the variable
+    # is a Square (bot review), before it still the Circle it was made.
+    edges = _index(temp_repo, {_JAVA_MAIN_PATH: SHAPES_JAVA}, mock_ingestor)
+
+    assert edges[12] == _exact("Circle.area()")
+    assert edges[14] == _exact("Square.area()")
+    # Assigned in a branch: a Square from the assignment to the block's end.
+    assert edges[21] == _exact("Square.area()")
+    assert edges[25] == _exact("Square.area()")
+
+
+def test_a_ts_reassignment_retypes_its_variable_from_there_on(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    source = (
+        "class Shape { area(): number { return 0; } }\n"
+        "class Circle extends Shape { area(): number { return 1; } }\n"
+        "class Square extends Shape { area(): number { return 2; } }\n"
+        "\n"
+        "export function total(): number {\n"
+        "  let sum = 0;\n"
+        "  {\n"
+        "    let s: Shape = new Circle();\n"
+        "    s = new Square();\n"
+        "    sum += s.area();\n"
+        "  }\n"
+        "  {\n"
+        "    const s = new Circle();\n"
+        "    sum += s.area();\n"
+        "  }\n"
+        "  return sum;\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"shapes.ts": source}, mock_ingestor)
+
+    assert edges[10] == _exact("Square.area")
+    assert edges[14] == _exact("Circle.area")
+
+
+def test_a_go_reassignment_keeps_the_declared_interface(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A Go assignment cannot change a variable's type: `s` stays the Shape it
+    # was declared, as the compiler binds it, whatever the other block's `s`
+    # is. The flat map typed it as that other block's Square.
+    source = (
+        "package main\n"
+        "\n"
+        "type Shape interface{ Area() int }\n"
+        "\n"
+        "type Circle struct{}\n"
+        "\n"
+        "func (Circle) Area() int { return 1 }\n"
+        "\n"
+        "type Square struct{}\n"
+        "\n"
+        "func (Square) Area() int { return 2 }\n"
+        "\n"
+        "func Total() int {\n"
+        "\tsum := 0\n"
+        "\t{\n"
+        "\t\tvar s Shape = Circle{}\n"
+        "\t\ts = Square{}\n"
+        "\t\tsum += s.Area()\n"
+        "\t}\n"
+        "\t{\n"
+        "\t\ts := Circle{}\n"
+        "\t\tsum += s.Area()\n"
+        "\t}\n"
+        "\treturn sum\n"
+        "}\n"
+    )
+
+    edges = _index(temp_repo, {"shapes.go": source}, mock_ingestor)
+    # The interface call fans out to the implementations as well.
+    at_line_18 = {
+        (cs.SEPARATOR_DOT.join(qn.split(cs.SEPARATOR_DOT)[-2:]), how)
+        for qn, line, how in _call_rows(mock_ingestor)
+        if line == 18
+    }
+
+    assert ("Shape.Area", cs.EdgeResolution.EXACT.value) in at_line_18
+    assert edges[22] == _exact("Circle.Area")
+
+
 # Negative: what must not change.
 
 

@@ -427,10 +427,13 @@ class JsTypeInferenceEngine:
         Where several hold, the call processor takes the narrowest, which is
         the innermost scope's, and of two `var`s of one callable the later.
         Nested callables are walked too, since their calls are this caller's
-        (an anonymous callback is not a caller of its own). A name declared
-        once, or always with one type, keeps the flat map's type everywhere.
+        (an anonymous callback is not a caller of its own). An assignment
+        whose value has a type (`s = new Square()`) retypes its variable
+        from there to the end of its scope. A name declared once, or always
+        with one type, keeps the flat map's type everywhere.
         """
         found: dict[str, list[tuple[int, int, ASTNode]]] = {}
+        assigned: dict[str, list[ASTNode]] = {}
         self._scoped_parameters(caller_node, found)
         stack: list[tuple[ASTNode, ASTNode]] = [
             (child, caller_node) for child in reversed(caller_node.children)
@@ -440,6 +443,12 @@ class JsTypeInferenceEngine:
             if node.type in _JS_NESTED_CALLABLE_TYPES:
                 owner = node
                 self._scoped_parameters(node, found)
+            elif node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION and (
+                (target := node.child_by_field_name(cs.FIELD_LEFT)) is not None
+                and target.type == cs.TS_IDENTIFIER
+                and (name := safe_decode_text(target))
+            ):
+                assigned.setdefault(name, []).append(node)
             else:
                 self._scoped_binding(node, owner, found)
             stack.extend((child, owner) for child in reversed(node.children))
@@ -458,6 +467,15 @@ class JsTypeInferenceEngine:
                         ),
                     )
                     for start, end, node in declarations
+                ],
+                [
+                    (
+                        assignment.end_byte,
+                        self._scoped_declaration_type(
+                            assignment, name, module_qn, language, local_var_types
+                        ),
+                    )
+                    for assignment in assigned.get(name, ())
                 ],
             )
         ]
@@ -511,8 +529,9 @@ class JsTypeInferenceEngine:
         language: cs.SupportedLanguage | None,
         local_var_types: Mapping[str, str],
     ) -> str | None:
-        # Typed as the flat map types the same declaration; a destructured
-        # name or a catch binding has no type it can read.
+        # Typed as the flat map types the same declaration, and an
+        # assignment as a declarator with that value; a destructured name or
+        # a catch binding has no type it can read.
         match node.type:
             case cs.TS_VARIABLE_DECLARATOR:
                 target = node.child_by_field_name(cs.FIELD_NAME)
@@ -526,6 +545,13 @@ class JsTypeInferenceEngine:
                 return self._for_of_element_type(binding[1], local_var_types, module_qn)
             case cs.TS_JS_CATCH_CLAUSE:
                 return None
+            case cs.TS_JS_ASSIGNMENT_EXPRESSION:
+                value = node.child_by_field_name(cs.FIELD_RIGHT)
+                if value is None:
+                    return None
+                return self._infer_js_variable_type_from_value(
+                    value, module_qn, language
+                )
             case _:
                 return self._interface_parameter_types(node, module_qn).get(name)
 
