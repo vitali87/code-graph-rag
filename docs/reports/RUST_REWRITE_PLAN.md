@@ -284,10 +284,17 @@ pull request.
 0. **Groundwork, in Python.** Land #2970 and #3024. Fix or record the other
    nondeterminism (#3148, #3137, #3332) and the incremental-against-fresh
    differences (#2403, #2911), so reference graphs are stable. Add the
-   all-toolchains CI job and fix #3628. Record the interface snapshot and the
-   reference outputs. Decide, per language, what happens to its open pull
-   requests before it moves. *Exit:* the same graph on every run, order and
-   seed for the pinned repositories; snapshot and reference checks in CI.
+   all-toolchains CI job and fix #3628. Fix today's known bugs first, above
+   all those that change what a command or MCP tool answers, so the
+   reference outputs record correct behaviour rather than bugs. Sweep the open
+   pull requests once (merge, close or keep each); after the sweep Python
+   takes no new features, and a fix lands only for a bug the rewrite would
+   otherwise copy. Then record the interface snapshot and the reference
+   outputs. Interface changes wait until after the rewrite, which keeps
+   today's behaviour as closely as it can: making `cgr index` the only way to
+   build the graph (#3523) is parked until then. *Exit:* the same graph on
+   every run, order and seed for the pinned repositories; snapshot and
+   reference checks in CI.
 1. **Seams.** The per-language engine switch, the `rust` and `both` CI
    modes (identical to `python` while nothing has moved), the data each stage
    hands to the next written out by the Python engine too.
