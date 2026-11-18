@@ -7,7 +7,11 @@ from unittest.mock import MagicMock
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.utils.path_utils import should_skip_path, should_skip_rel_file
+from codebase_rag.utils.path_utils import (
+    should_keep_dir,
+    should_skip_path,
+    should_skip_rel_file,
+)
 
 
 def _skip(
@@ -162,4 +166,79 @@ class TestDirectoryStructureRescue:
             exclude_paths=frozenset({"gen"}),
             unignore_paths=frozenset({"gen/*.py"}),
             is_file=False,
+        )
+
+
+class TestVcsMetadataNeverWalked:
+    """A `!` line can rescue a built-in-ignored directory, never `.git`
+    (issue #3642): .NET's standard `.gitignore` has `!*.[Cc]ache/` and
+    `!**/packages/build/`, and either one walked into `.git`."""
+
+    UNANCHORED = frozenset({"**/packages/build/", "*.[Cc]ache/"})
+
+    def test_a_metadata_dir_stays_pruned_whatever_the_unignores(self) -> None:
+        for name in (".git", ".hg", ".svn"):
+            assert not should_keep_dir(name, "", None, self.UNANCHORED), name
+            assert not should_keep_dir(name, "pkg/", None, self.UNANCHORED), name
+
+    def test_another_builtin_dir_is_still_rescued(self) -> None:
+        assert should_keep_dir("node_modules", "", None, self.UNANCHORED)
+
+    def test_the_structure_walk_skips_a_metadata_dir(self, tmp_path: Path) -> None:
+        assert should_skip_path(
+            tmp_path / ".git" / "hooks",
+            tmp_path,
+            unignore_paths=self.UNANCHORED,
+            is_file=False,
+        )
+
+    def test_no_metadata_folder_reaches_the_graph(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "a.py").write_text("def f():\n    return 1\n")
+        for folder in ("hooks", "objects/12", "refs/heads"):
+            (tmp_path / ".git" / folder).mkdir(parents=True)
+        ingestor = MagicMock()
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=ingestor,
+            repo_path=tmp_path,
+            parsers=parsers,
+            queries=queries,
+            unignore_paths=self.UNANCHORED,
+        ).run(force=True)
+
+        folders = {
+            call.args[1].get("path")
+            for call in ingestor.ensure_node_batch.call_args_list
+            if call.args[0] == "Folder"
+        }
+
+        assert "src" in folders
+        assert not any(str(path).startswith(".git") for path in folders), folders
+
+    def test_a_file_under_a_metadata_dir_is_skipped_by_both_predicates(
+        self, tmp_path: Path
+    ) -> None:
+        unignore = frozenset({"*.py"})
+        assert should_skip_path(
+            tmp_path / ".git" / "hooks" / "x.py",
+            tmp_path,
+            unignore_paths=unignore,
+            is_file=True,
+        )
+        assert should_skip_rel_file(
+            ".git/hooks/x.py", (".git", "hooks"), unignore_paths=unignore
+        )
+
+    def test_a_line_that_names_the_metadata_dir_still_rescues_it(
+        self, tmp_path: Path
+    ) -> None:
+        named = frozenset({"submodule1/.git"})
+        assert should_keep_dir(".git", "submodule1/", None, named)
+        assert not should_keep_dir(".git", "", None, named)
+        assert not should_skip_path(
+            tmp_path / "submodule1" / ".git" / "config",
+            tmp_path,
+            unignore_paths=named,
+            is_file=True,
         )

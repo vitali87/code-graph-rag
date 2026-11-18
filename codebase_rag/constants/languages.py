@@ -587,6 +587,11 @@ IGNORE_PATTERNS = frozenset(
         "venv",
     }
 )
+# Version-control metadata. Unlike the rest of IGNORE_PATTERNS, only a `!`
+# line that names a path through it rescues anything here: a negation that
+# can match at any depth (`!*.[Cc]ache/`) walked into it and recorded Git's
+# own folders as Folder nodes (issue #3642).
+VCS_METADATA_DIRS = frozenset({".git", ".hg", ".svn"})
 # Machine-generated artefacts: never hand-edited, never first-party. Matched
 # against the whole FILENAME with `str.endswith`, not against `Path.suffix`,
 # because two entries here are not suffixes in pathlib's sense:
