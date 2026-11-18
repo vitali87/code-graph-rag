@@ -75,8 +75,8 @@ def test_slnx_member_projects_parsed(temp_repo: Path) -> None:
 def test_slnx_declaring_entities_is_refused_not_raised(temp_repo: Path) -> None:
     from codebase_rag.parsers.csharp_frontend.frontend import _solution_member_projects
 
-    # Negative test. defusedxml refuses entity declarations with
-    # EntitiesForbidden, a ValueError rather than a ParseError, so it escaped
+    # Negative test. safe_xml refuses entity declarations with
+    # XmlEntityRefusedError, a ValueError rather than a ParseError, so it escaped
     # this handler and, with no guard further up, aborted the whole index run
     # instead of degrading like any other unreadable solution file.
     _solution_repo(

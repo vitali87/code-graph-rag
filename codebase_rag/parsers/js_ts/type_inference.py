@@ -11,7 +11,12 @@ from tree_sitter import Node, QueryCursor
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
-from ..utils import get_cached_query, safe_decode_text, unparenthesized
+from ..utils import (
+    get_cached_query,
+    safe_decode_text,
+    sorted_captures,
+    unparenthesized,
+)
 from . import utils as ut
 
 # Callable node types whose bodies own their locals and returns; the shared
@@ -219,6 +224,25 @@ def _member_name(member: ASTNode) -> str | None:
     return safe_decode_text(key) if key is not None else None
 
 
+def _member_key(member: ASTNode) -> str | None:
+    """The property a class member declares: `size`, `'size'` and
+    `['size']` all declare `size`, while `#size` is a name of its own and a
+    computed `[key]` names no property this can read."""
+    key = member.child_by_field_name(cs.FIELD_NAME) or member.child_by_field_name(
+        cs.FIELD_PROPERTY
+    )
+    if key is not None and key.type == cs.TS_JS_COMPUTED_PROPERTY_NAME:
+        key = next(iter(key.named_children), None)
+        if key is None or key.type != cs.TS_STRING:
+            return None
+    if key is not None and key.type == cs.TS_STRING:
+        parts = key.named_children
+        if any(part.type != cs.TS_STRING_FRAGMENT for part in parts):
+            return None
+        return "".join(safe_decode_text(part) or "" for part in parts)
+    return safe_decode_text(key) if key is not None else None
+
+
 def _single_non_nullish_member(union: ASTNode) -> ASTNode | None:
     members = [
         child
@@ -314,7 +338,7 @@ class JsTypeInferenceEngine:
                 try:
                     q = get_cached_query(lang_queries["language"], _JS_DECLARATOR_QUERY)
                     cursor = QueryCursor(q)
-                    captures = cursor.captures(caller_node)
+                    captures = sorted_captures(cursor, caller_node)
                     return captures.get("declarator", [])
                 except Exception:  # noqa: S112 - a failed query falls through to the next language
                     continue
@@ -619,6 +643,26 @@ class JsTypeInferenceEngine:
                 return True, member.start_point[0] + 1
             return True, None
         return declared, None
+
+    @staticmethod
+    def member_sides(class_body: ASTNode, member_name: str) -> tuple[bool, bool]:
+        """Whether the class body declares `member_name` for its instances,
+        and whether it declares a static one: two namespaces, which may
+        share the name.
+
+        Any kind of member counts: a method or accessor, a field (`declare`
+        and optional ones too), an overload or an abstract signature. Each is
+        what TypeScript reads as the class's own member of that name.
+        """
+        instance = static = False
+        for member in class_body.named_children:
+            if _member_key(member) != member_name:
+                continue
+            if ut.is_static_member(member):
+                static = True
+            else:
+                instance = True
+        return instance, static
 
     def visible_class(
         self,
