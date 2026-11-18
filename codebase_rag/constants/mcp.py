@@ -1,5 +1,6 @@
 # MCP server tool names, schema fields, and messages.
 
+import re
 from enum import StrEnum
 
 
@@ -393,6 +394,8 @@ MCP_WORKSPACE_INDEX_COMMAND = (
 # PowerShell and Git Bash all read literally except for these characters; a
 # path or name holding one gets no pasteable command (Greptile, PR #2964).
 MCP_WINDOWS_SHELL_UNQUOTABLE = frozenset('"%!$`\\')
+# Characters none of those shells treats specially outside quotes either.
+MCP_WINDOWS_SHELL_PLAIN = re.compile(r"[\w./:-]+")
 MCP_WORKSPACE_INDEX_UNQUOTABLE = (
     " Index {path!r} as project {project!r}: its path or project name holds a "
     "character a Windows shell expands even inside quotes, so quote both "

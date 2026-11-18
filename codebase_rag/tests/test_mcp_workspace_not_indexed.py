@@ -165,15 +165,18 @@ async def test_without_a_workspace_every_project_is_listed(root: Path) -> None:
 
 @pytest.mark.anyio
 async def test_the_index_command_quotes_a_project_name_for_the_shell(
-    root: Path,
+    root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # PR #2964 review: a workspace file does not constrain the project name,
     # and the hinted command is pasted into a shell, so shell syntax in the
-    # name must stay one literal argument.
+    # name must stay one literal argument. A POSIX host's shell here; the
+    # Windows quoting is pinned below.
     hostile = "alpha; touch pwned"
     registry, _ingestor = _registry(root, {}, ("a", hostile))
+    monkeypatch.setattr(sys, "platform", "linux")
 
     result = await registry.list_projects()
+    monkeypatch.undo()
 
     hint = str(result.get("hint"))
     assert "--project-name 'alpha; touch pwned' --update-graph" in hint
@@ -186,7 +189,8 @@ async def test_the_index_command_quotes_a_project_name_for_the_shell(
         ("alpha & whoami & rem ", '"alpha & whoami & rem "'),
         ("alpha|calc", '"alpha|calc"'),
         ("C:/Users/John Doe/a", '"C:/Users/John Doe/a"'),
-        ("alpha__1111", '"alpha__1111"'),
+        ("alpha__1111", "alpha__1111"),
+        ("C:/Users/runneradmin/a-b.c", "C:/Users/runneradmin/a-b.c"),
         ("a%PATH%", None),
         ("a!x!", None),
         ("$(whoami)", None),
@@ -202,7 +206,8 @@ def test_a_windows_argument_is_double_quoted_or_refused(
     # Greptile review of PR #2964: cmd.exe reads `shlex.quote`'s single
     # quotes as ordinary characters, leaving `&` active. Double quotes keep
     # it literal in cmd.exe, PowerShell and Git Bash; a character one of
-    # them expands even inside them gets no quoting at all.
+    # them expands even inside them gets no quoting at all. A plain value is
+    # left bare, as `shlex.quote` leaves it.
     assert _shell_argument(value, windows=True) == quoted
 
 

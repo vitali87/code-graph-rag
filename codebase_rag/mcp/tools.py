@@ -337,6 +337,10 @@ def _shell_argument(value: str, windows: bool) -> str | None:
     """
     if not windows:
         return shlex.quote(value)
+    # Left bare when every shell reads it as one word, as `shlex.quote`
+    # leaves a plain value bare.
+    if cs.MCP_WINDOWS_SHELL_PLAIN.fullmatch(value):
+        return value
     if any(c in cs.MCP_WINDOWS_SHELL_UNQUOTABLE or not c.isprintable() for c in value):
         return None
     return f'"{value}"'
