@@ -2,6 +2,7 @@
 
 import errno
 import hashlib
+import itertools
 import json
 import os
 import posixpath
@@ -29,9 +30,16 @@ from .ast_cache import BoundedASTCache
 from .capture import CaptureSelection, default_capture
 from .checkout_state import prepare_state_dir, state_dir
 from .config import settings
+from .dispatch_dependents import (
+    ScannedFile,
+    base_change_component_qns,
+    build_class_changes,
+    dispatch_target_prefixes,
+    scan_python_classes,
+)
 from .function_registry import FunctionRegistryTrie
 from .gloss_anchor import ParsedSource, parse_source
-from .gloss_repair import repair_unanchored
+from .gloss_repair import repair_mentions, repair_unanchored
 from .graph_query import _longer_project_prefixes
 from .interface_skip import (
     callers_to_reparse,
@@ -84,7 +92,11 @@ from .parsers.endpoints import (
     parse_route_decorator,
 )
 from .parsers.factory import ProcessorFactory
-from .parsers.field_nodes import PendingFieldType
+from .parsers.field_nodes import (
+    PendingFieldType,
+    add_callable_fields,
+    drop_callable_fields,
+)
 from .parsers.frontends import (
     EMITTING_FRONTENDS,
     FRONTENDS,
@@ -109,11 +121,17 @@ from .parsers.java_lombok import (
     current_lombok_identity,
     overlay_identity,
 )
+from .parsers.js_ts.reexports import js_ts_module_qn
 from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.parameter_nodes import PendingParameterType
+from .parsers.py.ast_analyzer import clear_scope_facts
 from .parsers.rs import utils as rs_utils
 from .parsers.structure_processor import StructureProcessor
-from .parsers.utils import mark_js_ts_module_private, sorted_captures
+from .parsers.utils import (
+    mark_js_ts_module_private,
+    mark_rust_visibility,
+    sorted_captures,
+)
 from .path_filters import matches_test_path
 from .services import (
     FilteringIngestor,
@@ -381,6 +399,20 @@ def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes] | None:
         logger.warning(ls.FILE_UNREADABLE, path=filepath, error=e)
         return None
     return hashlib.md5(data, usedforsecurity=False).hexdigest(), data
+
+
+def _unconfirmed(hashes: FileHashCache) -> FileHashCache:
+    """Every file `hashes` records, none of them as current.
+
+    For a skipped EXPOSES cleanup that neither its marker nor a dropped
+    directory-mtime map could owe. The unreadable mark is used for what it
+    does, not what it says: it is not a digest, so the next pass re-hashes
+    each file whatever its mtime and re-parses it as a known one (#1983),
+    and that run's endpoint passes retry the cleanup. Every path stays
+    listed, so the watcher still finds the files under a deleted directory
+    and a single-file run still finds its project root (Greptile, PR #3625).
+    """
+    return dict.fromkeys(hashes, cs.HASH_CACHE_UNREADABLE)
 
 
 def _load_hash_cache(cache_path: Path) -> FileHashCache:
@@ -1176,6 +1208,25 @@ def _file_module_holding(name: str, module_paths: Mapping[str, Path]) -> str | N
     return holder
 
 
+def _js_entry_modules(
+    targets: Iterable[str], module_paths: Mapping[str, Path]
+) -> list[str]:
+    """The JS/TS modules import `targets` name, a directory's `index` included.
+
+    `require("./worker")` names `worker` and `import run from "./worker"`
+    names `worker.default`, while the module is `worker/index.ts`, which no
+    prefix of either spells. A `worker/default.ts` beside it is a module
+    under that second qn, so the index is a target of its own rather than a
+    fallback for when nothing holds the name.
+    """
+    return [
+        module_qn
+        for target in targets
+        for name in (target, target.rpartition(cs.SEPARATOR_DOT)[0])
+        if (module_qn := js_ts_module_qn(name, module_paths)) is not None
+    ]
+
+
 def _project_root_for_single_file(target: Path) -> Path:
     """The project root owning `target`, or its parent when none is found.
 
@@ -1505,6 +1556,14 @@ def _drop_class_keyed_entry(
     """Drop one removed class's rows from the class-keyed maps."""
     processor.class_inheritance.pop(qn, None)
     processor.class_field_types.pop(qn, None)
+    drop_callable_fields(processor.cpp_callable_fields, qn)
+    # A Rust struct's guard-inner and element maps go with its field types:
+    # the re-parse records them only for fields that still have one, and a
+    # field retyped from `Mutex<State>` to a lock of its own kept unwrapping
+    # to State at `.lock()` (a scoped re-ingest reads the old map back from
+    # the graph before it re-parses).
+    processor.class_field_guard_inner.pop(qn, None)
+    processor.class_field_element_types.pop(qn, None)
     # A partial part leaves its group too. The group list is the
     # very list `_csharp_partial_index` holds under the syntactic
     # key, so removing the part there keeps both views in step;
@@ -1641,6 +1700,31 @@ def _advance_past_settled(progress: Progress, task: TaskID, scan: _FileScan) -> 
         progress.advance(task, scan.skipped_count + scan.unreadable_count)
 
 
+def _without_stale_targets(
+    fact: PendingTypeFact, stale_modules: set[str]
+) -> PendingTypeFact:
+    # A target defined in a file this re-parse deletes loses its inbound
+    # edges with it, so the name that reached it must be resolved again
+    # rather than counted as bound (issue #3007 meets #1527).
+    if not fact.resolved_returns and not fact.resolved_accepts:
+        return fact
+
+    def kept(targets: frozenset[str]) -> frozenset[str]:
+        return frozenset(
+            target
+            for target in targets
+            if not any(
+                target.startswith(f"{module}{cs.SEPARATOR_DOT}")
+                for module in stale_modules
+            )
+        )
+
+    return fact._replace(
+        resolved_returns=kept(fact.resolved_returns),
+        resolved_accepts=kept(fact.resolved_accepts),
+    )
+
+
 def _package_modules(module_files: Mapping[str, Path]) -> frozenset[str]:
     # The module qns that are a package's `__init__.py`: a relative import
     # there resolves against the package itself (issue #3192).
@@ -1695,6 +1779,9 @@ class GraphUpdater:
         # path -> module qualified name as the graph records it, read once
         # per rehydration for the requeues (issue #1935).
         self._module_qns_by_path: dict[str, str] | None = None
+        # qn -> relationship type -> the types its RETURNS / ACCEPTS reach,
+        # read once per incremental rehydration (issue #3007).
+        self._resolved_type_targets: dict[str, dict[str, set[str]]] = {}
         if repo_path.is_file():
             resolved = repo_path.resolve()
             self._single_file = resolved
@@ -1831,6 +1918,12 @@ class GraphUpdater:
         # which cannot tell a nested project's rows from this one's.
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        # A skipped cleanup whose marker could not be written: this run then
+        # leaves no directory-mtime map, which keeps the next run off the
+        # in-sync path just as the marker would. When the old map could not
+        # be dropped either, the hash cache records every file unconfirmed.
+        self._exposes_cleanup_unrecorded = False
+        self._exposes_map_kept = False
         self._prune_settled = False
 
         self.factory = ProcessorFactory(
@@ -2496,6 +2589,9 @@ class GraphUpdater:
         if rehydrate:
             self._rehydrate_registry_from_graph()
 
+        # After rehydration, which reads the impl methods back, and before
+        # the walk below, which then follows what the restored maps reach.
+        self._restore_unparsed_rust_impl_self_paths()
         # After rehydration, which tells a re-export from a definition, and
         # before every stage below that resolves through the import maps.
         self._restore_reached_import_state()
@@ -2606,7 +2702,9 @@ class GraphUpdater:
         self._ungroup_rehydrated_non_partials()
         # Return/parameter annotations resolve against the complete registry
         # (issue #1527), so a type defined in a later file still gets its edge.
-        typed = self.factory.definition_processor.emit_type_edges()
+        typed = self.factory.definition_processor.emit_type_edges(
+            self._restore_requeued_imports
+        )
         if typed:
             logger.info(ls.TYPE_EDGES_EMITTED, count=typed)
         return known_module_paths
@@ -2664,6 +2762,7 @@ class GraphUpdater:
                 *mapping.get(scope, {}).values(),
                 *import_processor.rust_mod_scope_targets(scope),
             ]
+            targets += _js_entry_modules(targets, module_paths)
             for target in targets:
                 holder = _file_module_holding(target, module_paths)
                 if holder is None or holder in walked:
@@ -2684,6 +2783,116 @@ class GraphUpdater:
                     )
                 pending.append(holder)
         return restored
+
+    def _restore_unparsed_rust_impl_self_paths(self) -> None:
+        """Re-read the self path of each unparsed Rust impl block away from
+        its type.
+
+        A call written with its type's path (`crate::model::Foo::run()`)
+        binds such a block only when the block's own self path names that
+        type, and parsing records the path only for the files it reads. An
+        incremental run that re-parsed only the caller lost the edge into an
+        unchanged `impl crate::model::Foo { fn run() }` that a clean index
+        emits (PR #2993 review).
+
+        The path is read the way the block's module reads it, so the maps
+        that reading follows come back too: the block's file's, where a bare
+        `impl Foo` finds its `use`, and the module a written path names,
+        whose `pub use` may re-export the type. The import walk after this
+        follows each of those maps on to the next re-export.
+        """
+        modules = self._unparsed_rust_impl_modules()
+        if not modules:
+            return
+        # Read only now: the view loads a grammar on first access, and a
+        # project with no Rust must not pay for one.
+        lang_queries = self.queries.get(cs.SupportedLanguage.RUST)
+        if lang_queries is None:
+            return
+        dp = self.factory.definition_processor
+        for module_qn in sorted(modules):
+            path = dp.module_qn_to_file_path.get(module_qn)
+            if path is None:
+                continue
+            # First: restoring a Rust file's imports drops the impl paths it
+            # recorded.
+            self._restore_unheld_imports(module_qn)
+            entry = self.ast_cache.load(path)
+            if entry is None:
+                continue
+            for written in dp.restore_rust_impl_self_paths(
+                entry[0], module_qn, lang_queries
+            ):
+                self._restore_rust_path_module_imports(written.path, written.module_qn)
+
+    def _restore_rust_path_module_imports(self, path: str, module_qn: str) -> None:
+        # `impl crate::facade::Foo` reads `Foo` in `facade`'s map. A head the
+        # file imports instead (`impl facade::Foo`) leads there through that
+        # import, which the walk follows.
+        if cs.SEPARATOR_DOUBLE_COLON not in path:
+            return
+        module_paths = self.factory.definition_processor.module_qn_to_file_path
+        target = self._rust_written_path_qn(path, module_qn, module_paths)
+        if target is None:
+            return
+        holder = _file_module_holding(target, module_paths)
+        if holder is not None:
+            self._restore_unheld_imports(holder)
+
+    def _rust_written_path_qn(
+        self, path: str, module_qn: str, module_paths: Mapping[str, Path]
+    ) -> str | None:
+        # Rewritten as the resolver reads it: `crate::`, `self::`, `super::`
+        # and a workspace crate head the way a `use` is, and a head naming a
+        # module beside the block (`impl inner::Foo` under `mod inner;`)
+        # from that module.
+        import_processor = self.factory.import_processor
+        target = import_processor._rewrite_rust_local_use_path(path, module_qn)
+        if target == cs.RUST_UNRESOLVABLE_QN:
+            return None
+        if cs.SEPARATOR_DOUBLE_COLON not in target:
+            return target
+        segments = path.split(cs.SEPARATOR_DOUBLE_COLON)
+        head_qn = import_processor._rust_resolve_relative(
+            module_qn, segments[:1], module_qn
+        )
+        if head_qn not in module_paths:
+            return None
+        return import_processor._rust_resolve_relative(module_qn, segments, module_qn)
+
+    def _restore_unheld_imports(self, module_qn: str) -> None:
+        if module_qn not in self.factory.import_processor.import_mapping:
+            self._restore_requeued_imports(module_qn)
+
+    def _unparsed_rust_impl_modules(self) -> set[str]:
+        # The files of the Rust methods read back from the graph whose impl
+        # block sits away from its type: only such a block's owner is
+        # unregistered, and only its written path says which type it is on.
+        modules: set[str] = set()
+        rehydrated = self.factory.definition_processor.rehydrated_definition_paths
+        for qn, path in rehydrated.items():
+            if (
+                path.endswith(cs.EXT_RS)
+                and self.function_registry.get(qn) == NodeType.METHOD
+                and _natural_qn(qn).rpartition(cs.SEPARATOR_DOT)[0]
+                not in self.function_registry
+            ):
+                modules.add(self._recorded_module_qn(path))
+        return modules
+
+    def _restore_requeued_imports(self, module_qn: str) -> None:
+        """Parse the imports of an unchanged module for its requeued
+        annotations, which resolve through them as a fresh index's do: no
+        re-parsed file need reach it (#3007 review)."""
+        module_paths = self.factory.definition_processor.module_qn_to_file_path
+        path = module_paths.get(module_qn)
+        if path is None or not self._restore_module_imports(module_qn, path):
+            return
+        import_processor = self.factory.import_processor
+        # Re-pointed as the closure walk re-points what it restores (#2586).
+        import_processor.point_module_imports_at_own_language_siblings(
+            module_qn, module_paths, import_processor.stem_sibling_modules(module_paths)
+        )
 
     def _restore_module_imports(self, module_qn: str, path: Path) -> bool:
         """Parse one unchanged module's imports; False when Pass 2 would not."""
@@ -2716,6 +2925,13 @@ class GraphUpdater:
             self.queries,
             self.factory.definition_processor.function_locations,
         )
+        if language in cs.JS_TS_LANGUAGES:
+            # A default import resolves through its module's recorded
+            # `export default`, which only Pass 2 records; an unchanged
+            # exporter has its definitions read back from the graph by now.
+            self.factory.definition_processor.record_esm_default_export(
+                entry[0], module_qn
+            )
         return True
 
     @property
@@ -2842,6 +3058,8 @@ class GraphUpdater:
         self._registered_projects = None
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        self._exposes_cleanup_unrecorded = False
+        self._exposes_map_kept = False
         self._prune_settled = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost(previous_root)
@@ -3101,6 +3319,8 @@ class GraphUpdater:
             py_engine._method_return_type_cache.clear()
             py_engine._self_assignment_cache.clear()
             py_engine._class_member_type_cache.clear()
+            py_engine._definition_indexes.clear()
+        clear_scope_facts()
 
     def _finish_in_sync_run(self) -> None:
         logger.info(ls.GRAPH_ALREADY_IN_SYNC)
@@ -3218,12 +3438,23 @@ class GraphUpdater:
             # are keyed against the same root every other run uses.
             if self._single_file is not None and not cache_path.is_file():
                 logger.info(ls.HASH_CACHE_SKIPPED_SINGLE_FILE, path=cache_path)
+            elif self._exposes_map_kept:
+                # Neither the marker nor a dropped map owes the cleanup, so
+                # the cache does: every file unconfirmed, none left out.
+                hash_cache_published = _publish_hash_cache(
+                    cache_path, _unconfirmed(new_hashes), observed_at
+                )
             else:
                 hash_cache_published = _publish_hash_cache(
                     cache_path, new_hashes, observed_at
                 )
             self._pending_hash_cache = None
-        if self._pending_dir_mtimes is not None and hash_cache_published:
+        # The missing map is what owes an unrecorded EXPOSES cleanup.
+        if (
+            self._pending_dir_mtimes is not None
+            and hash_cache_published
+            and not self._exposes_cleanup_unrecorded
+        ):
             _save_dir_mtimes(*self._pending_dir_mtimes)
         self._pending_dir_mtimes = None
         self._pending_cache_observed_at = None
@@ -3414,15 +3645,55 @@ class GraphUpdater:
         skipped one leaves the marker for the next (issue #2193).
         """
         marker = self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME
-        try:
-            if self._exposes_cleanup_skipped:
+        if self._exposes_cleanup_skipped:
+            try:
                 marker.touch()
-            elif cleared_by_this_run:
-                marker.unlink(missing_ok=True)
+            except OSError as e:
+                # A marker an earlier run left still owes the cleanup, even
+                # when its mtime cannot be refreshed: only a missing one needs
+                # the fallback, which costs the next run a full re-parse.
+                if not marker.exists():
+                    self._owe_exposes_cleanup_without_marker(marker, e)
+            return
+        # Only a run that could delete settles the debt. With EXPOSES capture
+        # off both passes return before their cleanups, and a sink that cannot
+        # query deletes nothing; settling there would let the next run take
+        # the in-sync path past edges nobody removed.
+        if not (cleared_by_this_run and self._can_clean_exposes()):
+            return
+        try:
+            marker.unlink(missing_ok=True)
         except OSError:
-            # Best effort, as every other state file here: a read-only tree
-            # must not lose the run to a marker it could not write.
-            logger.debug("EXPOSES cleanup marker not updated")
+            # A marker left in place only costs the next run a rescan.
+            logger.debug(ls.EXPOSES_CLEANUP_MARKER_NOT_UPDATED)
+
+    def _can_clean_exposes(self) -> bool:
+        return self.capture.rel_enabled(cs.RelationshipType.EXPOSES) and isinstance(
+            self.ingestor, QueryProtocol
+        )
+
+    def _owe_exposes_cleanup_without_marker(self, marker: Path, error: OSError) -> None:
+        """Keep a skipped cleanup owed when its marker cannot be written.
+
+        A run with no directory-mtime map cannot take the in-sync path, and
+        nothing but that check reads the map, so dropping it costs the next
+        run its shortcut and nothing else: it hashes as usual and its
+        endpoint passes cover every module. The hash cache stays, because a
+        single-file run finds its project root by it (Greptile, PR #3625).
+        Dropped now rather than at the commit, so a run that stops before
+        committing cannot leave the old map trusted either; the commit then
+        writes none (`_commit_run_state`).
+        """
+        self._exposes_cleanup_unrecorded = True
+        logger.warning(ls.EXPOSES_CLEANUP_NOT_RECORDED.format(path=marker, error=error))
+        snapshot = self.state_dir / cs.DIR_MTIMES_FILENAME
+        try:
+            snapshot.unlink(missing_ok=True)
+        except OSError as e:
+            self._exposes_map_kept = True
+            logger.warning(
+                ls.EXPOSES_CLEANUP_SNAPSHOT_KEPT.format(path=snapshot, error=e)
+            )
 
     def _emit_route_call_endpoints(self, only: set[str] | None = None) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
@@ -3821,8 +4092,38 @@ class GraphUpdater:
                 if isinstance(param_types, list)
                 else None,
                 path,
+                *self._resolved_targets_of(qn),
             )
         )
+
+    def _resolved_targets_of(self, qn: str) -> tuple[frozenset[str], frozenset[str]]:
+        # (RETURNS targets, ACCEPTS targets), as PendingTypeFact takes them.
+        by_rel = self._resolved_type_targets.get(qn, {})
+        return (
+            frozenset(by_rel.get(cs.RelationshipType.RETURNS.value, ())),
+            frozenset(by_rel.get(cs.RelationshipType.ACCEPTS.value, ())),
+        )
+
+    def _read_resolved_type_targets(self, project_params: PropertyParams) -> None:
+        # What each unchanged definition's annotations already resolved to,
+        # when its file was last parsed with its imports. Requeuing re-resolves
+        # without them, so a bound name is left alone (issue #3007).
+        self._resolved_type_targets = {}
+        if self._is_full_build or not isinstance(self.ingestor, QueryProtocol):
+            return
+        rows = self._owned_rows(
+            self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_TYPE_EDGE_TARGETS, project_params
+            ),
+            cs.KEY_QUALIFIED_NAME,
+        )
+        for row in rows:
+            qn, target = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_TARGET_QN)
+            rel = row.get(cs.KEY_REL_TYPE)
+            if isinstance(qn, str) and isinstance(target, str) and isinstance(rel, str):
+                self._resolved_type_targets.setdefault(qn, {}).setdefault(
+                    rel, set()
+                ).add(target)
 
     def _requeue_member_types[P: (PendingParameterType, PendingFieldType)](
         self,
@@ -3960,6 +4261,7 @@ class GraphUpdater:
                 self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params),
                 cs.KEY_QUALIFIED_NAME,
             )
+            self._read_resolved_type_targets(project_params)
         except Exception:
             # Rehydration completes cross-file resolution for files this run
             # did not re-parse: a FULL build parsed them all, so it degrades
@@ -3973,11 +4275,13 @@ class GraphUpdater:
         for row in rows:
             if self._rehydrate_definition_row(row):
                 restored.append(row)
+        self._rehydrate_same_definitions(restored)
         if restored:
             logger.info(ls.REGISTRY_REHYDRATED, count=len(restored))
         # After the loop: whether a method's owner is a trait needs the whole
         # registry, and its rows arrive in no particular order.
         self._rehydrate_rust_return_types(restored)
+        self._rehydrate_go_return_types(restored)
         self._rehydrate_go_method_sets(restored)
         # Module qns from unchanged files: deferred import verification and
         # C++20 module-impl resolution must count them as real targets, or
@@ -4139,6 +4443,11 @@ class GraphUpdater:
                 self.factory.definition_processor.cpp_module_interfaces.add(qn)
             else:
                 self._rehydrated_module_qns.add(qn)
+            # An unchanged Go file's package clause, which same-package
+            # visibility compares a re-parsed requester against (#3272).
+            # setdefault: a file this run re-parsed recorded its own.
+            if isinstance(package := row.get(cs.KEY_GO_PACKAGE), str) and package:
+                dp.go_package_names.setdefault(qn, package)
             # An unchanged PHP file's declared namespace, which a
             # `use function App\\Util\\slug` is matched against (issue #3277).
             if (
@@ -4146,6 +4455,40 @@ class GraphUpdater:
                 and namespace
             ):
                 self.factory.import_processor.php_module_namespaces[qn] = namespace
+
+    def _rehydrate_same_definitions(self, rows: list[ResultRow]) -> None:
+        """Re-pair the names an unchanged file registers one function under.
+
+        Only parsing marks `View.prototype.lookup = function lookup()` as one
+        definition with two names, and the call fan-out to the twin needs that
+        mark (issue #3174). Both nodes start at the same line and column of
+        the same file and end on the same line, under the same leaf name,
+        which no two separate definitions do: `class A { get() {} } class B
+        { get() {} }` on one line differ only by column (#3174 review). A row
+        without a column (written before it was recorded) pairs nothing. The
+        leaf is compared without its duplicate marker, as parsing pairs
+        `View.lookup` with `view.lookup@5` when a free `lookup` came first.
+        """
+        spans: defaultdict[tuple[str, int, int, int, str], list[str]] = defaultdict(
+            list
+        )
+        for row in rows:
+            qn, path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
+            start, end = row.get(cs.KEY_START_LINE), row.get(cs.KEY_END_LINE)
+            col = row.get(cs.KEY_START_COL)
+            if (
+                row.get(cs.KEY_LABEL) in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
+                and isinstance(qn, str)
+                and isinstance(path, str)
+                and isinstance(start, int)
+                and isinstance(end, int)
+                and isinstance(col, int)
+            ):
+                leaf = _natural_qn(qn).rpartition(cs.SEPARATOR_DOT)[2]
+                spans[(path, start, col, end, leaf)].append(qn)
+        for qns in spans.values():
+            for first, second in itertools.combinations(qns, 2):
+                self.function_registry.mark_same_definition(first, second)
 
     def _rehydrate_definition_row(self, row: ResultRow) -> bool:
         """Re-register one definition row missing locally; True when added."""
@@ -4221,6 +4564,13 @@ class GraphUpdater:
             self.function_registry.set_non_method_members(
                 qn, [name for name in names if isinstance(name, str)]
             )
+        # And an unchanged C++ type's callable data members (`int (*cb)()`),
+        # or a re-parsed file's `o->cb()` loses the free `cb` it reaches.
+        add_callable_fields(
+            self.factory.definition_processor.cpp_callable_fields,
+            qn,
+            _stored_strings(row.get(cs.KEY_CALLABLE_FIELDS)),
+        )
         # Restore the macro-namespace set for unchanged files: the Rust
         # macro/fn gate consults it, so a re-parsed file's invocation of a
         # macro defined elsewhere would otherwise drop.
@@ -4244,12 +4594,67 @@ class GraphUpdater:
                 namespace if isinstance(namespace, str) else "",
                 arity if isinstance(arity, int) else 0,
             )
+        # Restore an unchanged class's field types: only parsing records them,
+        # and a re-parsed file's field-hop receiver (`args.mode.update()`)
+        # types through them (issue #3004).
+        if isinstance(fields := row.get(cs.KEY_FIELD_TYPES), list):
+            self._rehydrate_class_field_types(qn, fields)
         # Record the defining file so _is_cpp_defined can language-check
         # rehydrated candidates (deferred C++ INHERITS resolution runs
         # after this and must reach bases in UNCHANGED headers).
         if isinstance(path := row.get(cs.KEY_PATH), str):
             self._rehydrate_definition_path(node_type, qn, path, row)
         return True
+
+    def _rehydrate_class_field_types(self, qn: str, fields: Sequence[object]) -> None:
+        field_types: dict[str, str] = {}
+        guard_inner: dict[str, str] = {}
+        for entry in fields:
+            # `name<TAB>type`, plus `<TAB>inner` for a Rust guard field.
+            name, _, rest = str(entry).partition(cs.FIELD_TYPE_SEPARATOR)
+            type_name, _, inner = rest.partition(cs.FIELD_TYPE_SEPARATOR)
+            if name and type_name:
+                field_types[name] = type_name
+                if inner:
+                    guard_inner[name] = inner
+        dp = self.factory.definition_processor
+        # A re-parsed class's fresh maps win, its guard inner types included.
+        if not field_types or qn in dp.class_field_types:
+            return
+        dp.class_field_types[qn] = field_types
+        if guard_inner:
+            dp.class_field_guard_inner[qn] = guard_inner
+
+    def _rehydrate_go_return_types(self, rows: list[ResultRow]) -> None:
+        # The result type names ingest records only while parsing the
+        # definition's own file: a re-parsed Go caller of an unchanged
+        # `NewBox` typed `b, _ := NewBox(2)` from nothing, and `b.Size()`
+        # bound by name to another type's `Size` (issue #3272). Only rows
+        # this run did not parse reach here (the caller skips registered
+        # qns), so a re-parsed definition keeps what it recorded itself.
+        type_inference = self.factory.type_inference
+        methods: dict[str, str] = {}
+        for row in sorted(rows, key=_registration_order):
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            if not isinstance(qn, str):
+                continue
+            first = row.get(cs.KEY_FIRST_RETURN_TYPE)
+            if isinstance(first, str) and first:
+                type_inference.go_function_return_types[qn] = first
+            chain = row.get(cs.KEY_CHAIN_RETURN_TYPE)
+            if not isinstance(chain, str) or not chain:
+                continue
+            if row.get(cs.KEY_LABEL) != cs.NodeLabel.METHOD.value:
+                type_inference.method_return_types[qn] = chain
+                continue
+            # Parsing keys a method's result by its natural qn, which each
+            # build file declaring it again (`Self`, `Self@5`) shares, and
+            # writes each over the last in registration order: replayed in
+            # that order, the last one stands, as a clean index has it.
+            methods[_natural_qn(qn)] = chain
+        for natural, chain in methods.items():
+            # A re-parsed build file's own record is current; keep it.
+            type_inference.method_return_types.setdefault(natural, chain)
 
     def _rehydrate_go_method_sets(self, rows: list[ResultRow]) -> None:
         # An unchanged Go file's methods and interfaces still count toward
@@ -4393,6 +4798,11 @@ class GraphUpdater:
             # star lookup then counts it, as it did before.
             row.get(cs.KEY_IS_EXPORTED) is not False,
             get_language_for_extension(Path(path).suffix),
+        )
+        # An unchanged Rust function's declared visibility, or a re-parsed
+        # caller's glob call binds it exactly where a clean index does not.
+        mark_rust_visibility(
+            self.function_registry, qn, row.get(cs.KEY_RUST_VISIBILITY)
         )
         # The C# declared-form index (issue #1629) is filled only by
         # parsing; an unchanged type must stay reachable by `N.Widget`
@@ -5396,6 +5806,246 @@ class GraphUpdater:
                 )
         return known
 
+    def _dispatch_dependent_keys(
+        self,
+        added: list[tuple[str, bytes]],
+        modified: list[tuple[str, bytes]],
+        deleted: Collection[str] = (),
+    ) -> list[str]:
+        """Files whose CALLS edges a dispatch change rebinds (issue #3338).
+
+        A new subclass override or Protocol conformer changes the
+        dispatch target set of unchanged callers, with no edge pointing
+        at the new file and no unresolved reference for the waiter
+        lookups to follow. The callers are found from the OLD graph,
+        before the changed files' subtrees are deleted: the hierarchy
+        and method sets the new bytes are judged against, and the CALLS
+        edges into the targets the dispatch set gained or lost. The
+        dependency set is the union of the old and the new state, so a
+        removal prunes its callers' edges instead of orphaning them.
+
+        Callers enter through the `waiters` sets of both incremental
+        paths, which re-parse unconditionally: the interface-fingerprint
+        skip (issue #2531) can never retain a dispatch caller's edges,
+        because the skip is consulted only for dependents of a file
+        whose interface held, and a dispatch dependent is queued for
+        what a DIFFERENT file gained or lost. No fingerprint is read
+        or written here, and unchanged files keep theirs. A failed read
+        degrades to the previous behaviour, never worse.
+        """
+        entries = [
+            (key, data) for key, data in (*added, *modified) if key.endswith(cs.EXT_PY)
+        ]
+        deleted_keys = [key for key in deleted if key.endswith(cs.EXT_PY)]
+        changed_keys = [key for key, _data in entries] + deleted_keys
+        if not changed_keys or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        scanned_files = [
+            ScannedFile(
+                key,
+                base_module_qn(Path(key), self.project_name),
+                PurePosixPath(key).name in cs.PY_PACKAGE_INIT_FILES,
+                classes,
+                imports,
+            )
+            for key, data in entries
+            for classes, imports in [scan_python_classes(data)]
+        ]
+        prefix = self.project_name + cs.SEPARATOR_DOT
+        longer_project_prefixes = [
+            name for name in self._registered_project_names() if name.startswith(prefix)
+        ]
+        try:
+            old_rows = self._graph_rows(
+                cq.CYPHER_DELTA_DEFINITIONS,
+                {
+                    cs.KEY_PROJECT_PREFIX: prefix,
+                    cs.KEY_LONGER_PROJECT_PREFIXES: longer_project_prefixes,
+                    cs.CYPHER_PARAM_PATHS: changed_keys,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch definitions")
+            return []
+        old_classes: dict[str, str] = {}
+        old_methods: dict[str, set[str]] = {}
+        for row in old_rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            path = row.get(cs.KEY_PATH)
+            label = row.get(cs.KEY_LABEL)
+            if not isinstance(qn, str) or not isinstance(path, str):
+                continue
+            if label in (cs.NodeLabel.CLASS.value, cs.NodeLabel.INTERFACE.value):
+                old_classes[qn] = path
+            elif label == cs.NodeLabel.METHOD.value:
+                natural = qn_markers.natural_qn(qn)
+                parent, sep, leaf = natural.rpartition(cs.SEPARATOR_DOT)
+                if sep:
+                    old_methods.setdefault(parent, set()).add(leaf)
+        if not scanned_files and not old_classes:
+            return []
+        try:
+            hierarchy_rows = self._owned_rows(
+                self._graph_rows(
+                    cs.CYPHER_ALL_INHERITS, {cs.KEY_PROJECT_PREFIX: prefix}
+                ),
+                cs.KEY_CHILD_QN,
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch hierarchy")
+            return []
+        hierarchy: dict[str, list[str]] = {}
+        for row in hierarchy_rows:
+            child = row.get(cs.KEY_CHILD_QN)
+            base = row.get(cs.KEY_BASE_QN)
+            if isinstance(child, str) and isinstance(base, str):
+                hierarchy.setdefault(child, []).append(base)
+        # Every class and interface node the graph holds, so base
+        # resolution can tell a real base in an unchanged file from an
+        # import-resolved guess for an external base. A failed read
+        # falls back to the classes this run and the hierarchy name:
+        # the phantom guess is still dropped, and only a base in an
+        # unchanged file could then be missed for this run.
+        graph_class_qns: set[str] = set()
+        try:
+            class_qn_rows = self._owned_rows(
+                self._graph_rows(
+                    cs.CYPHER_DISPATCH_CLASS_QNS,
+                    {cs.KEY_PROJECT_PREFIX: prefix},
+                ),
+                cs.KEY_QUALIFIED_NAME,
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch class names")
+        else:
+            for row in class_qn_rows:
+                if isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str):
+                    graph_class_qns.add(qn)
+        changes = build_class_changes(
+            scanned_files,
+            old_classes,
+            old_methods,
+            hierarchy,
+            self.project_name,
+            changed_keys,
+            graph_class_qns,
+        )
+        if not changes:
+            return []
+        try:
+            protocol_rows = self._graph_rows(
+                cs.CYPHER_DISPATCH_PROTOCOL_METHODS,
+                {cs.KEY_PROJECT_PREFIX: prefix},
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch protocols")
+            return []
+        protocols: dict[str, set[str]] = {}
+        for row in protocol_rows:
+            class_qn = row.get(cs.KEY_CLASS_QN)
+            method_qn = row.get(cs.KEY_METHOD_QN)
+            if isinstance(class_qn, str) and isinstance(method_qn, str):
+                protocols.setdefault(class_qn, set()).add(
+                    qn_markers.strip_dup_marker(
+                        method_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                    )
+                )
+        method_names = {
+            name
+            for change in changes
+            for name in (*change.old_methods, *change.new_methods)
+        } | {name for names in protocols.values() for name in names}
+        try:
+            method_rows = self._graph_rows(
+                cs.CYPHER_DISPATCH_CLASS_METHODS,
+                {
+                    cs.KEY_PROJECT_PREFIX: prefix,
+                    cs.CYPHER_PARAM_NAMES: sorted(method_names),
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch methods")
+            return []
+        class_methods: dict[str, set[str]] = {}
+        for row in method_rows:
+            class_qn = row.get(cs.KEY_CLASS_QN)
+            method_qn = row.get(cs.KEY_METHOD_QN)
+            if isinstance(class_qn, str) and isinstance(method_qn, str):
+                class_methods.setdefault(class_qn, set()).add(
+                    qn_markers.strip_dup_marker(
+                        method_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                    )
+                )
+        # A class that changed bases can detach a descendant override
+        # whose name neither the changed nor the Protocol names can
+        # ask the filtered query for. Read the whole method sets of
+        # the affected hierarchy components, so the target computation
+        # below can name that override.
+        component_qns = base_change_component_qns(
+            changes, hierarchy, self.project_name, tuple(longer_project_prefixes)
+        )
+        if component_qns:
+            try:
+                component_rows = self._graph_rows(
+                    cs.CYPHER_DISPATCH_METHODS_FOR_CLASSES,
+                    {cs.KEY_QNS: sorted(component_qns)},
+                )
+            except Exception:
+                logger.warning(
+                    ls.PRUNE_QUERY_FAILED, label="dispatch component methods"
+                )
+            else:
+                for row in component_rows:
+                    class_qn = row.get(cs.KEY_CLASS_QN)
+                    method_qn = row.get(cs.KEY_METHOD_QN)
+                    if isinstance(class_qn, str) and isinstance(method_qn, str):
+                        class_methods.setdefault(class_qn, set()).add(
+                            qn_markers.strip_dup_marker(
+                                method_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                            )
+                        )
+        prefixes, base_qns = dispatch_target_prefixes(
+            changes,
+            hierarchy,
+            class_methods,
+            protocols,
+            self.project_name,
+            tuple(longer_project_prefixes),
+        )
+        if not prefixes and not base_qns:
+            return []
+        try:
+            caller_rows = (
+                self._graph_rows(
+                    cs.CYPHER_DISPATCH_CALLER_PATHS,
+                    {
+                        cs.CYPHER_PARAM_PATHS: changed_keys,
+                        cs.KEY_PROJECT_PREFIX: prefix,
+                        cs.CYPHER_PARAM_TARGET_PREFIXES: sorted(prefixes),
+                    },
+                )
+                if prefixes
+                else []
+            )
+            base_rows = (
+                self._graph_rows(
+                    cs.CYPHER_DISPATCH_BASE_PATHS,
+                    {cs.KEY_QNS: sorted(base_qns)},
+                )
+                if base_qns
+                else []
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch callers")
+            return []
+        return sorted(
+            {
+                path
+                for row in (*caller_rows, *base_rows)
+                if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
+            }
+        )
+
     def _defined_simple_names(self, key: str, file_bytes: bytes) -> set[str]:
         """The simple names of the functions and classes a file defines, from
         a parse of its bytes with the language's combined query: what a
@@ -6049,6 +6699,7 @@ class GraphUpdater:
         """Drop the import-side state a removed file's module qns recorded."""
         for prefix in module_qn_prefixes:
             self.factory.import_processor.commonjs_direct_exports.pop(prefix, None)
+            self.factory.import_processor.esm_default_exports.pop(prefix, None)
         if file_path.suffix in (*cs.C_EXTENSIONS, *cs.CPP_EXTENSIONS):
             for qn in recorded_qns:
                 self.factory.import_processor.drop_cpp_module_import_state(qn)
@@ -6456,8 +7107,8 @@ class GraphUpdater:
         self, module_qn_prefixes: set[str], file_path: Path
     ) -> None:
         """Drop a removed file's entries from `class_inheritance`,
-        `class_field_types`, the C# partial groups and the parsed implementer
-        pairs.
+        `class_field_types` (with the Rust guard-inner and element maps), the
+        C# partial groups and the parsed implementer pairs.
 
         All three are keyed by a CLASS qn; the first two were never mentioned
         in `remove_file_from_state`, so a deleted file's rows outlived it on a
@@ -6995,8 +7646,15 @@ class GraphUpdater:
             return True
         # A skipped EXPOSES cleanup is owed: nothing on disk changed, so no
         # hash below would send the run into the endpoint passes that owe it
-        # (issue #2193).
-        if (self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
+        # (issue #2193). Only a run that can do the cleanup is sent: with
+        # EXPOSES capture off, or a sink that cannot query, it would delete
+        # nothing and settle nothing, so every run would rescan for it.
+        # Turning capture back on changes the parser fingerprint, and that run
+        # re-parses and pays the debt.
+        if (
+            self._can_clean_exposes()
+            and (self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists()
+        ):
             return True
         if (self.state_dir / cs.PRUNE_PENDING_FILENAME).exists():
             return True
@@ -7240,6 +7898,14 @@ class GraphUpdater:
             *self._unresolved_importer_keys(added_keys),
             *self._unresolved_reference_waiters(added_entries, modified_entries),
             *self._dart_package_waiters({*present, *deleted_before_parse}),
+            # Dispatch dependents join the waiters, not the affected
+            # callers: a new override or conformer rebinds callers the
+            # caller query cannot see, and a waiter re-parses even when
+            # the changed file's interface fingerprint held (issue
+            # #3338; the fingerprint skip is issue #2531).
+            *self._dispatch_dependent_keys(
+                added_entries, modified_entries, deleted_before_parse
+            ),
         }
         # A foreign definer's definitions are rebuilt with the module it
         # defines into, so their callers are its dependents as a re-indexed
@@ -8478,9 +9144,14 @@ class GraphUpdater:
             return None
         # Transcoded exactly as the first parse was, or a declared-encoding
         # file's call pass would see names its definitions do not carry.
-        root_node = parse_with_preproc_recovery(
-            parser, grammar_bytes(file_bytes, language, file_path), language
-        ).root_node
+        parsed = grammar_bytes(file_bytes, language, file_path)
+        root_node = parse_with_preproc_recovery(parser, parsed, language).root_node
+        if language == cs.SupportedLanguage.SQL:
+            # The reload is the tree the call pass now walks, so its DDL must
+            # come from these bytes, not the first parse's (issue #3181).
+            self.factory.definition_processor.keep_sql_source(
+                file_path, root_node, parsed
+            )
         self.factory._func_class_captures_cache.pop(file_path, None)
         return (root_node, language)
 
@@ -9243,23 +9914,30 @@ class GraphUpdater:
         # Inbound edges find dependents of files that already existed; the
         # unresolved-import lookup finds importers of files this call CREATED,
         # which by construction have no inbound edges yet (issue #1682).
+        # Created files offer everything; modified files offer only the
+        # definitions they gained (bot review on PR #1979).
+        created_entries = [
+            (key, self._delombok_overlay.get(key, _read_bytes(path)))
+            for key, path in sorted(present.items())
+            if created is not None and key in created
+        ]
+        modified_entries = [
+            (key, self._delombok_overlay.get(key, _read_bytes(path)))
+            for key, path in sorted(present.items())
+            if created is None or key not in created
+        ]
         waiters = {
             *self._unresolved_importer_keys(sorted(present)),
-            # Created files offer everything; modified files offer only the
-            # definitions they gained (bot review on PR #1979).
-            *self._unresolved_reference_waiters(
-                [
-                    (key, self._delombok_overlay.get(key, _read_bytes(path)))
-                    for key, path in sorted(present.items())
-                    if created is not None and key in created
-                ],
-                [
-                    (key, self._delombok_overlay.get(key, _read_bytes(path)))
-                    for key, path in sorted(present.items())
-                    if created is None or key not in created
-                ],
-            ),
+            *self._unresolved_reference_waiters(created_entries, modified_entries),
             *self._dart_package_waiters(keys),
+            # Dispatch dependents join the waiters, as on the batch
+            # path: a new override or conformer rebinds callers the
+            # caller query cannot see, and a waiter re-parses even when
+            # the changed file's interface fingerprint held (issues
+            # #3338 and #2531).
+            *self._dispatch_dependent_keys(
+                created_entries, modified_entries, sorted(gone)
+            ),
         }
         for caller_key in (
             *self._dependent_keys(keys, stable or {}, waiters),
@@ -9340,7 +10018,7 @@ class GraphUpdater:
         } | {qn for qn, path in qn_to_path.items() if path in stale_paths}
         pending = self.factory.definition_processor.pending_type_facts
         pending[:] = [
-            fact
+            _without_stale_targets(fact, stale_modules)
             for fact in pending
             if (
                 fact.path not in stale_keys
@@ -9525,6 +10203,9 @@ class GraphUpdater:
                 hashes[key] = hashlib.md5(data, usedforsecurity=False).hexdigest()
         for key in gone:
             hashes.pop(key, None)
+        if self._exposes_map_kept:
+            # As at the batch commit: the cache owes the skipped cleanup.
+            hashes = _unconfirmed(hashes)
         _save_hash_cache(cache_path, hashes)
         # The cache's mtime is the instant every file NOT in it was last
         # judged (`_is_already_in_sync` and the walk skip files no newer
@@ -9640,6 +10321,8 @@ class GraphUpdater:
         self._registered_projects = None
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        self._exposes_cleanup_unrecorded = False
+        self._exposes_map_kept = False
         self._prune_settled = False
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
@@ -9910,7 +10593,15 @@ class GraphUpdater:
                 self._read_project_source,
                 project_name=self.project_name,
             )
-            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS, scope)
+            # Mentions are placed the way the subject was: by name while the
+            # name holds the recorded code, else by hash or quote, else
+            # listed as lost rather than dropped or handed to a newcomer.
+            repair_mentions(
+                self.ingestor.fetch_all,
+                self.ingestor.execute_write,
+                self._read_project_source,
+                project_name=self.project_name,
+            )
             # Then grade: the subject's `anchor_hash` was just re-emitted by
             # the parse, so comparing it with the note's recorded hash here
             # is what makes a note about changed code read STALE.
