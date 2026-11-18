@@ -437,11 +437,13 @@ class B:
 
 
 class Base:
-    def __add__(self, o): return NotImplemented
+    def __add__(self, o): return self
 
 
 class Child(Base):
-    def __radd__(self, o): return self
+    # Tried first, a subclass's reflection; NotImplemented hands on to
+    # `Base.__add__`, so both run.
+    def __radd__(self, o): return NotImplemented
 
 
 def rebound():
@@ -495,10 +497,49 @@ def test_each_operator_site_reads_the_binding_that_reaches_it(
         for caller, callee, line in edges
         if caller == "rebound" and "__" in callee
     }
-    assert negations == {("A.__neg__", 19), ("B.__neg__", 21)}, negations
+    assert negations == {("A.__neg__", 21), ("B.__neg__", 23)}, negations
     added = {
         callee
         for caller, callee, _line in edges
         if caller == "rebound_reflected" and "__" in callee
     }
     assert added == {"Base.__add__", "Child.__radd__"}, added
+
+
+_PROTOCOL_LOOP = """\
+from typing import Protocol
+
+
+class IterLike(Protocol):
+    def rows(self): ...
+    def __iter__(self): ...
+
+
+class SelfIter:
+    def rows(self): return []
+    def __iter__(self): return self
+    def __next__(self): raise StopIteration
+
+
+class ListIter:
+    def rows(self): return []
+    def __iter__(self): return iter([])
+    def __next__(self): raise StopIteration
+
+
+def loop(items: IterLike):
+    for _x in items:
+        pass
+"""
+
+
+def test_a_protocol_loop_advances_only_the_conformer_that_is_its_iterator(
+    tmp_path: Path,
+) -> None:
+    # Both conformers' `__iter__` may run; only SelfIter's returns itself, so
+    # only its `__next__` advances the loop. ListIter's returns a builtin.
+    edges = _site_callees(tmp_path, _PROTOCOL_LOOP)
+    called = {callee for caller, callee, _line in edges if caller == "loop"}
+    assert called == {"SelfIter.__iter__", "ListIter.__iter__", "SelfIter.__next__"}, (
+        called
+    )

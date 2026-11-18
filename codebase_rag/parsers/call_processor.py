@@ -9844,11 +9844,13 @@ class CallProcessor:
         for view in self._operand_views(
             caller_node, iterable, local_var_types, module_qn
         ):
-            if not view or not (receiver := view.get(text)):
+            if not view or not view.get(text):
                 continue
-            # The `__iter__` the loop runs, its class's own or a base's.
-            for _label, method_qn in sorted(
-                self._resolver.operator_dunder_targets(text, creator, module_qn, view)
+            # The `__iter__` the loop runs, its class's own or a base's, with
+            # the concrete class it runs on: a Protocol-typed iterable's
+            # conformer iterates as that conformer, not as every one.
+            for receiver, (_label, method_qn) in sorted(
+                self._resolver.operator_dunder_receivers(text, creator, module_qn, view)
             ):
                 if iterator := self._python_iterator_type(method_qn, receiver):
                     self._emit_operator_dunder(
