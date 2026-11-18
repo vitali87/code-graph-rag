@@ -592,6 +592,8 @@ IGNORE_PATTERNS = frozenset(
 # can match at any depth (`!*.[Cc]ache/`) walked into it and recorded Git's
 # own folders as Folder nodes (issue #3642).
 VCS_METADATA_DIRS = frozenset({".git", ".hg", ".svn"})
+# The gitignore segment that matches any number of directories.
+GLOB_DOUBLE_STAR = "**"
 # Machine-generated artefacts: never hand-edited, never first-party. Matched
 # against the whole FILENAME with `str.endswith`, not against `Path.suffix`,
 # because two entries here are not suffixes in pathlib's sense:

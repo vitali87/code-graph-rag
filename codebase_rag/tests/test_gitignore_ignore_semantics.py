@@ -242,3 +242,18 @@ class TestVcsMetadataNeverWalked:
             unignore_paths=named,
             is_file=True,
         )
+
+    def test_a_named_line_may_glob_the_segments_before_the_metadata_dir(
+        self,
+    ) -> None:
+        # Codex review of #3644: `!submodule*/.git/keep.py` names `.git`.
+        assert should_keep_dir(
+            ".git", "submodule1/", None, frozenset({"submodule*/.git/keep.py"})
+        )
+        assert should_keep_dir(".git", "a/b/", None, frozenset({"**/.git/keep.py"}))
+
+    def test_a_wildcard_standing_for_the_metadata_dir_does_not_rescue_it(
+        self,
+    ) -> None:
+        assert not should_keep_dir(".git", "sub/", None, frozenset({"*/*/x.py"}))
+        assert not should_keep_dir(".git", "", None, frozenset({"**/*/x.py"}))

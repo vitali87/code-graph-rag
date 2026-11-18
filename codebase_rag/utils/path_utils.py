@@ -1,3 +1,4 @@
+import fnmatch
 import hashlib
 import os
 import posixpath
@@ -359,17 +360,39 @@ def unignore_names_vcs_dir(rel_dir: str, unignore_paths: frozenset[str] | None) 
     """
     if not unignore_paths:
         return False
-    name = rel_dir.rsplit(cs.SEPARATOR_SLASH, 1)[-1]
+    dir_parts = tuple(rel_dir.split(cs.SEPARATOR_SLASH))
     for pattern in unignore_paths:
         bare = pattern.strip(cs.SEPARATOR_SLASH)
         if cs.SEPARATOR_SLASH not in bare:
-            if bare == name:
+            if bare == dir_parts[-1]:
                 return True
             continue
-        head = _GLOB_MAGIC.split(bare, 1)[0]
-        if head == rel_dir or head.startswith(f"{rel_dir}{cs.SEPARATOR_SLASH}"):
+        if _pattern_reaches_vcs_dir(tuple(bare.split(cs.SEPARATOR_SLASH)), dir_parts):
             return True
     return False
+
+
+def _pattern_reaches_vcs_dir(
+    pattern_parts: tuple[str, ...], dir_parts: tuple[str, ...]
+) -> bool:
+    # The segments before the metadata dir may be globs (`submodule*/.git/x`)
+    # or `**`, but the metadata dir's own segment must be spelled out: a
+    # wildcard standing in for it (`*/*/x.py`) is a broad line, not a rescue.
+    if not dir_parts:
+        return True
+    if not pattern_parts:
+        return False
+    head, rest = pattern_parts[0], pattern_parts[1:]
+    if head == cs.GLOB_DOUBLE_STAR:
+        return _pattern_reaches_vcs_dir(rest, dir_parts) or (
+            len(dir_parts) > 1
+            and _pattern_reaches_vcs_dir(pattern_parts, dir_parts[1:])
+        )
+    if len(dir_parts) == 1:
+        return head == dir_parts[0]
+    return fnmatch.fnmatchcase(dir_parts[0], head) and _pattern_reaches_vcs_dir(
+        rest, dir_parts[1:]
+    )
 
 
 def has_unrescued_vcs_part(
