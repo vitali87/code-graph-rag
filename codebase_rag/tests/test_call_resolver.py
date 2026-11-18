@@ -56,6 +56,9 @@ class MockFunctionRegistry:
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
         return [(k, v) for k, v in self._data.items() if k.startswith(prefix)]
 
+    def has_prefix(self, prefix: str) -> bool:
+        return any(k.startswith(prefix) for k in self._data)
+
     def find_ending_with(self, suffix: str) -> list[QualifiedName]:
         return self._suffix_index.get(suffix, [])
 
