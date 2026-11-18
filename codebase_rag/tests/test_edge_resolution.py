@@ -65,17 +65,265 @@ def test_exact_and_heuristic_calls_are_tagged(
 ) -> None:
     (temp_repo / "pkg").mkdir()
     (temp_repo / "pkg" / "__init__.py").write_text("")
-    (temp_repo / "pkg" / "util.py").write_text(
-        "def helper():\n    return 1\n\n\ndef lonely():\n    return 2\n"
-    )
+    (temp_repo / "pkg" / "util.py").write_text("def helper():\n    return 1\n")
+    (temp_repo / "pkg" / "more.py").write_text("def lonely():\n    return 2\n")
     (temp_repo / "pkg" / "app.py").write_text(
-        "from pkg.util import helper\n\n\ndef run():\n    helper()\n    lonely()\n"
+        "from pkg.util import helper\nfrom pkg.more import *\n\n\n"
+        "def run():\n    helper()\n    lonely()\n"
     )
     create_and_run_updater(temp_repo, mock_ingestor)
     by_callee = _resolutions(mock_ingestor, ".pkg.app.run")
-    # Bound through the import: exact. Not imported, found by name only: heuristic.
+    # Bound through the import: exact. Through a star import, found by name
+    # only: heuristic.
     assert by_callee["helper"] == {cs.EdgeResolution.EXACT}
     assert by_callee["lonely"] == {cs.EdgeResolution.HEURISTIC}
+
+
+def test_a_call_through_a_rebound_local_carries_each_bindings_label(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `a()` reaches both functions `a` was bound to; each edge says how its
+    # own binding resolved, not how the last one did.
+    (temp_repo / "pkg").mkdir()
+    (temp_repo / "pkg" / "__init__.py").write_text("")
+    (temp_repo / "pkg" / "util.py").write_text("def helper():\n    return 1\n")
+    # Through a star import, `lonely` binds by name alone.
+    (temp_repo / "pkg" / "more.py").write_text("def lonely():\n    return 2\n")
+    (temp_repo / "pkg" / "app.py").write_text(
+        "from pkg.util import helper\nfrom pkg.more import *\n\n\n"
+        "def run(flag):\n    a = helper\n    if flag:\n        a = lonely\n    a()\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+    by_callee = _resolutions(mock_ingestor, ".pkg.app.run")
+    assert by_callee["helper"] == {cs.EdgeResolution.EXACT}
+    assert by_callee["lonely"] == {cs.EdgeResolution.HEURISTIC}
+
+
+def test_python_property_reads_require_the_receiver_class_and_skip_writes(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "models.py").write_text(
+        "class Remote:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "remote"\n\n'
+        "class Local:\n"
+        "    name: str\n\n"
+        "    def label(self):\n"
+        "        return self.name.upper()\n\n"
+        "    def update(self, name):\n"
+        "        self.name = name\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    edges = _edges(mock_ingestor, cs.RelationshipType.CALLS)
+    local_label = [
+        (dst, props) for src, dst, props in edges if src.endswith(".models.Local.label")
+    ]
+    local_update = [
+        (dst, props)
+        for src, dst, props in edges
+        if src.endswith(".models.Local.update")
+    ]
+    assert not any(dst.endswith(".models.Remote.name") for dst, _ in local_label)
+    assert not local_update
+
+
+@pytest.mark.parametrize(
+    ("assignment", "expect_getter"),
+    [
+        ("self.name = value", False),
+        ("self.name += value", True),
+        ("self.name, value = value, value", False),
+    ],
+)
+def test_python_property_write_does_not_call_getter(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    assignment: str,
+    expect_getter: bool,
+) -> None:
+    (temp_repo / "models.py").write_text(
+        "class Local:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "local"\n\n'
+        "    def update(self, value):\n"
+        f"        {assignment}\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    resolutions = _resolutions(mock_ingestor, ".models.Local.update")
+    if expect_getter:
+        assert resolutions["name"] == {cs.EdgeResolution.EXACT}
+    else:
+        assert not resolutions
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        "self.prop.field = value",
+        "self.prop[0] = value",
+        "value[self.prop] = value",
+        "value[: self.prop] = value",
+        "value[0], value[self.prop] = value",
+    ],
+)
+def test_python_property_receiver_is_read_for_nested_assignment_targets(
+    temp_repo: Path, mock_ingestor: MagicMock, assignment: str
+) -> None:
+    (temp_repo / "models.py").write_text(
+        "class Local:\n"
+        "    @property\n"
+        "    def prop(self):\n"
+        '        return "local"\n\n'
+        "    def update(self, value):\n"
+        f"        {assignment}\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    resolutions = _resolutions(mock_ingestor, ".models.Local.update")
+    assert resolutions["prop"] == {cs.EdgeResolution.EXACT}
+
+
+def test_inherited_python_property_read_is_exact(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "models.py").write_text(
+        "class Base:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "base"\n\n'
+        "class Child(Base):\n"
+        "    def label(self):\n"
+        "        return self.name.upper()\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    by_callee = _resolutions(mock_ingestor, ".models.Child.label")
+    assert by_callee["name"] == {cs.EdgeResolution.EXACT}
+
+
+def test_python_property_read_in_a_lambda_default_is_exact(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A default is evaluated in the method, before the lambda binds its own
+    # `self`, so it still reads the method's receiver.
+    (temp_repo / "models.py").write_text(
+        "class Local:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "local"\n\n'
+        "    def read(self):\n"
+        "        return lambda self=self.name: self\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    by_callee = _resolutions(mock_ingestor, ".models.Local.read")
+    assert by_callee["name"] == {cs.EdgeResolution.EXACT}
+
+
+def test_python_property_read_preserves_heuristic_resolution(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "models.py").write_text(
+        "class Remote:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "remote"\n\n'
+        "def read(value):\n"
+        "    return value.name.upper()\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    by_callee = _resolutions(mock_ingestor, ".models.read")
+    assert by_callee["name"] == {cs.EdgeResolution.HEURISTIC}
+
+
+def test_python_property_reads_keep_each_site_and_resolution(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    from codebase_rag.dead_code import resolution_at_least
+
+    (temp_repo / "models.py").write_text(
+        "class Local:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "local"\n\n'
+        "    def read(self, value):\n"
+        "        return self.name, value.name\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    reads = [
+        props
+        for src, dst, props in _edges(mock_ingestor, cs.RelationshipType.CALLS)
+        if src.endswith(".models.Local.read") and dst.endswith(".models.Local.name")
+    ]
+    assert len(reads) == 2
+    assert {str(props[cs.KEY_RESOLUTION]) for props in reads} == {
+        cs.EdgeResolution.EXACT,
+        cs.EdgeResolution.HEURISTIC,
+    }
+    assert len({(props[cs.KEY_LINE], props[cs.KEY_COL]) for props in reads}) == 2
+    kept = [
+        props
+        for props in reads
+        if resolution_at_least(props.get(cs.KEY_RESOLUTION), cs.EdgeResolution.EXACT)
+    ]
+    assert len(kept) == 1
+    assert kept[0][cs.KEY_RESOLUTION] == cs.EdgeResolution.EXACT
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "    def read(self, cls):\n        return cls.name\n",
+        "    @staticmethod\n    def read(self):\n        return self.name\n",
+        "    def read(self):\n        return (lambda self: self.name)(None)\n",
+    ],
+)
+def test_python_property_read_through_an_unbound_receiver_name_is_not_exact(
+    temp_repo: Path, mock_ingestor: MagicMock, method: str
+) -> None:
+    # A parameter merely named `cls`, or a staticmethod's `self`, holds
+    # whatever the caller passes, so it must not bind to the enclosing class.
+    (temp_repo / "models.py").write_text(
+        "class Local:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "local"\n\n' + method
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    by_callee = _resolutions(mock_ingestor, ".models.Local.read")
+    assert cs.EdgeResolution.EXACT not in by_callee.get("name", set())
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "    @classmethod\n    def read(cls):\n        return cls.name\n",
+        "    def __init_subclass__(cls):\n        cls.kept = cls.name\n",
+    ],
+)
+def test_python_property_read_through_the_class_does_not_call_the_getter(
+    temp_repo: Path, mock_ingestor: MagicMock, method: str
+) -> None:
+    # Through the class a property is just an object; the getter never runs.
+    (temp_repo / "models.py").write_text(
+        "class Local:\n"
+        "    @property\n"
+        "    def name(self):\n"
+        '        return "local"\n\n' + method
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    assert not any(
+        dst.endswith(".models.Local.name")
+        for _, dst, _ in _edges(mock_ingestor, cs.RelationshipType.CALLS)
+    )
 
 
 def test_an_engine_bound_call_does_not_inherit_the_previous_label(
@@ -148,11 +396,13 @@ def test_a_higher_order_calls_callback_does_not_change_its_own_label(
     (temp_repo / "pkg").mkdir()
     (temp_repo / "pkg" / "__init__.py").write_text("")
     (temp_repo / "pkg" / "util.py").write_text(
-        "def sorted(items, key=None):\n    return items\n\n\n"
-        "def lonely(x):\n    return x\n"
+        "def sorted(items, key=None):\n    return items\n"
     )
+    # Through a star import, `lonely` binds by name alone.
+    (temp_repo / "pkg" / "more.py").write_text("def lonely(x):\n    return x\n")
     (temp_repo / "pkg" / "app.py").write_text(
-        "from pkg.util import sorted\n\n\ndef run(xs):\n    return sorted(xs, key=lonely)\n"
+        "from pkg.util import sorted\nfrom pkg.more import *\n\n\n"
+        "def run(xs):\n    return sorted(xs, key=lonely)\n"
     )
     create_and_run_updater(temp_repo, mock_ingestor)
     by_callee = _resolutions(mock_ingestor, ".pkg.app.run")
@@ -170,11 +420,13 @@ def test_a_callback_carries_its_own_verdict_not_the_enclosing_calls(
     (temp_repo / "pkg").mkdir()
     (temp_repo / "pkg" / "__init__.py").write_text("")
     (temp_repo / "pkg" / "util.py").write_text(
-        "def sorted(items, key=None):\n    return items\n\n\n"
-        "def lonely(x):\n    return x\n"
+        "def sorted(items, key=None):\n    return items\n"
     )
+    # Through a star import, `lonely` binds by name alone.
+    (temp_repo / "pkg" / "more.py").write_text("def lonely(x):\n    return x\n")
     (temp_repo / "pkg" / "app.py").write_text(
-        "from pkg.util import sorted\n\n\ndef run(xs):\n    return sorted(xs, key=lonely)\n"
+        "from pkg.util import sorted\nfrom pkg.more import *\n\n\n"
+        "def run(xs):\n    return sorted(xs, key=lonely)\n"
     )
     create_and_run_updater(temp_repo, mock_ingestor)
     by_callee = _resolutions(mock_ingestor, ".pkg.app.run")

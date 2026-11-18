@@ -748,7 +748,7 @@ def this_constructor_invocation(ctor_node: ASTNode) -> ASTNode | None:
         ),
         None,
     )
-    if first is None or first.type != cs.TS_JAVA_EXPLICIT_CONSTRUCTOR_INVOCATION:
+    if first is None or first.type != cs.TS_EXPLICIT_CONSTRUCTOR_INVOCATION:
         return None
     keyword = first.child_by_field_name(cs.FIELD_CONSTRUCTOR)
     return first if keyword is not None and keyword.type == cs.TS_THIS else None
