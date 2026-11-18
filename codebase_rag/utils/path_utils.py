@@ -10,6 +10,7 @@ from functools import lru_cache
 from pathlib import Path, PurePath
 
 from pathspec import PathSpec
+from pathspec.pattern import RegexPattern
 
 from .. import constants as cs
 
@@ -342,21 +343,28 @@ def _matches_at_or_below_keep(pattern: str, match_path: str, keep: str) -> bool:
     Only the match on a directory enclosing the keep gives way. With
     `secrets/` excluded and `!secrets/public` kept, the `secrets/` inside
     `secrets/public/secrets/` is a match of its own and still excludes
-    (Greptile review of PR 2510). A slash-free pattern matches by name at
-    any depth, so matching it against the path below the keep's parent sees
-    exactly the directories from the keep down. An anchored pattern matches
-    at one depth, the enclosing directory it was lifted for, so it has no
-    match below; only a `**` inside one can match at several, and that rare
-    case is still lifted whole.
+    (Greptile review of PR 2510), as does `a/**/secrets/` inside a kept
+    `a/secrets/public`. So each path from the keep down to `match_path` is
+    tested as itself: a gitignore pattern's regex matches a path's prefix,
+    which is how it takes in everything below a directory it names, and the
+    same regex matched in full names that one path alone.
     """
-    unanchored = pattern.strip().rstrip(cs.SEPARATOR_SLASH)
-    while unanchored.startswith(cs.GLOB_ANY_DEPTH_PREFIX):
-        unanchored = unanchored.removeprefix(cs.GLOB_ANY_DEPTH_PREFIX)
-    if cs.SEPARATOR_SLASH in unanchored:
-        return False
-    parent = keep.rsplit(cs.SEPARATOR_SLASH, 1)[0]
-    below_parent = match_path[len(parent) + 1 :]
-    return _single_ignore_spec(pattern).match_file(below_parent)
+    regexes = [
+        compiled.regex
+        for compiled in _single_ignore_spec(pattern).patterns
+        if isinstance(compiled, RegexPattern)
+        and compiled.include
+        and compiled.regex is not None
+    ]
+    is_dir = match_path.endswith(cs.SEPARATOR_SLASH)
+    parts = match_path.rstrip(cs.SEPARATOR_SLASH).split(cs.SEPARATOR_SLASH)
+    for depth in range(keep.count(cs.SEPARATOR_SLASH) + 1, len(parts) + 1):
+        path = cs.SEPARATOR_SLASH.join(parts[:depth])
+        if depth < len(parts) or is_dir:
+            path += cs.SEPARATOR_SLASH
+        if any(regex.fullmatch(path) for regex in regexes):
+            return True
+    return False
 
 
 def should_keep_dir(

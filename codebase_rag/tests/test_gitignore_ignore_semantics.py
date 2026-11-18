@@ -140,6 +140,20 @@ class TestGitignoreUnignoreSemantics:
         )
         assert _skip("secrets/other.py", exclude=exclude, unignore=unignore)
 
+    def test_a_double_star_exclusion_still_applies_below_a_keep(self) -> None:
+        # An anchored pattern with `**` matches at several depths: its match
+        # on the enclosing `a/secrets/` gives way, the one below does not.
+        exclude = frozenset({"a/**/secrets/"})
+        unignore = frozenset({"a/secrets/public"})
+        assert not _skip("a/secrets/public/x.py", exclude=exclude, unignore=unignore)
+        assert _skip(
+            "a/secrets/public/secrets/y.py", exclude=exclude, unignore=unignore
+        )
+        assert _skip(
+            "a/secrets/public/b/secrets/z.py", exclude=exclude, unignore=unignore
+        )
+        assert _skip("a/secrets/other.py", exclude=exclude, unignore=unignore)
+
     def test_an_anchored_enclosing_exclusion_is_lifted_inside_the_keep(
         self,
     ) -> None:
