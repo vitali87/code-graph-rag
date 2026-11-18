@@ -183,13 +183,18 @@ class _Collector:
         # enclosing caller is only recoverable by span once ALL definitions are
         # collected; resolved at flush.
         self._pending_macro_calls: set[tuple[str, _Span, str, str]] = set()
-        # {(including file, any line of the directive): (`#` line, `#`
-        # column, written path)} for the TU being walked: FileInclusion
+        # {(including file, any line of the directive, header it resolved
+        # to): (`#` line, `#` column, written path)} for the TU being walked: FileInclusion
         # locates the FILENAME token, which a backslash continuation puts on
         # a later line, and knows no spelling, so the IMPORTS site and alias
         # come from the INCLUSION_DIRECTIVE cursor, matching tree-sitter's
         # (issue #2944).
-        self._include_directives: dict[tuple[str, int], tuple[int, int, str]] = {}
+        # Keyed by the header the directive resolved to as well: an unguarded
+        # header holding `#include CHOSEN` is expanded once per inclusion, and
+        # each expansion's directive sits on the same file and line.
+        self._include_directives: dict[
+            tuple[str, int, str | None], tuple[int, int, str]
+        ] = {}
         # (including module qn, included module qn, line, col, alias, written
         # path): one IMPORTS edge per located `#include`.
         self._include_sites: set[tuple[str, str, int, int, str, str]] = set()
@@ -608,8 +613,12 @@ class _Collector:
             return
         start = cursor.location.line
         directive = (start, cursor.location.column - 1, cursor.spelling)
+        included = cursor.get_included_file()
+        target = included.name if included is not None else None
         for line in range(start, max(start, cursor.extent.end.line) + 1):
-            self._include_directives[(cursor.location.file.name, line)] = directive
+            self._include_directives[(cursor.location.file.name, line, target)] = (
+                directive
+            )
 
     def _resolve_macro_calls(self) -> None:
         # Attribute each macro use to the tightest enclosing
@@ -678,7 +687,7 @@ class _Collector:
             self._add_module(src_qn, src_rel, source.name)
             self._add_module(inc_qn, inc_rel, included.name)
             directive = self._include_directives.get(
-                (source.name, inclusion.location.line)
+                (source.name, inclusion.location.line, included.name)
             )
             if directive is None:
                 self._add_edge(

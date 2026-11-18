@@ -854,3 +854,112 @@ def test_hybrid_macro_use_belongs_to_the_definition_holding_its_column(
     )
     assert one == [{cs.KEY_LINE: 2, cs.KEY_COL: first}], one
     assert two == [{cs.KEY_LINE: 2, cs.KEY_COL: second}], two
+
+
+def test_hybrid_include_expanded_twice_keeps_each_targets_name(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An unguarded dispatch.h holds `#include CHOSEN` and is included twice,
+    # with CHOSEN first "a.h" and then "b.h": both expansions put their
+    # directive on dispatch.h's line 1, and each edge keeps its own header's
+    # name instead of the last one's.
+    root = temp_repo / "hybtwice"
+    root.mkdir()
+    (root / "a.h").write_text("#define FROM_A 1\n", encoding="utf-8")
+    (root / "b.h").write_text("#define FROM_B 2\n", encoding="utf-8")
+    (root / "dispatch.h").write_text("#include CHOSEN\n", encoding="utf-8")
+    (root / "main.cpp").write_text(
+        '#define CHOSEN "a.h"\n#include "dispatch.h"\n#undef CHOSEN\n'
+        '#define CHOSEN "b.h"\n#include "dispatch.h"\n'
+        "int both() { return FROM_A + FROM_B; }\n",
+        encoding="utf-8",
+    )
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "main.cpp")]), encoding="utf-8"
+    )
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    for header in ("a", "b"):
+        sites = _sites(
+            store,
+            cs.RelationshipType.IMPORTS,
+            "hybtwice.dispatch",
+            f"hybtwice.{header}",
+        )
+        assert sites == [{cs.KEY_LINE: 1, cs.KEY_COL: 0, cs.KEY_ALIAS: header}], (
+            header,
+            sites,
+        )
+
+
+def _write_two_limits(root: Path, use_h: str, one: str, two: str) -> None:
+    root.mkdir()
+    (root / "a.h").write_text("#define LIMIT 3\n", encoding="utf-8")
+    (root / "b.h").write_text("#define LIMIT 4\n", encoding="utf-8")
+    (root / "use.h").write_text(use_h, encoding="utf-8")
+    (root / "one.cpp").write_text(one, encoding="utf-8")
+    (root / "two.cpp").write_text(two, encoding="utf-8")
+    (root / "compile_commands.json").write_text(
+        json.dumps(
+            [
+                _compdb_entry(root, root / "one.cpp"),
+                _compdb_entry(root, root / "two.cpp"),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("macro", ["a.LIMIT", "b.LIMIT"])
+def test_hybrid_rename_refuses_a_use_another_same_named_macro_binds(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, macro: str
+) -> None:
+    # use.h is compiled after a.h in one.cpp and after b.h in two.cpp, so
+    # its one LIMIT token is each macro's: renaming it for one leaves the
+    # other unit without LIMIT.
+    from codebase_rag.editing.rename import RenameRefused, rename
+
+    root = temp_repo / "twolimits"
+    _write_two_limits(
+        root,
+        "static inline int cap(int n) { return n > LIMIT ? LIMIT : n; }\n",
+        '#include "a.h"\n#include "use.h"\nint one() { return cap(1); }\n',
+        '#include "b.h"\n#include "use.h"\nint two() { return cap(2); }\n',
+    )
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            store.fetch_all,
+            "twolimits",
+            f"twolimits.{macro}",
+            "CAP",
+            dry_run=True,
+            allow_heuristic=True,
+        )
+    assert "another definition of LIMIT" in str(refused.value), refused.value
+    assert (root / "use.h").read_text(encoding="utf-8").count("LIMIT") == 2
+
+
+def test_hybrid_rename_of_a_macro_with_uses_of_its_own_still_plans(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: each LIMIT is used in its own unit only.
+    from codebase_rag.editing.rename import rename
+
+    root = temp_repo / "ownlimits"
+    _write_two_limits(
+        root,
+        "int unused();\n",
+        '#include "a.h"\nint one() { return LIMIT; }\n',
+        '#include "b.h"\nint two() { return LIMIT; }\n',
+    )
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    report = rename(
+        root, store.fetch_all, "ownlimits", "ownlimits.a.LIMIT", "CAP", dry_run=True
+    )
+    assert "+#define CAP 3" in report.diff, report.message
+    assert "+int one() { return CAP; }" in report.diff, report.diff
+    assert "two.cpp" not in report.diff, report.diff

@@ -1571,6 +1571,18 @@ class Renamer:
                 siteless,
                 unlocatable,
             )
+        # Planned, not guessed, so `allow_heuristic` does not cover it.
+        if shared := self._sites_another_namesake_binds(members, old_name, sites):
+            raise RenameRefused(
+                cs.RENAME_SHARED_SITE.format(
+                    qn=qn,
+                    count=len(shared),
+                    name=old_name,
+                    locations=_locations(shared),
+                ),
+                shared,
+                unlocatable,
+            )
         ambiguous = [
             s for s in sites if s.resolution in AMBIGUOUS or s.resolution == _CHAIN
         ]
@@ -1824,6 +1836,39 @@ class Renamer:
                     and isinstance(path := row.get(cs.KEY_PATH), str)
                 )
         return paths
+
+    def _sites_another_namesake_binds(
+        self, hierarchy: list[str], old_name: str, sites: list[RenameSite]
+    ) -> list[RenameSite]:
+        """C/C++ use sites the graph also binds to another definition of
+        `old_name`.
+
+        A header expanded in two translation units binds one `LIMIT` token
+        to `a.h`'s `#define LIMIT` in one and to `b.h`'s in the other, and
+        the hybrid frontend records both, at that one site. Rewriting the
+        token for one leaves the other's units without the name.
+        """
+        definitions = [s.path for s in sites if s.kind == "definition"]
+        if not definitions or not all(
+            get_language_for_extension(Path(path).suffix) in cs.C_FAMILY_LANGUAGES
+            for path in definitions
+        ):
+            return []
+        uses = {(s.path, s.line, s.col): s for s in sites if s.kind != "definition"}
+        shared: dict[tuple[str, int, int], RenameSite] = {}
+        for symbol in graph_query.resolve(self.fetch_all, self.project, old_name):
+            other = symbol["qualified_name"]
+            if other in hierarchy:
+                continue
+            try:
+                other_sites, _unlocatable, _name, _label = self._collect(other)
+            except (RenameRefused, PatcherError):
+                continue
+            for site in other_sites:
+                position = (site.path, site.line, site.col)
+                if site.kind != "definition" and position in uses:
+                    shared.setdefault(position, uses[position])
+        return [shared[position] for position in sorted(shared)]
 
     def _namesakes(
         self, old_name: str, hierarchy: list[str], target: Target

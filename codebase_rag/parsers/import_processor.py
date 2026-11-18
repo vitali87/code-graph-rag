@@ -2277,10 +2277,12 @@ class ImportProcessor:
         # survived (issue #1758). The binding can hold one name, but the file
         # really does include both headers, so the edge is kept here.
         self._cpp_shadowed_include_targets: set[tuple[str, str]] = set()
-        # The site each of those includes had when it lost its name, so its
-        # edge is located as tree-sitter would place it and libclang's edge
-        # for the same `#include` merges into it (issue #2944).
-        self._cpp_shadowed_include_sites: dict[tuple[str, str], PropertyDict] = {}
+        # The site of each directive that lost its name, so its edge is
+        # located as tree-sitter would place it and libclang's edge for the
+        # same `#include` merges into it (issue #2944). One per directive: a
+        # header can lose the name more than once (`a/util.h`, `b/util.h`,
+        # `a/util.h`), or to a later include of itself.
+        self._cpp_shadowed_include_sites: dict[tuple[str, str], list[PropertyDict]] = {}
         # Per JS/TS module, the modules it imports for side effects only
         # (`import "./instrument"`, `require("./db");`), with each statement's
         # site. They bind no name, so the map cannot carry them (#3267).
@@ -2609,14 +2611,17 @@ class ImportProcessor:
                 # out, which `test_cpp_module_declarations_emit_no_
                 # self_import` forbids (#1758 review).
                 continue
-            self._deferred_import_edges.append(
-                DeferredImportEdge(
-                    module_qn=module_qn,
-                    full_name=shadowed,
-                    language=language,
-                    site=self._cpp_shadowed_include_sites.get((module_qn, shadowed)),
+            for site in self._cpp_shadowed_include_sites.get((module_qn, shadowed)) or [
+                None
+            ]:
+                self._deferred_import_edges.append(
+                    DeferredImportEdge(
+                        module_qn=module_qn,
+                        full_name=shadowed,
+                        language=language,
+                        site=site,
+                    )
                 )
-            )
 
     def parse_imports(
         self,
@@ -7553,9 +7558,13 @@ class ImportProcessor:
         # a DIFFERENT header (`<std>` then `<std.h>`, both binding `std`).
         # The map holds one binding, so remember the loser's target: it is a
         # real include of a real header and must keep its IMPORTS edge (#1758).
+        # The same header included again keeps the earlier directive's edge
+        # the same way, since the binding records one site.
         displaced = self.import_mapping[module_qn].get(local_name)
-        if displaced is not None and displaced != full_name:
-            self._shadow_cpp_include(module_qn, local_name, displaced)
+        if displaced is not None:
+            self._shadow_cpp_include(
+                module_qn, local_name, displaced, again=displaced == full_name
+            )
         self.import_mapping[module_qn][local_name] = full_name
         self._record_import_site(module_qn, local_name, include_node, include_path)
         logger.debug(
@@ -7566,13 +7575,21 @@ class ImportProcessor:
         )
 
     def _shadow_cpp_include(
-        self, module_qn: str, local_name: str, displaced: str
+        self, module_qn: str, local_name: str, displaced: str, again: bool = False
     ) -> None:
-        # Before the new binding records its own site over the old one.
-        self._cpp_shadowed_include_targets.add((module_qn, displaced))
+        # Before the new binding records its own site over the old one. A
+        # header included `again` under its own binding is kept only by its
+        # earlier directive's site: without one it has its edge already.
         site = self._import_sites.get(module_qn, {}).get(local_name)
+        if again and site is None:
+            return
+        self._cpp_shadowed_include_targets.add((module_qn, displaced))
         if site is not None:
-            self._cpp_shadowed_include_sites[(module_qn, displaced)] = site
+            sites = self._cpp_shadowed_include_sites.setdefault(
+                (module_qn, displaced), []
+            )
+            if site not in sites:
+                sites.append(site)
 
     def _cpp_include_full_name(
         self, include_path: str, is_system_include: bool, module_qn: str
