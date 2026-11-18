@@ -1290,6 +1290,26 @@ class FunctionLocations(dict[FunctionSpanKey, FunctionLocation]):
             super().pop(key, None)
 
 
+class CppClassLookup(NamedTuple):
+    """The class an out-of-line C++ member definition names, as C++ looks it up.
+
+    `scope` is the dotted namespace path the lookup starts from: the
+    definition's own, or an alias's when the name came through one; each
+    enclosing namespace is tried out to the global one (issue #3137).
+
+    `name` is the qualifier, dotted, as the rest of the pipeline reads it
+    (`extract_class_name_from_out_of_class_method`), with a type alias or
+    using-declaration in scope replaced by what it stands for. That reading
+    drops a template's name from `SkipList<K, C>::Iterator::Valid`, so
+    `written` keeps the qualifier as written (`SkipList.Iterator`): it admits
+    a nested class that the code really names.
+    """
+
+    name: str
+    scope: str
+    written: str
+
+
 class CppDefinitionSpan(NamedTuple):
     """Full line span of a C/C++ function or method the tree-sitter pass ingested.
 
