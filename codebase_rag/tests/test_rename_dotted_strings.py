@@ -248,3 +248,24 @@ def test_a_symlinked_file_is_patched_once(repo: Path, mock_ingestor: MagicMock) 
         pytest.skip("symlinks are not available here")
     _rename(repo, mock_ingestor, "pkg.core.helper", "add_one")
     assert (repo / "tests" / "target.py").read_text() == 'TARGET = "pkg.core.add_one"\n'
+
+
+def test_a_file_the_ignore_files_leave_out_is_left_alone(
+    repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negatives: a `.cgrignore`d fixture and a `.gitignore`d config spell the
+    # entry point too, but they are outside the project the rename edits.
+    saved = 'target = "pkg.core:main"\n'
+    _repo(
+        repo,
+        {
+            ".cgrignore": "fixtures/\n",
+            ".gitignore": "local.toml\n",
+            "fixtures/config.toml": saved,
+            "local.toml": saved,
+        },
+    )
+    _rename(repo, mock_ingestor, "pkg.core.main", "run_main")
+    assert 'renstr = "pkg.core:run_main"' in (repo / "pyproject.toml").read_text()
+    assert (repo / "fixtures" / "config.toml").read_text() == saved
+    assert (repo / "local.toml").read_text() == saved

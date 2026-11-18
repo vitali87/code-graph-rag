@@ -28,7 +28,6 @@ rewritten: prose is not a graph edge.
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path, PurePosixPath
@@ -40,6 +39,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import cypher_queries as cq
 from .. import graph_query
+from ..config import load_ignore_patterns
 from ..function_registry import TYPE_SPACE_KINDS
 from ..graph_updater import ReingestAborted
 from ..language_spec import csharp_partial_key_from_graph, get_language_for_extension
@@ -55,6 +55,7 @@ from ..utils.path_utils import (
     base_module_qn,
     declaration_implementations,
     python_stub_implementations,
+    walk_eligible_files,
 )
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
@@ -1778,19 +1779,19 @@ class Renamer:
         return rivals
 
     def _string_site_files(self) -> list[Path]:
-        # Pruned while walking: `node_modules` or a virtualenv can hold more
-        # files than the project itself. A symlink is skipped: its target is
-        # walked as itself when it is in the repository, and patched once.
-        files: list[Path] = []
-        for directory, dirnames, filenames in os.walk(self.repo_root):
-            dirnames[:] = sorted(d for d in dirnames if d not in cs.IGNORE_PATTERNS)
-            files.extend(
-                path
-                for name in sorted(filenames)
-                if Path(name).suffix in cs.RENAME_STRING_SUFFIXES
-                and not (path := Path(directory) / name).is_symlink()
+        # The indexer's own walk, under the repository's `.cgrignore` and
+        # `.gitignore`: a file the project leaves out (a saved fixture) is not
+        # the rename's to edit. It prunes `node_modules` and virtualenvs as it
+        # goes, and skips a symlink, whose in-repository target is walked as
+        # itself and patched once.
+        ignore = load_ignore_patterns(self.repo_root)
+        return [
+            Path(directory) / name
+            for directory, name, _rel in walk_eligible_files(
+                self.repo_root, ignore.exclude or None, ignore.unignore or None
             )
-        return files
+            if Path(name).suffix in cs.RENAME_STRING_SUFFIXES
+        ]
 
     def _python_import_paths(self, module_path: str) -> list[tuple[str, PurePosixPath]]:
         """The dotted names a Python file imports as, one per import root,
