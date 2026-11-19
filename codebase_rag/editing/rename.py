@@ -197,9 +197,24 @@ def _js_words_at(
     async and `yield` when a generator. A binding's own function is not its
     enclosing one: `async function await() {}` binds outside its body.
     """
-    strict = file.strict or is_class
-    words: set[str] = set()
     holder = token.parent if token is not None else None
+    words = _js_function_words(holder, binding=binding)
+    if _js_binds_lexically(holder, binding=binding):
+        words.add(cs.JS_LET)
+    if _js_is_strict_at(file, holder, is_class=is_class):
+        words |= cs.JS_STRICT_RESERVED_WORDS
+        if binding:
+            # Strict code may read `eval` and `arguments` but bind neither.
+            words |= cs.JS_STRICT_RESTRICTED_BINDINGS
+    if file.module:
+        words.add(cs.JS_AWAIT)
+    return frozenset(words)
+
+
+def _js_is_strict_at(file: _JsFile, holder: Node | None, *, is_class: bool) -> bool:
+    """Whether the file, a class or an enclosing "use strict" body makes
+    the code at `holder` strict."""
+    strict = file.strict or is_class
     current = holder
     while current is not None:
         if current.type == cs.TS_CLASS_BODY:
@@ -209,6 +224,15 @@ def _js_words_at(
             if body is not None and _js_opens_with_use_strict(body, file.source):
                 strict = True
         current = current.parent
+    return strict
+
+
+def _js_function_words(holder: Node | None, *, binding: bool) -> set[str]:
+    """The words the nearest enclosing function reserves at `holder`:
+    `await` when async, `yield` when a generator."""
+    words: set[str] = set()
+    # A binding's own function is not its enclosing one: `async function
+    # await() {}` binds outside its body, so the search starts above it.
     enclosing = holder.parent if binding and holder is not None else holder
     while enclosing is not None and enclosing.type not in cs.JS_TS_FUNCTION_NODES:
         enclosing = enclosing.parent
@@ -218,24 +242,21 @@ def _js_words_at(
             words.add(cs.JS_AWAIT)
         if enclosing.type in _JS_GENERATOR_TYPES or cs.JS_GENERATOR_STAR in keywords:
             words.add(cs.JS_YIELD)
+    return words
+
+
+def _js_binds_lexically(holder: Node | None, *, binding: bool) -> bool:
+    """Whether a binding at `holder` is declared by `let` or `const`, which
+    may not bind `let`."""
     declarator = holder if binding else None
     # `const { fetch } = ...` binds in a pattern inside the declarator.
     while declarator is not None and declarator.type in _JS_BINDING_PATTERNS:
         declarator = declarator.parent
-    if (
+    return (
         declarator is not None
         and declarator.parent is not None
         and declarator.parent.type == cs.TS_LEXICAL_DECLARATION
-    ):
-        words.add(cs.JS_LET)
-    if strict:
-        words |= cs.JS_STRICT_RESERVED_WORDS
-        if binding:
-            # Strict code may read `eval` and `arguments` but bind neither.
-            words |= cs.JS_STRICT_RESTRICTED_BINDINGS
-    if file.module:
-        words.add(cs.JS_AWAIT)
-    return frozenset(words)
+    )
 
 
 def _js_has_module_syntax(root: Node) -> bool:
@@ -275,6 +296,28 @@ def _js_destructured_local(statement: Node, name: str) -> Node | None:
             if _node_text(key) == name == _node_text(local):
                 return local
     return None
+
+
+def _js_import_reserves(
+    file: _JsFile, site: ImportSite, old_name: str, new_name: str
+) -> bool:
+    """Whether `new_name` is reserved where an unaliased import site binds
+    the symbol under `old_name`."""
+    statement = file.statement_at(site)
+    if (
+        statement is not None
+        and statement.type == cs.TS_EXPORT_STATEMENT
+        and statement.child_by_field_name(cs.FIELD_SOURCE) is not None
+    ):
+        # `export { await } from "./api"` is valid: an export name
+        # may be any IdentifierName when it forwards one.
+        return False
+    # A destructure's words depend on its declaration (`let` in a
+    # `const` one) and the function it sits in.
+    token = (
+        _js_destructured_local(statement, old_name) if statement is not None else None
+    )
+    return new_name in _js_words_at(file, token, binding=True, is_class=False)
 
 
 def _js_opens_with_use_strict(scope: Node, source: bytes) -> bool:
@@ -1779,33 +1822,8 @@ class Renamer:
         found = _hierarchy(self.fetch_all, self.project, qn, self.repo_root)
         members = found.members
         self._guessed_members = found.guessed
-        unknown = _go_implementers_unknown(self.fetch_all, self.project, members)
-        if unknown is not None:
-            interface, why, name = unknown
-            raise RenameRefused(
-                cs.RENAME_GO_IMPLEMENTERS_UNKNOWN.format(
-                    qn=qn,
-                    interface=interface,
-                    name=name,
-                    why=cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY.get(
-                        why, cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY_OTHER
-                    ),
-                ),
-                [],
-                [],
-            )
-        sites: list[RenameSite] = []
-        unlocatable: list[str] = []
-        old_name: str | None = None
-        label: str | None = None
-        for member in members:
-            member_sites, member_unlocatable, member_name, member_label = self._collect(
-                member
-            )
-            old_name = old_name or member_name
-            label = label or member_label
-            sites.extend(member_sites)
-            unlocatable.extend(member_unlocatable)
+        self._refuse_go_implementers_unknown(qn, members)
+        sites, unlocatable, old_name, label = self._collect_members(members)
         assert old_name is not None
         covered = {(s.path, s.line, s.col) for s in sites if s.resolution != _CHAIN}
         sites = [
@@ -1923,6 +1941,47 @@ class Renamer:
             unplanned=tuple(unplanned),
             companions=companions,
         )
+
+    def _refuse_go_implementers_unknown(self, qn: str, members: list[str]) -> None:
+        """Refuse when a Go interface whose implementers cgr cannot tell
+        declares the members' name: the hierarchy cannot show what the
+        rename must take along, so any part it leaves behind stops
+        compiling."""
+        unknown = _go_implementers_unknown(self.fetch_all, self.project, members)
+        if unknown is None:
+            return
+        interface, why, name = unknown
+        raise RenameRefused(
+            cs.RENAME_GO_IMPLEMENTERS_UNKNOWN.format(
+                qn=qn,
+                interface=interface,
+                name=name,
+                why=cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY.get(
+                    why, cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY_OTHER
+                ),
+            ),
+            [],
+            [],
+        )
+
+    def _collect_members(
+        self, members: list[str]
+    ) -> tuple[list[RenameSite], list[str], str | None, str | None]:
+        """Every member's sites and unlocatable uses, with the first name and
+        label a member reports."""
+        sites: list[RenameSite] = []
+        unlocatable: list[str] = []
+        old_name: str | None = None
+        label: str | None = None
+        for member in members:
+            member_sites, member_unlocatable, member_name, member_label = self._collect(
+                member
+            )
+            old_name = old_name or member_name
+            label = label or member_label
+            sites.extend(member_sites)
+            unlocatable.extend(member_unlocatable)
+        return sites, unlocatable, old_name, label
 
     def _identifier_refusal(self, qn: str, new_name: str) -> str | None:
         """Why `new_name` cannot name the definition, or None.
@@ -2080,23 +2139,7 @@ class Renamer:
             file = files[site.path]
             if file is None:
                 continue
-            statement = file.statement_at(site)
-            if (
-                statement is not None
-                and statement.type == cs.TS_EXPORT_STATEMENT
-                and statement.child_by_field_name(cs.FIELD_SOURCE) is not None
-            ):
-                # `export { await } from "./api"` is valid: an export name
-                # may be any IdentifierName when it forwards one.
-                continue
-            # A destructure's words depend on its declaration (`let` in a
-            # `const` one) and the function it sits in.
-            token = (
-                _js_destructured_local(statement, old_name)
-                if statement is not None
-                else None
-            )
-            if new_name in _js_words_at(file, token, binding=True, is_class=False):
+            if _js_import_reserves(file, site, old_name, new_name):
                 found.append(
                     RenameSite("import", site.path, site.line, site.col, module, None)
                 )
