@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from codebase_rag import constants as cs
+from codebase_rag.types_defs import ReferenceRepo
 from scripts import reference_graphs
 from scripts.reference_graphs import (
     REFERENCE_DIR,
@@ -26,6 +29,7 @@ from scripts.reference_graphs import (
     _index_env,
     canonical,
     difference,
+    environment_path,
     graph_path,
     load_manifest,
     read_graph,
@@ -34,6 +38,19 @@ from scripts.reference_graphs import (
 
 ROOT = Path("/work/checkout/demo")
 _COMMIT = re.compile(r"[0-9a-f]{40}")
+WORKFLOW = reference_graphs.PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
+_SEP = cs.REFERENCE_FIELD_SEPARATOR
+ENVIRONMENT = sorted(
+    [
+        f"{cs.LanguageTier.AST_GREP}{_SEP}bash",
+        f"{cs.LanguageTier.AST_GREP}{_SEP}ruby",
+        f"{cs.LanguageTier.TREE_SITTER}{_SEP}c",
+        f"{cs.LanguageTier.TREE_SITTER}{_SEP}python",
+    ]
+)
+WITHOUT_AST_GREP = [
+    line for line in ENVIRONMENT if not line.startswith(cs.LanguageTier.AST_GREP)
+]
 
 
 def _export(order: list[int]) -> ExportRecord:
@@ -249,6 +266,7 @@ def test_a_recording_whose_runs_disagree_writes_nothing(
     repo = load_manifest()[0]
     graph = graph_path(repo, tmp_path)
     graph.write_text("kept\n", encoding="utf-8")
+    monkeypatch.setattr(reference_graphs, "probe", lambda: ENVIRONMENT)
     monkeypatch.setattr(reference_graphs, "fetch", lambda repo, cache: tmp_path)
     monkeypatch.setattr(
         reference_graphs,
@@ -260,6 +278,172 @@ def test_a_recording_whose_runs_disagree_writes_nothing(
 
     assert status == cs.REFERENCE_EXIT_DIFFERENT
     assert graph.read_text(encoding="utf-8") == "kept\n"
+    assert not environment_path(tmp_path).exists()
+
+
+def _machine(monkeypatch, environment: list[str], graph: list[str]) -> None:
+    """A machine that parses `environment` and indexes every repository
+    into `graph`."""
+    monkeypatch.setattr(reference_graphs, "probe", lambda: environment)
+    monkeypatch.setattr(reference_graphs, "fetch", lambda repo, cache: Path())
+    monkeypatch.setattr(
+        reference_graphs, "_graphs", lambda cgr, repo, checkout, runs: (graph, [])
+    )
+
+
+def _not_indexed(repo: ReferenceRepo, cache: Path) -> Path:
+    raise AssertionError(f"{repo['name']} fetched on a machine that cannot compare")
+
+
+def test_a_machine_parsing_what_was_recorded_compares_the_graphs(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = load_manifest()[0]
+    write_graph(environment_path(tmp_path), ENVIRONMENT)
+    write_graph(graph_path(repo, tmp_path), ["a"])
+    _machine(monkeypatch, ENVIRONMENT, ["a"])
+
+    assert reference_graphs.run("check", [repo], ["cgr"], tmp_path, 1, tmp_path) == 0
+
+    _machine(monkeypatch, ENVIRONMENT, ["b"])
+    status = reference_graphs.run("check", [repo], ["cgr"], tmp_path, 1, tmp_path)
+
+    assert status == cs.REFERENCE_EXIT_DIFFERENT
+
+
+def test_a_machine_missing_a_language_is_told_so_before_any_index(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    repo = load_manifest()[0]
+    write_graph(environment_path(tmp_path), ENVIRONMENT)
+    write_graph(graph_path(repo, tmp_path), ["a"])
+    _machine(monkeypatch, WITHOUT_AST_GREP, ["a"])
+    monkeypatch.setattr(reference_graphs, "fetch", _not_indexed)
+
+    status = reference_graphs.run("check", [repo], ["cgr"], tmp_path, 1, tmp_path)
+    out = capsys.readouterr().out
+
+    assert status == cs.REFERENCE_EXIT_FAILED
+    assert "this machine cannot parse: bash, ruby (ast-grep missing)" in out
+    assert cs.REFERENCE_INSTALL in out
+    assert len(out.splitlines()) == 1
+
+
+def test_a_machine_parsing_more_than_was_recorded_is_told_so(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    repo = load_manifest()[0]
+    write_graph(environment_path(tmp_path), WITHOUT_AST_GREP)
+    write_graph(graph_path(repo, tmp_path), ["a"])
+    _machine(monkeypatch, ENVIRONMENT, ["a"])
+
+    status = reference_graphs.run("check", [repo], ["cgr"], tmp_path, 1, tmp_path)
+
+    assert status == cs.REFERENCE_EXIT_FAILED
+    assert "this machine also parses: bash, ruby (ast-grep)" in capsys.readouterr().out
+
+
+def test_a_check_without_the_recorded_environment_asks_for_a_new_recording(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    repo = load_manifest()[0]
+    write_graph(graph_path(repo, tmp_path), ["a"])
+    _machine(monkeypatch, ENVIRONMENT, ["a"])
+    monkeypatch.setattr(reference_graphs, "fetch", _not_indexed)
+
+    status = reference_graphs.run("check", [repo], ["cgr"], tmp_path, 1, tmp_path)
+    out = capsys.readouterr().out
+
+    assert status == cs.REFERENCE_EXIT_FAILED
+    assert str(environment_path(tmp_path)) in out
+    assert cs.REFERENCE_REGENERATE in out
+
+
+def test_a_full_recording_writes_the_environment_it_ran_in(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = load_manifest()[0]
+    write_graph(environment_path(tmp_path), WITHOUT_AST_GREP)
+    _machine(monkeypatch, ENVIRONMENT, ["a"])
+
+    status = reference_graphs.run("record", [repo], ["cgr"], tmp_path, 1, tmp_path)
+
+    assert status == 0
+    assert read_graph(environment_path(tmp_path)) == ENVIRONMENT
+    assert read_graph(graph_path(repo, tmp_path)) == ["a"]
+
+
+def test_a_partial_recording_must_parse_what_the_others_were_recorded_with(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = load_manifest()[0]
+    write_graph(environment_path(tmp_path), ENVIRONMENT)
+    write_graph(graph_path(repo, tmp_path), ["kept"])
+    _machine(monkeypatch, WITHOUT_AST_GREP, ["a"])
+
+    status = reference_graphs.run(
+        "record", [repo], ["cgr"], tmp_path, 1, tmp_path, partial=True
+    )
+
+    assert status == cs.REFERENCE_EXIT_FAILED
+    assert read_graph(graph_path(repo, tmp_path)) == ["kept"]
+    assert read_graph(environment_path(tmp_path)) == ENVIRONMENT
+
+    _machine(monkeypatch, ENVIRONMENT, ["a"])
+    status = reference_graphs.run(
+        "record", [repo], ["cgr"], tmp_path, 1, tmp_path, partial=True
+    )
+
+    assert status == 0
+    assert read_graph(graph_path(repo, tmp_path)) == ["a"]
+
+
+def test_the_probe_reports_what_an_index_would_parse() -> None:
+    # In a process of its own, with the index's environment: the frontends
+    # are the forced ones whatever this process's settings say.
+    environment = reference_graphs.probe()
+
+    for setting, mode in cs.REFERENCE_ENV.items():
+        if setting.endswith("_FRONTEND"):
+            assert f"{cs.REFERENCE_FRONTEND_TIER}{_SEP}{setting}={mode}" in environment
+    assert f"{cs.LanguageTier.TREE_SITTER}{_SEP}python" in environment
+    ast_grep = [
+        line for line in environment if line.startswith(cs.LanguageTier.AST_GREP)
+    ]
+    try:
+        import ast_grep_py  # noqa: F401
+    except ImportError:
+        assert ast_grep == []
+    else:
+        assert f"{cs.LanguageTier.AST_GREP}{_SEP}ruby" in ast_grep
+    assert environment == sorted(environment)
+
+
+def test_the_recorded_environment_parses_every_listed_repository() -> None:
+    recorded = read_graph(environment_path())
+
+    for repo in load_manifest():
+        assert f"{cs.LanguageTier.TREE_SITTER}{_SEP}{repo['language']}" in recorded
+
+
+def test_the_ci_job_installs_what_the_graphs_are_recorded_with() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding=cs.ENCODING_UTF8))
+    steps = workflow["jobs"]["reference-graphs"]["steps"]
+    flags = [arg for extra in cs.REFERENCE_EXTRAS for arg in ("--extra", extra)]
+    installs = [
+        shlex.split(step["run"])
+        for step in steps
+        if step.get("run", "").startswith("uv sync")
+    ]
+
+    assert installs == [["uv", "sync", *flags]]
+    assert shlex.split(cs.REFERENCE_INSTALL) == ["uv", "sync", *flags]
+    assert shlex.split(cs.REFERENCE_REGENERATE)[: 2 + len(flags)] == [
+        "uv",
+        "run",
+        *flags,
+    ]
+    assert set(cs.TIER_EXTRAS.values()) <= set(cs.REFERENCE_EXTRAS)
 
 
 def test_the_git_calls_ignore_a_repository_location_in_the_environment(

@@ -692,8 +692,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      # What the graphs are recorded with (REFERENCE_EXTRAS in
+      # codebase_rag/constants/reference_graphs.py): every tier's extra.
+      # Without ast-grep, Ruby and shell files give no nodes; the check
+      # compares fixtures/reference_graphs/environment.txt first and names
+      # what this machine cannot parse.
       - name: Install dependencies
-        run: uv sync --extra treesitter-full
+        run: uv sync --extra treesitter-full --extra ast-grep
 
       # Keyed on the manifest: a pinned commit never changes, so a hit is
       # always the same checkout.

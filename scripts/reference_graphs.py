@@ -6,16 +6,28 @@ pinned commit, indexed by the `cgr` on PATH (or the command `--cgr` names)
 into an embedded graph of its own, exported, and written out as sorted text:
 one node or relationship per line, keyed by what the graph keys it on, with
 the checkout's directory written as `<root>` and the time of the run left
-out. Nothing here imports the indexer, so the same files hold the Rust
-rewrite to the graphs the Python indexer builds today.
+out. The graphs come from `cgr`, not from importing the indexer, so the same
+files hold the Rust rewrite to the graphs the Python indexer builds today.
 
-    uv run python scripts/reference_graphs.py record           # rewrite them all
+They are recorded and checked with every tier's extra installed, as the CI
+job installs them (`uv sync --extra treesitter-full --extra ast-grep`):
+
+    uv run --extra treesitter-full --extra ast-grep python scripts/reference_graphs.py record
     uv run python scripts/reference_graphs.py check            # exit 1 on a difference
     uv run python scripts/reference_graphs.py check --runs 3   # and on a run-to-run one
     uv run python scripts/reference_graphs.py record itsdangerous
+    uv run python scripts/reference_graphs.py environment      # what this install parses
 
 With `--runs N`, runs after the first index a copy of the checkout at another
 path under another `PYTHONHASHSEED`; every run must give the same graph.
+
+A full `record` also writes `environment.txt`: what the install could parse
+(the languages each tier loads, the frontend each setting resolves to), read
+in a process of its own by this Python, the one `cgr` comes from under
+`uv run`. `check`, and a `record` of some repositories only, first compare
+it with this machine's and stop on a difference, naming what is missing: a
+language the machine cannot parse would otherwise read as its files' nodes
+all gone.
 """
 
 from __future__ import annotations
@@ -70,6 +82,10 @@ def load_manifest(directory: Path = REFERENCE_DIR) -> list[ReferenceRepo]:
 
 def graph_path(repo: ReferenceRepo, directory: Path = REFERENCE_DIR) -> Path:
     return directory / f"{repo['name']}{cs.REFERENCE_GRAPH_SUFFIX}"
+
+
+def environment_path(directory: Path = REFERENCE_DIR) -> Path:
+    return directory / cs.REFERENCE_ENVIRONMENT_FILE
 
 
 def _git_env() -> dict[str, str]:
@@ -222,6 +238,143 @@ def index(
                 f"{result.returncode}\n{result.stderr[-4000:]}"
             )
         return json.loads(output.read_text(encoding=cs.ENCODING_UTF8))
+
+
+def parse_capabilities() -> list[str]:
+    """What this install parses, as sorted `<tier>` and `<name>` lines.
+
+    Asks what indexing asks: the tree-sitter grammars that load, the ast-grep
+    tier's languages when it runs (it needs ast-grep-py and readable
+    configs), the document tier, and each frontend's mode as its setting
+    resolves. Imports the indexer, so `probe` runs it in a process of its own
+    with the index's environment.
+    """
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers import (
+        cpp_frontend,
+        csharp_frontend,
+        go_frontend,
+        java_frontend,
+        py_frontend,
+    )
+    from codebase_rag.parsers.ast_grep_tier import (
+        ast_grep_importable,
+        structural_tier_languages,
+    )
+    from codebase_rag.parsers.document_tier import document_tier_available
+
+    tiers: list[tuple[str, str]] = [
+        (cs.LanguageTier.TREE_SITTER, str(language)) for language in load_parsers()[0]
+    ]
+    if ast_grep_importable():
+        try:
+            structural = list(structural_tier_languages())
+        except Exception:  # noqa: BLE001
+            # The tier disables itself on a config it cannot read.
+            structural = []
+        tiers.extend((cs.LanguageTier.AST_GREP, name) for name in structural)
+    if document_tier_available():
+        tiers.append((cs.LanguageTier.DOCUMENT, cs.DOCUMENT_TIER_LANGUAGE))
+    frontends = (
+        (cs.SETTING_CPP_FRONTEND, cpp_frontend.resolve_cpp_frontend),
+        (cs.SETTING_CSHARP_FRONTEND, csharp_frontend.resolve_csharp_frontend),
+        (cs.SETTING_GO_FRONTEND, go_frontend.resolve_go_frontend),
+        (cs.SETTING_JAVA_FRONTEND, java_frontend.resolve_java_frontend),
+        (cs.SETTING_PYTHON_FRONTEND, py_frontend.resolve_python_frontend),
+    )
+    tiers.extend(
+        (
+            cs.REFERENCE_FRONTEND_TIER,
+            cs.REFERENCE_FRONTEND_ENTRY.format(setting=setting, mode=resolve().value),
+        )
+        for setting, resolve in frontends
+    )
+    return sorted(cs.REFERENCE_FIELD_SEPARATOR.join(entry) for entry in tiers)
+
+
+def probe() -> list[str]:
+    """`parse_capabilities` as an index would find it: under this Python,
+    with the index's environment, from a scratch directory."""
+    with tempfile.TemporaryDirectory(prefix="cgr-reference-") as tmp:
+        work = Path(tmp)
+        home = work / "home"
+        home.mkdir()
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            cs.REFERENCE_ENVIRONMENT_COMMAND,
+            cs.REFERENCE_IN_PROCESS_FLAG,
+        ]
+        result = subprocess.run(
+            command,
+            check=False,
+            cwd=work,
+            env=_index_env(home, None),
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            timeout=cs.REFERENCE_PROBE_TIMEOUT_S,
+        )
+    if result.returncode != 0:
+        raise SystemExit(
+            cs.REFERENCE_PROBE_FAILED.format(
+                command=shlex.join(command),
+                code=result.returncode,
+                stderr=result.stderr[-4000:],
+            )
+        )
+    return sorted(line.strip() for line in result.stdout.split("\n") if line.strip())
+
+
+def _by_tier(entries: Iterable[str], machine: Sequence[str] | None) -> str:
+    """`bash, ruby (ast-grep missing); Markdown (document)`. A tier reads as
+    missing when `machine`, this machine's entries, has none of it."""
+    names: dict[str, list[str]] = {}
+    for entry in sorted(entries):
+        tier, _, name = entry.partition(cs.REFERENCE_FIELD_SEPARATOR)
+        names.setdefault(tier, []).append(name)
+    present = (
+        None
+        if machine is None
+        else {entry.partition(cs.REFERENCE_FIELD_SEPARATOR)[0] for entry in machine}
+    )
+    return cs.REFERENCE_GROUP_SEPARATOR.join(
+        (
+            cs.REFERENCE_TIER_MISSING
+            if present is not None and tier not in present
+            else cs.REFERENCE_TIER_ENTRIES
+        ).format(names=cs.REFERENCE_LIST_SEPARATOR.join(listed), tier=tier)
+        for tier, listed in names.items()
+    )
+
+
+def environment_refusal(
+    recorded: Sequence[str] | None, current: Sequence[str], directory: Path
+) -> str | None:
+    """Why the graphs cannot be compared on this machine, or None when it
+    parses exactly what they were recorded with."""
+    if recorded is None:
+        return cs.REFERENCE_NO_ENVIRONMENT.format(
+            path=environment_path(directory), regenerate=cs.REFERENCE_REGENERATE
+        )
+    missing = set(recorded) - set(current)
+    extra = set(current) - set(recorded)
+    if not missing and not extra:
+        return None
+    differences: list[str] = []
+    if missing:
+        differences.append(
+            cs.REFERENCE_CANNOT_PARSE.format(entries=_by_tier(missing, current))
+        )
+    if extra:
+        differences.append(
+            cs.REFERENCE_ALSO_PARSES.format(entries=_by_tier(extra, None))
+        )
+    return cs.REFERENCE_ENVIRONMENT_DIFFERS.format(
+        differences=cs.REFERENCE_GROUP_SEPARATOR.join(differences),
+        install=cs.REFERENCE_INSTALL,
+        regenerate=cs.REFERENCE_REGENERATE,
+    )
 
 
 def _relative(value: JsonValue, roots: Sequence[str]) -> JsonValue:
@@ -385,7 +538,22 @@ def run(
     cache: Path,
     runs: int,
     directory: Path = REFERENCE_DIR,
+    *,
+    partial: bool = False,
 ) -> int:
+    environment = probe()
+    # A partial recording joins graphs recorded elsewhere, so it must parse
+    # what they were recorded with, as a check must.
+    if command == "check" or partial:
+        recorded = environment_path(directory)
+        refusal = environment_refusal(
+            read_graph(recorded) if recorded.is_file() else None,
+            environment,
+            directory,
+        )
+        if refusal:
+            _say(refusal)
+            return cs.REFERENCE_EXIT_FAILED
     status = 0
     # `record` writes nothing until every repository has indexed and every
     # run agreed: a half-finished or unstable recording must not replace a
@@ -413,13 +581,20 @@ def run(
         diff = difference(read_graph(path), first)
         if diff:
             status = cs.REFERENCE_EXIT_DIFFERENT
-            _report(f"  differs from {path.relative_to(PROJECT_ROOT)}", diff)
+            shown = (
+                path.relative_to(PROJECT_ROOT)
+                if path.is_relative_to(PROJECT_ROOT)
+                else path
+            )
+            _report(f"  differs from {shown}", diff)
     if command == "record":
         if status:
             _say("Runs disagreed, so no graph was written.")
             return status
         for path, lines in staged:
             write_graph(path, lines)
+        if not partial:
+            write_graph(environment_path(directory), environment)
     if command == "check" and status == cs.REFERENCE_EXIT_DIFFERENT:
         _say(
             "If the change is intended, run "
@@ -441,18 +616,35 @@ def _command(text: str) -> list[str]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("command", choices=("record", "check"))
+    parser.add_argument(
+        "command", choices=("record", "check", cs.REFERENCE_ENVIRONMENT_COMMAND)
+    )
     parser.add_argument("names", nargs="*", help="only these repositories")
     parser.add_argument("--cgr", default="cgr", help="the command that runs cgr")
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--runs", type=int, default=1)
+    # How `probe` runs `environment` in its own process.
+    parser.add_argument(
+        cs.REFERENCE_IN_PROCESS_FLAG, action="store_true", help=argparse.SUPPRESS
+    )
     args = parser.parse_args(argv)
+    if args.command == cs.REFERENCE_ENVIRONMENT_COMMAND:
+        for line in parse_capabilities() if args.in_process else probe():
+            _say(line)
+        return 0
     repos = load_manifest()
     unknown = set(args.names) - {repo["name"] for repo in repos}
     if unknown:
         parser.error(f"unknown repositories: {', '.join(sorted(unknown))}")
     chosen = [repo for repo in repos if not args.names or repo["name"] in args.names]
-    return run(args.command, chosen, _command(args.cgr), args.cache, max(args.runs, 1))
+    return run(
+        args.command,
+        chosen,
+        _command(args.cgr),
+        args.cache,
+        max(args.runs, 1),
+        partial=bool(args.names),
+    )
 
 
 if __name__ == "__main__":
