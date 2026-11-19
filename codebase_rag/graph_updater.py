@@ -4,6 +4,7 @@ import errno
 import hashlib
 import itertools
 import json
+import math
 import os
 import posixpath
 import secrets
@@ -1414,6 +1415,26 @@ def _scan_dir_children(dir_path_str: str) -> tuple[set[str], set[str]]:
     return files, dirs
 
 
+def _last_changed(info: os.stat_result) -> float:
+    """When a file's bytes last changed, as far as the cache watermark can trust.
+
+    `st_mtime` alone is not it: `cp -p`, `rsync -a`, `tar -x`, `unzip` and file
+    sync tools write new content under the source's OLD mtime, so a change
+    copied in after the last sync sat below the watermark, was never hashed,
+    and every later sync said "already in sync" (issue #2834). The inode
+    change time is set by the kernel on every write and cannot be backdated
+    from user space, so the later of the two catches all of them. A chmod or a
+    hard link moves it too, which only costs a hash: the hash comparison stays
+    the authority. Windows has no inode change time, and its creation time
+    is kept when a file is overwritten in place, so no timestamp there says
+    the bytes changed: a cached file is always hashed (bot review on PR
+    #2910).
+    """
+    if sys.platform == "win32":
+        return math.inf
+    return max(info.st_mtime, info.st_ctime)
+
+
 def _log_skipped_symlinks(repo_path: Path, rel_paths: list[str]) -> None:
     # Each link at DEBUG and one count at INFO, so a module missing from the
     # graph can be traced to the link that was not followed (issue #2451).
@@ -1449,7 +1470,7 @@ def _cached_file_unchanged(
     # equals it for every other file.
     if stat.S_ISLNK(info.st_mode):
         return False
-    if info.st_mtime <= cache_mtime:
+    if _last_changed(info) <= cache_mtime:
         return True
     try:
         current_hash = _hash_file(Path(file_path_str))
@@ -1937,6 +1958,10 @@ class GraphUpdater:
             exclude_paths=self.exclude_paths,
             capture=self.capture,
         )
+        # A file's captures pin its tree, so they leave the moment the AST
+        # cache evicts it; Pass 3 recomputes absent captures from the tree it
+        # re-loads, as it already does after `_load_ast_from_disk` (#2926).
+        self.ast_cache.on_evict = self._forget_evicted_captures
         # Fallback structural tier for languages with no tree-sitter
         # LanguageSpec (e.g. Ruby), driven by ast-grep pattern configs.
         self.ast_grep_tier = AstGrepTier(self._sink, self.repo_path, self.project_name)
@@ -3256,10 +3281,9 @@ class GraphUpdater:
         self._record_exposes_cleanup(cleared_by_this_run=True)
 
         # ast-grep findings post-pass (opt-in FINDINGS group). Links to the
-        # Modules the definition pass already emitted, so no dangling edges.
-        self.finding_analyzer.analyze(
-            self.factory.definition_processor.module_qn_to_file_path
-        )
+        # Modules the definition pass already emitted, and to those the
+        # ast-grep tier did, so no dangling edges.
+        self.finding_analyzer.analyze(self._analysable_modules())
 
         # Once per sync, after every file was seen: files the ast-grep tier
         # would parse but could not, for want of its extra (issue #2634).
@@ -6419,7 +6443,13 @@ class GraphUpdater:
             return []
         try:
             return self.ingestor.fetch_all(
-                cs.CYPHER_INBOUND_EDGES, {cs.CYPHER_PARAM_PATHS: reindexed_keys}
+                cs.CYPHER_INBOUND_EDGES,
+                {
+                    cs.CYPHER_PARAM_PATHS: reindexed_keys,
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                    cs.KEY_NESTED_PROJECTS: self._nested_project_names(),
+                },
             )
         except Exception:
             # A FULL build re-parses every caller, so the source-derived edges
@@ -6503,6 +6533,10 @@ class GraphUpdater:
         ):
             return None
         if not self._restore_target_exists(target_label, target_qn):
+            return None
+        # Another project's node is never this run's to restore: a module
+        # passes the existence test above whoever owns it (issue #2918).
+        if not self._owns(target_qn):
             return None
         caller_key = cs.NODE_UNIQUE_CONSTRAINTS.get(caller_label)
         target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)
@@ -7030,6 +7064,12 @@ class GraphUpdater:
         for qn in [qn for qn, path in qn_to_path.items() if path == file_path]:
             del qn_to_path[qn]
             self._rehydrated_module_qns.discard(qn)
+        # The ast-grep tier's modules go too: the findings pass reads its map
+        # as well, so a file excluded on a reused updater would keep writing
+        # findings for the Module the delete just removed (issue #2781).
+        tier_map = self.ast_grep_tier.module_qn_to_file_path
+        for qn in [qn for qn, path in tier_map.items() if path == file_path]:
+            del tier_map[qn]
         # The paths read back from the graph for an earlier incremental run
         # go with the registry entries: `_module_language` falls through to
         # them for a definition qn, and a replacement in another language
@@ -7517,7 +7557,7 @@ class GraphUpdater:
                 stale.unlink(missing_ok=True)
             except OSError as e:
                 # Failing to DELETE the file must not resurrect TRUSTING it.
-                # The mtime fast path (`file_mtime <= cache_mtime`) skips a
+                # The mtime fast path (`changed_at <= cache_mtime`) skips a
                 # file before its hash is ever compared, and a real run stamps
                 # the cache at or after its sources, so a surviving cache makes
                 # every file look unchanged against hashes already known dead:
@@ -8041,7 +8081,9 @@ class GraphUpdater:
                     self._process_single_file(
                         filepath,
                         file_bytes=file_bytes,
-                        pre_parsed=pre_parsed.get(filepath),
+                        # Popped, not read: a consumed tree is the AST
+                        # cache's to keep or evict from here on.
+                        pre_parsed=pre_parsed.pop(filepath, None),
                     )
                 except Exception as exc:
                     logger.error(ls.INCREMENTAL_FILE_FAILED, path=filepath, error=exc)
@@ -8330,7 +8372,7 @@ class GraphUpdater:
     ) -> bool:
         """Settle a cached file without hashing it; True when it was settled."""
         try:
-            file_mtime = filepath.stat().st_mtime
+            changed_at = _last_changed(filepath.stat())
         except OSError as stat_error:
             # The stat's own error decides: a missing path is a
             # deletion, any other failure an unreadable file.
@@ -8355,7 +8397,7 @@ class GraphUpdater:
         # comparison below sees a change and the file is re-parsed
         # as a KNOWN file, its old subtree deleted first (#1983).
         if (
-            file_mtime <= baseline.cache_mtime
+            changed_at <= baseline.cache_mtime
             and baseline.old_hashes[file_key] != cs.HASH_CACHE_UNREADABLE
         ):
             scan.new_hashes[file_key] = baseline.old_hashes[file_key]
@@ -8795,7 +8837,7 @@ class GraphUpdater:
             # than stamping this run's instant. The merged entries are mostly
             # the previous run's hashes, so stamping now would assert every
             # sibling was observed just now: a sibling edited before this run
-            # then satisfies `file_mtime <= cache_mtime` with a hash that
+            # then satisfies `changed_at <= cache_mtime` with a hash that
             # still matches, and the next project run reports "already in
             # sync" and never indexes the edit (#1619 review).
             #
@@ -8831,11 +8873,23 @@ class GraphUpdater:
                 repo_path=self.repo_path, capture=self.capture, state_dir=self.state_dir
             )
 
+    def _forget_evicted_captures(self, file_path: Path) -> None:
+        self.factory._func_class_captures_cache.pop(file_path, None)
+
     def _pre_parse_changed_files(
         self,
         changed_entries: list[tuple[Path, str, bool, bytes]],
     ) -> dict[Path, tuple[Node, dict[str, list] | None]]:
+        # Every changed file parses here, before any stale subtree is
+        # deleted, so a parse failure leaves the old graph in place. Only
+        # trees within the AST cache's bounds (entry count AND its memory
+        # measure, source bytes spanned) are KEPT for the loop to consume:
+        # holding all of them pinned every tree of a first index for the
+        # whole pass (microsoft/vscode: OOM at 11.5 GB, issue #2926). The
+        # rest parse again when the loop reaches them.
         result: dict[Path, tuple[Node, dict[str, list] | None]] = {}
+        retain = self.ast_cache.max_entries
+        retained_bytes = 0
         for filepath, _file_key, _is_new, file_bytes in changed_entries:
             language = self._tree_sitter_language(filepath)
             if language is None:
@@ -8852,6 +8906,13 @@ class GraphUpdater:
                 parser, grammar_bytes(file_bytes, language, filepath), language
             )
             root_node = tree.root_node
+            size = root_node.end_byte
+            if (
+                len(result) >= retain
+                or retained_bytes + size > self.ast_cache.max_memory_bytes
+            ):
+                continue
+            retained_bytes += size
             combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
             combined_captures: dict[str, list] | None = None
             if combined_query:
@@ -10363,15 +10424,23 @@ class GraphUpdater:
         change. The analyzer already takes a module map, so the scope is the
         argument and needs no new machinery.
         """
-        processor = self.factory.definition_processor
         touched = set(reparse.values())
         scoped = {
             module_qn: path
-            for module_qn, path in processor.module_qn_to_file_path.items()
+            for module_qn, path in self._analysable_modules().items()
             if path in touched
         }
         if scoped:
             self.finding_analyzer.analyze(scoped)
+
+    def _analysable_modules(self) -> dict[str, Path]:
+        """Every module the findings pass can analyse: the definition pass's
+        and the ast-grep tier's, whose Ruby files the shipped rule packs
+        cover (issue #2781)."""
+        return {
+            **self.ast_grep_tier.module_qn_to_file_path,
+            **self.factory.definition_processor.module_qn_to_file_path,
+        }
 
     def _reanchor_glosses(self) -> None:
         """Re-attach this project's Glosses to the definitions their own records
