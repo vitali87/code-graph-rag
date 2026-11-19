@@ -922,16 +922,6 @@ E	CONTAINS_FILE	Project	"mediatr"	File	"<root>/MediatR.snk"	{}
 E	CONTAINS_FILE	Project	"mediatr"	File	"<root>/NuGet.Config"	{}
 E	CONTAINS_FILE	Project	"mediatr"	File	"<root>/Push.ps1"	{}
 E	CONTAINS_FILE	Project	"mediatr"	File	"<root>/README.md"	{}
-E	CONTAINS_FOLDER	Folder	"<root>/.git"	Folder	"<root>/.git/branches"	{}
-E	CONTAINS_FOLDER	Folder	"<root>/.git"	Folder	"<root>/.git/hooks"	{}
-E	CONTAINS_FOLDER	Folder	"<root>/.git"	Folder	"<root>/.git/info"	{}
-E	CONTAINS_FOLDER	Folder	"<root>/.git"	Folder	"<root>/.git/logs"	{}
-E	CONTAINS_FOLDER	Folder	"<root>/.git"	Folder	"<root>/.git/objects"	{}
-E	CONTAINS_FOLDER	Folder	"<root>/.git"	Folder	"<root>/.git/refs"	{}
-E	CONTAINS_FOLDER	Folder	"<root>/.git/objects"	Folder	"<root>/.git/objects/info"	{}
-E	CONTAINS_FOLDER	Folder	"<root>/.git/objects"	Folder	"<root>/.git/objects/pack"	{}
-E	CONTAINS_FOLDER	Folder	"<root>/.git/refs"	Folder	"<root>/.git/refs/heads"	{}
-E	CONTAINS_FOLDER	Folder	"<root>/.git/refs"	Folder	"<root>/.git/refs/tags"	{}
 E	CONTAINS_FOLDER	Folder	"<root>/.github"	Folder	"<root>/.github/workflows"	{}
 E	CONTAINS_FOLDER	Folder	"<root>/assets"	Folder	"<root>/assets/logo"	{}
 E	CONTAINS_FOLDER	Folder	"<root>/samples"	Folder	"<root>/samples/MediatR.Examples"	{}
@@ -959,7 +949,6 @@ E	CONTAINS_FOLDER	Folder	"<root>/test"	Folder	"<root>/test/MediatR.Tests"	{}
 E	CONTAINS_FOLDER	Folder	"<root>/test/MediatR.Tests"	Folder	"<root>/test/MediatR.Tests/MicrosoftExtensionsDI"	{}
 E	CONTAINS_FOLDER	Folder	"<root>/test/MediatR.Tests"	Folder	"<root>/test/MediatR.Tests/Pipeline"	{}
 E	CONTAINS_FOLDER	Folder	"<root>/test/MediatR.Tests/Pipeline"	Folder	"<root>/test/MediatR.Tests/Pipeline/Streams"	{}
-E	CONTAINS_FOLDER	Project	"mediatr"	Folder	"<root>/.git"	{}
 E	CONTAINS_FOLDER	Project	"mediatr"	Folder	"<root>/.github"	{}
 E	CONTAINS_FOLDER	Project	"mediatr"	Folder	"<root>/assets"	{}
 E	CONTAINS_FOLDER	Project	"mediatr"	Folder	"<root>/samples"	{}
@@ -4261,17 +4250,6 @@ N	File	"<root>/test/MediatR.Tests/SendVoidInterfaceTests.cs"	{"extension":".cs",
 N	File	"<root>/test/MediatR.Tests/ServiceFactoryTests.cs"	{"extension":".cs","name":"ServiceFactoryTests.cs","path":"test/MediatR.Tests/ServiceFactoryTests.cs"}
 N	File	"<root>/test/MediatR.Tests/StreamPipelineTests.cs"	{"extension":".cs","name":"StreamPipelineTests.cs","path":"test/MediatR.Tests/StreamPipelineTests.cs"}
 N	File	"<root>/test/MediatR.Tests/UnitTests.cs"	{"extension":".cs","name":"UnitTests.cs","path":"test/MediatR.Tests/UnitTests.cs"}
-N	Folder	"<root>/.git"	{"name":".git","path":".git"}
-N	Folder	"<root>/.git/branches"	{"name":"branches","path":".git/branches"}
-N	Folder	"<root>/.git/hooks"	{"name":"hooks","path":".git/hooks"}
-N	Folder	"<root>/.git/info"	{"name":"info","path":".git/info"}
-N	Folder	"<root>/.git/logs"	{"name":"logs","path":".git/logs"}
-N	Folder	"<root>/.git/objects"	{"name":"objects","path":".git/objects"}
-N	Folder	"<root>/.git/objects/info"	{"name":"info","path":".git/objects/info"}
-N	Folder	"<root>/.git/objects/pack"	{"name":"pack","path":".git/objects/pack"}
-N	Folder	"<root>/.git/refs"	{"name":"refs","path":".git/refs"}
-N	Folder	"<root>/.git/refs/heads"	{"name":"heads","path":".git/refs/heads"}
-N	Folder	"<root>/.git/refs/tags"	{"name":"tags","path":".git/refs/tags"}
 N	Folder	"<root>/.github"	{"name":".github","path":".github"}
 N	Folder	"<root>/.github/workflows"	{"name":"workflows","path":".github/workflows"}
 N	Folder	"<root>/assets"	{"name":"assets","path":"assets"}
