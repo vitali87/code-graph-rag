@@ -5347,14 +5347,41 @@ class CallResolver:
                 for qn in possible_matches
                 if self.function_registry[qn] == cs.NodeLabel.METHOD.value
             ]
+        possible_matches = self._drop_unreachable_bare_names(
+            possible_matches, call_name, search_name, module_qn, language
+        )
+        if language in cs.C_FAMILY_LANGUAGES:
+            possible_matches = self._linkable_from(possible_matches, module_qn)
+        if not possible_matches:
+            logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
+            return None
+        if language == cs.SupportedLanguage.CSHARP and len(possible_matches) > 1:
+            possible_matches = self._csharp_prefer_imported(
+                possible_matches, module_qn, call_name
+            )
+
+        best_candidate_qn = self._best_trie_candidate(possible_matches, module_qn)
+        logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
+        self.last_resolution = cs.EdgeResolution.HEURISTIC
+        return self.function_registry[best_candidate_qn], best_candidate_qn
+
+    def _drop_unreachable_bare_names(
+        self,
+        matches: list[str],
+        call_name: str,
+        search_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+    ) -> list[str]:
+        """The candidates a bare call can name under its language's scoping."""
         if language == cs.SupportedLanguage.RUST and search_name == call_name:
             # A bare Rust path NEVER names a method (inherent methods need
             # self./Self::/Type::), so a same-named method must not soak
             # up the edge when the real target is external, prelude, or a
             # shadowing closure the graph cannot see (issue #1011).
-            possible_matches = [
+            matches = [
                 qn
-                for qn in possible_matches
+                for qn in matches
                 if self.function_registry[qn] != cs.NodeLabel.METHOD.value
             ]
         elif (
@@ -5371,29 +5398,16 @@ class CallResolver:
             # it, so with none naming the call (and no star import) the name
             # is a builtin or a local, not that function (issue #2929).
             places = self._python_binding_places(call_name, module_qn)
-            possible_matches = [
+            matches = [
                 qn
-                for qn in possible_matches
+                for qn in matches
                 if self._in_python_module(qn, module_qn)
                 or (
                     self.function_registry[qn] != cs.NodeLabel.METHOD.value
                     and any(_place_may_bind(qn, call_name, place) for place in places)
                 )
             ]
-        if language in cs.C_FAMILY_LANGUAGES:
-            possible_matches = self._linkable_from(possible_matches, module_qn)
-        if not possible_matches:
-            logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
-            return None
-        if language == cs.SupportedLanguage.CSHARP and len(possible_matches) > 1:
-            possible_matches = self._csharp_prefer_imported(
-                possible_matches, module_qn, call_name
-            )
-
-        best_candidate_qn = self._best_trie_candidate(possible_matches, module_qn)
-        logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
-        self.last_resolution = cs.EdgeResolution.HEURISTIC
-        return self.function_registry[best_candidate_qn], best_candidate_qn
+        return matches
 
     def _linkable_from(self, candidates: list[str], module_qn: str) -> list[str]:
         # A `static` C/C++ function has internal linkage: only its own
