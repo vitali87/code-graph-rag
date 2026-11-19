@@ -70,6 +70,21 @@ def push_plain():
     requests.post("{URL}", json=os.getenv("CLIENT_TOKEN"))
 """
 
+# `build` returns the env value, and `caller` posts that return to the
+# other service (Greptile review on PR #2762).
+CLIENT_RELAY = f"""import os
+
+import requests
+
+
+def build():
+    return os.getenv("CLIENT_TOKEN")
+
+
+def caller():
+    requests.post("{URL}", json=build())
+"""
+
 SERVER = """app = object()
 
 
@@ -117,10 +132,10 @@ def notify(ingestor: MemgraphIngestor, tmp_path: Path) -> MemgraphIngestor:
 
 
 def _services(
-    ingestor: MemgraphIngestor, tmp_path: Path, server: str
+    ingestor: MemgraphIngestor, tmp_path: Path, server: str, client: str = CLIENT
 ) -> MemgraphIngestor:
     _index(ingestor, _project(tmp_path, "server", "api.py", server), "server")
-    _index(ingestor, _project(tmp_path, "client", "client.py", CLIENT), "client")
+    _index(ingestor, _project(tmp_path, "client", "client.py", client), "client")
     return ingestor
 
 
@@ -199,6 +214,30 @@ def test_a_client_function_reaches_the_handler_of_another_service(
     assert result.verdict == FLOW_VERDICT_FOUND
     assert result.path == (
         "client.client.push_plain",
+        NETWORK,
+        HANDLER,
+    )
+    assert result.remote_hops == ((NETWORK, HANDLER),)
+
+
+def test_a_function_reaches_a_handler_through_the_function_that_posts_it(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # A question between two functions goes on from every function the walk
+    # reaches: from `caller`, which `build` returns into, through the
+    # NETWORK resource it writes. Taking writes only from the source stopped
+    # at `caller` and answered NO_FLOW with full coverage, a false absence
+    # (Greptile review on PR #2762).
+    services = _services(ingestor, tmp_path, SERVER, CLIENT_RELAY)
+
+    result = flow_reachability_verdict(
+        services.fetch_all, "client", "client.client.build", HANDLER
+    )
+
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.path == (
+        "client.client.build",
+        "client.client.caller",
         NETWORK,
         HANDLER,
     )

@@ -598,8 +598,13 @@ the distinction queryable:
       for a question with a resource at either end, the walk reached a
       function it cannot follow the value through (that function is
       named). A handler a value was sent to, and a function other than the
-      source that writes the sink, are such functions: a write records no
-      value, so `print("ok")` and `print(item)` leave the same edge.
+      source whose writes can go on to the sink (it writes the sink, a
+      resource whose own flows lead there, or a NETWORK resource another
+      handler serves), are such functions: a write records no value, so
+      `print("ok")` and `print(item)` leave the same edge. A question
+      between two functions keeps the function-level walk: it goes on
+      through what every function it reaches writes, into the handler of an
+      endpoint that function calls.
 
 The coverage read is deliberately project-wide rather than restricted to the
 query's reachable surface: without path sensitivity, a flow through an

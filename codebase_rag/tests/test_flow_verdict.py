@@ -560,6 +560,79 @@ def test_the_writes_of_a_function_the_walk_reached_are_not_followed() -> None:
     assert own.path == ("p.app.g", STDOUT)
 
 
+FILE = "resource::FILE::/tmp/out"
+
+
+@pytest.mark.parametrize(
+    ("written", "flows", "remote", "verdict", "gaps"),
+    [
+        (FILE, [(FILE, STDOUT, "p.app.relay")], [], FLOW_VERDICT_UNKNOWN, ("p.app.g",)),
+        (NET, [], [(NET, "q.api.handler")], FLOW_VERDICT_UNKNOWN, ("p.app.g",)),
+        (FILE, [], [], FLOW_VERDICT_NO_FLOW, ()),
+    ],
+    ids=[
+        "a-resource-that-flows-on-to-the-sink",
+        "a-resource-a-handler-serves",
+        "a-resource-that-goes-nowhere",
+    ],
+)
+def test_a_reached_function_is_named_when_what_it_writes_goes_on(
+    written: str,
+    flows: list[tuple[str, ...]],
+    remote: list[tuple[str, str]],
+    verdict: str,
+    gaps: tuple[str, ...],
+) -> None:
+    """`f` passes a value to `g`, which writes it, or something else, to a
+    resource. Naming only the functions that write the sink itself answered
+    NO_FLOW when that resource goes on: a flow from it to STDOUT, or the
+    handler behind an endpoint (Greptile review on PR #2762)."""
+    result = flow_reachability_verdict(
+        _query_fn(
+            [("p.app.f", "p.app.g"), *flows],
+            [],
+            remote=remote,
+            projects=["p", "q"],
+            writes={"p": [("p.app.g", written)]},
+        ),
+        "p",
+        "p.app.f",
+        STDOUT,
+    )
+    assert result.verdict == verdict
+    assert result.gaps == gaps
+
+
+def test_between_two_functions_the_walk_goes_on_through_what_each_writes() -> None:
+    """`build` returns a value that `caller` posts to another service. A
+    question between two functions keeps main's walk, which goes on from
+    every function it reaches: through `caller`'s NETWORK resource into the
+    handler and on. Taking writes only from the source stopped at `caller`
+    and answered NO_FLOW with full coverage, where main, on these edges,
+    answers FOUND (Greptile review on PR #2762)."""
+    result = flow_reachability_verdict(
+        _query_fn(
+            [("p.app.build", "p.app.caller"), ("p.app.caller", NET)],
+            [],
+            remote=[(NET, "q.api.handler")],
+            other_edges={"q": [("q.api.handler", "q.db.save")]},
+            projects=["p", "q"],
+        ),
+        "p",
+        "p.app.build",
+        "q.db.save",
+    )
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.path == (
+        "p.app.build",
+        "p.app.caller",
+        NET,
+        "q.api.handler",
+        "q.db.save",
+    )
+    assert result.remote_hops == ((NET, "q.api.handler"),)
+
+
 def test_a_resource_reaches_the_handler_it_was_sent_to_and_stops() -> None:
     """The handler is a function sink a resource does reach. Past it, the
     handler's own code flows carry other values, so a function beyond it is
