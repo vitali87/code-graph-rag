@@ -82,6 +82,18 @@ REFERENCE_ENVIRONMENT_DIFFERS = (
     "{differences}. Install what they were recorded with (`{install}`), "
     "or re-record them all with `{regenerate}`."
 )
+# `probe` reads what this Python parses, so environment.txt and the graphs
+# describe one install only when the index runs under this Python too.
+REFERENCE_CGR_PROGRAM = "cgr"
+REFERENCE_OTHER_CGR_RECORD = (
+    "`{cgr}` does not run under this Python ({python}): environment.txt, read "
+    "under this Python, would describe another install than the graphs. "
+    "Record with this Python's cgr: `{regenerate}`."
+)
+REFERENCE_OTHER_CGR_CHECK = (
+    "`{cgr}` does not run under this Python, so what it parses is not "
+    "compared with {path}; only its graphs are."
+)
 REFERENCE_TIER_ENTRIES = "{names} ({tier})"
 REFERENCE_TIER_MISSING = "{names} ({tier} missing)"
 REFERENCE_LIST_SEPARATOR = ", "

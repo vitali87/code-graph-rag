@@ -27,7 +27,9 @@ in a process of its own by this Python, the one `cgr` comes from under
 `uv run`. `check`, and a `record` of some repositories only, first compare
 it with this machine's and stop on a difference, naming what is missing: a
 language the machine cannot parse would otherwise read as its files' nodes
-all gone.
+all gone. `record` refuses a `--cgr` that does not run under this Python, so
+the file and the graphs describe one install; `check` with one (the Rust
+engine) compares the graphs only, and says so.
 """
 
 from __future__ import annotations
@@ -531,16 +533,44 @@ def _graphs(
     return first, later
 
 
-def run(
-    command: str,
-    repos: Sequence[ReferenceRepo],
-    cgr: Sequence[str],
-    cache: Path,
-    runs: int,
-    directory: Path = REFERENCE_DIR,
-    *,
-    partial: bool = False,
-) -> int:
+def _same_file(path: str) -> str:
+    # `absolute()`, not `resolve()`: a venv's python is a symlink to the
+    # base interpreter, which is not this Python's install.
+    return os.path.normcase(str(Path(path).absolute()))
+
+
+def _runs_this_python(cgr: Sequence[str]) -> bool:
+    """Whether `cgr` runs under this Python: its own `cgr` script, or this
+    interpreter itself (`python -m ...`)."""
+    found = shutil.which(cgr[0]) if cgr else None
+    if found is None:
+        return False
+    here = sys.executable
+    own = shutil.which(cs.REFERENCE_CGR_PROGRAM, path=str(Path(here).parent))
+    ours = {_same_file(here)} | ({_same_file(own)} if own else set())
+    return _same_file(found) in ours
+
+
+def _environment_gate(
+    command: str, cgr: Sequence[str], directory: Path, partial: bool
+) -> tuple[list[str], bool]:
+    """What this Python parses, and whether the run may go on."""
+    if not _runs_this_python(cgr):
+        if command == "record":
+            _say(
+                cs.REFERENCE_OTHER_CGR_RECORD.format(
+                    cgr=shlex.join(cgr),
+                    python=sys.executable,
+                    regenerate=cs.REFERENCE_REGENERATE,
+                )
+            )
+            return [], False
+        _say(
+            cs.REFERENCE_OTHER_CGR_CHECK.format(
+                cgr=shlex.join(cgr), path=environment_path(directory)
+            )
+        )
+        return [], True
     environment = probe()
     # A partial recording joins graphs recorded elsewhere, so it must parse
     # what they were recorded with, as a check must.
@@ -553,7 +583,23 @@ def run(
         )
         if refusal:
             _say(refusal)
-            return cs.REFERENCE_EXIT_FAILED
+            return environment, False
+    return environment, True
+
+
+def run(
+    command: str,
+    repos: Sequence[ReferenceRepo],
+    cgr: Sequence[str],
+    cache: Path,
+    runs: int,
+    directory: Path = REFERENCE_DIR,
+    *,
+    partial: bool = False,
+) -> int:
+    environment, proceed = _environment_gate(command, cgr, directory, partial)
+    if not proceed:
+        return cs.REFERENCE_EXIT_FAILED
     status = 0
     # `record` writes nothing until every repository has indexed and every
     # run agreed: a half-finished or unstable recording must not replace a
@@ -620,7 +666,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "command", choices=("record", "check", cs.REFERENCE_ENVIRONMENT_COMMAND)
     )
     parser.add_argument("names", nargs="*", help="only these repositories")
-    parser.add_argument("--cgr", default="cgr", help="the command that runs cgr")
+    parser.add_argument(
+        "--cgr", default=cs.REFERENCE_CGR_PROGRAM, help="the command that runs cgr"
+    )
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--runs", type=int, default=1)
     # How `probe` runs `environment` in its own process.

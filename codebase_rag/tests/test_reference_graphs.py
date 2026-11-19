@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -266,6 +267,7 @@ def test_a_recording_whose_runs_disagree_writes_nothing(
     repo = load_manifest()[0]
     graph = graph_path(repo, tmp_path)
     graph.write_text("kept\n", encoding="utf-8")
+    monkeypatch.setattr(reference_graphs, "_runs_this_python", lambda cgr: True)
     monkeypatch.setattr(reference_graphs, "probe", lambda: ENVIRONMENT)
     monkeypatch.setattr(reference_graphs, "fetch", lambda repo, cache: tmp_path)
     monkeypatch.setattr(
@@ -284,6 +286,7 @@ def test_a_recording_whose_runs_disagree_writes_nothing(
 def _machine(monkeypatch, environment: list[str], graph: list[str]) -> None:
     """A machine that parses `environment` and indexes every repository
     into `graph`."""
+    monkeypatch.setattr(reference_graphs, "_runs_this_python", lambda cgr: True)
     monkeypatch.setattr(reference_graphs, "probe", lambda: environment)
     monkeypatch.setattr(reference_graphs, "fetch", lambda repo, cache: Path())
     monkeypatch.setattr(
@@ -396,6 +399,77 @@ def test_a_partial_recording_must_parse_what_the_others_were_recorded_with(
 
     assert status == 0
     assert read_graph(graph_path(repo, tmp_path)) == ["a"]
+
+
+def _another_cgr(monkeypatch) -> None:
+    """A `--cgr` that is not this Python's: the probe cannot describe it."""
+    monkeypatch.setattr(reference_graphs, "_runs_this_python", lambda cgr: False)
+
+    def _no_probe() -> list[str]:
+        raise AssertionError("probed this Python for another cgr")
+
+    monkeypatch.setattr(reference_graphs, "probe", _no_probe)
+
+
+def test_a_recording_with_another_cgr_is_refused_before_any_index(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    # environment.txt is read under this Python; graphs indexed by another
+    # install would be recorded beside a list of what that install never
+    # parsed (CodeRabbit review of PR #3640).
+    repo = load_manifest()[0]
+    write_graph(graph_path(repo, tmp_path), ["kept"])
+    _another_cgr(monkeypatch)
+    monkeypatch.setattr(reference_graphs, "fetch", _not_indexed)
+
+    status = reference_graphs.run(
+        "record", [repo], ["/elsewhere/cgr"], tmp_path, 1, tmp_path
+    )
+    out = capsys.readouterr().out
+
+    assert status == cs.REFERENCE_EXIT_FAILED
+    assert "/elsewhere/cgr" in out
+    assert cs.REFERENCE_REGENERATE in out
+    assert read_graph(graph_path(repo, tmp_path)) == ["kept"]
+    assert not environment_path(tmp_path).exists()
+
+
+def test_a_check_with_another_cgr_compares_only_the_graphs(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    # The Rust engine is checked against these graphs: what this Python
+    # parses says nothing about it, so the environment is not compared, and
+    # saying so keeps the skip visible.
+    repo = load_manifest()[0]
+    write_graph(graph_path(repo, tmp_path), ["a"])
+    _another_cgr(monkeypatch)
+    monkeypatch.setattr(reference_graphs, "fetch", lambda repo, cache: Path())
+    monkeypatch.setattr(
+        reference_graphs, "_graphs", lambda cgr, repo, checkout, runs: (["a"], [])
+    )
+
+    status = reference_graphs.run("check", [repo], ["rust-cgr"], tmp_path, 1, tmp_path)
+
+    assert status == 0
+    assert "rust-cgr" in capsys.readouterr().out
+
+    monkeypatch.setattr(
+        reference_graphs, "_graphs", lambda cgr, repo, checkout, runs: (["b"], [])
+    )
+    status = reference_graphs.run("check", [repo], ["rust-cgr"], tmp_path, 1, tmp_path)
+
+    assert status == cs.REFERENCE_EXIT_DIFFERENT
+
+
+def test_only_this_pythons_cgr_or_interpreter_runs_under_this_python() -> None:
+    assert reference_graphs._runs_this_python([sys.executable, "-m", "codebase_rag"])
+    own = shutil.which(cs.REFERENCE_CGR_PROGRAM, path=str(Path(sys.executable).parent))
+    if own is not None:
+        assert reference_graphs._runs_this_python([own])
+    other = shutil.which("git")
+    if other is not None:
+        assert not reference_graphs._runs_this_python([other])
+    assert not reference_graphs._runs_this_python(["no-such-cgr-anywhere"])
 
 
 def test_the_probe_reports_what_an_index_would_parse() -> None:
