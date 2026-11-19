@@ -48,7 +48,7 @@ from ..parsers.go.builds import GoBuilds
 from ..parsers.go.module_paths import read_package_clause
 from ..parsers.js_ts.overloads import overload_signatures
 from ..parsers.py.overloads import overload_stub_names
-from ..types_defs import PropertyParams, ResultRow, ResultScalar
+from ..types_defs import PropertyParams, ResultRow
 from ..utils import qn_markers
 from ..utils.path_utils import (
     base_module_qn,
@@ -1550,18 +1550,7 @@ class Renamer:
             )
         if not self.allow_external_override:
             self._refuse_external_overrides(qn, members)
-        sites: list[RenameSite] = []
-        unlocatable: list[str] = []
-        old_name: str | None = None
-        label: str | None = None
-        for member in members:
-            member_sites, member_unlocatable, member_name, member_label = self._collect(
-                member
-            )
-            old_name = old_name or member_name
-            label = label or member_label
-            sites.extend(member_sites)
-            unlocatable.extend(member_unlocatable)
+        sites, unlocatable, old_name, label = self._collect_members(members)
         assert old_name is not None
         covered = {(s.path, s.line, s.col) for s in sites if s.resolution != _CHAIN}
         sites = [
@@ -1667,6 +1656,25 @@ class Renamer:
             companions=companions,
         )
 
+    def _collect_members(
+        self, members: list[str]
+    ) -> tuple[list[RenameSite], list[str], str | None, str | None]:
+        """Every hierarchy member's sites and unlocatable occurrences, with
+        the first old name and label a member reports."""
+        sites: list[RenameSite] = []
+        unlocatable: list[str] = []
+        old_name: str | None = None
+        label: str | None = None
+        for member in members:
+            member_sites, member_unlocatable, member_name, member_label = self._collect(
+                member
+            )
+            old_name = old_name or member_name
+            label = label or member_label
+            sites.extend(member_sites)
+            unlocatable.extend(member_unlocatable)
+        return sites, unlocatable, old_name, label
+
     def _refuse_external_overrides(self, qn: str, members: list[str]) -> None:
         """Refuse a rename that would silently stop an override (issue #3226).
 
@@ -1698,9 +1706,12 @@ class Renamer:
             owner = row.get(cs.RENAME_FACT_OWNER)
             if isinstance(owner, str):
                 row = dict(row)
-                row[cs.RENAME_FACT_OUTSIDE_SUPERTYPES] = list[ResultScalar](
-                    sorted(self._outside_supertypes(owner, owners, prefix))
-                )
+                # A display, not the bare `sorted` list: the row's lists hold
+                # `ResultScalar`, and a `list[str]` is not one (lists are
+                # invariant).
+                row[cs.RENAME_FACT_OUTSIDE_SUPERTYPES] = [
+                    *sorted(self._outside_supertypes(owner, owners, prefix))
+                ]
             if (reason := _external_override_reason(member, row)) is not None:
                 reasons.append(reason)
         if reasons:
