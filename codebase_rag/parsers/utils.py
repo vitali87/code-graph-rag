@@ -24,6 +24,7 @@ from ..types_defs import (
     PropertyValue,
     ResultValue,
     SimpleNameLookup,
+    SpanBinding,
     TreeSitterNodeProtocol,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
@@ -293,6 +294,49 @@ class FunctionCapturesResult(NamedTuple):
     captures: dict[str, list[ASTNode]]
 
 
+def conflicting_declaration_spans(
+    name: str,
+    declarations: Sequence[tuple[int, int, str | None]],
+    assignments: Sequence[tuple[int, int, str | None]] = (),
+) -> list[SpanBinding]:
+    """Span bindings for the declarations of one local name, each `(start,
+    end, type)` over the part of the body where the name reads it, when they
+    give the name two types or more (issue #3332).
+
+    The flat per-function map holds one of those types for the whole body,
+    so it is wrong wherever another declaration is in scope; each
+    declaration's span then carries its own type, untyped where it has
+    none. Where they agree, or only one has a type, the flat map's type
+    stands: an untyped inner `x, err := f()` under a typed `var err error`
+    is far likelier the same type than a reason to drop it.
+
+    `assignments` are `(site, function end, type)` for each `name =
+    value`: the variable it assigns (the narrowest declaration holding the
+    site) holds that type from the site to the end of its scope. So `Shape s
+    = new Circle(); s = new Square(); s.area()` calls Square's, as the flat
+    map has it, and of two assignments the later one's span is the
+    narrower, so it wins. An assignment with no type it can read changes
+    nothing, as in the flat map. One written in a nested function holds no
+    further than that function's end: `later(() => { s = new B(); s.m();
+    })` calls B's inside the callback, which may run later or never, and
+    says nothing about the `s` the line after it reads.
+    """
+    spans = list(declarations)
+    for site, function_end, type_name in assignments:
+        owners = [
+            (start, end) for start, end, _type in declarations if start <= site < end
+        ]
+        if owners and type_name:
+            _start, end = min(owners, key=lambda span: span[1] - span[0])
+            spans.append((site, min(end, function_end), type_name))
+    if len({type_name for _start, _end, type_name in spans if type_name}) < 2:
+        return []
+    return [
+        (start, end, name, type_name or cs.UNTYPED_SPAN_BINDING)
+        for start, end, type_name in spans
+    ]
+
+
 def sorted_captures(cursor: QueryCursor, node: ASTNode) -> dict[str, list[ASTNode]]:
     # tree-sitter v0.25 captures() returns nodes in non-deterministic order;
     # sort by (start_byte, end_byte) for reproducibility. start_byte alone leaves
@@ -500,7 +544,8 @@ def node_site_properties(node: Node) -> PropertyDict:
 
     1-based lines, 0-based columns, end exclusive, matching the node
     `start_line`/`start_col` convention so a site can be sliced straight
-    out of the file.
+    out of the bytes the grammar parsed. tree-sitter counts a column in
+    UTF-8 bytes, not characters (issue #3162).
     """
     return {
         cs.KEY_LINE: node.start_point[0] + 1,

@@ -1,0 +1,545 @@
+"""Python operators and protocols call the dunders they dispatch to.
+
+Only `x[k]`, `k in x`, `len(x)` and truthiness produced a CALLS edge to the
+operand's dunder. `a + b`, `a == b`, `-a`, `a += b`, calling an instance,
+`for` over an object and `with obj:` all dispatch to a method at runtime
+too, so those dunders showed no callers and `cgr check` could not flag a
+caller of a removed `__add__`, `__call__` or `__enter__` (issue #2852).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from evals.cgr_graph import _StatefulIngestor
+
+_M = """\
+class Box:
+    def __add__(self, o): return self
+    def __radd__(self, o): return self
+    def __iadd__(self, o): return self
+    def __eq__(self, o): return True
+    def __lt__(self, o): return True
+    def __gt__(self, o): return True
+    def __neg__(self): return self
+    def __getitem__(self, i): return i
+    def __contains__(self, k): return True
+    def __call__(self, x): return x
+    def __iter__(self): return iter([])
+    def __aiter__(self): return self
+    def __enter__(self): return self
+    def __exit__(self, *a): pass
+    async def __aenter__(self): return self
+    async def __aexit__(self, *a): pass
+
+
+class Plain:
+    pass
+
+
+def helper(x):
+    return x
+
+
+def binary():
+    a = Box(); b = Box()
+    return a + b
+
+def reflected():
+    a = Box()
+    return 1 + a
+
+def augmented():
+    a = Box(); b = Box()
+    a += b
+
+def equality():
+    a = Box(); b = Box()
+    return a == b
+
+def ordering():
+    a = Box(); b = Box()
+    return a < b < a
+
+def reflected_ordering():
+    a = Box(); p = Plain()
+    return p < a
+
+def negate():
+    a = Box()
+    return -a
+
+def call_instance():
+    a = Box()
+    return a(3)
+
+def iterate():
+    a = Box()
+    for _x in a:
+        pass
+
+def comprehend():
+    a = Box()
+    return [x for x in a]
+
+async def iterate_async():
+    a = Box()
+    async for _x in a:
+        pass
+
+def enter():
+    a = Box()
+    with a as w:
+        return w
+
+async def enter_async():
+    a = Box()
+    async with a:
+        pass
+
+def subscript():
+    a = Box()
+    return a[0]
+
+def construct():
+    return Box()
+
+def class_reference():
+    ref = Box
+    return ref()
+
+def plain_function():
+    return helper(3)
+
+def no_dunder():
+    p = Plain()
+    return p + p
+
+def builtin_operands():
+    xs = [1]
+    return xs + xs
+
+def identity():
+    a = Box(); b = Box()
+    return a is b
+
+def opened(path):
+    with open(path) as f:
+        return f
+
+
+class Walker:
+    def __iter__(self): return self
+    def __next__(self): raise StopIteration
+    def __aiter__(self): return self
+    async def __anext__(self): raise StopAsyncIteration
+
+
+def walk():
+    w = Walker()
+    for _x in w:
+        pass
+
+def walk_comprehension():
+    w = Walker()
+    return [x for x in w]
+
+async def walk_async():
+    w = Walker()
+    async for _x in w:
+        pass
+
+
+class Base:
+    def __add__(self, o): return NotImplemented
+    def __radd__(self, o): return self
+    def __iadd__(self, o): return NotImplemented
+    def __lt__(self, o): return NotImplemented
+    def __gt__(self, o): return True
+    def __eq__(self, o): return NotImplemented
+
+
+class Child(Base):
+    def __radd__(self, o): return self
+
+
+def mixed_add():
+    b = Base(); c = Child()
+    return b + c
+
+def mixed_augmented():
+    b = Base(); c = Child()
+    b += c
+
+def same_type_add():
+    b = Base(); b2 = Base()
+    return b + b2
+
+def same_type_equality():
+    b = Base(); b2 = Base()
+    return b == b2
+
+def same_type_ordering():
+    b = Base(); b2 = Base()
+    return b < b2
+
+def contains_commented():
+    a = Box()
+    return (1 in  # membership check
+            a)
+
+def compare_commented():
+    a = Box(); b = Box()
+    return (a <  # ordering
+            b)
+
+
+class Cursor:
+    def __next__(self): raise StopIteration
+    async def __anext__(self): raise StopAsyncIteration
+
+
+class Container:
+    def __iter__(self): return Cursor()
+    def __next__(self): raise StopIteration
+    def __aiter__(self): return Cursor()
+    async def __anext__(self): raise StopAsyncIteration
+
+
+class Opaque:
+    def __iter__(self): return iter([])
+    def __next__(self): raise StopIteration
+
+
+def loop_container():
+    c = Container()
+    for _x in c:
+        pass
+
+async def loop_container_async():
+    c = Container()
+    async for _x in c:
+        pass
+
+def loop_opaque():
+    o = Opaque()
+    for _x in o:
+        pass
+
+
+class SelfIterBase:
+    def __iter__(self): return self
+    def __aiter__(self): return self
+
+
+class SelfIterChild(SelfIterBase):
+    def __next__(self): raise StopIteration
+    async def __anext__(self): raise StopAsyncIteration
+
+
+def loop_inherited():
+    c = SelfIterChild()
+    for _x in c:
+        pass
+
+async def loop_inherited_async():
+    c = SelfIterChild()
+    async for _x in c:
+        pass
+"""
+
+
+@pytest.fixture(scope="module")
+def callees(tmp_path_factory: pytest.TempPathFactory) -> dict[str, set[str]]:
+    root = tmp_path_factory.mktemp("ops") / "ops"
+    root.mkdir()
+    (root / "m.py").write_text(_M, encoding="utf-8")
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="ops",
+    ).run(force=True)
+    found: dict[str, set[str]] = {}
+    for edge in store.keyed_edges:
+        if edge[2] == cs.RelationshipType.CALLS.value:
+            caller = str(edge[1]).removeprefix("ops.m.")
+            found.setdefault(caller, set()).add(str(edge[4]).removeprefix("ops.m."))
+    return found
+
+
+def _dunders(callees: dict[str, set[str]], caller: str, owner: str = "Box") -> set[str]:
+    return {c for c in callees.get(caller, set()) if c.startswith(f"{owner}.__")}
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("binary", {"Box.__add__"}),
+        ("reflected", {"Box.__radd__"}),
+        # `__iadd__` may return NotImplemented, and `+=` then runs `__add__`;
+        # `__radd__` never runs on operands of one type.
+        ("augmented", {"Box.__iadd__", "Box.__add__"}),
+        ("equality", {"Box.__eq__"}),
+        # `__lt__` may return NotImplemented, and `<` then runs the right
+        # operand's `__gt__`.
+        ("ordering", {"Box.__lt__", "Box.__gt__"}),
+        ("reflected_ordering", {"Box.__gt__"}),
+        ("negate", {"Box.__neg__"}),
+        ("call_instance", {"Box.__call__"}),
+        ("iterate", {"Box.__iter__"}),
+        ("comprehend", {"Box.__iter__"}),
+        ("iterate_async", {"Box.__aiter__"}),
+        ("enter", {"Box.__enter__", "Box.__exit__"}),
+        ("enter_async", {"Box.__aenter__", "Box.__aexit__"}),
+    ],
+)
+def test_each_protocol_calls_its_dunder(
+    callees: dict[str, set[str]], caller: str, expected: set[str]
+) -> None:
+    assert _dunders(callees, caller) == expected, callees.get(caller)
+
+
+@pytest.mark.parametrize(
+    "caller",
+    [
+        "construct",
+        "class_reference",
+        "plain_function",
+        "no_dunder",
+        "builtin_operands",
+        "identity",
+        "opened",
+    ],
+)
+def test_no_dunder_is_invented(callees: dict[str, set[str]], caller: str) -> None:
+    # Negatives: constructing a class, calling a class reference or a plain
+    # function, an operand type without the dunder, builtin operands, an
+    # identity test and a call-built context manager imply no Box dunder.
+    assert _dunders(callees, caller) == set(), callees.get(caller)
+
+
+def test_the_existing_subscript_edge_is_kept(callees: dict[str, set[str]]) -> None:
+    assert _dunders(callees, "subscript") == {"Box.__getitem__"}
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("walk", {"Walker.__iter__", "Walker.__next__"}),
+        ("walk_comprehension", {"Walker.__iter__", "Walker.__next__"}),
+        ("walk_async", {"Walker.__aiter__", "Walker.__anext__"}),
+    ],
+)
+def test_a_loop_calls_the_advancing_dunder_too(
+    callees: dict[str, set[str]], caller: str, expected: set[str]
+) -> None:
+    # A `for` calls `__iter__` once and then `__next__` on what it returned
+    # each step; an iterator that returns itself has both.
+    assert _dunders(callees, caller, "Walker") == expected, callees.get(caller)
+
+
+def _operator_dunders(callees: dict[str, set[str]], caller: str) -> set[str]:
+    return _dunders(callees, caller, "Base") | _dunders(callees, caller, "Child")
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        # `Base.__add__` returns NotImplemented, so Python goes on to the
+        # right operand's `__radd__`; a right operand of a subclass has its
+        # `__radd__` tried first. Either way both run.
+        ("mixed_add", {"Base.__add__", "Child.__radd__"}),
+        # `+=` falls back from `__iadd__` to `__add__`, then to `__radd__`.
+        ("mixed_augmented", {"Base.__iadd__", "Base.__add__", "Child.__radd__"}),
+        # A comparison falls back to the reflection whatever the types.
+        ("same_type_ordering", {"Base.__lt__", "Base.__gt__"}),
+    ],
+)
+def test_a_fallback_python_may_take_is_recorded(
+    callees: dict[str, set[str]], caller: str, expected: set[str]
+) -> None:
+    assert _operator_dunders(callees, caller) == expected, callees.get(caller)
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        # Python never tries `__radd__` when both operands have one type.
+        ("same_type_add", {"Base.__add__"}),
+        # The reflection of `==` on the same type is the method already
+        # recorded.
+        ("same_type_equality", {"Base.__eq__"}),
+    ],
+)
+def test_a_fallback_python_never_takes_is_not_recorded(
+    callees: dict[str, set[str]], caller: str, expected: set[str]
+) -> None:
+    assert _operator_dunders(callees, caller) == expected, callees.get(caller)
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("contains_commented", {"Box.__contains__"}),
+        ("compare_commented", {"Box.__lt__", "Box.__gt__"}),
+    ],
+)
+def test_a_comment_between_operands_keeps_the_call(
+    callees: dict[str, set[str]], caller: str, expected: set[str]
+) -> None:
+    # tree-sitter lists the comment among the comparison's named children.
+    assert _dunders(callees, caller) == expected, callees.get(caller)
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("loop_container", {"Container.__iter__", "Cursor.__next__"}),
+        ("loop_container_async", {"Container.__aiter__", "Cursor.__anext__"}),
+        # Negative: `iter([])` is no project class, so no `__next__` is
+        # guessed, `Opaque.__next__` included.
+        ("loop_opaque", {"Opaque.__iter__"}),
+        # An inherited `__iter__` returning `self` iterates as the subclass.
+        ("loop_inherited", {"SelfIterBase.__iter__", "SelfIterChild.__next__"}),
+        (
+            "loop_inherited_async",
+            {"SelfIterBase.__aiter__", "SelfIterChild.__anext__"},
+        ),
+    ],
+)
+def test_a_loop_advances_the_iterator_its_iter_returns(
+    callees: dict[str, set[str]], caller: str, expected: set[str]
+) -> None:
+    found = {
+        c
+        for owner in ("Container", "Cursor", "Opaque", "SelfIterBase", "SelfIterChild")
+        for c in _dunders(callees, caller, owner)
+    }
+    assert found == expected, callees.get(caller)
+
+
+_REBOUND = """\
+class A:
+    def __neg__(self): return self
+
+
+class B:
+    def __neg__(self): return self
+
+
+class Base:
+    def __add__(self, o): return self
+
+
+class Child(Base):
+    # Tried first, a subclass's reflection; NotImplemented hands on to
+    # `Base.__add__`, so both run.
+    def __radd__(self, o): return NotImplemented
+
+
+def rebound():
+    x = A()
+    first = -x
+    x = B()
+    second = -x
+    return first, second
+
+
+def rebound_reflected():
+    b = Base(); c = Child()
+    total = b + c
+    c = Base()
+    return total
+"""
+
+
+def _site_callees(tmp_path: Path, source: str) -> set[tuple[str, str, int]]:
+    root = tmp_path / "ops"
+    root.mkdir()
+    (root / "m.py").write_text(source, encoding="utf-8")
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="ops",
+    ).run(force=True)
+    return {
+        (
+            str(edge[1]).removeprefix("ops.m."),
+            str(edge[4]).removeprefix("ops.m."),
+            int(dict(edge[5])[cs.KEY_LINE]),
+        )
+        for edge in store.keyed_edges
+        if edge[2] == cs.RelationshipType.CALLS.value and len(edge) > 5
+    }
+
+
+def test_each_operator_site_reads_the_binding_that_reaches_it(
+    tmp_path: Path,
+) -> None:
+    # `x` holds an A at the first `-x` and a B at the second; `c` holds a
+    # Child where `b + c` runs, so its `__radd__` may run there.
+    edges = _site_callees(tmp_path, _REBOUND)
+    negations = {
+        (callee, line)
+        for caller, callee, line in edges
+        if caller == "rebound" and "__" in callee
+    }
+    assert negations == {("A.__neg__", 21), ("B.__neg__", 23)}, negations
+    added = {
+        callee
+        for caller, callee, _line in edges
+        if caller == "rebound_reflected" and "__" in callee
+    }
+    assert added == {"Base.__add__", "Child.__radd__"}, added
+
+
+_PROTOCOL_LOOP = """\
+from typing import Protocol
+
+
+class IterLike(Protocol):
+    def rows(self): ...
+    def __iter__(self): ...
+
+
+class SelfIter:
+    def rows(self): return []
+    def __iter__(self): return self
+    def __next__(self): raise StopIteration
+
+
+class ListIter:
+    def rows(self): return []
+    def __iter__(self): return iter([])
+    def __next__(self): raise StopIteration
+
+
+def loop(items: IterLike):
+    for _x in items:
+        pass
+"""
+
+
+def test_a_protocol_loop_advances_only_the_conformer_that_is_its_iterator(
+    tmp_path: Path,
+) -> None:
+    # Both conformers' `__iter__` may run; only SelfIter's returns itself, so
+    # only its `__next__` advances the loop. ListIter's returns a builtin.
+    edges = _site_callees(tmp_path, _PROTOCOL_LOOP)
+    called = {callee for caller, callee, _line in edges if caller == "loop"}
+    assert called == {"SelfIter.__iter__", "ListIter.__iter__", "SelfIter.__next__"}, (
+        called
+    )

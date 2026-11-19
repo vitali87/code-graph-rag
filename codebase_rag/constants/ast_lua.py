@@ -46,6 +46,9 @@ TS_LUA_TABLE_CONSTRUCTOR = "table_constructor"
 TS_LUA_LOCAL_KEYWORD = "local"
 TS_LUA_FOR_STATEMENT = "for_statement"
 TS_LUA_FIELD_CLAUSE = "clause"
+TS_LUA_PARAMETERS = "parameters"
+TS_LUA_FOR_NUMERIC_CLAUSE = "for_numeric_clause"
+TS_LUA_FOR_GENERIC_CLAUSE = "for_generic_clause"
 
 # Import processor function names
 IMPORT_REQUIRE = "require"

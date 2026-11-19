@@ -28,6 +28,7 @@ from ..dart.utils import (
 from ..import_processor import ImportProcessor
 from ..io_access import (
     DYNAMIC_TARGET,
+    IO_HANDLE_CONSTRUCTORS,
     IO_MACRO_SINKS,
     IO_MEMBER_READS,
     IO_SINKS,
@@ -46,16 +47,19 @@ from ..io_access import (
     definition_header_nodes,
     first_token_arg_string,
     head_is_genuine_module,
+    is_inline_callback,
     is_require_alias,
     iter_token_tree_calls,
     lean_binding_targets,
     lean_definition_header_nodes,
     literal_target,
     match_normalised,
+    mode_direction,
     normalise,
     positional_arg_node,
     python_name_binding_sites,
     python_name_shadowed_at,
+    python_stream_target,
     registry_match,
     rust_unwrap_result,
     scope_seed_nodes,
@@ -344,6 +348,20 @@ class _UndecidedCall(NamedTuple):
     through: frozenset[str]
     sources: frozenset[str] | None
     sinks: frozenset[str] | None
+
+    def may_carry(self, flow: PriorResourceFlow) -> bool:
+        """Whether `flow` may still run through this call: it was composed
+        through one of the call's unwalked functions, and its ends match
+        the ones the call knows."""
+        return (
+            bool(self.through & set(flow.through))
+            and (self.sources is None or flow.src in self.sources)
+            and (self.sinks is None or flow.dst in self.sinks)
+        )
+
+
+def _always_own_pass(_node: Node) -> bool:
+    return True
 
 
 class _LeanState(NamedTuple):
@@ -1157,6 +1175,11 @@ class FlowProcessor:
         # call processor drives one caller at a time).
         self._acc_returns_taint = False
         self._acc_return_taint = _EMPTY_TAINT
+        # Whether a nested inline callable gets a caller pass of its own, set
+        # per caller, and how deep the walk is inside callbacks it walks inline
+        # (a `return` there leaves the callback, not the caller; issue #2772).
+        self._has_own_pass: Callable[[Node], bool] = _always_own_pass
+        self._inline_callback_depth = 0
         # Forward parameter-taint (issue #1142). A function's parameter is seeded
         # as a pseudo-origin during the walk; where it reaches a write sink or is
         # handed to another callee we record it here and compose at finalize, so
@@ -1228,6 +1251,7 @@ class FlowProcessor:
         language: cs.SupportedLanguage,
         class_context: str | None,
         local_var_types: dict[str, str] | None = None,
+        has_own_pass: Callable[[Node], bool] | None = None,
     ) -> None:
         if not self._enabled:
             return
@@ -1235,6 +1259,7 @@ class FlowProcessor:
         sinks = IO_SINKS.get(language, ())
         if not sinks:
             return
+        self._has_own_pass = has_own_pass or _always_own_pass
         ctx = _FlowCtx(
             caller_spec=caller_spec,
             caller_qn=caller_qn,
@@ -1422,6 +1447,72 @@ class FlowProcessor:
             self._acc_returns_taint = True
             self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
 
+    def _walk_inline_callback(
+        self,
+        node: Node,
+        state: _LeanState,
+        jc: _JsCtx,
+        walk: Callable[[Node, _LeanState, _JsCtx], _LeanState],
+    ) -> None:
+        # An inline callback no caller pass walks alone (`items.forEach(x =>
+        # console.log(secret))`, issue #2772) runs as part of this caller, as a
+        # Python lambda does: what it reads from the enclosing scope flows into
+        # its sinks and callees. It runs zero or more times, possibly later, so
+        # it gets a copy of the state with its own parameters untainted, and its
+        # bindings are dropped afterwards. A `return` in it leaves the callback,
+        # so it adds nothing to this caller's return summary.
+        params = self._inline_callback_params(node, jc.descriptor)
+        inner = state.copy()
+        for name in params:
+            inner.taint.pop(name, None)
+            inner.handles.pop(name, None)
+        shadows = set(jc.local_names)
+        jc.local_names.update(params)
+        # A JS/TS callback's own declarations shadow throughout it, as a
+        # caller's do (`const console = {...}` in it is not the console); the
+        # caller's seed skipped the callback's body as a nested scope.
+        jc.local_names.update(
+            self._js_local_names(node, jc.descriptor, jc.flow.language)
+        )
+        self._inline_callback_depth += 1
+        try:
+            for stmt in self._lean_body_statements(node, jc.flow, jc.descriptor):
+                inner = walk(stmt, inner, jc)
+        finally:
+            self._inline_callback_depth -= 1
+            self._restore_shadows(shadows, jc)
+
+    def _inline_callback_params(
+        self, node: Node, descriptor: LanguageDescriptor
+    ) -> set[str]:
+        # A callback's parameters: a list (`(a, b) =>`, `|a, b|`, Go's
+        # parameter_list) or a lone one (`x =>`, Java `x ->`, C# `x =>`).
+        names: set[str] = set()
+        params = node.child_by_field_name(descriptor.params_field)
+        if params is not None and params.type in (
+            descriptor.identifier_type,
+            cs.TS_CSHARP_IMPLICIT_PARAMETER,
+        ):
+            if params.text:
+                names.add(params.text.decode(cs.ENCODING_UTF8))
+        elif params is not None:
+            for child in params.named_children:
+                for target in self._callback_param_targets(child):
+                    self._js_binding_names(target, descriptor, names)
+        if (single := node.child_by_field_name(cs.TS_FIELD_PARAMETER)) is not None:
+            self._js_binding_names(single, descriptor, names)
+        return names
+
+    @staticmethod
+    def _callback_param_targets(param: Node) -> list[Node]:
+        # What one entry of a callback's parameter list binds: its `pattern`
+        # (TS `(x: T) =>`, Rust `|x: T|`), else EVERY `name` (Go groups `a, b
+        # string` into one declaration; Java `String x`, C# `int x` have one),
+        # else the entry itself (`(x) =>`).
+        if (pattern := param.child_by_field_name(cs.TS_FIELD_PATTERN)) is not None:
+            return [pattern]
+        return param.children_by_field_name(cs.TS_FIELD_NAME) or [param]
+
     def _walk_flat_stmt(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Structured walk for the non-hoisted flat languages (Go, Java, Rust,
         # C++): if/loop/try/match nodes branch-and-merge (issue #714 follow-up);
@@ -1433,6 +1524,8 @@ class FlowProcessor:
             # THIS scope; walk them, then leave the body to its own caller pass.
             for header in lean_definition_header_nodes(node, jc.descriptor):
                 state = self._walk_flat_stmt(header, state, jc)
+            if is_inline_callback(node, jc.descriptor, self._has_own_pass):
+                self._walk_inline_callback(node, state, jc, self._walk_flat_stmt)
             return state
         if node_type == cs.TS_BREAK_STATEMENT:
             self._record_break_exit(state)
@@ -1791,6 +1884,8 @@ class FlowProcessor:
             # THIS scope; walk them, then leave the body to its own caller pass.
             for header in lean_definition_header_nodes(node, jc.descriptor):
                 state = self._walk_js_stmt(header, state, jc)
+            if is_inline_callback(node, jc.descriptor, self._has_own_pass):
+                self._walk_inline_callback(node, state, jc, self._walk_js_stmt)
             return state
         if node_type == cs.TS_BREAK_STATEMENT:
             self._record_break_exit(state)
@@ -1959,7 +2054,10 @@ class FlowProcessor:
             self._flow_stream(node, tainted, handles, jc)
         elif node_type in (d.keyword_stdout_write_types or ()):
             self._flow_keyword_write(node, tainted, jc)
-        elif node_type in (cs.TS_RETURN_STATEMENT, cs.TS_RS_RETURN_EXPRESSION):
+        elif (
+            node_type in (cs.TS_RETURN_STATEMENT, cs.TS_RS_RETURN_EXPRESSION)
+            and not self._inline_callback_depth
+        ):
             # Rust names this node return_expression, so matching only
             # return_statement dropped every Rust return summary (issue #1365).
             self._accumulate_return_taint(self._js_return_taint(node, tainted, jc))
@@ -3580,6 +3678,13 @@ class FlowProcessor:
         sink = self._js_match_sink(raw, jc.flow.read_sinks, jc)
         if sink is None:
             return None
+        # `fsp.open(p, "w")` opens for writing only, so nothing is read from
+        # the file to flow on (#2775 review).
+        if (
+            sink.mode_arg is not None
+            and mode_direction(node, sink, jc.descriptor) == IODirection.WRITE
+        ):
+            return None
         identity = literal_target(
             node,
             sink.target_arg,
@@ -4334,10 +4439,13 @@ class FlowProcessor:
         # taint (issue #2588). A first-party callee never gets here: it keeps
         # its return summary. A write sink returns nothing of its payload and a
         # taint-clearing call nothing of its input, so both yield no operands.
-        if (
-            registry_match(ctx.write_sinks, raw, ctx.import_map) is not None
-            or registry_match(_PY_TAINT_CLEARING_CALLS, raw, ctx.import_map) is not None
-        ):
+        # A command runner returns the command's output, which can echo its
+        # arguments back (`print(check_output(["echo", token]))`), so it keeps
+        # them (Greptile review of PR 3108).
+        write_sink = registry_match(ctx.write_sinks, raw, ctx.import_map)
+        if (write_sink is not None and not write_sink.returns_output) or registry_match(
+            _PY_TAINT_CLEARING_CALLS, raw, ctx.import_map
+        ) is not None:
             return []
         operands: list[Node] = []
         func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
@@ -4556,9 +4664,19 @@ class FlowProcessor:
             return
         sink = registry_match(ctx.write_sinks, raw, ctx.import_map)
         if sink is not None:
-            dst_identity = literal_target(node, sink.target_arg, sink.target_kw)
-            for taint, _via in arg_taints:
-                self._flow_taint_into_sink(taint, sink.kind, dst_identity, ctx)
+            dst = self._write_sink_target(node, sink, ctx)
+            if dst is None:
+                return
+            kind, dst_identity = dst
+            # The stream argument is where the data goes, not data itself.
+            stream_via = (
+                None
+                if sink.stream_kw is None
+                else VIA_KW_FORMAT.format(name=sink.stream_kw)
+            )
+            for taint, via in arg_taints:
+                if via != stream_via:
+                    self._flow_taint_into_sink(taint, kind, dst_identity, ctx)
             return
         callee = self._resolve(
             raw,
@@ -4572,6 +4690,19 @@ class FlowProcessor:
             return
         for taint, via in arg_taints:
             self._flow_arg_into_callee(taint, via, callee, node, ctx)
+
+    @staticmethod
+    def _write_sink_target(
+        node: Node, sink: IOSink, ctx: _FlowCtx
+    ) -> tuple[ResourceKind, str] | None:
+        if sink.stream_kw is None:
+            return sink.kind, literal_target(node, sink.target_arg, sink.target_kw)
+        # `print(x, file=...)` writes where `file=` says (issue #2776); a
+        # named stream's binding is looked up in the enclosing scope.
+        ctor_by_name = {
+            c.callee: c for c in IO_HANDLE_CONSTRUCTORS.get(ctx.language, ())
+        }
+        return python_stream_target(node, sink, ctx.import_map, ctor_by_name)
 
     def _flow_taint_into_sink(
         self, taint: Taint, kind: ResourceKind, dst_identity: str, ctx: _FlowCtx
@@ -4884,6 +5015,25 @@ class FlowProcessor:
         # flow, or one through a call the edit removed, does not come back.
         if not self._prior_flows:
             return
+        patterns = self._undecided_calls(handoffs)
+        walked = self._walked
+        for scope, flows in self._prior_flows.items():
+            if scope not in walked or not (scope_patterns := patterns.get(scope)):
+                continue
+            for flow in sorted(flows):
+                if any(call.may_carry(flow) for call in scope_patterns):
+                    self._add_composed(
+                        (flow.src, flow.src_name, flow.src_kind),
+                        (flow.dst, flow.dst_name, flow.dst_kind),
+                        flow.scope,
+                        set(flow.through),
+                    )
+
+    def _undecided_calls(
+        self, handoffs: _HandoffIndex
+    ) -> dict[str, list[_UndecidedCall]]:
+        """Per scope, the calls this run made that go through a function it
+        did not walk: a parameter hand-off or a pending return."""
         patterns: dict[str, list[_UndecidedCall]] = defaultdict(list)
         walked = self._walked
         for taint, callee_qn, via, _token, scope in self._param_call_sites:
@@ -4903,22 +5053,7 @@ class FlowProcessor:
                 patterns[scope].append(
                     _UndecidedCall(frozenset(unwalked), None, frozenset({sink}))
                 )
-        for scope, flows in self._prior_flows.items():
-            if scope not in walked or not (scope_patterns := patterns.get(scope)):
-                continue
-            for flow in sorted(flows):
-                if any(
-                    call.through & set(flow.through)
-                    and (call.sources is None or flow.src in call.sources)
-                    and (call.sinks is None or flow.dst in call.sinks)
-                    for call in scope_patterns
-                ):
-                    self._add_composed(
-                        (flow.src, flow.src_name, flow.src_kind),
-                        (flow.dst, flow.dst_name, flow.dst_kind),
-                        flow.scope,
-                        set(flow.through),
-                    )
+        return patterns
 
     def _resource_qn(self, binding: HandleBinding) -> str:
         return resource_qn(binding.kind, binding.identity, self._project_name)

@@ -1,5 +1,6 @@
 # MCP server tool names, schema fields, and messages.
 
+import re
 from enum import StrEnum
 
 
@@ -377,6 +378,37 @@ MCP_WORKSPACE_SOURCE_UNPROVEN = (
     "{name!r} belongs to project {project!r} of workspace {workspace!r}, but the "
     "graph does not show that project indexed from the workspace's checkout; "
     "re-index it from there to read its source"
+)
+# `list_projects` on a workspace server whose repos are not all indexed under
+# their own project names (issue #2867).
+# `cgr start --update-graph` indexes one directory and does not read
+# `--workspace`, so each repo gets its own command (Greptile, PR #2964).
+MCP_WORKSPACE_NOT_INDEXED = (
+    "Workspace {workspace!r} projects not in the graph: {names}. Index each "
+    "repo under its project name:"
+)
+MCP_WORKSPACE_INDEX_COMMAND = (
+    " 'cgr start --repo-path {path} --project-name {project} --update-graph'."
+)
+# On Windows the command is quoted with double quotes, which cmd.exe,
+# PowerShell and Git Bash all read literally except for these characters; a
+# path or name holding one gets no pasteable command (Greptile, PR #2964).
+# PowerShell also ends a double-quoted string at a typographic double quote
+# (CodeRabbit, PR #2964).
+MCP_WINDOWS_SHELL_UNQUOTABLE = frozenset('"%!$`\\\u201c\u201d\u201e')
+# Characters none of those shells treats specially outside quotes either.
+MCP_WINDOWS_SHELL_PLAIN = re.compile(r"[\w./:-]+")
+MCP_WORKSPACE_INDEX_UNQUOTABLE = (
+    " Index {path!r} as project {project!r}: its path or project name holds a "
+    "character a Windows shell expands even inside quotes, so quote both "
+    "yourself."
+)
+MCP_WORKSPACE_REPO_INDEXED_AS = (
+    " {path} is indexed as project {project!r}, not {expected!r}."
+)
+MCP_WORKSPACE_REPO_INDEXED_INSIDE = (
+    " {path} is indexed inside project {project!r} (rooted at {root}), not as a "
+    "project of its own."
 )
 MCP_WORKSPACE_DEFAULT_AMBIGUOUS = (
     "Workspace {workspace!r} holds {count} projects and none is rooted at this "

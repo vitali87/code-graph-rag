@@ -12,6 +12,11 @@ rewrite each call. Edges written without a site (libclang macro uses,
 Roslyn facts, trace write-back) return `null` positions. In both directions
 `path` is the file the site sits in (its caller's), so `path:line` is always
 the call; `callee_path` is where the invoked symbol is defined (issue #2460).
+
+Columns are 0-based UTF-8 byte offsets, as the graph stores them. Given the
+project's own checkout, `callers`, `callees` and `importers` also answer each
+as `col_char` / `end_col_char`, the same position in characters of the line,
+left out where the file cannot tell (issue #3162).
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ from __future__ import annotations
 import difflib
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import NamedTuple, TypedDict
+from typing import NamedTuple, NotRequired, TypedDict
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -32,6 +37,7 @@ from .dead_code import (
     _rust_test_modules_from_nodes,
 )
 from .types_defs import PropertyDict, PropertyParams, ResultRow
+from .utils.char_columns import CharColumns
 from .utils.path_utils import portable_posix, project_roots_from_rows
 from .utils.source_extraction import extract_source_lines
 
@@ -122,8 +128,10 @@ class CallSiteRow(TypedDict):
     callee_path: str | None
     line: int | None
     col: int | None
+    col_char: NotRequired[int]
     end_line: int | None
     end_col: int | None
+    end_col_char: NotRequired[int]
     arg_count: int | None
     kwarg_names: list[str] | None
     resolution: str | None
@@ -150,8 +158,10 @@ class ImporterRow(TypedDict):
     path: str | None
     line: int | None
     col: int | None
+    col_char: NotRequired[int]
     end_line: int | None
     end_col: int | None
+    end_col_char: NotRequired[int]
     alias: str | None
     imported_name: str | None
 
@@ -160,6 +170,25 @@ class ReexportImporterRow(ImporterRow):
     # The import statements the row reaches the module through, consumer
     # side first; empty for a direct importer (issue #2573).
     via: list[ImporterRow]
+
+
+class _SiteSpan(TypedDict):
+    # A site's span as the graph stores it, each column followed by its
+    # character column when the file could tell (issue #3162).
+    line: int | None
+    col: int | None
+    col_char: NotRequired[int]
+    end_line: int | None
+    end_col: int | None
+    end_col_char: NotRequired[int]
+
+
+class _ColChar(TypedDict, total=False):
+    col_char: int
+
+
+class _EndColChar(TypedDict, total=False):
+    end_col_char: int
 
 
 class _ReexportEntry(TypedDict):
@@ -251,6 +280,28 @@ def _symbol_row(row: ResultRow) -> SymbolRow:
 
 def _symbol_key(row: SymbolRow) -> tuple[str, str]:
     return (row["qualified_name"], row["path"] or "")
+
+
+def _site_span(row: ResultRow, path: str | None, chars: CharColumns) -> _SiteSpan:
+    line, col = _opt_int(row.get(cs.KEY_LINE)), _opt_int(row.get(cs.KEY_COL))
+    end_line = _opt_int(row.get(cs.KEY_END_LINE))
+    end_col = _opt_int(row.get(cs.KEY_END_COL))
+    col_char: _ColChar = (
+        {} if (n := chars.at(path, line, col)) is None else {cs.KEY_COL_CHAR: n}
+    )
+    end_col_char: _EndColChar = (
+        {}
+        if (n := chars.at(path, end_line, end_col)) is None
+        else {cs.KEY_END_COL_CHAR: n}
+    )
+    return _SiteSpan(
+        line=line,
+        col=col,
+        **col_char,
+        end_line=end_line,
+        end_col=end_col,
+        **end_col_char,
+    )
 
 
 class TargetRefusal(TypedDict):
@@ -382,11 +433,54 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
     a location returns the innermost definitions spanning that line, and
     nothing when `resolve_or_refuse` would refuse it.
     """
-    prefix = _prefix(project_name)
-    owns = _owner_check(fetch_all, project_name)
     if parse_location(target) is not None:
+        owns = _owner_check(fetch_all, project_name)
         found = _resolve_location(fetch_all, project_name, target, owns)
         return found if isinstance(found, list) else []
+    ordered: list[SymbolRow] = []
+    for bucket in _resolve_name_tiers(fetch_all, project_name, target):
+        ordered.extend(sorted(bucket, key=_symbol_key))
+    return ordered
+
+
+def resolve_one(
+    fetch_all: QueryFn, project_name: str, target: str
+) -> list[str] | TargetRefusal:
+    """The qualified names `target` names most directly, for a query that
+    takes one definition (issue #2861).
+
+    A `path:line` names the definitions with the innermost span there, or
+    is refused as `resolve_or_refuse` refuses it; a name, the qualified
+    names it is a dotted suffix of, else, when it has no dot, the
+    definitions it is the name of. A dotted name that is no qualified
+    name's suffix names nothing: `app.total` is not `app.shapes.total`,
+    however unique its last part. One answer is the definition; several
+    mean the name is ambiguous.
+    """
+    if parse_location(target) is not None:
+        owns = _owner_check(fetch_all, project_name)
+        found = _resolve_location(fetch_all, project_name, target, owns)
+        if not isinstance(found, list):
+            return found
+        tier = [s for s in found if _span_width(s) == _span_width(found[0])]
+    else:
+        exact, suffix, by_name = _resolve_name_tiers(fetch_all, project_name, target)
+        bare = cs.SEPARATOR_DOT not in target
+        tier = exact or suffix or (by_name if bare else [])
+    return sorted({s["qualified_name"] for s in tier})
+
+
+def _span_width(symbol: SymbolRow) -> int:
+    return (symbol["end_line"] or 0) - (symbol["start_line"] or 0)
+
+
+def _resolve_name_tiers(
+    fetch_all: QueryFn, project_name: str, target: str
+) -> tuple[list[SymbolRow], list[SymbolRow], list[SymbolRow]]:
+    """The definitions a name matches: by qualified name, by dotted suffix,
+    and by name alone."""
+    prefix = _prefix(project_name)
+    owns = _owner_check(fetch_all, project_name)
     rows = fetch_all(
         cq.CYPHER_GRAPH_RESOLVE_NAME,
         {
@@ -418,10 +512,7 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
         )
     ]
     by_name = [s for s in symbols if s not in exact and s not in suffix]
-    ordered: list[SymbolRow] = []
-    for bucket in (exact, suffix, by_name):
-        ordered.extend(sorted(bucket, key=_symbol_key))
-    return ordered
+    return exact, suffix, by_name
 
 
 def resolve_or_refuse(
@@ -477,12 +568,7 @@ def _definitions_at(
     )
     symbols = [_symbol_row(r) for r in rows if owns(_text_qn(r))]
     # Innermost first: the tightest span is what the line "is in".
-    symbols.sort(
-        key=lambda s: (
-            (s["end_line"] or 0) - (s["start_line"] or 0),
-            s["qualified_name"],
-        )
-    )
+    symbols.sort(key=lambda s: (_span_width(s), s["qualified_name"]))
     return symbols
 
 
@@ -632,17 +718,17 @@ def definition(
 # --- callers / callees --------------------------------------------------------
 
 
-def _site_row(row: ResultRow, depth: int, through: str) -> CallSiteRow:
+def _site_row(
+    row: ResultRow, depth: int, through: str, chars: CharColumns
+) -> CallSiteRow:
     kwargs = row.get(cs.KEY_KWARG_NAMES)
+    path = _opt_str(row.get(cs.KEY_PATH))
     return CallSiteRow(
         label=str(row.get(cs.KEY_LABEL, "")),
         qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME, "")),
-        path=_opt_str(row.get(cs.KEY_PATH)),
+        path=path,
         callee_path=_opt_str(row.get(cs.KEY_CALLEE_PATH)),
-        line=_opt_int(row.get(cs.KEY_LINE)),
-        col=_opt_int(row.get(cs.KEY_COL)),
-        end_line=_opt_int(row.get(cs.KEY_END_LINE)),
-        end_col=_opt_int(row.get(cs.KEY_END_COL)),
+        **_site_span(row, path, chars),
         arg_count=_opt_int(row.get(cs.KEY_ARG_COUNT)),
         kwarg_names=[str(k) for k in kwargs] if isinstance(kwargs, list) else None,
         resolution=_opt_str(row.get(cs.KEY_RESOLUTION)),
@@ -682,7 +768,12 @@ _CALLEES_READS = _CallReads(
 
 
 def _walk_sites(
-    fetch_all: QueryFn, project_name: str, reads: _CallReads, start: str, depth: int
+    fetch_all: QueryFn,
+    project_name: str,
+    reads: _CallReads,
+    start: str,
+    depth: int,
+    chars: CharColumns,
 ) -> list[CallSiteRow]:
     # Breadth-first over endpoints, one query per LEVEL: one per frontier
     # node was 886 round trips for a depth-2 walk on django (issue #2597).
@@ -713,7 +804,7 @@ def _walk_sites(
             # through (issue #1982).
             if not owns(_text_qn(row)):
                 continue
-            site = _site_row(row, level, through)
+            site = _site_row(row, level, through, chars)
             out.append(site)
             other = site["qualified_name"]
             if other not in seen:
@@ -726,25 +817,50 @@ def _walk_sites(
 
 
 def callers(
-    fetch_all: QueryFn, project_name: str, qualified_name: str, depth: int = 1
+    fetch_all: QueryFn,
+    project_name: str,
+    qualified_name: str,
+    depth: int = 1,
+    repo_root: Path | None = None,
 ) -> list[CallSiteRow]:
     """Call sites that reach `qualified_name`, one row per site.
 
     `depth` > 1 follows the callers' callers; `through` names the callee
     each row's site invokes, so a transitive row is still one exact site.
+    With `repo_root`, the checkout the project was indexed from
+    (`source_root_for`), each column also comes in characters.
     """
-    return _walk_sites(fetch_all, project_name, _CALLERS_READS, qualified_name, depth)
+    return _walk_sites(
+        fetch_all,
+        project_name,
+        _CALLERS_READS,
+        qualified_name,
+        depth,
+        CharColumns(repo_root),
+    )
 
 
 def callees(
-    fetch_all: QueryFn, project_name: str, qualified_name: str, depth: int = 1
+    fetch_all: QueryFn,
+    project_name: str,
+    qualified_name: str,
+    depth: int = 1,
+    repo_root: Path | None = None,
 ) -> list[CallSiteRow]:
     """Call sites inside `qualified_name`, one row per site (`through` = caller).
 
     `path` is `through`'s file, where the site is, not the callee's: that
     one is `callee_path`, so a hop past depth 1 still reads as `path:line`.
+    `repo_root` adds the character columns, as for `callers`.
     """
-    return _walk_sites(fetch_all, project_name, _CALLEES_READS, qualified_name, depth)
+    return _walk_sites(
+        fetch_all,
+        project_name,
+        _CALLEES_READS,
+        qualified_name,
+        depth,
+        CharColumns(repo_root),
+    )
 
 
 # --- implementors / overrides / importers ---------------------------------------
@@ -885,14 +1001,12 @@ def overrides(
     )
 
 
-def _importer_row(r: ResultRow) -> ImporterRow:
+def _importer_row(r: ResultRow, chars: CharColumns) -> ImporterRow:
+    path = _opt_str(r.get(cs.KEY_PATH))
     return ImporterRow(
         module=str(r.get(cs.KEY_QUALIFIED_NAME, "")),
-        path=_opt_str(r.get(cs.KEY_PATH)),
-        line=_opt_int(r.get(cs.KEY_LINE)),
-        col=_opt_int(r.get(cs.KEY_COL)),
-        end_line=_opt_int(r.get(cs.KEY_END_LINE)),
-        end_col=_opt_int(r.get(cs.KEY_END_COL)),
+        path=path,
+        **_site_span(r, path, chars),
         alias=_opt_str(r.get(cs.KEY_ALIAS)),
         imported_name=_opt_str(r.get(cs.KEY_IMPORTED_NAME)),
     )
@@ -913,20 +1027,31 @@ def _importer_key(r: ImporterRow) -> tuple[str, int, int, str, str]:
 
 
 def importers(
-    fetch_all: QueryFn, project_name: str, module_qn: str
+    fetch_all: QueryFn,
+    project_name: str,
+    module_qn: str,
+    repo_root: Path | None = None,
 ) -> list[ImporterRow]:
     """Modules importing `module_qn`, with each import statement's location.
 
     Direct importers only: a module reaching `module_qn` through a package
-    facade is answered by `importers_through_reexports`.
+    facade is answered by `importers_through_reexports`. `repo_root` adds
+    the character columns, as for `callers`.
     """
+    return _direct_importers(fetch_all, project_name, module_qn, CharColumns(repo_root))
+
+
+def _direct_importers(
+    fetch_all: QueryFn, project_name: str, module_qn: str, chars: CharColumns
+) -> list[ImporterRow]:
     rows = fetch_all(
         cq.CYPHER_GRAPH_IMPORTERS,
         {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QN: module_qn},
     )
     owns = _owner_check(fetch_all, project_name)
     return sorted(
-        (_importer_row(r) for r in rows if owns(_text_qn(r))), key=_importer_key
+        (_importer_row(r, chars) for r in rows if owns(_text_qn(r))),
+        key=_importer_key,
     )
 
 
@@ -1018,6 +1143,7 @@ def _reexport_hops(
     project_name: str,
     qns: list[str],
     owns: Callable[[str], bool],
+    chars: CharColumns,
 ) -> list[tuple[str, ImporterRow]]:
     """(imported module, importer row) for every importer of `qns`, in order.
 
@@ -1029,7 +1155,7 @@ def _reexport_hops(
     )
     return sorted(
         (
-            (str(r.get(cs.KEY_TO_QN, "")), _importer_row(r))
+            (str(r.get(cs.KEY_TO_QN, "")), _importer_row(r, chars))
             for r in rows
             if owns(_text_qn(r))
         ),
@@ -1068,7 +1194,10 @@ def _reexport_step(
 
 
 def importers_through_reexports(
-    fetch_all: QueryFn, project_name: str, module_qn: str
+    fetch_all: QueryFn,
+    project_name: str,
+    module_qn: str,
+    repo_root: Path | None = None,
 ) -> list[ReexportImporterRow]:
     """`importers`, plus the modules reaching `module_qn` through re-exports.
 
@@ -1085,9 +1214,11 @@ def importers_through_reexports(
     so a direct importer is listed once. A later path bringing it a name it
     did not bind there is still walked on, for that name alone, so a module
     importing the name from it is reached; a module is walked again only
-    for names new to it, so a cycle of re-exports ends.
+    for names new to it, so a cycle of re-exports ends. `repo_root` adds the
+    character columns, as for `callers`, to every row and every `via` entry.
     """
-    direct = importers(fetch_all, project_name, module_qn)
+    chars = CharColumns(repo_root)
+    direct = _direct_importers(fetch_all, project_name, module_qn, chars)
     out = [ReexportImporterRow(**row, via=[]) for row in direct]
     frontier: dict[str, list[_ReexportEntry]] = {}
     for row in direct:
@@ -1102,7 +1233,7 @@ def importers_through_reexports(
         walked[module] = _union_names(entry["names"] for entry in entries)
     owns = _owner_check(fetch_all, project_name)
     while frontier:
-        hops = _reexport_hops(fetch_all, project_name, sorted(frontier), owns)
+        hops = _reexport_hops(fetch_all, project_name, sorted(frontier), owns, chars)
         found = _reexport_step(hops, frontier, walked, out)
         for module, entries in found.items():
             walked[module] = _union_names(

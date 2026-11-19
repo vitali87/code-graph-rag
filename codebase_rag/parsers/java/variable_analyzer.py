@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
@@ -10,9 +10,9 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...decorators import depth_exhausted, depth_guard, recursion_guard
-from ...types_defs import ASTNode
+from ...types_defs import ASTNode, SpanBinding
 from ...utils.path_utils import cached_relative_path
-from ..utils import safe_decode_text
+from ..utils import conflicting_declaration_spans, safe_decode_text
 from .utils import (
     extract_class_info,
     extract_field_info,
@@ -92,10 +92,64 @@ def _java_type_field_text(expr_node: ASTNode) -> str | None:
     return None
 
 
+# The initializers whose inferred type is the one they write out.
+_JAVA_TYPE_NAMING_INITIALIZERS = frozenset(
+    {
+        cs.TS_OBJECT_CREATION_EXPRESSION,
+        cs.TS_JAVA_CAST_EXPRESSION,
+        cs.TS_ARRAY_CREATION_EXPRESSION,
+    }
+)
+
+
+def _initializer_names_its_type(value_node: ASTNode) -> bool:
+    node: ASTNode | None = value_node
+    while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        node = next(
+            (c for c in node.children if c.type not in cs.DELIMITER_TOKENS), None
+        )
+    return node is not None and node.type in _JAVA_TYPE_NAMING_INITIALIZERS
+
+
 def _java_array_creation_type(expr_node: ASTNode) -> str | None:
     if base_type := _java_type_field_text(expr_node):
         return f"{base_type}{cs.JAVA_ARRAY_SUFFIX}"
     return None
+
+
+# Methods and constructors, of the method itself or of a class nested in it.
+_JAVA_CALLABLE_TYPES = frozenset(
+    {cs.TS_METHOD_DECLARATION, cs.TS_CONSTRUCTOR_DECLARATION}
+)
+
+
+def _local_scope(declaration: ASTNode, scope_node: ASTNode) -> ASTNode:
+    # The innermost block, switch block or for statement around a local
+    # variable declaration, else the method itself.
+    current = declaration.parent
+    while current is not None and current.id != scope_node.id:
+        if current.type in cs.JAVA_LOCAL_SCOPE_TYPES:
+            return current
+        current = current.parent
+    return scope_node
+
+
+def _assigned_local(assignment: ASTNode) -> str | None:
+    # `s = ...` assigns a local (or a field, which no local span holds);
+    # `this.s = ...` is the field's.
+    left = assignment.child_by_field_name(cs.FIELD_LEFT)
+    if left is None or left.type != cs.TS_IDENTIFIER:
+        return None
+    return safe_decode_text(left)
+
+
+def _try_body_end(resource: ASTNode) -> int:
+    # resource -> resource_specification -> try_with_resources_statement.
+    statement = resource.parent.parent if resource.parent is not None else None
+    if statement is None:
+        return resource.end_byte
+    body = statement.child_by_field_name(cs.FIELD_BODY)
+    return (body or statement).end_byte
 
 
 def _first_type_identifier_text(parent: ASTNode) -> str | None:
@@ -127,7 +181,9 @@ class JavaVariableAnalyzerMixin:
     _resolve_java_method_return_type: Callable[..., str | None]
 
     @abstractmethod
-    def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
+    def _resolve_java_type_name(
+        self, type_name: str, module_qn: str, scope: ASTNode | None = None
+    ) -> str: ...
 
     @abstractmethod
     def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None: ...
@@ -149,6 +205,198 @@ class JavaVariableAnalyzerMixin:
         self._analyze_java_enhanced_for_loops(scope_node, local_var_types, module_qn)
         self._analyze_java_try_resources(scope_node, local_var_types, module_qn)
         self._analyze_java_catch_parameters(scope_node, local_var_types, module_qn)
+
+    def collect_scoped_declarations(
+        self, scope_node: ASTNode, module_qn: str, local_var_types: Mapping[str, str]
+    ) -> list[SpanBinding]:
+        """Each declaration of a name the method declares more than once, as
+        a binding over the part of the body where the name reads it (issue
+        #3332).
+
+        The flat map keeps one type per name, so `Circle s` in an `if` and
+        `Square s` in its `else` typed both `s.area()` calls as Square, and
+        an enhanced-for variable, collected after the locals, retyped a
+        same-named local in another block. Java forbids a local hiding
+        another, so these spans never nest: a parameter holds over the
+        method, a local from its declarator to the end of its block, a loop,
+        catch or resource variable over its statement. Each is typed by the
+        pass that types it in the flat map, and an assignment the flat map
+        reads (`s = new Square()`) retypes its variable from there on, within
+        the anonymous class or lambda it is written in, if any; a name
+        declared once, or always with one type, keeps the flat map's type
+        everywhere.
+        """
+        found: dict[str, list[tuple[int, int, ASTNode]]] = {}
+        assigned: dict[str, list[tuple[ASTNode, int]]] = {}
+        # Each node with the end of the body a write in it can affect: the
+        # method's, or that of the class body or lambda nested in it, whose
+        # code runs when it is called, if ever.
+        pending = [(scope_node, scope_node.end_byte)]
+        while pending:
+            current, limit = pending.pop()
+            if current.id == scope_node.id or current.type in _JAVA_CALLABLE_TYPES:
+                # A nested class's method has parameters of its own: a write
+                # to one is not a write to the enclosing method's local.
+                self._scoped_parameters(current, found)
+            self._scoped_local(current, scope_node, found)
+            if current.type == cs.TS_ASSIGNMENT_EXPRESSION and (
+                name := _assigned_local(current)
+            ):
+                assigned.setdefault(name, []).append((current, limit))
+            if current.id != scope_node.id and current.type in (
+                cs.TS_JAVA_CLASS_BODY,
+                cs.TS_JAVA_LAMBDA_EXPRESSION,
+            ):
+                limit = current.end_byte
+            pending.extend((child, limit) for child in reversed(current.children))
+        return [
+            binding
+            for name, declarations in found.items()
+            if len(declarations) > 1
+            for binding in conflicting_declaration_spans(
+                name,
+                [
+                    (
+                        start,
+                        end,
+                        self._scoped_declaration_type(
+                            node, name, module_qn, local_var_types
+                        ),
+                    )
+                    for start, end, node in declarations
+                ],
+                [
+                    (
+                        assignment.end_byte,
+                        limit,
+                        self._scoped_declaration_type(
+                            assignment, name, module_qn, local_var_types
+                        ),
+                    )
+                    for assignment, limit in assigned.get(name, ())
+                ],
+            )
+        ]
+
+    def _scoped_parameters(
+        self,
+        callable_node: ASTNode,
+        found: dict[str, list[tuple[int, int, ASTNode]]],
+    ) -> None:
+        if params := callable_node.child_by_field_name(cs.FIELD_PARAMETERS):
+            for param in params.children:
+                if param.type in (cs.TS_FORMAL_PARAMETER, cs.TS_SPREAD_PARAMETER):
+                    self._scoped_parameter(param, callable_node, found)
+
+    @staticmethod
+    def _scoped_parameter(
+        param: ASTNode,
+        scope_node: ASTNode,
+        found: dict[str, list[tuple[int, int, ASTNode]]],
+    ) -> None:
+        # A varargs parameter carries its name on a declarator child.
+        name_node = param.child_by_field_name(cs.FIELD_NAME) or next(
+            (
+                child.child_by_field_name(cs.FIELD_NAME)
+                for child in param.children
+                if child.type == cs.TS_VARIABLE_DECLARATOR
+            ),
+            None,
+        )
+        if name_node is not None and (name := safe_decode_text(name_node)):
+            found.setdefault(name, []).append(
+                (scope_node.start_byte, scope_node.end_byte, param)
+            )
+
+    @staticmethod
+    def _scoped_local(
+        node: ASTNode,
+        scope_node: ASTNode,
+        found: dict[str, list[tuple[int, int, ASTNode]]],
+    ) -> None:
+        # (the node the flat map's pass types, its name, its scope). A local
+        # is in scope from its own declarator on, an enhanced-for variable
+        # only in the loop body: `for (Item s : s.items())` iterates another
+        # `s`.
+        bound: list[tuple[ASTNode, ASTNode | None, int | None, int]] = []
+        match node.type:
+            case cs.TS_LOCAL_VARIABLE_DECLARATION:
+                scope_end = _local_scope(node, scope_node).end_byte
+                bound = [
+                    (
+                        declarator,
+                        declarator.child_by_field_name(cs.FIELD_NAME),
+                        None,
+                        scope_end,
+                    )
+                    for declarator in node.children_by_field_name(cs.FIELD_DECLARATOR)
+                ]
+            case cs.TS_ENHANCED_FOR_STATEMENT:
+                body = node.child_by_field_name(cs.FIELD_BODY)
+                bound = [
+                    (
+                        node,
+                        node.child_by_field_name(cs.FIELD_NAME),
+                        (body or node).start_byte,
+                        node.end_byte,
+                    )
+                ]
+            case cs.TS_CATCH_FORMAL_PARAMETER if (clause := node.parent) is not None:
+                bound = [
+                    (
+                        node,
+                        node.child_by_field_name(cs.FIELD_NAME),
+                        None,
+                        clause.end_byte,
+                    )
+                ]
+            case cs.TS_JAVA_RESOURCE if node.child_by_field_name(cs.FIELD_TYPE):
+                # In scope over the later resources and the try block, not the
+                # catch or finally clauses after it.
+                bound = [
+                    (
+                        node,
+                        node.child_by_field_name(cs.FIELD_NAME),
+                        None,
+                        _try_body_end(node),
+                    )
+                ]
+        for typed, name_node, scope_start, scope_end in bound:
+            if name_node is not None and (name := safe_decode_text(name_node)):
+                start = name_node.end_byte if scope_start is None else scope_start
+                found.setdefault(name, []).append((start, scope_end, typed))
+
+    def _scoped_declaration_type(
+        self,
+        node: ASTNode,
+        name: str,
+        module_qn: str,
+        local_var_types: Mapping[str, str],
+    ) -> str | None:
+        # The declaration or assignment typed alone, by the pass that types
+        # it in the flat map, against the rest of the map: nothing another
+        # write of the name can answer for it.
+        scratch = {key: value for key, value in local_var_types.items() if key != name}
+        match node.type:
+            case cs.TS_FORMAL_PARAMETER:
+                self._process_formal_parameter(node, scratch, module_qn)
+            case cs.TS_SPREAD_PARAMETER:
+                self._process_spread_parameter(node, scratch, module_qn)
+            case cs.TS_VARIABLE_DECLARATOR if (declaration := node.parent) and (
+                declared := safe_decode_text(
+                    declaration.child_by_field_name(cs.FIELD_TYPE)
+                )
+            ):
+                self._process_variable_declarator(node, declared, scratch, module_qn)
+            case cs.TS_ENHANCED_FOR_STATEMENT:
+                self._process_enhanced_for_statement(node, scratch, module_qn)
+            case cs.TS_CATCH_FORMAL_PARAMETER:
+                self._process_catch_formal_parameter(node, scratch, module_qn)
+            case cs.TS_JAVA_RESOURCE:
+                self._process_java_resource(node, scratch, module_qn)
+            case cs.TS_ASSIGNMENT_EXPRESSION:
+                self._process_java_assignment(node, scratch, module_qn)
+        return scratch.get(name)
 
     def _analyze_java_parameters(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
@@ -177,7 +425,9 @@ class JavaVariableAnalyzerMixin:
         param_type = safe_decode_text(param_type_node)
 
         if param_name and param_type:
-            resolved_type = self._resolve_java_type_name(param_type, module_qn)
+            resolved_type = self._resolve_java_type_name(
+                param_type, module_qn, param_node
+            )
             local_var_types[param_name] = resolved_type
             logger.debug(ls.JAVA_PARAM, name=param_name, type=resolved_type)
 
@@ -199,7 +449,9 @@ class JavaVariableAnalyzerMixin:
                     param_name = safe_decode_text(name_node)
 
         if param_name and param_type:
-            resolved_type = self._resolve_java_type_name(param_type, module_qn)
+            resolved_type = self._resolve_java_type_name(
+                param_type, module_qn, param_node
+            )
             local_var_types[param_name] = resolved_type
             logger.debug(ls.JAVA_VARARGS_PARAM, name=param_name, type=resolved_type)
 
@@ -271,14 +523,26 @@ class JavaVariableAnalyzerMixin:
             if inferred_type := self._infer_java_type_from_expression(
                 value_node, module_qn, local_var_types
             ):
-                resolved_type = self._resolve_java_type_name(inferred_type, module_qn)
+                # Only a type the initializer writes (`new Box()`, a cast) is
+                # read in this scope. One inferred from a call or a field was
+                # named where it is declared, so a type the caller nests must
+                # not take it over (Greptile, PR #2973).
+                resolved_type = self._resolve_java_type_name(
+                    inferred_type,
+                    module_qn,
+                    declarator_node
+                    if _initializer_names_its_type(value_node)
+                    else None,
+                )
                 local_var_types[var_name] = resolved_type
                 logger.debug(
                     ls.JAVA_LOCAL_VAR_INFERRED, name=var_name, type=resolved_type
                 )
                 return
 
-        resolved_type = self._resolve_java_type_name(declared_type, module_qn)
+        resolved_type = self._resolve_java_type_name(
+            declared_type, module_qn, declarator_node
+        )
         local_var_types[var_name] = resolved_type
         logger.debug(ls.JAVA_LOCAL_VAR_DECLARED, name=var_name, type=resolved_type)
 
@@ -1011,5 +1275,10 @@ class JavaVariableAnalyzerMixin:
             if field_info.get(cs.FIELD_NAME) == field_name and (
                 field_type := field_info.get(cs.FIELD_TYPE)
             ):
-                return self._resolve_java_type_name(str(field_type), module_qn)
+                # Named where the field is declared, member types it inherits
+                # included, so a local copying it reads the same type
+                # (Greptile, PR #2973).
+                return self._resolve_java_type_name(
+                    str(field_type), module_qn, field_child
+                )
         return None

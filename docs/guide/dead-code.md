@@ -11,6 +11,22 @@ handlers such as routes/tasks/CLI commands, dunder/lifecycle methods, and
 JavaScript/TypeScript well-known symbol properties) and lists everything the
 walk never reaches.
 
+The decorated handlers include the usual registration idioms, whose handler
+the framework or the interpreter calls with no call site in the code: Celery
+`@shared_task`, Flask `@app.errorhandler` and the request hooks
+(`before_request`, `after_request`, `teardown_request` and their `_app_`
+forms), FastAPI/Starlette `@app.exception_handler` and `@app.middleware`,
+Django `@receiver` and `@admin.register`, SQLAlchemy `@event.listens_for`,
+and `@atexit.register`. Those last two are matched dotted, so a project's own
+`@registry.register` is not a root unless `--decorator-root` names it.
+A `functools.singledispatch` (or `singledispatchmethod`) implementation
+registered with `@generic.register` is reachable exactly when its generic is,
+so the implementations of a dead generic are still reported. An
+implementation registered with several generics is reachable when any of them
+is, and another registration decorator on it (such as `@atexit.register`)
+still makes it a root, as does a `--decorator-root` that matches its
+`@generic.register` (`register` or `generic.register`).
+
 The results are **candidates for review, not a guaranteed delete list**. Code
 reached only through dynamic dispatch, reflection, string-keyed lookups, or an
 external framework that the static graph cannot see may still be reported. Read
@@ -254,6 +270,17 @@ so no name or path is cut to fit 80 columns.
    instantiates or subclasses it.
 3. **Report**: functions and methods (and, with `--classes`, classes) the walk
    never reaches, minus anything matching an `--exclude` glob.
+
+Annotated Java methods count as decorated handlers too. A method carrying a
+container or runtime annotation is a root even when it is package-private, as
+a C# method with `[HttpGet]` or `[Fact]` is. That covers:
+
+- `@PostConstruct` and `@PreDestroy`;
+- Spring's `@Bean`, `@Scheduled`, `@EventListener`, `@ExceptionHandler` and the
+  `@...Mapping` request mappings;
+- the Kafka, Rabbit, JMS and SQS `@...Listener` annotations;
+- JAX-RS resource methods;
+- JPA entity callbacks such as `@PrePersist`.
 
 ### What counts as test code
 

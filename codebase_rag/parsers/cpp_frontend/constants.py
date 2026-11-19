@@ -15,6 +15,8 @@ KIND_TRANSLATION_UNIT = "TRANSLATION_UNIT"
 KIND_CALL_EXPR = "CALL_EXPR"
 KIND_MACRO_DEFINITION = "MACRO_DEFINITION"
 KIND_MACRO_INSTANTIATION = "MACRO_INSTANTIATION"
+# clang driver flag: resolve relative paths against this directory
+CLANG_WORKING_DIRECTORY_FLAG = "-working-directory"
 
 # class/struct/union and their templated forms -> a Class node (cgr collapses
 # struct/class to Class, matching parsers/cpp + the oracle).

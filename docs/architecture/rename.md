@@ -23,8 +23,9 @@ same report as JSON.
 
 ## What gets rewritten
 
-Sites come from the graph, never from text search (the source is read only
-to [cross-check](#cross-check-against-the-source) the plan):
+Sites come from the graph, never from text search, except the `string` sites
+in the table (otherwise the source is read only to
+[cross-check](#cross-check-against-the-source) the plan):
 
 | Site kind    | Source                                                          |
 |--------------|-----------------------------------------------------------------|
@@ -32,6 +33,7 @@ to [cross-check](#cross-check-against-the-source) the plan):
 | `call`       | `CALLS` edges into the definition, using the per-site `line`/`col` recorded at ingest (see [graph schema](graph-schema.md#edge-site-properties)). |
 | `reference`  | `REFERENCES` and `INSTANTIATES` edges, the same way.            |
 | `import`     | `IMPORTS` edges whose `imported_name` is the symbol; the statement is retargeted by the [import rewriter](patchers.md#import-rewriting-for-rename-and-move), and an alias (`import helper as h`) is kept, so aliased call sites need no edit. |
+| `string`     | A string that is exactly the Python symbol's import path, `"pkg.core.helper"` or the entry-point form `"pkg.core:main"`, in a `.py`, `.toml`, `.cfg` or `.ini` file (an unquoted `pkg.core:main` in a config file too). This covers `mock.patch(...)`, `monkeypatch.setattr(...)`, `[project.scripts]` and `setup.cfg` entry points. The import path is taken from every import root, so `src/pkg/core.py` matches `pkg.core.helper`. Only a whole string literal or config value counts: a longer path, another module's path, a bare name, or prose around the path (in the same string, a comment or a longer value) is left as written. So is a path another module of the repository spells too (two apps each with a `pkg/core.py`) in a file under that module's import root rather than this one's. |
 
 Python modules that export the symbol through `__all__` (the defining module
 and any package `__init__` importing it) have the entry renamed too. Markdown
