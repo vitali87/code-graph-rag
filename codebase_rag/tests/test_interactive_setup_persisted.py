@@ -460,6 +460,56 @@ def test_a_saved_keep_inside_an_excluded_directory_keeps_nothing(
     assert "src/lib.py" in walked
 
 
+@pytest.fixture
+def negated(repo: Path) -> Path:
+    # A `.gitignore` with a `!` line: its lines are one ordered block, the
+    # last matching line deciding (issue #2835).
+    (repo / ".gitignore").write_text(
+        "results/\ngenerated/\nsrc/gen/*.py\n!src/gen/handwritten.py\n"
+    )
+    for rel in (
+        "results/run.py",
+        "generated/node_modules/m.py",
+        "src/gen/auto.py",
+        "src/gen/handwritten.py",
+    ):
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text("X = 1\n")
+    return repo
+
+
+def test_a_keep_of_a_line_in_a_gitignore_with_negations_is_saved(
+    negated: Path, console: MagicMock
+) -> None:
+    # The saved `!results/` cancels the block's `results/` line, as it does
+    # in a `.gitignore` without `!` lines, but the keep was reported blocked
+    # by the whole block. Rows: bin, generated, node_modules, results, src.
+    _, confirm_ask = _keep(negated, "4", confirm=True)
+
+    confirm_ask.assert_called_once()
+    assert "!results/" in (negated / CGRIGNORE_FILENAME).read_text().splitlines()
+    assert "Not kept" not in _printed(console)
+    walked = _walked(negated)
+    assert "results/run.py" in walked
+    # The rest of the block still applies, its `!` line included.
+    assert "src/gen/handwritten.py" in walked
+    assert "src/gen/auto.py" not in walked
+
+
+def test_a_keep_a_line_of_the_block_excludes_names_that_line(
+    negated: Path, console: MagicMock
+) -> None:
+    # Negative: a keep inside a directory the block excludes is still not
+    # saved, and the message names that line rather than the whole block.
+    _, confirm_ask = _keep(negated, "3", confirm=True)
+
+    confirm_ask.assert_not_called()
+    assert not (negated / CGRIGNORE_FILENAME).exists()
+    assert "Not kept: generated/node_modules (excluded by generated/)" in _printed(
+        console
+    )
+
+
 def test_concurrent_saves_both_keep_their_choice(
     vendored: Path, console: MagicMock
 ) -> None:

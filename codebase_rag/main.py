@@ -61,6 +61,7 @@ from .config import (
     CGRIGNORE_FILENAME,
     ModelConfig,
     approve_repo_instructions,
+    excludes_once_kept,
     load_ignore_patterns,
     provider_env_api_key,
     repo_instructions,
@@ -1989,12 +1990,13 @@ def prompt_for_unignored_directories(
     cgrignore = load_ignore_patterns(repo_path)
     cli_patterns = frozenset(cli_excludes) if cli_excludes else frozenset()
     # An ordered .gitignore block is offered by its exclude lines, as before.
-    pre_excluded = cli_patterns | {
+    exclude_lines = frozenset(
         line
         for pattern in cgrignore.exclude
         for line in ordered_block_lines(pattern)
         if not line.startswith("!")
-    }
+    )
+    pre_excluded = cli_patterns | exclude_lines
 
     if not detected and not pre_excluded:
         return cgrignore.unignore
@@ -2024,13 +2026,13 @@ def prompt_for_unignored_directories(
     # A path both excluded and unignored in `.cgrignore` is still excluded
     # (its excludes win), so it counts as new.
     _offer_to_save_keeps(
-        repo_path, kept - (cgrignore.unignore - cgrignore.exclude), cgrignore.exclude
+        repo_path, kept - (cgrignore.unignore - exclude_lines), exclude_lines
     )
     return kept | cgrignore.unignore
 
 
 def _offer_to_save_keeps(
-    repo_path: Path, new_keeps: frozenset[str], cgrignore_excludes: frozenset[str]
+    repo_path: Path, new_keeps: frozenset[str], exclude_lines: frozenset[str]
 ) -> None:
     """Offer to save new keeps to `.cgrignore` so later syncs keep them too.
 
@@ -2040,7 +2042,7 @@ def _offer_to_save_keeps(
     itself excludes needs that line removed, not a `!` line beside it:
     `.cgrignore` excludes beat its `!` lines (review of PR 2510).
     """
-    blocked = _keeps_still_excluded(new_keeps, cgrignore_excludes)
+    blocked = _keeps_still_excluded(repo_path, new_keeps)
     if blocked:
         listing = cs.SEPARATOR_COMMA_SPACE.join(
             cs.INTERACTIVE_BLOCKED_KEEP.format(
@@ -2059,7 +2061,7 @@ def _offer_to_save_keeps(
         return
     lines = [f"{cs.CGRIGNORE_UNIGNORE_PREFIX}{path}" for path in sorted(new_keeps)]
     listing = cs.SEPARATOR_COMMA_SPACE.join(lines)
-    lifted = sorted(new_keeps & cgrignore_excludes)
+    lifted = sorted(new_keeps & exclude_lines)
     lifted_listing = cs.SEPARATOR_COMMA_SPACE.join(lifted)
     prompt = cs.INTERACTIVE_PROMPT_SAVE_KEEPS.format(lines=listing)
     if lifted:
@@ -2101,21 +2103,24 @@ def _offer_to_save_keeps(
 
 
 def _keeps_still_excluded(
-    new_keeps: frozenset[str], excludes: frozenset[str]
+    repo_path: Path, new_keeps: frozenset[str]
 ) -> dict[str, list[str]]:
     """The keeps an exclusion other than their own line still matches.
 
     Saving lifts only an exclusion written exactly as the kept path. Another
-    one that matches it (`bin/` for a kept `app/bin`) still wins after the
-    save, on this run and every later sync, so the keep must not be reported
-    saved (Greptile review of PR 2510). Removing that line instead would
-    also bring in every other path it excludes, which nobody chose. A
-    blocked keep's own line stays, and may in turn block another, hence the
-    loop.
+    one that matches it (`bin/` for a kept `app/bin`, or `generated/` for a
+    kept `generated/node_modules`, since a `!` line cannot keep a path inside
+    an excluded directory) still wins after the save, on this run and every
+    later sync, so the keep must not be reported saved (Greptile review of
+    PR 2510). Removing that line instead would also bring in every other
+    path it excludes, which nobody chose. The ignore files are read as a
+    later sync reads them, so a `.gitignore` with `!` lines is judged line
+    by line too. A blocked keep's own line stays, and may in turn block
+    another, hence the loop.
     """
     blocked: dict[str, list[str]] = {}
     while True:
-        remaining = excludes - ((new_keeps - frozenset(blocked)) & excludes)
+        remaining = excludes_once_kept(repo_path, new_keeps - frozenset(blocked))
         found = {
             keep: patterns
             for keep in sorted(new_keeps)

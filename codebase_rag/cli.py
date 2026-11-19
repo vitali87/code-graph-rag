@@ -1176,8 +1176,9 @@ def _run_graph_sync(
     unignore_paths: frozenset[str] | None
     if interactive_setup:
         unignore_paths = prompt_for_unignored_directories(repo, exclude)
-        # Read again: a keep saved at the prompt may have removed a
-        # `.cgrignore` exclusion, and this run keeps it too (review of PR 2510).
+        # Read again: a keep saved at the prompt may have lifted an exclusion
+        # (a `.cgrignore` line it removed, or a `.gitignore` line its `!` line
+        # cancels), and this run keeps it too (review of PR 2510).
         cgrignore = load_ignore_patterns(repo)
     else:
         unignore_paths = cgrignore.unignore or None
