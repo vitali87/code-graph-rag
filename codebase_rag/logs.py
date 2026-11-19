@@ -60,6 +60,10 @@ CPP_FRONTEND_NO_COMPDB = (
     "bear -- make)"
 )
 CPP_FRONTEND_COVERED = "C/C++ libclang frontend covered {count} file(s)"
+CPP_FRONTEND_TU_LOAD_FAILED = (
+    "C/C++ libclang frontend could not parse {file} (compile directory "
+    "{directory}); its macros, includes and aliases are skipped"
+)
 CPP_FRONTEND_HYBRID_PENDING = (
     "C/C++ hybrid frontend queued {count} macro use(s) for span attribution"
 )
@@ -394,6 +398,15 @@ LOCALS_QUERY_FAILED = "Failed to create locals query for {lang}: {error}"
 GRAMMAR_LOADED = "Successfully loaded {lang} grammar."
 GRAMMAR_LOAD_FAILED = "Failed to load {lang} grammar: {error}"
 PARSERS_LAZY_READY = "Parser registry ready; grammars load on first use."
+# Once per sync, after every file was seen: files of a supported language
+# indexed as bare File nodes for want of its grammar (issue #2905).
+GRAMMARS_MISSING_FILES = (
+    "{count} file(s) ({languages}) were indexed as plain File nodes, with no "
+    "modules, functions, classes or imports: their tree-sitter grammars are "
+    "not installed. Install them, e.g. "
+    'pip install "code-graph-rag[treesitter-full]", then sync again.'
+)
+GRAMMARS_MISSING_LANGUAGE_COUNT = "{language}: {count}"
 LANG_LIST_AST_GREP_UNREADABLE = (
     "Cannot read the ast-grep tier's language configs, so its languages are "
     "left out of the list: {error}"
@@ -525,6 +538,10 @@ WATCHING = "Watching for changes in: {path} (project {project})"
 
 # Build logs
 BUILD_BINARY = "Building binary: {name}"
+# Not the grammar-bindings BUILD_SUCCESS / BUILD_FAILED above: those name a
+# language and take `lang`, which this build never passed (issue #2880).
+BUILD_BINARY_SUCCESS = "Successfully built binary {name}"
+BUILD_BINARY_FAILED = "Failed to build binary {name}: stdout={stdout}, stderr={stderr}"
 BUILD_PROGRESS = "This may take a few minutes..."
 BUILD_READY = "Binary is ready for distribution!"
 BINARY_INFO = "Binary: {path}"
@@ -576,6 +593,13 @@ MG_SET_WITHOUT_BACKEND = (
 MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
 MG_CONNECTED = "Successfully connected to Memgraph."
+MG_UNSUPPORTED_VERSION = (
+    "Memgraph {version} at {host}:{port} is not supported: cgr needs "
+    "{major}.x or later, and a query this server cannot parse fails with a "
+    "bare parser error (such as \"mismatched input '|'\" for a generated "
+    "query's label alternation). Run `cgr daemon up` to start the supported "
+    "server."
+)
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
 MG_DELIBERATE_EXIT = (
     "Command ended with {kind} inside the graph connection; closing it normally"

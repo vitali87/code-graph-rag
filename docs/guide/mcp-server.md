@@ -66,7 +66,7 @@ After adding or changing `CGR_CAPTURE`, restart the server and run
 ```bash
 git clone https://github.com/vitali87/code-graph-rag.git
 cd code-graph-rag
-uv sync
+uv sync --extra treesitter-full
 
 cgr daemon up
 ```
@@ -76,11 +76,11 @@ cgr daemon up
 <!-- SECTION:mcp_tools -->
 | Tool | Description |
 |----|-----------|
-| `list_projects` | List all indexed projects in the knowledge graph database. Returns a list of project names that have been indexed. |
+| `list_projects` | List all indexed projects in the knowledge graph database. Returns a list of project names that have been indexed. A server scoped to a workspace lists the workspace's indexed projects, and names the ones the graph does not hold in `not_indexed`, with a `hint` saying how to index them. |
 | `delete_project` | Delete a specific project from the knowledge graph database. This removes all nodes associated with the project while preserving other projects. Use list_projects first to see available projects. |
 | `wipe_database` | WARNING: Completely wipe the entire database, removing ALL indexed projects. This cannot be undone. Use delete_project for removing individual projects. |
-| `index_repository` | WARNING: Clears all data for the current project including its embeddings. Parse and ingest the repository into the Memgraph knowledge graph. Use update_repository for incremental updates. Only use when explicitly requested. |
-| `update_repository` | Update the repository in the Memgraph knowledge graph without clearing existing data. Use this for incremental updates. |
+| `index_repository` | WARNING: Clears all data for the current project including its embeddings. Parse and ingest the repository into the knowledge graph. Use update_repository for incremental updates. Only use when explicitly requested. |
+| `update_repository` | Update the repository in the knowledge graph without clearing existing data. Use this for incremental updates. |
 | `reingest` | Re-ingest specific files into the knowledge graph after editing them. Re-parses only the given files and the files that depend on them, and re-resolves calls in that set only; an edit that leaves a file's interface unchanged (a comment, or a function body no other file's resolution reads) re-parses no dependents at all. An edit lands in the graph in the time it takes to parse the affected dependents (hundreds of milliseconds for a typical file, seconds for a hub imported by dozens) instead of a full update_repository pass. Paths are relative to the project root; files that no longer exist are removed from the graph; paths the project's ignore rules exclude are skipped and reported rather than indexed. Repository-wide passes are not re-run: code-quality findings (smells, vulnerabilities, patterns) and URL-to-endpoint links are rebuilt only by update_repository. Returns the files re-parsed, the dependents re-parsed with them, the files removed, the paths skipped, and the elapsed milliseconds. |
 | `resolve` | Resolve a name or a location to qualified names in the graph. `target` is a qualified name, a bare name like `helper` or `Store.get`, or `path:line` (the file's path relative to the repository root or absolute inside it, a 1-based line, optionally `:col`) for the definitions spanning that line, innermost first; a file the project does not hold is refused with an error. Exact matches come first, then dotted-suffix matches, then same-name matches. Deterministic: fixed graph queries, no LLM, same graph gives the same JSON. Use this instead of query_code_graph whenever you know the exact name or location.  |
 | `definition` | File, line span, decorators, docstring and source of one definition by qualified name (`found` is false when the graph has no such node). `start_line` and `source` open at the first decorator; `name_line` is the line of its name (the `def`/`class` line). Deterministic: fixed graph queries, no LLM, same graph gives the same JSON. Use this instead of query_code_graph whenever you know the exact name or location.  |
@@ -227,6 +227,8 @@ claude mcp add --transport stdio code-graph-rag-workspace \
 ![A workspace server for the backend workspace added and connected, then list_projects showing only the workspace's two projects and resolve refusing a project outside it](../assets/demos/mcp-server-workspace.gif)
 
 A workspace server lists the workspace's indexed projects, refuses a `project` argument outside the workspace (naming the projects it serves), defaults a request without `project` to the repo rooted at `TARGET_REPO_PATH` or to the only repo, and reads source for each repo from its own root. The workspace narrows the choice only: a workspace repo that is not indexed is still refused as unknown, exactly as without a workspace, but the refusal's close matches and its list of indexed projects come from the workspace's own projects, never from others in the shared graph.
+
+`list_projects` names a workspace repo the graph does not hold under its project name in `not_indexed`, with a `hint` giving the command that indexes each one as its own project: `cgr start --repo-path PATH --project-name PROJECT --update-graph`. When the repo's code is in the graph under another project, the hint names it: a project indexed from the directory holding the repos (one project for all of them) or from the repo under another name.
 
 ## Troubleshooting
 

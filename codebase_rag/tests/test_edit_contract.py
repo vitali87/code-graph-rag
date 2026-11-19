@@ -350,6 +350,27 @@ def test_rename_fails_on_dangling_callers_and_caller_count() -> None:
     )
 
 
+def test_a_dangling_caller_at_its_base_line_says_so() -> None:
+    # CodeRabbit, PR #3245: a line the delta could not move to the working
+    # tree is the base ref's, and the failure must not pass it off as current.
+    expectation = rename_expectation(
+        [("p.pkg.util.helper", "p.pkg.util.assist")], False
+    )
+    verdict = verify(
+        expectation,
+        _delta(
+            symbols={"added": [], "removed": [], "renamed": RENAMED, "changed": []},
+            dangling_callers=[
+                {**_dangling(), cs.KEY_LINE_FROM: cs.DANGLING_LINE_FROM_BASE},
+                _dangling("main.py", 4),
+            ],
+        ),
+    )
+    assert verdict.failures == (
+        cs.CONTRACT_DANGLING.format(sites="pkg/app.py:5 (base), main.py:4"),
+    )
+
+
 def test_rename_fails_when_the_symbol_set_moved() -> None:
     expectation = rename_expectation(
         [("p.pkg.util.helper", "p.pkg.util.assist")], False

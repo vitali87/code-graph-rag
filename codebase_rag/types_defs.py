@@ -146,6 +146,12 @@ type SimpleNameLookup = defaultdict[SimpleName, set[QualifiedName]]
 
 NodeIdentifier = tuple[NodeLabel | str, str, str | None]
 
+# A local's type over part of a body: (start byte, end byte, name, type). The
+# call processor lays the innermost one holding a call over the flat
+# per-function map; `UNTYPED_SPAN_BINDING` as the type leaves the name untyped
+# there.
+SpanBinding = tuple[int, int, str, str]
+
 
 type ASTNode = Node
 
@@ -1110,6 +1116,9 @@ class ReingestToolResult(TypedDict, total=False):
 class ListProjectsSuccessResult(TypedDict):
     projects: list[str]
     count: int
+    # A workspace server's projects the graph does not hold, and why (#2867).
+    not_indexed: NotRequired[list[str]]
+    hint: NotRequired[str]
 
 
 class ListProjectsErrorResult(TypedDict):
