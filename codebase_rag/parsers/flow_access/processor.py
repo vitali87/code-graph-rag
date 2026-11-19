@@ -345,6 +345,16 @@ class _UndecidedCall(NamedTuple):
     sources: frozenset[str] | None
     sinks: frozenset[str] | None
 
+    def may_carry(self, flow: PriorResourceFlow) -> bool:
+        """Whether `flow` may still run through this call: it was composed
+        through one of the call's unwalked functions, and its ends match
+        the ones the call knows."""
+        return (
+            bool(self.through & set(flow.through))
+            and (self.sources is None or flow.src in self.sources)
+            and (self.sinks is None or flow.dst in self.sinks)
+        )
+
 
 class _LeanState(NamedTuple):
     # Path-sensitive state threaded through the lean (non-Python) walk: the taint
@@ -4884,6 +4894,25 @@ class FlowProcessor:
         # flow, or one through a call the edit removed, does not come back.
         if not self._prior_flows:
             return
+        patterns = self._undecided_calls(handoffs)
+        walked = self._walked
+        for scope, flows in self._prior_flows.items():
+            if scope not in walked or not (scope_patterns := patterns.get(scope)):
+                continue
+            for flow in sorted(flows):
+                if any(call.may_carry(flow) for call in scope_patterns):
+                    self._add_composed(
+                        (flow.src, flow.src_name, flow.src_kind),
+                        (flow.dst, flow.dst_name, flow.dst_kind),
+                        flow.scope,
+                        set(flow.through),
+                    )
+
+    def _undecided_calls(
+        self, handoffs: _HandoffIndex
+    ) -> dict[str, list[_UndecidedCall]]:
+        """Per scope, the calls this run made that go through a function it
+        did not walk: a parameter hand-off or a pending return."""
         patterns: dict[str, list[_UndecidedCall]] = defaultdict(list)
         walked = self._walked
         for taint, callee_qn, via, _token, scope in self._param_call_sites:
@@ -4903,22 +4932,7 @@ class FlowProcessor:
                 patterns[scope].append(
                     _UndecidedCall(frozenset(unwalked), None, frozenset({sink}))
                 )
-        for scope, flows in self._prior_flows.items():
-            if scope not in walked or not (scope_patterns := patterns.get(scope)):
-                continue
-            for flow in sorted(flows):
-                if any(
-                    call.through & set(flow.through)
-                    and (call.sources is None or flow.src in call.sources)
-                    and (call.sinks is None or flow.dst in call.sinks)
-                    for call in scope_patterns
-                ):
-                    self._add_composed(
-                        (flow.src, flow.src_name, flow.src_kind),
-                        (flow.dst, flow.dst_name, flow.dst_kind),
-                        flow.scope,
-                        set(flow.through),
-                    )
+        return patterns
 
     def _resource_qn(self, binding: HandleBinding) -> str:
         return resource_qn(binding.kind, binding.identity, self._project_name)
