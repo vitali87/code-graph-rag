@@ -1028,6 +1028,10 @@ RENAME_OVERRIDE_ALSO_OUTSIDE = (
 RENAME_IMPLEMENTS_OUTSIDE = (
     "{qn} implements {name} of {supertypes}, outside the project"
 )
+RENAME_INHERITED_IMPLEMENTS_OUTSIDE = (
+    "{qn} is inherited by {subclass}, which implements {name} of {supertypes}, "
+    "outside the project, through it"
+)
 # The columns of CYPHER_RENAME_OVERRIDE_FACTS that are no node property.
 RENAME_FACT_BASES = "bases"
 RENAME_FACT_OUTSIDE_SUPERTYPES = "outside_supertypes"

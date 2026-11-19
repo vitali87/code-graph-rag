@@ -1738,6 +1738,12 @@ CYPHER_RENAME_SUPERTYPES = """MATCH (c)-[:INHERITS|IMPLEMENTS]->(s)
 WHERE c.qualified_name IN $qns AND c.qualified_name STARTS WITH $project_prefix
 RETURN DISTINCT c.qualified_name AS qualified_name,
        s.qualified_name AS supertype, labels(s) AS labels"""
+# The project classes that directly extend or implement any of `$qns`, a
+# step of the rename's walk down to the classes that inherit a renamed member
+# (`Task extends Base implements Runnable`, where only `Base` declares `run()`).
+CYPHER_RENAME_SUBTYPES = """MATCH (c)-[:INHERITS|IMPLEMENTS]->(s)
+WHERE s.qualified_name IN $qns AND c.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT c.qualified_name AS qualified_name"""
 CYPHER_GRAPH_OVERRIDES = """MATCH (a)-[r:OVERRIDES]-(b)
 WHERE b.qualified_name = $qn AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS label, a.qualified_name AS qualified_name, a.path AS path,

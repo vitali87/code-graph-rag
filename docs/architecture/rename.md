@@ -108,7 +108,9 @@ chain that does not define the method itself
 asks no `@Override` of an implementation, so an unmarked method also refuses
 when its class implements a JDK type that declares its name (`run()` of
 `Runnable` or `Thread`, `compareTo()`, `close()`, `call()`, `iterator()`),
-even when only a subclass's override carries the marker. Pass
+even when only a subclass's override carries the marker, and when a project
+class below it that does not declare the method implements one through it
+(`Task extends Base implements Runnable`, with `run()` only in `Base`). Pass
 `--allow-external-override` (`allow_external_override: true`) when renaming
 it is the intent (issue #3226).
 

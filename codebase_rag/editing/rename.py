@@ -1726,19 +1726,12 @@ class Renamer:
             for row in facts.values()
             if isinstance(owner := row.get(cs.RENAME_FACT_OWNER), str)
         }
-        reasons: list[str] = []
-        for member, row in facts.items():
-            owner = row.get(cs.RENAME_FACT_OWNER)
-            if isinstance(owner, str):
-                row = dict(row)
-                # A display, not the bare `sorted` list: the row's lists hold
-                # `ResultScalar`, and a `list[str]` is not one (lists are
-                # invariant).
-                row[cs.RENAME_FACT_OUTSIDE_SUPERTYPES] = [
-                    *sorted(self._outside_supertypes(owner, owners, prefix))
-                ]
-            if (reason := _external_override_reason(member, row)) is not None:
-                reasons.append(reason)
+        reasons = [
+            reason
+            for member, row in facts.items()
+            if (reason := self._member_override_reason(member, row, owners, prefix))
+            is not None
+        ]
         if reasons:
             raise RenameRefused(
                 cs.RENAME_EXTERNAL_OVERRIDE.format(
@@ -1749,6 +1742,65 @@ class Renamer:
                 [],
                 [],
             )
+
+    def _member_override_reason(
+        self, member: str, row: ResultRow, owners: set[str], prefix: str
+    ) -> str | None:
+        """Why renaming `member` would stop it answering something outside
+        the project, or None."""
+        owner = row.get(cs.RENAME_FACT_OWNER)
+        if not isinstance(owner, str):
+            return _external_override_reason(member, row)
+        row = dict(row)
+        # A display, not the bare `sorted` list: the row's lists hold
+        # `ResultScalar`, and a `list[str]` is not one (lists are invariant).
+        row[cs.RENAME_FACT_OUTSIDE_SUPERTYPES] = [
+            *sorted(self._outside_supertypes(owner, owners, prefix))
+        ]
+        if (reason := _external_override_reason(member, row)) is not None:
+            return reason
+        name = str(row.get(cs.KEY_NAME) or member.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        return self._inherited_contract_reason(member, name, owner, owners, prefix)
+
+    def _inherited_contract_reason(
+        self, qn: str, name: str, owner: str, owners: set[str], prefix: str
+    ) -> str | None:
+        """Why a project class that inherits `qn` needs its name, or None.
+
+        `Task extends Base implements Runnable` declares no `run()`: the one
+        it inherits from `Base` implements `Runnable`, so renaming `Base.run()`
+        leaves `Task` owing it, though `Base` itself implements nothing. A
+        class that declares a member of the hierarchy answers for itself and
+        the classes below it. Only a JDK contract method's name can be owed
+        this way, so other names skip the walk.
+        """
+        if not any(name in names for names in cs.JAVA_STDLIB_CONTRACT_METHODS.values()):
+            return None
+        seen = {owner}
+        frontier = [owner]
+        while frontier:
+            step: list[str] = []
+            for row in self.fetch_all(
+                cq.CYPHER_RENAME_SUBTYPES,
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: frontier},
+            ):
+                subclass = row.get(cs.KEY_QUALIFIED_NAME)
+                if not isinstance(subclass, str) or subclass in seen | owners:
+                    continue
+                seen.add(subclass)
+                declaring = _contract_declarers(
+                    name, sorted(self._outside_supertypes(subclass, owners, prefix))
+                )
+                if declaring:
+                    return cs.RENAME_INHERITED_IMPLEMENTS_OUTSIDE.format(
+                        qn=qn,
+                        subclass=subclass,
+                        name=name,
+                        supertypes=cs.SEPARATOR_COMMA_SPACE.join(declaring),
+                    )
+                step.append(subclass)
+            frontier = step
+        return None
 
     def _outside_supertypes(self, owner: str, stops: set[str], prefix: str) -> set[str]:
         """The supertypes outside the project that `owner` extends or
@@ -2713,16 +2765,21 @@ def _implemented_outside(qn: str, name: str, supertypes: list[str]) -> str | Non
     marked `Leaf.run()` would also refuse `Sub.plain()` over `Task
     implements Runnable`, the same shape; only the name tells them apart.
     """
-    declaring = [
-        supertype
-        for supertype in supertypes
-        if name in cs.JAVA_STDLIB_CONTRACT_METHODS.get(supertype, frozenset())
-    ]
+    declaring = _contract_declarers(name, supertypes)
     if not declaring:
         return None
     return cs.RENAME_IMPLEMENTS_OUTSIDE.format(
         qn=qn, name=name, supertypes=cs.SEPARATOR_COMMA_SPACE.join(declaring)
     )
+
+
+def _contract_declarers(name: str, supertypes: list[str]) -> list[str]:
+    """The JDK types among `supertypes` whose contract requires `name`."""
+    return [
+        supertype
+        for supertype in supertypes
+        if name in cs.JAVA_STDLIB_CONTRACT_METHODS.get(supertype, frozenset())
+    ]
 
 
 def _override_marker(row: ResultRow) -> str | None:

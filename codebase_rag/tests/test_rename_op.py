@@ -139,6 +139,21 @@ class RecordedGraph:
                     }
                 )
             ]
+        if query == cq.CYPHER_RENAME_SUBTYPES:
+            prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
+            wanted = {str(q) for q in p.get(cs.KEY_QNS) or []}
+            return [
+                {cs.KEY_QUALIFIED_NAME: src}
+                for src in sorted(
+                    {
+                        src
+                        for src, rel, dst, _props in self.edges
+                        if dst in wanted
+                        and src.startswith(prefix)
+                        and rel in ("INHERITS", "IMPLEMENTS")
+                    }
+                )
+            ]
         if query == cq.CYPHER_GRAPH_RESOLVE_NAME:
             # The rename's cross-check asks for the symbol's namesakes, whose
             # sites are theirs and not unplanned occurrences (issue #2564).

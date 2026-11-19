@@ -1066,6 +1066,30 @@ class _StatefulIngestor:
                 }
         return [rows[key] for key in sorted(rows)]
 
+    def _rename_subtype_rows(self, params: PropertyDict) -> list[ResultRow]:
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        wanted = params.get(cs.KEY_QNS)
+        qns = {_str(q) for q in wanted} if isinstance(wanted, list) else set()
+        sources: set[str] = set()
+        for (label, uid), edges in self._out.items():
+            source = _str(self.nodes.get((label, uid), {}).get(cs.KEY_QUALIFIED_NAME))
+            if not source.startswith(prefix):
+                continue
+            for edge in edges:
+                if edge[2] not in (
+                    cs.RelationshipType.INHERITS.value,
+                    cs.RelationshipType.IMPLEMENTS.value,
+                ):
+                    continue
+                target = _str(
+                    self.nodes.get((edge[3], edge[4]), {}).get(
+                        cs.KEY_QUALIFIED_NAME, edge[4]
+                    )
+                )
+                if target in qns:
+                    sources.add(source)
+        return [{cs.KEY_QUALIFIED_NAME: source} for source in sorted(sources)]
+
     def _project_rows(self) -> list[ResultRow]:
         return [
             {
@@ -1521,6 +1545,8 @@ class _StatefulIngestor:
                 return self._go_implementers_unknown_rows(params or {})
             case cq.CYPHER_RENAME_SUPERTYPES:
                 return self._rename_supertype_rows(params or {})
+            case cq.CYPHER_RENAME_SUBTYPES:
+                return self._rename_subtype_rows(params or {})
             case (
                 cq.CYPHER_CONTEXT_HOTNESS
                 | cq.CYPHER_CONTEXT_TYPES

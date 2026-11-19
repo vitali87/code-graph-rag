@@ -402,3 +402,64 @@ def test_the_same_pair_without_an_outside_contract_still_renames(
         f"{graph.project}.Leaf.Leaf.run()",
         f"{graph.project}.Base.Base.run()",
     }, report.hierarchy
+
+
+# `Task` declares no `run()`: it implements Runnable through the `run()` it
+# inherits from `Base`, which implements nothing. Renaming `Base.run()` left
+# `Task` owing `Runnable.run()`, and Java no longer compiled it (Greptile, PR
+# #3234).
+_JAVA_INHERITED = {
+    "Base.java": "public class Base {\n    public void run() {}\n}\n",
+    "Task.java": "public class Task extends Base implements Runnable {\n}\n",
+}
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        _JAVA_INHERITED,
+        {
+            "Base.java": _JAVA_INHERITED["Base.java"],
+            "Mid.java": "public class Mid extends Base {\n}\n",
+            "Task.java": "public class Task extends Mid implements Runnable {\n}\n",
+        },
+    ],
+    ids=["direct", "through-a-class-between"],
+)
+def test_a_subclass_that_meets_a_jdk_contract_with_the_inherited_method_is_refused(
+    temp_repo: Path, mock_ingestor: MagicMock, files: dict[str, str]
+) -> None:
+    graph = _java_repo(temp_repo, mock_ingestor, files)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "Base.Base.run()", "execute")
+    message = str(refused.value)
+    assert f"inherited by {graph.project}.Task.Task" in message, message
+    assert "java.lang.Runnable" in message, message
+    assert "allow-external-override" in message or "allow_external_override" in (
+        message
+    ), message
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        "public class Task extends Base {\n}\n",
+        "public class Task extends Base implements Runnable {\n"
+        "    @Override\n    public void run() {}\n}\n",
+    ],
+    ids=["no-contract", "declares-its-own-run"],
+)
+def test_a_subclass_that_owes_no_contract_through_it_still_renames(
+    temp_repo: Path, mock_ingestor: MagicMock, task: str
+) -> None:
+    # Negatives: `Task` implements nothing, or declares its own `run()`,
+    # which overrides `Base.run()` and renames with it: `Task.run()` is the
+    # one that answers `Runnable` and is held to the marker rule instead.
+    graph = _java_repo(temp_repo, mock_ingestor, {**_JAVA_INHERITED, "Task.java": task})
+    if "Override" in task:
+        with pytest.raises(RenameRefused) as refused:
+            _plan(temp_repo, graph, "Base.Base.run()", "execute")
+        assert "inherited by" not in str(refused.value), refused.value
+        return
+    report = _plan(temp_repo, graph, "Base.Base.run()", "execute")
+    assert "public void execute()" in report.diff, report.diff
