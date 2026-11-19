@@ -218,6 +218,14 @@ _MCP_DETERMINISTIC_NOTE = (
     "JSON. Use this instead of query_code_graph whenever you know the exact "
     "name or location. "
 )
+_MCP_COLUMNS_NOTE = (
+    "`col` and `end_col` are 0-based UTF-8 byte offsets into the line; "
+    "`col_char` and `end_col_char` are the same positions in characters "
+    "(Unicode code points, what string indexing counts), absent when the file "
+    "cannot be read from this server's checkout of the project or is a Java "
+    "source of a Lombok build, which may have been parsed from its delombok "
+    "expansion. "
+)
 MCP_RESOLVE = (
     "Resolve a name or a location to qualified names in the graph. `target` is "
     "a qualified name, a bare name like `helper` or `Store.get`, or "
@@ -238,6 +246,7 @@ MCP_CALLERS = (
     "caller, file, line, column, argument count and keyword names taken from "
     "the CALLS edges; `depth` > 1 follows the callers' callers (`through` "
     "names the callee each site invokes, `callee_path` its file). "
+    + _MCP_COLUMNS_NOTE
     + _MCP_DETERMINISTIC_NOTE
 )
 MCP_CALLEES = (
@@ -245,6 +254,7 @@ MCP_CALLEES = (
     "the location of the call: `path` is the file holding the site's `line` "
     "and `col` (the caller's, named by `through`) and `callee_path` the file "
     "defining the callee; `depth` > 1 follows the callees' callees. "
+    + _MCP_COLUMNS_NOTE
     + _MCP_DETERMINISTIC_NOTE
 )
 MCP_IMPLEMENTORS = (
@@ -267,7 +277,9 @@ MCP_IMPORTERS = (
     "`through_reexports` is true: then also the modules that reach it through "
     "a re-export (a package `__init__.py`, a Rust `pub use`, an `index.ts` "
     "barrel), each row with `via`, the import statements it came through, "
-    "consumer side first (empty for a direct importer). " + _MCP_DETERMINISTIC_NOTE
+    "consumer side first (empty for a direct importer). "
+    + _MCP_COLUMNS_NOTE
+    + _MCP_DETERMINISTIC_NOTE
 )
 MCP_PARAM_ENDPOINT_TARGET = (
     "The handler's qualified name, or the endpoint identity (`GET /users/{id}`) "

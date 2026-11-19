@@ -94,8 +94,9 @@ KEY_END_LINE = "end_line"
 # Edge-site location properties (issue #1522). Every CALLS / REFERENCES /
 # INSTANTIATES edge records the span of the expression that produced it, and
 # every IMPORTS edge the span of its import statement, so a consumer can jump
-# to, verify, or rewrite the exact site. Lines are 1-based and columns 0-based,
-# matching the node `start_line` / `start_col` convention. Sites are stored as
+# to, verify, or rewrite the exact site. Lines are 1-based and columns 0-based
+# UTF-8 byte offsets into the line, as tree-sitter counts them, matching the
+# node `start_line` / `start_col` convention (issue #3162). Sites are stored as
 # ONE EDGE PER SITE: the site props join the MERGE key (see
 # MERGE_KEY_PROPS_BY_REL), so a caller invoking one callee twice carries two
 # parallel edges. Edges emitted without a site (libclang macro uses, Roslyn
@@ -184,6 +185,12 @@ KEY_SUFFIX = "suffix"
 KEY_VARIANT_PREFIX = "variant_prefix"
 KEY_COL = "col"
 KEY_END_COL = "end_col"
+# What `cgr graph` and its MCP tools answer beside `col` and `end_col`: the same
+# position counted in characters (Unicode code points) of the line, the column
+# an editor or a `str` index uses. Derived from the file when the answer is
+# read and never stored (issue #3162).
+KEY_COL_CHAR = "col_char"
+KEY_END_COL_CHAR = "end_col_char"
 KEY_ARG_COUNT = "arg_count"
 KEY_KWARG_NAMES = "kwarg_names"
 # Call-site flags, present (true) only when the argument list unpacks a
