@@ -28,6 +28,7 @@ from ..dart.utils import (
 from ..import_processor import ImportProcessor
 from ..io_access import (
     DYNAMIC_TARGET,
+    IO_HANDLE_CONSTRUCTORS,
     IO_MACRO_SINKS,
     IO_MEMBER_READS,
     IO_SINKS,
@@ -58,6 +59,7 @@ from ..io_access import (
     positional_arg_node,
     python_name_binding_sites,
     python_name_shadowed_at,
+    python_stream_target,
     registry_match,
     rust_unwrap_result,
     scope_seed_nodes,
@@ -4369,10 +4371,13 @@ class FlowProcessor:
         # taint (issue #2588). A first-party callee never gets here: it keeps
         # its return summary. A write sink returns nothing of its payload and a
         # taint-clearing call nothing of its input, so both yield no operands.
-        if (
-            registry_match(ctx.write_sinks, raw, ctx.import_map) is not None
-            or registry_match(_PY_TAINT_CLEARING_CALLS, raw, ctx.import_map) is not None
-        ):
+        # A command runner returns the command's output, which can echo its
+        # arguments back (`print(check_output(["echo", token]))`), so it keeps
+        # them (Greptile review of PR 3108).
+        write_sink = registry_match(ctx.write_sinks, raw, ctx.import_map)
+        if (write_sink is not None and not write_sink.returns_output) or registry_match(
+            _PY_TAINT_CLEARING_CALLS, raw, ctx.import_map
+        ) is not None:
             return []
         operands: list[Node] = []
         func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
@@ -4591,9 +4596,19 @@ class FlowProcessor:
             return
         sink = registry_match(ctx.write_sinks, raw, ctx.import_map)
         if sink is not None:
-            dst_identity = literal_target(node, sink.target_arg, sink.target_kw)
-            for taint, _via in arg_taints:
-                self._flow_taint_into_sink(taint, sink.kind, dst_identity, ctx)
+            dst = self._write_sink_target(node, sink, ctx)
+            if dst is None:
+                return
+            kind, dst_identity = dst
+            # The stream argument is where the data goes, not data itself.
+            stream_via = (
+                None
+                if sink.stream_kw is None
+                else VIA_KW_FORMAT.format(name=sink.stream_kw)
+            )
+            for taint, via in arg_taints:
+                if via != stream_via:
+                    self._flow_taint_into_sink(taint, kind, dst_identity, ctx)
             return
         callee = self._resolve(
             raw,
@@ -4607,6 +4622,19 @@ class FlowProcessor:
             return
         for taint, via in arg_taints:
             self._flow_arg_into_callee(taint, via, callee, node, ctx)
+
+    @staticmethod
+    def _write_sink_target(
+        node: Node, sink: IOSink, ctx: _FlowCtx
+    ) -> tuple[ResourceKind, str] | None:
+        if sink.stream_kw is None:
+            return sink.kind, literal_target(node, sink.target_arg, sink.target_kw)
+        # `print(x, file=...)` writes where `file=` says (issue #2776); a
+        # named stream's binding is looked up in the enclosing scope.
+        ctor_by_name = {
+            c.callee: c for c in IO_HANDLE_CONSTRUCTORS.get(ctx.language, ())
+        }
+        return python_stream_target(node, sink, ctx.import_map, ctor_by_name)
 
     def _flow_taint_into_sink(
         self, taint: Taint, kind: ResourceKind, dst_identity: str, ctx: _FlowCtx

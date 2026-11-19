@@ -60,6 +60,10 @@ CPP_FRONTEND_NO_COMPDB = (
     "bear -- make)"
 )
 CPP_FRONTEND_COVERED = "C/C++ libclang frontend covered {count} file(s)"
+CPP_FRONTEND_TU_LOAD_FAILED = (
+    "C/C++ libclang frontend could not parse {file} (compile directory "
+    "{directory}); its macros, includes and aliases are skipped"
+)
 CPP_FRONTEND_HYBRID_PENDING = (
     "C/C++ hybrid frontend queued {count} macro use(s) for span attribution"
 )
@@ -580,6 +584,13 @@ MG_SET_WITHOUT_BACKEND = (
 MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
 MG_CONNECTED = "Successfully connected to Memgraph."
+MG_UNSUPPORTED_VERSION = (
+    "Memgraph {version} at {host}:{port} is not supported: cgr needs "
+    "{major}.x or later, and a query this server cannot parse fails with a "
+    "bare parser error (such as \"mismatched input '|'\" for a generated "
+    "query's label alternation). Run `cgr daemon up` to start the supported "
+    "server."
+)
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
 MG_DELIBERATE_EXIT = (
     "Command ended with {kind} inside the graph connection; closing it normally"
