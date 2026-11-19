@@ -360,3 +360,45 @@ def test_a_library_supertype_counts_in_a_project_named_like_its_package(
     with pytest.raises(RenameRefused) as refused:
         _plan(root, graph, "Task.Task.run()", "execute")
     assert "java.lang.Runnable" in str(refused.value), refused.value
+
+
+# `Base.run()` implements Runnable without @Override, and only its subclass's
+# `Leaf.run()` carries the marker: the rename would leave `Base` owing
+# `Runnable.run()`.
+_JAVA_UNMARKED_BASE = {
+    "Base.java": (
+        "public class Base implements Runnable {\n    public void run() {}\n}\n"
+    ),
+    "Leaf.java": (
+        "public class Leaf extends Base {\n    @Override\n    public void run() {}\n}\n"
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "member", ["Leaf.Leaf.run()", "Base.Base.run()"], ids=["override", "its-base"]
+)
+def test_an_outside_contract_of_an_unmarked_base_is_refused(
+    temp_repo: Path, mock_ingestor: MagicMock, member: str
+) -> None:
+    graph = _java_repo(temp_repo, mock_ingestor, _JAVA_UNMARKED_BASE)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, member, "execute")
+    assert "java.lang.Runnable" in str(refused.value), refused.value
+
+
+@pytest.mark.parametrize(
+    "member", ["Leaf.Leaf.run()", "Base.Base.run()"], ids=["override", "its-base"]
+)
+def test_the_same_pair_without_an_outside_contract_still_renames(
+    temp_repo: Path, mock_ingestor: MagicMock, member: str
+) -> None:
+    # Negative: `Base` implements nothing, so the pair renames together.
+    files = dict(_JAVA_UNMARKED_BASE)
+    files["Base.java"] = "public class Base {\n    public void run() {}\n}\n"
+    graph = _java_repo(temp_repo, mock_ingestor, files)
+    report = _plan(temp_repo, graph, member, "execute")
+    assert set(report.hierarchy) == {
+        f"{graph.project}.Leaf.Leaf.run()",
+        f"{graph.project}.Base.Base.run()",
+    }, report.hierarchy

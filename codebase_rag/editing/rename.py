@@ -2524,12 +2524,33 @@ def _external_override_reason(qn: str, row: ResultRow) -> str | None:
         return None
     marker = _override_marker(row)
     if marker is None:
-        return None
+        return _implemented_outside(qn, name, supertypes)
     if row.get(cs.RENAME_FACT_BASES):
         return cs.RENAME_OVERRIDE_ALSO_OUTSIDE.format(
             qn=qn, marker=marker, supertypes=cs.SEPARATOR_COMMA_SPACE.join(supertypes)
         )
     return cs.RENAME_UNMATCHED_OVERRIDE.format(qn=qn, marker=marker)
+
+
+def _implemented_outside(qn: str, name: str, supertypes: list[str]) -> str | None:
+    """Why an unmarked member is the implementation of a JDK contract.
+
+    `Base implements Runnable` with an unmarked `run()`, and `Leaf extends
+    Base` with `@Override run()`: `Base.run()` explains the marker, so no
+    marker points at `Runnable`. Carrying `Base`'s supertypes down to the
+    marked `Leaf.run()` would also refuse `Sub.plain()` over `Task
+    implements Runnable`, the same shape; only the name tells them apart.
+    """
+    declaring = [
+        supertype
+        for supertype in supertypes
+        if name in cs.JAVA_STDLIB_CONTRACT_METHODS.get(supertype, frozenset())
+    ]
+    if not declaring:
+        return None
+    return cs.RENAME_IMPLEMENTS_OUTSIDE.format(
+        qn=qn, name=name, supertypes=cs.SEPARATOR_COMMA_SPACE.join(declaring)
+    )
 
 
 def _override_marker(row: ResultRow) -> str | None:

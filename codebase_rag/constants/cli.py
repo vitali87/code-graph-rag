@@ -1015,6 +1015,9 @@ RENAME_OVERRIDE_ALSO_OUTSIDE = (
     "{qn} is marked {marker} and its class also extends or implements "
     "{supertypes}, outside the project, which may declare it"
 )
+RENAME_IMPLEMENTS_OUTSIDE = (
+    "{qn} implements {name} of {supertypes}, outside the project"
+)
 # The columns of CYPHER_RENAME_OVERRIDE_FACTS that are no node property.
 RENAME_FACT_BASES = "bases"
 RENAME_FACT_OUTSIDE_SUPERTYPES = "outside_supertypes"

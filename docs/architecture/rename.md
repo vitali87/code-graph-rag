@@ -102,7 +102,11 @@ overrides no method in the project, or whose class also extends or
 implements a type outside the project that may declare it, directly
 (`Task extends Base implements Runnable`) or through a project class up its
 chain that does not define the method itself
-(`Task extends Bridge`, `Bridge extends Base implements Runnable`). Pass
+(`Task extends Bridge`, `Bridge extends Base implements Runnable`). Java
+asks no `@Override` of an implementation, so an unmarked method also refuses
+when its class implements a JDK type that declares its name (`run()` of
+`Runnable` or `Thread`, `compareTo()`, `close()`, `call()`, `iterator()`),
+even when only a subclass's override carries the marker. Pass
 `--allow-external-override` (`allow_external_override: true`) when renaming
 it is the intent (issue #3226).
 
