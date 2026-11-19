@@ -24,9 +24,10 @@ pytestmark = [pytest.mark.anyio, pytest.mark.integration]
 CORE = (
     "def helper(x):\n    return x + 1\n\n\ndef compute(x):\n    return helper(x) * 2\n"
 )
-# `lonely` is called without being imported: a name-only, heuristic site.
-UTIL = "def lonely():\n    return 1\n"
-APP = "def run():\n    return lonely()\n"
+# `obj` has no known type, so `obj.lonely()` binds to `Box.lonely` by name
+# alone: a heuristic site. A bare call to an unimported name binds to nothing.
+UTIL = "class Box:\n    def lonely(self):\n        return 1\n"
+APP = "def run(obj):\n    return obj.lonely()\n"
 INCOMPLETE = "failed part way"
 
 
@@ -103,7 +104,7 @@ async def test_graph_tools_still_answer_after_a_rename_preview(
     ("target", "refusal"),
     [
         ("pkg.core.helpr", "No definition named"),
-        ("pkg.util.lonely", "resolved heuristically"),
+        ("pkg.util.Box.lonely", "resolved heuristically"),
     ],
 )
 async def test_a_refused_rename_leaves_no_marker(
@@ -121,7 +122,7 @@ async def test_a_second_preview_still_plans_after_a_refusal(
     indexed: tuple[MCPToolsRegistry, str],
 ) -> None:
     server, project = indexed
-    await server.rename(f"{project}.pkg.util.lonely", "renamed")
+    await server.rename(f"{project}.pkg.util.Box.lonely", "renamed")
 
     result = await server.rename(f"{project}.pkg.core.helper", "helper2", dry_run=True)
 
