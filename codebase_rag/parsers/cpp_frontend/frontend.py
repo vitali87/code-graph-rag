@@ -88,6 +88,18 @@ def _has_internal_linkage(cursor: Cursor) -> bool:
         return False
 
 
+def _included_file_name(cursor: Cursor) -> str | None:
+    # An `#include` libclang could not find (a system header with no
+    # sysroot, a missing file) has a NULL included file, and the libclang 18
+    # bindings assert on it rather than return None. Such a directive has no
+    # FileInclusion to locate, so the caller skips it.
+    try:
+        included = cursor.get_included_file()
+    except AssertionError:
+        return None
+    return included.name or None
+
+
 def _classify(cursor: Cursor) -> str | None:
     kind = cursor.kind.name
     if kind in fc.CLASS_KIND_NAMES:
@@ -192,9 +204,7 @@ class _Collector:
         # Keyed by the header the directive resolved to as well: an unguarded
         # header holding `#include CHOSEN` is expanded once per inclusion, and
         # each expansion's directive sits on the same file and line.
-        self._include_directives: dict[
-            tuple[str, int, str | None], tuple[int, int, str]
-        ] = {}
+        self._include_directives: dict[tuple[str, int, str], tuple[int, int, str]] = {}
         # (including module qn, included module qn, line, col, alias, written
         # path): one IMPORTS edge per located `#include`.
         self._include_sites: set[tuple[str, str, int, int, str, str]] = set()
@@ -612,9 +622,10 @@ class _Collector:
         if cursor.location.file is None:
             return
         start = cursor.location.line
+        target = _included_file_name(cursor)
+        if target is None:
+            return
         directive = (start, cursor.location.column - 1, cursor.spelling)
-        included = cursor.get_included_file()
-        target = included.name if included is not None else None
         for line in range(start, max(start, cursor.extent.end.line) + 1):
             self._include_directives[(cursor.location.file.name, line, target)] = (
                 directive

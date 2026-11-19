@@ -892,6 +892,31 @@ def test_hybrid_include_expanded_twice_keeps_each_targets_name(
         )
 
 
+def test_hybrid_unfound_include_leaves_the_found_one_located(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # libclang finds no missing.h, so that directive has no included file
+    # (the bindings assert on reading it): the run must go on, and the
+    # include beside it keep its located edge.
+    root = temp_repo / "hybmissing"
+    root.mkdir()
+    (root / "base.h").write_text(_DUP_BASE_H, encoding="utf-8")
+    (root / "calc.cpp").write_text(
+        '#include "missing.h"\n#include "base.h"\n'
+        "int cap(int n) { return n > LIMIT ? LIMIT : n; }\n",
+        encoding="utf-8",
+    )
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "calc.cpp")]), encoding="utf-8"
+    )
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    sites = _sites(
+        store, cs.RelationshipType.IMPORTS, "hybmissing.calc", "hybmissing.base"
+    )
+    assert sites == [{cs.KEY_LINE: 2, cs.KEY_COL: 0, cs.KEY_ALIAS: "base"}], sites
+
+
 def _write_two_limits(root: Path, use_h: str, one: str, two: str) -> None:
     root.mkdir()
     (root / "a.h").write_text("#define LIMIT 3\n", encoding="utf-8")
