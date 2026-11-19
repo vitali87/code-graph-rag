@@ -2570,10 +2570,12 @@ class _Spelling(NamedTuple):
 # A quoted config value is the whole value: after `key =`, an array's `[` or
 # `,`, or alone on its line, and followed by nothing but a separator or a
 # comment. An unquoted entry point (`setup.cfg`) is everything after `=`, an
-# extras list and a comment aside.
+# extras list and a comment aside. The space after the extras list belongs to
+# the list, so a run of spaces with no list has one way to match, not one per
+# split between two `\s*`, and a long one is read in linear time.
 _VALUE_BEFORE = re.compile(r"(?:^|[=\[,{])\s*$")
 _VALUE_AFTER = re.compile(r"\s*(?:$|[,\]}#;])")
-_BARE_VALUE_AFTER = re.compile(r"\s*(?:\[[^\]]*\])?\s*(?:[#;].*)?$")
+_BARE_VALUE_AFTER = re.compile(r"\s*(?:\[[^\]]*\]\s*)?(?:[#;].*)?$")
 # Keeps every byte a lone undecodable byte occupied, so an offset in the
 # decoded text maps back to the same offset in the file.
 _EXACT_BYTES = "surrogateescape"

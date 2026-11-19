@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.editing.rename import rename
+from codebase_rag.editing.rename import _BARE_VALUE_AFTER, rename
 from codebase_rag.tests.test_rename_op import _index, _write
 
 _CORE = (
@@ -269,3 +269,48 @@ def test_a_file_the_ignore_files_leave_out_is_left_alone(
     assert 'renstr = "pkg.core:run_main"' in (repo / "pyproject.toml").read_text()
     assert (repo / "fixtures" / "config.toml").read_text() == saved
     assert (repo / "local.toml").read_text() == saved
+
+
+_LONG = 50_000
+
+
+@pytest.mark.parametrize(
+    ("after", "whole"),
+    [
+        # What follows an unquoted entry point in the cases above, and the
+        # extras list and comment allowed after it: each reads as it did with
+        # the earlier pattern, `\s*(?:\[[^\]]*\])?\s*(?:[#;].*)?$`.
+        ("", True),
+        ("  ", True),
+        (" [cli]", True),
+        (" [cli, extra] ", True),
+        ("[cli]# console", True),
+        (" [cli] ; console", True),
+        ("  # console", True),
+        ("\t; console", True),
+        ("\u00a0# console", True),
+        # Negatives: anything else after the value, or an unclosed list.
+        (" for details", False),
+        (" x", False),
+        (" [cli", False),
+        (" [cli] x", False),
+        (" [a] [b]", False),
+        (":main", False),
+    ],
+)
+def test_an_unquoted_value_tail_reads_as_it_did(after: str, whole: bool) -> None:
+    assert bool(_BARE_VALUE_AFTER.match(after)) is whole
+
+
+@pytest.mark.parametrize(
+    "after",
+    [" " * _LONG + "x", " [cli]" + " " * _LONG + "x", "[" + "a" * _LONG],
+    # Short ids: the default spells the whole input into the test id, which
+    # overflows the environment variable pytest stores it in on Windows.
+    ids=["spaces", "spaces-after-extras", "unclosed-extras"],
+)
+def test_a_long_unquoted_value_tail_is_read_without_backtracking(after: str) -> None:
+    # The earlier pattern's two `\s*` split a run of spaces every possible
+    # way before giving up, which took it about half a minute on the first of
+    # these; this returns at once.
+    assert _BARE_VALUE_AFTER.match(after) is None
