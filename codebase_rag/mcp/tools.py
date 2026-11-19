@@ -2,6 +2,7 @@ import asyncio
 import functools
 import itertools
 import json
+import shlex
 import sys
 import uuid
 from collections.abc import Callable, Collection
@@ -84,7 +85,7 @@ from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependenc
 from codebase_rag.utils.path_utils import derive_project_name, nested_project_names
 from codebase_rag.utils.terminal_console import terminal_aware_console
 from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
-from codebase_rag.workspaces import WorkspaceConfig
+from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo
 
 if TYPE_CHECKING:
     from codebase_rag.crash_correlation import (
@@ -279,6 +280,98 @@ def _plain_function(tool: Tool) -> ToolFuncPlain[...]:
     # this registry calls directly is built without one, which this states
     # once instead of at each call site.
     return tool.function
+
+
+def _not_indexed_hint(
+    workspace: WorkspaceConfig,
+    missing: list[WorkspaceRepo],
+    roots: dict[str, str | None],
+) -> str:
+    """Which workspace projects the graph lacks, and for each repo whose
+    code the graph holds under another project, which one (issue #2867)."""
+    hint = cs.MCP_WORKSPACE_NOT_INDEXED.format(
+        workspace=workspace.name,
+        names=cs.SEPARATOR_COMMA_SPACE.join(r.project_name for r in missing),
+    )
+    windows = sys.platform == cs.PLATFORM_WINDOWS
+    for repo in missing:
+        # Forward slashes: `C:/...` reads the same in every shell. The project
+        # name is quoted too: a workspace file does not constrain it, and the
+        # command is meant to be pasted into a shell (PR #2964 review).
+        path = _shell_argument(repo.repo_path().as_posix(), windows)
+        project = _shell_argument(repo.project_name, windows)
+        if path is None or project is None:
+            hint += cs.MCP_WORKSPACE_INDEX_UNQUOTABLE.format(
+                path=repo.repo_path().as_posix(), project=repo.project_name
+            )
+            continue
+        hint += cs.MCP_WORKSPACE_INDEX_COMMAND.format(path=path, project=project)
+    for repo in missing:
+        holder = _project_holding(repo.repo_path(), roots)
+        if holder is None:
+            continue
+        project, root = holder
+        template = (
+            cs.MCP_WORKSPACE_REPO_INDEXED_AS
+            if root == repo.repo_path()
+            else cs.MCP_WORKSPACE_REPO_INDEXED_INSIDE
+        )
+        hint += template.format(
+            path=repo.repo_path(),
+            project=project,
+            root=root,
+            expected=repo.project_name,
+        )
+    return hint
+
+
+def _shell_argument(value: str, windows: bool) -> str | None:
+    """`value` as one argument of a command pasted into this host's shell,
+    or None when no quoting keeps it one.
+
+    `shlex.quote` quotes for a POSIX shell only: cmd.exe reads its single
+    quotes as ordinary characters, so a project named `alpha & whoami & rem `
+    ran `whoami` there (Greptile review of PR #2964). Double quotes keep `&`,
+    `|` and spaces literal in cmd.exe, PowerShell and Git Bash alike, but
+    not the characters each still expands inside them.
+    """
+    if not windows:
+        return shlex.quote(value)
+    # Left bare when every shell reads it as one word, as `shlex.quote`
+    # leaves a plain value bare.
+    if cs.MCP_WINDOWS_SHELL_PLAIN.fullmatch(value):
+        return value
+    if any(c in cs.MCP_WINDOWS_SHELL_UNQUOTABLE or not c.isprintable() for c in value):
+        return None
+    return f'"{value}"'
+
+
+def _project_holding(
+    repo_path: Path, roots: dict[str, str | None]
+) -> tuple[str, Path] | None:
+    # The project indexed from the repo itself or from the closest directory
+    # above it: that index is where the repo's code is.
+    holders = [
+        (name, root)
+        for name, raw in roots.items()
+        if raw
+        and (root := _resolved_root(raw)) is not None
+        and repo_path.is_relative_to(root)
+    ]
+    if not holders:
+        return None
+    return max(holders, key=lambda h: len(h[1].parts))
+
+
+def _resolved_root(raw: str) -> Path | None:
+    # Another project's stored root may since have become a link loop
+    # (`resolve` raises RuntimeError for one on Python 3.12) or unreadable:
+    # it holds none of the workspace's repos, and must not cost the listing
+    # the projects already found (CodeRabbit, PR #2964).
+    try:
+        return Path(raw).resolve()
+    except (OSError, RuntimeError):
+        return None
 
 
 def _resolution_section(resolution: "FrameResolutionRate") -> dict:
@@ -920,7 +1013,7 @@ class MCPToolsRegistry:
                 properties={
                     cs.MCPParamName.PROJECT: MCPInputSchemaProperty(
                         type=cs.MCPSchemaType.STRING,
-                        description=td.MCP_PARAM_PROJECT,
+                        description=self._project_default_description(),
                     ),
                     cs.MCPParamName.THRESHOLD: MCPInputSchemaProperty(
                         type=cs.MCPSchemaType.NUMBER,
@@ -1339,13 +1432,28 @@ class MCPToolsRegistry:
             # graph under this lock; an interleaved read mixes generations.
             async with self._ingestor_lock:
                 projects = await _run_in_thread(self.ingestor.list_projects)
+            if self.workspace is None:
+                return ListProjectsSuccessResult(projects=projects, count=len(projects))
             # A workspace server lists the workspace's projects that are
             # indexed: a workspace repo not yet in the graph is not a project
             # a query can reach, and one outside the workspace is not served.
-            if self.workspace is not None:
-                allowed = set(self.workspace.project_names())
-                projects = [p for p in projects if p in allowed]
-            return ListProjectsSuccessResult(projects=projects, count=len(projects))
+            allowed = set(self.workspace.project_names())
+            indexed = set(projects)
+            projects = [p for p in projects if p in allowed]
+            missing = [r for r in self.workspace.repos if r.project_name not in indexed]
+            if not missing:
+                return ListProjectsSuccessResult(projects=projects, count=len(projects))
+            # Named rather than dropped (issue #2867): with the repos' parent
+            # directory indexed as one project, every workspace project was
+            # missing and the answer was an unexplained empty list.
+            async with self._ingestor_lock:
+                roots = await _run_in_thread(self.ingestor.list_project_roots)
+            return ListProjectsSuccessResult(
+                projects=projects,
+                count=len(projects),
+                not_indexed=[r.project_name for r in missing],
+                hint=_not_indexed_hint(self.workspace, missing, roots),
+            )
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))
             return ListProjectsErrorResult(error=str(e), projects=[], count=0)
@@ -2530,8 +2638,14 @@ class MCPToolsRegistry:
                 cs.MCPToolName.FIND_DUPLICATE_CODE,
             ):
                 return refusal
+            # The same default the other graph tools take (issue #2757). Left
+            # as None, the tool refused on any multi-project graph with every
+            # project's name.
             result = await _plain_function(self._find_duplicates_tool)(
-                project=project, threshold=threshold, min_size=min_size, limit=limit
+                project=dup_project,
+                threshold=threshold,
+                min_size=min_size,
+                limit=limit,
             )
         if isinstance(result, te.ToolFailure):
             return result
@@ -2776,7 +2890,8 @@ class MCPToolsRegistry:
             for key, description in params.items()
         }
         properties[cs.MCPParamName.PROJECT] = MCPInputSchemaProperty(
-            type=cs.MCPSchemaType.STRING, description=td.MCP_PARAM_PROJECT
+            type=cs.MCPSchemaType.STRING,
+            description=self._project_default_description(),
         )
         return ToolMetadata(
             name=name,
@@ -2997,6 +3112,17 @@ class MCPToolsRegistry:
         return graph_query.resolve_or_refuse(
             self.ingestor.fetch_all, project_name, target
         )
+
+    def _project_default_description(self) -> str:
+        """The `project` description for a tool that reads one project: it
+        names the project an omitted argument means (issue #2757)."""
+        if self.workspace is None:
+            default = td.MCP_PROJECT_DEFAULT_SERVER.format(
+                project=derive_project_name(Path(self.project_root))
+            )
+        else:
+            default = td.MCP_PROJECT_DEFAULT_WORKSPACE
+        return td.MCP_PARAM_PROJECT_DEFAULT.format(default=default)
 
     def _workspace_scope(self, project: str | None) -> tuple[str | None, str | None]:
         """(the project a request means, why it is refused) under a workspace.
@@ -3352,7 +3478,8 @@ class MCPToolsRegistry:
                         cs.MCPSchemaType.INTEGER, td.MCP_PARAM_BUDGET_TOKENS
                     ),
                     cs.MCPParamName.PROJECT: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                        cs.MCPSchemaType.STRING,
+                        self._project_default_description(),
                     ),
                 },
                 required=[cs.MCPParamName.TARGET],
@@ -3430,7 +3557,8 @@ class MCPToolsRegistry:
                         cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
                     ),
                     cs.MCPParamName.PROJECT: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                        cs.MCPSchemaType.STRING,
+                        self._project_default_description(),
                     ),
                 },
                 required=[cs.MCPParamName.QUALIFIED_NAME, cs.MCPParamName.NEW_NAME],
@@ -3462,7 +3590,8 @@ class MCPToolsRegistry:
                         cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_MOVE_DRY_RUN
                     ),
                     cs.MCPParamName.PROJECT: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                        cs.MCPSchemaType.STRING,
+                        self._project_default_description(),
                     ),
                 },
                 required=[
@@ -3788,7 +3917,8 @@ class MCPToolsRegistry:
                         cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
                     ),
                     cs.MCPParamName.PROJECT: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                        cs.MCPSchemaType.STRING,
+                        self._project_default_description(),
                     ),
                 },
                 required=[

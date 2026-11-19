@@ -162,10 +162,6 @@ GO_PREDECLARED_ALIASES = {"byte": "uint8", "rune": "int32"}
 # Appended to a package key (`dir:clause`) for what the package's `_test.go`
 # files declare, which only `go test` compiles: no identifier holds a space.
 GO_TEST_SCOPE_SUFFIX = " [test]"
-# The type of a span-scoped Go binding whose type cannot be read (`x :=
-# f()` shadowing a range variable): inside its span the name is untyped, and
-# never the type an outer declaration of it has.
-GO_UNTYPED_BINDING = ""
 # `for _, s := range xs` declares `s` alone: `_` binds nothing.
 GO_BLANK_IDENTIFIER = "_"
 # A result list read back from the graph's `return_type` text is parsed again

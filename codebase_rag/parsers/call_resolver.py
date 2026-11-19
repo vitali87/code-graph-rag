@@ -2677,6 +2677,13 @@ class CallResolver:
             self._remember_cacheable(cache_key, result)
             return True, result
 
+        # `new Range(5, 1)` naming a top-level type of a sibling file in the
+        # same package: visible without an import, so it is that type, not a
+        # bare-name guess (issue #2703).
+        if result := self._try_resolve_java_same_package_type(call):
+            self._remember_cacheable(cache_key, result)
+            return True, result
+
         if (
             call.language == cs.SupportedLanguage.GO
             and cs.SEPARATOR_DOT not in call_name
@@ -2718,6 +2725,28 @@ class CallResolver:
         ):
             return True, result
         return False, None
+
+    def _try_resolve_java_same_package_type(
+        self, call: _CallSite
+    ) -> tuple[str, str] | None:
+        if (
+            call.language != cs.SupportedLanguage.JAVA
+            or not call.constructing
+            or cs.SEPARATOR_DOT in call.call_name
+        ):
+            return None
+        # A single-type import shadows the package's other types (JLS 6.4.1):
+        # `new Date()` under `import java.util.Date;` is java.util's, so it is
+        # left to the import and external-target probes.
+        if call.call_name in (
+            self.import_processor.import_mapping.get(call.module_qn) or {}
+        ):
+            return None
+        engine = self.type_inference.java_type_inference
+        qn = engine.same_package_type_qn(call.call_name, call.module_qn)
+        if qn is None or self.function_registry.get(qn) != NodeType.CLASS:
+            return None
+        return NodeType.CLASS.value, qn
 
     def _resolve_external_target(
         self, call: _CallSite, cache_key: tuple[str, str, bool] | None
@@ -5725,6 +5754,10 @@ class CallResolver:
                 language,
             ):
                 return result
+            if language == cs.SupportedLanguage.GO and (
+                found := self._go_build_copy_method(class_qn, method_name, module_qn)
+            ):
+                return found
             if language == cs.SupportedLanguage.DART and (
                 extension := self._dart_extension_member(
                     class_qn, method_name, module_qn
@@ -5820,7 +5853,30 @@ class CallResolver:
                 ls.CALL_IMPORT_STATIC, call_name=call_name, method_qn=method_qn
             )
             return self.function_registry[method_qn], method_qn
+        if result := self._try_resolve_js_namespace_member(
+            target, method_name, language
+        ):
+            return result
         return self._try_resolve_package_member(class_qn, method_name)
+
+    def _try_resolve_js_namespace_member(
+        self, module_qn: str, member: str, language: cs.SupportedLanguage | None
+    ) -> tuple[str, str] | None:
+        # `import * as ns from "./lib/index.js"; ns.f()` names the barrel,
+        # where nothing is registered: `f` is what its `export *` or
+        # `export { g as f }` passes on, possibly through further barrels.
+        # Named imports already followed them (#2464); a namespace member
+        # did not, and bound nothing (issue #2933).
+        if language not in cs.JS_TS_LANGUAGES:
+            return None
+        followed = self.import_processor.follow_js_reexports(
+            f"{module_qn}{cs.SEPARATOR_DOT}{member}",
+            self.type_inference.module_qn_to_file_path,
+            self.function_registry,
+        )
+        if followed not in self.function_registry:
+            return None
+        return self.function_registry[followed], followed
 
     def _try_resolve_lua_module_member(
         self,
@@ -7896,6 +7952,72 @@ class CallResolver:
         if (order := self._binding_aware_mro(class_qn, method_name)) is not None:
             return self._resolve_inherited_along_mro(order, method_name)
         return self._resolve_inherited_breadth_first(class_qn, method_name)
+
+    def _go_build_copy_method(
+        self, type_qn: str, method_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        # A Go type each build declares again (`Iovec` in `ztypes_linux.go`
+        # and in `ztypes_darwin.go`) is one type, but a receiver resolves to
+        # one of its copies and each method sits on the copy its own file
+        # builds with. A copy without the method left the call to the
+        # name-only fallback, which bound `var v Iovec; v.SetLen()` to
+        # `Cmsghdr.SetLen` (#3148). Another copy's method counts only where
+        # some build compiles the caller with that copy and that method, so
+        # a Linux caller never lands on a Windows-only method; the copies go
+        # by qn, so the answer does not depend on registration order. An
+        # interface's copies were searched already (`_go_variant_method`).
+        builds = self.go_builds
+        if builds is None or type_qn in self.go_declaration_variants:
+            return None
+        caller = self.go_caller_rel(module_qn)
+        for copy_qn in self._go_build_copies(type_qn):
+            method_qn = f"{copy_qn}{cs.SEPARATOR_DOT}{method_name}"
+            found = (
+                (self.function_registry[method_qn], method_qn)
+                if method_qn in self.function_registry
+                else self._resolve_inherited_breadth_first(copy_qn, method_name)
+            )
+            if found is not None and builds.together(
+                (
+                    caller,
+                    self.go_declaring_rel(copy_qn),
+                    self.go_declaring_rel(found[1]),
+                )
+            ):
+                return found
+        return None
+
+    def _go_build_copies(self, type_qn: str) -> list[str]:
+        # The other declarations of Go type `type_qn`'s name in its package
+        # that no build compiles with it, by qn.
+        builds = self.go_builds
+        if (
+            builds is None
+            or self.function_registry.get(type_qn)
+            not in go_utils.TYPE_DECLARATION_TYPES
+        ):
+            return []
+        module_qn, _, name = type_qn.rpartition(cs.SEPARATOR_DOT)
+        package_dir = self._go_declaring_dir(type_qn)
+        if (
+            package_dir is None
+            or self._definition_language(type_qn, module_qn) != cs.SupportedLanguage.GO
+        ):
+            return []
+        own_file = self.go_declaring_rel(type_qn)
+        return [
+            qn
+            for qn in go_utils.package_level_definitions(
+                self.function_registry,
+                name,
+                go_utils.TYPE_DECLARATION_TYPES,
+                lambda qn: qn != type_qn and self._go_declaring_dir(qn) == package_dir,
+            )
+            if self._definition_language(qn, self._parent_qn(qn))
+            == cs.SupportedLanguage.GO
+            and self.go_declaration_is_visible(qn, module_qn)
+            and builds.apart((own_file, self.go_declaring_rel(qn)))
+        ]
 
     def _go_variant_method(
         self, class_qn: str, method_name: str

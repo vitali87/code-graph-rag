@@ -212,10 +212,11 @@ class _CgrGroup(TyperGroup):
         # Every command reaches the graph through the ingestor, which raises
         # this at connect time with the fix in its message; printing it here
         # covers them all, the delegated groups and the chat included (#2443).
+        # On stderr, where a report command's stdout is its report (#2642).
         try:
             result = super().invoke(ctx)
         except GraphUnavailableError as e:
-            app_context.console.print(style(str(e), cs.Color.RED))
+            app_context.err_console.print(style(str(e), cs.Color.RED))
             raise typer.Exit(1) from e
         # Only a command that finished gets here: a failure exits by raising.
         pledge = sponsor_pledge(ctx.invoked_subcommand, sys.stderr.isatty())
@@ -2783,7 +2784,9 @@ def doctor() -> None:
         status_color = cs.Color.GREEN if result.passed else cs.Color.RED
         status_text = style(status, status_color, cs.StyleModifier.NONE)
 
-        check_name = f"{status_text} {result.name}"
+        # Escaped: a name or error naming an extra (`[treesitter-full]`) is
+        # text, not Rich markup to swallow (issue #2905).
+        check_name = f"{status_text} {escape(result.name)}"
         table.add_row(check_name)
 
     panel = Panel(
@@ -2807,7 +2810,7 @@ def doctor() -> None:
         app_context.console.print()
         app_context.console.print(style("Failed checks details:", cs.Color.YELLOW))
         for result in failed_checks:
-            error_msg = f"  {result.name}: {result.error}"
+            error_msg = f"  {escape(result.name)}: {escape(result.error or '')}"
             app_context.console.print(
                 style(error_msg, cs.Color.YELLOW, cs.StyleModifier.NONE)
             )
@@ -2940,7 +2943,7 @@ def stats(
     # scope that was asked for and came out empty would report the whole
     # shared graph as if it were that scope's (review of PR 2436).
     if not requested and (names or workspace_config is not None):
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_STATS_EMPTY_WORKSPACE.format(name=workspace)
                 if workspace_config is not None
@@ -2950,7 +2953,7 @@ def stats(
         )
         raise typer.Exit(1)
 
-    app_context.console.print(style(cs.CLI_MSG_CONNECTING_STATS, cs.Color.CYAN))
+    app_context.err_console.print(style(cs.CLI_MSG_CONNECTING_STATS, cs.Color.CYAN))
 
     refusal = ""
     try:
@@ -2967,7 +2970,7 @@ def stats(
     except GraphUnavailableError:
         raise
     except Exception as e:
-        app_context.console.print(
+        app_context.err_console.print(
             style(cs.CLI_ERR_STATS_FAILED.format(error=e), cs.Color.RED)
         )
         logger.exception(ls.STATS_ERROR.format(error=e))
@@ -2976,7 +2979,7 @@ def stats(
     # Outside the connection, as dead-code does: a typo must not look like a
     # failed query to the service layer's error logging.
     if refusal:
-        app_context.console.print(style(refusal, cs.Color.RED))
+        app_context.err_console.print(style(refusal, cs.Color.RED))
         raise typer.Exit(1)
     _print_stats(requested, node_results, rel_results, breakdown)
 
@@ -3082,9 +3085,11 @@ def _require_project(choice: ProjectChoice) -> str:
     # Raised OUTSIDE the connection context so a user typo never trips the
     # service layer's error logging on exit, and before anything is reported:
     # a name absent from the graph must error, not scan a nonexistent prefix
-    # and report a clean project.
+    # and report a clean project. On stderr: stdout is the scan's report
+    # (issue #2642).
     if choice.name is None:
-        _exit_with_error(choice.refusal)
+        app_context.err_console.print(style(choice.refusal, cs.Color.RED))
+        raise typer.Exit(1)
     return choice.name
 
 
@@ -3288,29 +3293,20 @@ def _emit_dead_code(
         app_context.console.print(style(notice, cs.Color.YELLOW))
 
 
-def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
+def _notice_single_project_endpoint_roots() -> None:
     """Endpoint roots off on a graph holding one project: every endpoint
-    reads as uncalled. Stdout carries the JSON payload when that format is
-    chosen (local review P1), and only the table under --quiet, so the
-    notice goes to stderr then."""
-    if show_progress:
-        app_context.console.print(
-            style(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, cs.Color.YELLOW)
-        )
-    else:
-        typer.echo(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, err=True)
+    reads as uncalled. Stdout carries the report (local review P1), so the
+    notice goes to stderr, as the command's errors do (issue #2642)."""
+    app_context.err_console.print(
+        style(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, cs.Color.YELLOW)
+    )
 
 
-def _refuse_without_endpoint_data(
-    error: ex.EndpointDataMissingError, show_progress: bool
-) -> NoReturn:
-    """No verdict, rather than one that reads as nothing unreachable. A
-    machine format owns stdout, so the refusal goes to stderr there, as the
-    single-project notice does."""
-    if show_progress:
-        app_context.console.print(style(str(error), cs.Color.RED))
-    else:
-        typer.echo(str(error), err=True)
+def _refuse_without_endpoint_data(error: ex.EndpointDataMissingError) -> NoReturn:
+    """No verdict, rather than one that reads as nothing unreachable. Stdout
+    carries the report, so the refusal goes to stderr, as the single-project
+    notice and the command's other errors do (issue #2642)."""
+    app_context.err_console.print(style(str(error), cs.Color.RED))
     raise typer.Exit(1)
 
 
@@ -3383,7 +3379,7 @@ def dead_code(
         and not settings.QUIET
     )
     if show_progress:
-        app_context.console.print(style(cs.CLI_DEADCODE_CONNECTING, cs.Color.CYAN))
+        app_context.err_console.print(style(cs.CLI_DEADCODE_CONNECTING, cs.Color.CYAN))
 
     choice = ProjectChoice(None)
     rows: list[ResultRow] = []
@@ -3415,18 +3411,18 @@ def dead_code(
                     # failed session with a traceback (issue #2896).
                     endpoint_gap = e
                 if not endpoint_roots and len(projects) <= 1 and not endpoint_gap:
-                    _notice_single_project_endpoint_roots(show_progress)
+                    _notice_single_project_endpoint_roots()
     except GraphUnavailableError:
         raise
     except Exception as e:
-        app_context.console.print(
+        app_context.err_console.print(
             style(cs.CLI_ERR_DEADCODE_FAILED.format(error=e), cs.Color.RED)
         )
         logger.exception(ls.DEADCODE_ERROR.format(error=e))
         raise typer.Exit(1) from e
 
     if endpoint_gap is not None:
-        _refuse_without_endpoint_data(endpoint_gap, show_progress)
+        _refuse_without_endpoint_data(endpoint_gap)
     resolved = _require_project(choice)
 
     candidates = [
@@ -3691,7 +3687,7 @@ def _open_duplicate_group(
 ) -> None:
     """Open a group's first two members side by side in the user's editor."""
     if number > len(groups):
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_DUPLICATES_OPEN_UNKNOWN_GROUP.format(
                     number=number, count=len(groups)
@@ -3701,7 +3697,7 @@ def _open_duplicate_group(
         )
         raise typer.Exit(1)
     if root_path is None:
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_DUPLICATES_OPEN_NO_ROOT.format(project=project_name),
                 cs.Color.RED,
@@ -3714,10 +3710,10 @@ def _open_duplicate_group(
     try:
         argv = diff_command(left, right)
     except EditorTemplateError as e:
-        app_context.console.print(style(str(e), cs.Color.RED))
+        app_context.err_console.print(style(str(e), cs.Color.RED))
         raise typer.Exit(1) from e
     if argv is None:
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_DUPLICATES_OPEN_NO_TOOL.format(editor=resolve_editor()),
                 cs.Color.RED,
@@ -3729,7 +3725,7 @@ def _open_duplicate_group(
             argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
     except OSError as e:
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_DUPLICATES_OPEN_NO_TOOL.format(editor=argv[0]), cs.Color.RED
             )
@@ -3808,7 +3804,9 @@ def duplicates(
         and not settings.QUIET
     )
     if show_progress:
-        app_context.console.print(style(cs.CLI_DUPLICATES_CONNECTING, cs.Color.CYAN))
+        app_context.err_console.print(
+            style(cs.CLI_DUPLICATES_CONNECTING, cs.Color.CYAN)
+        )
 
     choice = ProjectChoice(None)
     roots: dict[str, str | None] = {}
@@ -3835,7 +3833,7 @@ def duplicates(
     except GraphUnavailableError:
         raise
     except Exception as e:
-        app_context.console.print(
+        app_context.err_console.print(
             style(cs.CLI_ERR_DUPLICATES_FAILED.format(error=e), cs.Color.RED)
         )
         logger.exception(ls.DUPLICATES_ERROR.format(error=e))

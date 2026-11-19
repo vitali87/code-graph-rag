@@ -34,6 +34,7 @@ from ..types_defs import (
     NodeType,
     PropertyDict,
     ScalaBinding,
+    SpanBinding,
 )
 from ..utils import qn_markers
 from ..utils.fqn_resolver import scoped_name_parts
@@ -63,6 +64,7 @@ from .import_processor import ImportProcessor
 from .io_access import IOAccessProcessor
 from .java import type_inference as java_ti
 from .java import utils as java_utils
+from .java.method_resolver import java_signature_accepts
 from .js_ts import utils as js_ts_utils
 from .julia import utils as julia_utils
 from .lua import utils as lua_utils
@@ -476,7 +478,12 @@ _JS_SCOPE_CONTAINER_TYPES = frozenset(
 # callable-param flow: passing a function keeps it reachable (REFERENCES),
 # while invocation edges stay with the flow languages.
 _ARG_REF_ONLY_LANGUAGES = frozenset(
-    {cs.SupportedLanguage.CSHARP, cs.SupportedLanguage.DART}
+    {
+        cs.SupportedLanguage.CSHARP,
+        cs.SupportedLanguage.DART,
+        cs.SupportedLanguage.PHP,
+        cs.SupportedLanguage.LUA,
+    }
 )
 _DART_VALUE_WRAPPER_TYPES = frozenset(
     {cs.TS_DART_LIST_LITERAL, cs.TS_DART_SET_OR_MAP_LITERAL, cs.TS_DART_ARGUMENT}
@@ -964,6 +971,13 @@ _JS_LEXICAL_HOISTED_DECLARATIONS = frozenset(
 # Inline values that ARE callables when held by a declarator; generators
 # included (a `const gen = function* () {...}` receiver is invocable).
 _JS_INLINE_CALLABLE_VALUE_TYPES = _INLINE_FUNC_VALUE_TYPES | {cs.TS_GENERATOR_FUNCTION}
+# A PHP closure and a Lua function expression are inline function values
+# only in their own language: the same node type names a DECLARATION in
+# Python, C++ and Scala, which can never sit in argument position.
+_LANG_INLINE_FUNC_VALUE_TYPES: dict[cs.SupportedLanguage, frozenset[str]] = {
+    cs.SupportedLanguage.PHP: frozenset({cs.TS_PHP_ANONYMOUS_FUNCTION}),
+    cs.SupportedLanguage.LUA: frozenset({cs.TS_LUA_FUNCTION_DEFINITION}),
+}
 # Declarations that bind a VALUE name for the receiver index: classes, TS
 # enums (compiled to vars) and namespaces/modules (compiled to objects).
 _JS_VALUE_TYPE_DECLARATIONS = frozenset(
@@ -1022,6 +1036,31 @@ def _names_a_callable(node: Node) -> bool:
         operator = node.child_by_field_name(cs.FIELD_OPERATOR)
         return operator is not None and safe_decode_text(operator) == cs.CPP_ADDRESS_OF
     return node.type in _CALLBACK_REF_TYPES
+
+
+def _is_inline_func_value(node: Node, language: cs.SupportedLanguage | None) -> bool:
+    return node.type in _INLINE_FUNC_VALUE_TYPES or (
+        language is not None
+        and node.type in _LANG_INLINE_FUNC_VALUE_TYPES.get(language, frozenset())
+    )
+
+
+def _callback_arg_name(node: Node, language: cs.SupportedLanguage | None) -> str | None:
+    # Only a name can hand a callable over. The whole source text of any
+    # other argument (`items.length - start`, `-x`, `xs[0]`) was resolved
+    # as if it were one (issue #2438).
+    if not _names_a_callable(node):
+        return None
+    # A Lua local or parameter hides a same-name function, which the
+    # name-based resolver cannot see: `show(view)` with a local `view`
+    # string would reference the module's `view` function.
+    if (
+        language == cs.SupportedLanguage.LUA
+        and node.type == cs.TS_LUA_IDENTIFIER
+        and lua_utils.is_local_value(node)
+    ):
+        return None
+    return safe_decode_text(node)
 
 
 def _first_class_value_children(
@@ -3406,11 +3445,61 @@ class CallProcessor:
             self._ingest_java_enum_constant_ctor_calls(
                 module_qn, combined_captures.get(cs.CAPTURE_CLASS) or [], queries
             )
+            # `this(...)` runs a sibling constructor and is no call node
+            # either (issue #2703).
+            self._ingest_java_this_ctor_calls(
+                module_qn, combined_captures.get(cs.CAPTURE_CLASS) or []
+            )
         if language == cs.SupportedLanguage.SQL:
             # A trigger, aggregate, cast, type or handler clause runs the
             # routine it names without an `invocation`; a schema file often
             # holds no call at all (issue #3181).
             self._ingest_sql_ddl_references(root_node, module_qn)
+
+    @_site_scoped
+    def _ingest_java_this_ctor_calls(
+        self, module_qn: str, class_nodes: list[Node]
+    ) -> None:
+        # `Range(int only) { this(only, only); }` runs the class's own
+        # constructor that takes two arguments: a CALLS edge from the
+        # delegating constructor to each sibling its argument count admits
+        # (JLS 15.12.2.1), `exact` for one, `overload` for several.
+        for class_node in class_nodes:
+            ctors = java_utils.class_constructors(class_node)
+            for ctor in ctors:
+                self._emit_java_this_ctor_call(ctor, ctors, module_qn)
+
+    def _emit_java_this_ctor_call(
+        self, ctor: Node, ctors: list[Node], module_qn: str
+    ) -> None:
+        # The CALLS edges of one constructor's `this(...)`, if it has one;
+        # `ctors` are its class's constructors. Runs inside the @_site_scoped
+        # pass above, which restores the site and resolution it sets.
+        invocation = java_utils.this_constructor_invocation(ctor)
+        caller = (
+            self._recorded_caller(ctor, module_qn) if invocation is not None else None
+        )
+        if invocation is None or caller is None:
+            return
+        arg_count = java_utils.argument_count(invocation)
+        targets = [
+            loc
+            for target in ctors
+            if target.id != ctor.id
+            and java_utils.accepts_argument_count(target, arg_count)
+            and (loc := self._recorded_caller(target, module_qn)) is not None
+        ]
+        self._site_node = invocation
+        self._resolution = (
+            cs.EdgeResolution.EXACT if len(targets) == 1 else cs.EdgeResolution.OVERLOAD
+        )
+        for target in targets:
+            self._emit_rel(
+                (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
+                cs.RelationshipType.CALLS,
+                (target.label, cs.KEY_QUALIFIED_NAME, target.qualified_name),
+                {cs.KEY_ARG_COUNT: arg_count, cs.KEY_KWARG_NAMES: []},
+            )
 
     @_site_scoped
     def _ingest_sql_ddl_references(self, root_node: Node, module_qn: str) -> None:
@@ -4884,7 +4973,7 @@ class CallProcessor:
         class_context: str | None,
         language: cs.SupportedLanguage,
         local_var_types: dict[str, str] | None,
-    ) -> list[tuple[int, int, str, str]]:
+    ) -> list[SpanBinding]:
         if local_var_types is None:
             return []
         type_inference = self._resolver.type_inference
@@ -4894,8 +4983,20 @@ class CallProcessor:
             )
         if language == cs.SupportedLanguage.GO:
             # A `for k, v := range xs` variable is the loop's own, so it holds
-            # the element type inside the loop and nowhere else (issue #2483).
+            # the element type inside the loop and nowhere else (issue #2483),
+            # and a local declared again in an inner block is another
+            # variable (issue #3332).
             return type_inference.collect_go_span_bindings(
+                caller_node, module_qn, local_var_types
+            )
+        # A `const op` in each `switch` case, `s` in each arm of an
+        # `if`/`else`: one name, a variable per block (issue #3332).
+        if language in _JS_TS_LANGUAGES:
+            return type_inference.js_type_inference.collect_scoped_declarations(
+                caller_node, module_qn, language, local_var_types
+            )
+        if language == cs.SupportedLanguage.JAVA:
+            return type_inference.java_type_inference.collect_scoped_declarations(
                 caller_node, module_qn, local_var_types
             )
         return []
@@ -4905,12 +5006,13 @@ class CallProcessor:
         call_name: str,
         call_node: Node,
         local_var_types: dict[str, str] | None,
-        span_bindings: list[tuple[int, int, str, str]],
+        span_bindings: list[SpanBinding],
     ) -> dict[str, str] | None:
         # If the call's receiver base is a span-scoped binding (match-arm
-        # variant, adaptor-closure parameter) whose range contains this call,
-        # overlay that binding's type, shadowing the flat map's value. The
-        # innermost (smallest) containing span wins for nested scopes.
+        # variant, adaptor-closure parameter, a local declared in several
+        # blocks) whose range contains this call, overlay that binding's
+        # type, shadowing the flat map's value. The innermost (smallest)
+        # containing span wins for nested scopes.
         if local_var_types is None or cs.SEPARATOR_DOT not in call_name:
             return local_var_types
         base = call_name.split(cs.SEPARATOR_DOT, 1)[0]
@@ -4923,9 +5025,9 @@ class CallProcessor:
                     best = (span, bound_type)
         if best is None or local_var_types.get(base) == best[1]:
             return local_var_types
-        if best[1] == cs.GO_UNTYPED_BINDING:
-            # A Go local nothing can type: the name is untyped here, not the
-            # type an outer declaration of it has (issue #2483).
+        if best[1] == cs.UNTYPED_SPAN_BINDING:
+            # A local nothing can type: the name is untyped here, not the type
+            # another declaration of it has (issues #2483, #3332).
             return {
                 name: type_name
                 for name, type_name in local_var_types.items()
@@ -5707,8 +5809,14 @@ class CallProcessor:
 
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
 
+        # A nested inline callback (`items.forEach(x => console.log(x))`) that
+        # gets no caller pass of its own is walked as part of this caller by
+        # the I/O and flow walks, as its CALLS already are (issue #2772).
+        def has_own_pass(node: Node) -> bool:
+            return self._caller_func_name(node, language, module_qn) is not None
+
         self._io_processor.process_io_for_caller(
-            caller_node, caller_spec, module_qn, language
+            caller_node, caller_spec, module_qn, language, has_own_pass=has_own_pass
         )
         self._rpc_exposure.process_caller(caller_node, module_qn, language)
         self._flow_processor.process_flow_for_caller(
@@ -5719,6 +5827,7 @@ class CallProcessor:
             language,
             class_context,
             local_var_types,
+            has_own_pass=has_own_pass,
         )
 
         caller_params = self._record_caller_flow_params(
@@ -6215,6 +6324,33 @@ class CallProcessor:
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 language,
             )
+        self._ingest_compiled_caller_references(
+            caller_node,
+            caller_spec,
+            caller_qn,
+            caller_type,
+            module_qn,
+            language,
+            queries,
+            class_context,
+            local_var_types,
+        )
+
+    def _ingest_compiled_caller_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        caller_type: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        class_context: str | None,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        # The Go, C, C++ and Dart reference passes: composite-literal and
+        # function-value references, and constructor calls no call expression
+        # spells out.
         if language == cs.SupportedLanguage.GO and caller_type != cs.NodeLabel.MODULE:
             self._ingest_go_composite_function_references(
                 caller_node,
@@ -7075,7 +7211,7 @@ class CallProcessor:
         ):
             return scala.callee
         if ctx.is_java and call_node.type == cs.TS_METHOD_INVOCATION:
-            return self._resolve_java_callee(ctx, call_node)
+            return self._resolve_java_callee(ctx, call_node, call_var_types)
         if ctx.is_csharp and call_node.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
             return self._resolve_csharp_callee(
                 ctx, call_node, call_name, call_var_types
@@ -7889,7 +8025,10 @@ class CallProcessor:
         )
 
     def _resolve_java_callee(
-        self, ctx: _CallScanContext, call_node: Node
+        self,
+        ctx: _CallScanContext,
+        call_node: Node,
+        call_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
         # The javac frontend (issue #1181): a HIT is the declaration the
         # compiler bound this call to, which the ARGUMENT TYPES select
@@ -7902,14 +8041,20 @@ class CallProcessor:
             callee_info = None
         elif callee_info is None:
             callee_info = self._resolver.resolve_java_method_call(
-                call_node, ctx.module_qn, ctx.local_var_types, ctx.caller_qn
+                call_node, ctx.module_qn, call_var_types, ctx.caller_qn
             )
             if callee_info is not None:
-                self._link_java_overload_ties(ctx, call_node, callee_info[1])
+                self._link_java_overload_ties(
+                    ctx, call_node, callee_info[1], call_var_types
+                )
         return callee_info
 
     def _link_java_overload_ties(
-        self, ctx: _CallScanContext, call_node: Node, callee_qn: str
+        self,
+        ctx: _CallScanContext,
+        call_node: Node,
+        callee_qn: str,
+        call_var_types: dict[str, str] | None,
     ) -> None:
         # Same-arity overloads the argument types cannot tell apart were
         # bound by declaration order, which is no evidence for any one of
@@ -7920,7 +8065,7 @@ class CallProcessor:
         # references emitted in between keep their own.
         engine = self._resolver.type_inference.java_type_inference
         ties = engine.java_overload_ties(
-            call_node, callee_qn, ctx.local_var_types, ctx.module_qn
+            call_node, callee_qn, call_var_types, ctx.module_qn
         )
         if not ties:
             return
@@ -9140,9 +9285,26 @@ class CallProcessor:
             )
             for variant in self._resolver.function_registry.variants(ctor_qn)
         ]
+        site = self._site_node
+        if (
+            ctx.language == cs.SupportedLanguage.JAVA
+            and site is not None
+            and site.type == cs.TS_OBJECT_CREATION_EXPRESSION
+        ):
+            # Only the constructors that take this many arguments can run
+            # (JLS 15.12.2.1): `new Range(5, 1)` never runs `Range(int)`. A
+            # record's implicit canonical constructor has no node, so a
+            # count no declared one admits leaves the INSTANTIATES alone
+            # (issue #2703).
+            arg_count = java_utils.argument_count(site)
+            ctor_edges = [
+                (ctor_type, variant)
+                for ctor_type, variant in ctor_edges
+                if java_signature_accepts(variant, arg_count)
+            ]
         if len(ctor_edges) > 1:
-            # Every declared constructor takes an edge because
-            # argument-type selection is not attempted: one call,
+            # Every declared constructor of a matching arity takes an edge
+            # because argument-type selection is not attempted: one call,
             # several candidates, which is what `overload` means
             # (issue #1526).
             self._resolution = cs.EdgeResolution.OVERLOAD
@@ -11751,7 +11913,7 @@ class CallProcessor:
         # registered anonymously in the enclosing scope but named after no
         # identifier, so resolve_func cannot find it. The call consumes it, so
         # reference it by position the same way inline object-literal values are.
-        if arg_node.type in _INLINE_FUNC_VALUE_TYPES:
+        if _is_inline_func_value(arg_node, language):
             self._emit_inline_arg_function_ref(
                 arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
             )
@@ -11760,12 +11922,7 @@ class CallProcessor:
             arg_node, source_spec, module_qn, local_var_types, ensure_rel, language
         ):
             return
-        # Only a name can hand a callable over. The whole source text of any
-        # other argument (`items.length - start`, `-x`, `xs[0]`) was resolved
-        # as if it were one (issue #2438).
-        if not _names_a_callable(arg_node):
-            return
-        if not (arg_text := safe_decode_text(arg_node)):
+        if not (arg_text := _callback_arg_name(arg_node, language)):
             return
         if language == cs.SupportedLanguage.CSHARP:
             # `Callback<int>` passes the method group with explicit type
