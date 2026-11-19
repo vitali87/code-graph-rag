@@ -98,6 +98,7 @@ from .parsers.field_nodes import (
     add_callable_fields,
     drop_callable_fields,
 )
+from .parsers.flow_access import PriorResourceFlow
 from .parsers.frontends import (
     EMITTING_FRONTENDS,
     FRONTENDS,
@@ -7267,15 +7268,46 @@ class GraphUpdater:
         Method nodes and their edges linger alongside the new ones.
         """
         if isinstance(self.ingestor, QueryProtocol):
-            self.ingestor.execute_write(
-                cs.CYPHER_DELETE_MODULE,
-                {
-                    cs.KEY_PATH: file_key,
-                    cs.KEY_PROJECT_NAME: self.project_name,
-                    cs.KEY_PROJECT_PREFIX: self.project_name + ".",
-                    cs.KEY_NESTED_PROJECTS: self._nested_project_names(),
-                },
-            )
+            params: PropertyDict = {
+                cs.KEY_PATH: file_key,
+                cs.KEY_PROJECT_NAME: self.project_name,
+                cs.KEY_PROJECT_PREFIX: self.project_name + ".",
+                cs.KEY_NESTED_PROJECTS: self._nested_project_names(),
+            }
+            if self.capture.rel_enabled(cs.RelationshipType.FLOWS_TO):
+                self._remember_prior_flows(self.ingestor, params)
+            self.ingestor.execute_write(cs.CYPHER_DELETE_MODULE, params)
+
+    def _remember_prior_flows(
+        self, ingestor: QueryProtocol, params: PropertyDict
+    ) -> None:
+        """Hand the flow walk the resource flows the delete is about to take.
+
+        One composed through a callee in a file the run does not re-parse
+        (`log(os.getenv("K"))` with `log` printing, unchanged) cannot be
+        rebuilt from the caller, and the walk puts it back while the caller
+        still makes that call (review of PR #2759). A failed read keeps none.
+        """
+        try:
+            rows = ingestor.fetch_all(cs.CYPHER_MODULE_RESOURCE_FLOWS, params)
+        except Exception as error:
+            logger.debug(ls.PRIOR_FLOWS_UNREAD, path=params[cs.KEY_PATH], error=error)
+            return
+        flows: list[PriorResourceFlow] = []
+        for row in rows:
+            values = [row.get(key) for key in cs.PRIOR_FLOW_COLUMNS]
+            through = row.get(cs.PRIOR_FLOW_THROUGH)
+            if all(isinstance(value, str) for value in values):
+                flows.append(
+                    PriorResourceFlow(
+                        *(str(value) for value in values),
+                        through=tuple(
+                            str(qn)
+                            for qn in (through if isinstance(through, list) else ())
+                        ),
+                    )
+                )
+        self.factory.call_processor.remember_prior_flows(flows)
 
     def _nested_project_names(self) -> list[str]:
         """Registered projects whose names extend this one, whose modules

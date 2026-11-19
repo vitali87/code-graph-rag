@@ -1372,6 +1372,7 @@ INTERFACE_FLOW_SOURCES_UNREAD = (
     "in; every dependent caller is re-parsed."
 )
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
+PRIOR_FLOWS_UNREAD = "Could not read the prior resource flows of {path}: {error}"
 DEPENDENCIES_RESYNC = (
     "A dependency manifest changed; rebuilding the external dependencies of "
     "'{project}' from every manifest"

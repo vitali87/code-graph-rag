@@ -56,7 +56,7 @@ from .dart import utils as dart_utils
 from .definition_docstring import extract_definition_docstring
 from .dispatch_registry import DispatchRegistryProcessor
 from .field_nodes import declared_fields
-from .flow_access import FlowProcessor
+from .flow_access import FlowProcessor, PriorResourceFlow
 from .go import type_inference as go_ti
 from .go import utils as go_utils
 from .go.link_state import GoLinkState
@@ -12560,6 +12560,10 @@ class CallProcessor:
 
     def finalize_dispatch(self) -> None:
         self._dispatch_registry.finalize()
+
+    def remember_prior_flows(self, flows: list[PriorResourceFlow]) -> None:
+        """The resource flows a module about to be re-parsed owned in the graph."""
+        self._flow_processor.remember_prior_flows(flows)
 
     def finalize_flow(self) -> None:
         # Resolve deferred FLOWS_TO return-taint once every function body has
