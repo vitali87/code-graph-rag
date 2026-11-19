@@ -144,7 +144,8 @@ def test_doctor_does_not_build_a_grammar_checkout(
     )
     result = HealthChecker().check_tree_sitter_grammars()
     assert ran == [], ran
-    assert result.error is not None and "go" in result.error, result
+    assert result.error is not None, result
+    assert "go" in result.error, result
 
 
 def test_doctor_counts_an_installed_grammar_that_does_not_load(
