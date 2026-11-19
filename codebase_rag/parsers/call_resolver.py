@@ -6226,6 +6226,23 @@ class CallResolver:
         # builtin container does not borrow a first-party dunder. A Protocol-typed
         # operand dispatches to the dunder on each structural implementer (which may
         # define the dunder even when the Protocol stub does not, e.g. __len__).
+        return {
+            target
+            for _receiver, target in self.operator_dunder_receivers(
+                operand_text, dunder, module_qn, local_var_types
+            )
+        }
+
+    def operator_dunder_receivers(
+        self,
+        operand_text: str,
+        dunder: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> set[tuple[str, tuple[str, str]]]:
+        """`operator_dunder_targets`, each with the concrete class it was
+        found on: a Protocol-typed operand's conformer, or the operand's own
+        class when the method is a base's."""
         if not local_var_types or not (var_type := local_var_types.get(operand_text)):
             return set()
         import_map = self.import_processor.import_mapping.get(module_qn, {})
@@ -6241,11 +6258,11 @@ class CallResolver:
                 classes.add(named_impl)
         else:
             classes = {class_qn}
-        targets: set[tuple[str, str]] = set()
+        receivers: set[tuple[str, tuple[str, str]]] = set()
         for candidate in classes:
             if resolved := self._try_resolve_method(candidate, dunder):
-                targets.add(resolved)
-        return targets
+                receivers.add((candidate, resolved))
+        return receivers
 
     def _protocol_structural_implementers(self, protocol_qn: str) -> set[str]:
         # Classes that define every method declared on the Protocol (own or

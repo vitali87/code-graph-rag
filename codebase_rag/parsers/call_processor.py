@@ -2034,45 +2034,201 @@ class _JsFileBindingCollector:
                     self._add(member_name, fn_node, sibling)
 
 
-def _operator_dunder_target(node: Node) -> tuple[Node | None, str] | None:
-    """(receiver, dunder) that a Python operator node dispatches to, if any.
+# One implied dunder call: (operand, dunder, reflected) steps in the order
+# Python tries them, falling back from `a.__add__(b)` to `b.__radd__(a)` when
+# a method returns NotImplemented. Which method returns it is not in the graph,
+# so every step that resolves is a call Python may make, and each is recorded.
+# A `reflected` step is the exception: Python never tries `b.__radd__(a)` when
+# both operands have one type, and the reflection of `a == b` is then the
+# method already recorded (Greptile, PR #3080).
+type _DunderDispatch = list[tuple[Node | None, str, bool]]
+
+
+def _reflected(dunder: str) -> str:
+    """`__add__` -> `__radd__`: the method the RIGHT operand supplies."""
+    return dunder.replace(cs.PY_DUNDER_MARK, cs.PY_REFLECTED_DUNDER_PREFIX, 1)
+
+
+def _inplace(dunder: str) -> str:
+    """`__add__` -> `__iadd__`: what `+=` tries before `__add__`."""
+    return dunder.replace(cs.PY_DUNDER_MARK, cs.PY_INPLACE_DUNDER_PREFIX, 1)
+
+
+def _is_async(node: Node) -> bool:
+    return any(child.type == cs.TS_PY_ASYNC for child in node.children)
+
+
+def _returns_only_self(method: Node) -> bool:
+    """Whether every `return` of a method's own body returns `self`."""
+    returns: list[Node] = []
+    stack = list(method.children)
+    while stack:
+        node = stack.pop()
+        if node.type in (
+            cs.TS_PY_FUNCTION_DEFINITION,
+            cs.TS_PY_CLASS_DEFINITION,
+            cs.TS_PY_LAMBDA,
+        ):
+            continue
+        if node.type == cs.TS_PY_RETURN_STATEMENT:
+            returns.append(node)
+            continue
+        stack.extend(node.children)
+    return bool(returns) and all(
+        len(values := ret.named_children) == 1
+        and values[0].type == cs.TS_PY_IDENTIFIER
+        and safe_decode_text(values[0]) == cs.PY_KEYWORD_SELF
+        for ret in returns
+    )
+
+
+def _one_known_type(left: set[str], right: set[str]) -> bool:
+    """Whether both operands hold one known type, the same, at their site."""
+    return len(left) == 1 and left == right
+
+
+def _operator_dunder_dispatches(node: Node) -> list[_DunderDispatch]:
+    """The dunder calls a Python operator or protocol node implies.
 
     `x[k]` is `__getitem__` (or `__setitem__` as an assignment target),
-    `k in x` is `x.__contains__`, and `len(x)` is `x.__len__`.
+    `k in x` is `x.__contains__` and `len(x)` is `x.__len__`. Arithmetic,
+    comparison, unary and augmented operators and `for` over an object
+    dispatch to their dunders too (issue #2852). A `with` statement's are
+    `_ingest_python_with_protocol`'s, which follows the manager's bindings.
     """
     match node.type:
         case cs.TS_PY_SUBSCRIPT:
-            parent = node.parent
-            left = (
-                parent.child_by_field_name(cs.TS_FIELD_LEFT)
-                if parent is not None and parent.type == cs.TS_PY_ASSIGNMENT
-                else None
-            )
-            is_write = left is not None and left.id == node.id
-            return (
+            return _subscript_dispatches(node)
+        case cs.TS_PY_COMPARISON_OPERATOR:
+            return _comparison_dispatches(node)
+        case cs.TS_PY_CALL:
+            return _call_dispatches(node)
+        case cs.TS_PY_BINARY_OPERATOR:
+            return _binary_dispatches(node)
+        case cs.TS_PY_AUGMENTED_ASSIGNMENT:
+            return _augmented_dispatches(node)
+        case cs.TS_PY_UNARY_OPERATOR:
+            return _unary_dispatches(node)
+        case cs.TS_PY_FOR_STATEMENT | cs.TS_PY_FOR_IN_CLAUSE:
+            return _iteration_dispatches(node)
+    return []
+
+
+def _iteration_protocol(node: Node) -> tuple[str, str]:
+    """The dunder that makes a loop's iterator, and the one that advances it."""
+    if _is_async(node):
+        return cs.PY_DUNDER_AITER, cs.PY_DUNDER_ANEXT
+    return cs.PY_DUNDER_ITER, cs.PY_DUNDER_NEXT
+
+
+def _iteration_dispatches(node: Node) -> list[_DunderDispatch]:
+    # `__iter__` is called on the iterable. `__next__` is called on what it
+    # returned, not on the iterable: `_emit_iterator_advance` resolves that.
+    iterable = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+    return [[(iterable, _iteration_protocol(node)[0], False)]]
+
+
+def _subscript_dispatches(node: Node) -> list[_DunderDispatch]:
+    # `x[k] = v` is `__setitem__`; every other `x[k]` is `__getitem__`.
+    parent = node.parent
+    left = (
+        parent.child_by_field_name(cs.TS_FIELD_LEFT)
+        if parent is not None and parent.type == cs.TS_PY_ASSIGNMENT
+        else None
+    )
+    is_write = left is not None and left.id == node.id
+    return [
+        [
+            (
                 node.child_by_field_name(cs.FIELD_VALUE),
                 cs.PY_DUNDER_SETITEM if is_write else cs.PY_DUNDER_GETITEM,
+                False,
             )
-        case cs.TS_PY_COMPARISON_OPERATOR:
-            operators = node.child_by_field_name(cs.TS_FIELD_OPERATORS)
-            if (
-                operators is not None
-                and (op_text := safe_decode_text(operators))
-                and cs.PY_OP_IN in op_text.split()
-                and node.named_children
-            ):
-                return node.named_children[-1], cs.PY_DUNDER_CONTAINS
-        case cs.TS_PY_CALL:
-            func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-            args = node.child_by_field_name(cs.FIELD_ARGUMENTS)
-            if (
-                func is not None
-                and safe_decode_text(func) == cs.PY_BUILTIN_LEN
-                and args is not None
-                and len(args.named_children) == 1
-            ):
-                return args.named_children[0], cs.PY_DUNDER_LEN
-    return None
+        ]
+    ]
+
+
+def _binary_dispatches(node: Node) -> list[_DunderDispatch]:
+    operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+    dunder = cs.PY_BINARY_OPERATOR_DUNDERS.get(
+        safe_decode_text(operator) or "" if operator is not None else ""
+    )
+    if dunder is None:
+        return []
+    left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+    right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+    return [[(left, dunder, False), (right, _reflected(dunder), True)]]
+
+
+def _augmented_dispatches(node: Node) -> list[_DunderDispatch]:
+    operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+    text = safe_decode_text(operator) if operator is not None else None
+    dunder = cs.PY_BINARY_OPERATOR_DUNDERS.get(
+        (text or "").removesuffix(cs.PY_AUGMENTED_OPERATOR_SUFFIX)
+    )
+    if dunder is None:
+        return []
+    left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+    right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+    return [
+        [
+            (left, _inplace(dunder), False),
+            (left, dunder, False),
+            (right, _reflected(dunder), True),
+        ]
+    ]
+
+
+def _unary_dispatches(node: Node) -> list[_DunderDispatch]:
+    operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+    dunder = cs.PY_UNARY_OPERATOR_DUNDERS.get(
+        safe_decode_text(operator) or "" if operator is not None else ""
+    )
+    if dunder is None:
+        return []
+    return [[(node.child_by_field_name(cs.TS_FIELD_ARGUMENT), dunder, False)]]
+
+
+def _comparison_dispatches(node: Node) -> list[_DunderDispatch]:
+    # `a < b < c` is `a < b and b < c`: each adjacent pair is one comparison.
+    operators = node.children_by_field_name(cs.TS_FIELD_OPERATORS)
+    operator_ids = {op.id for op in operators}
+    # A comment between operands is a named child too (`key in  # note`).
+    operands = [
+        c
+        for c in node.named_children
+        if c.id not in operator_ids and c.type != cs.TS_COMMENT
+    ]
+    if len(operands) != len(operators) + 1:
+        return []
+    dispatches: list[_DunderDispatch] = []
+    for left, operator, right in zip(operands, operators, operands[1:]):
+        text = safe_decode_text(operator) or ""
+        if cs.PY_OP_IN in text.split():
+            dispatches.append([(right, cs.PY_DUNDER_CONTAINS, False)])
+        elif pair := cs.PY_COMPARISON_DUNDERS.get(text):
+            # `a < b` falls back to `b.__gt__(a)` whatever the types, so only
+            # a reflection that is the same method (`==`, `!=`) is `reflected`.
+            dispatches.append(
+                [(left, pair[0], False), (right, pair[1], pair[0] == pair[1])]
+            )
+    return dispatches
+
+
+def _call_dispatches(node: Node) -> list[_DunderDispatch]:
+    func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    if func is None:
+        return []
+    args = node.child_by_field_name(cs.FIELD_ARGUMENTS)
+    if (
+        safe_decode_text(func) == cs.PY_BUILTIN_LEN
+        and args is not None
+        and len(args.named_children) == 1
+    ):
+        return [[(args.named_children[0], cs.PY_DUNDER_LEN, False)]]
+    # Calling an object (`obj(...)`) is `_emit_instance_call`'s: it also types
+    # a call result and follows a `__call__` alias (issue #2620).
+    return []
 
 
 def _truthiness_operands(node: Node) -> list[Node | None]:
@@ -9764,15 +9920,138 @@ class CallProcessor:
             node = self._site_node = stack.pop()
             if node.type in boundary:
                 continue
-            if (dunder := _operator_dunder_target(node)) is not None:
-                self._emit_operator_dunder(
-                    dunder[0], dunder[1], caller_spec, module_qn, local_var_types
+            dispatches = _operator_dunder_dispatches(node)
+            for dispatch in dispatches:
+                self._emit_dunder_dispatch(
+                    caller_node, dispatch, caller_spec, module_qn, local_var_types
                 )
-            elif node.type == cs.TS_PY_CALL:
+            if node.type in (cs.TS_PY_FOR_STATEMENT, cs.TS_PY_FOR_IN_CLAUSE):
+                self._emit_iterator_advance(
+                    node, caller_node, caller_spec, module_qn, local_var_types
+                )
+            if not dispatches and node.type == cs.TS_PY_CALL:
                 self._emit_instance_call(node, caller_spec, module_qn, local_var_types)
             for operand in _truthiness_operands(node):
                 self._emit_truthiness(operand, caller_spec, module_qn, local_var_types)
             stack.extend(node.children)
+
+    def _emit_dunder_dispatch(
+        self,
+        caller_node: Node,
+        dispatch: _DunderDispatch,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        """The dunder edges one operator implies.
+
+        A reflected dunder is skipped when both operands hold the same one
+        known type: Python never tries `__radd__` on a same-type pair.
+        """
+        first = self._operand_types(
+            caller_node, dispatch[0][0], local_var_types, module_qn
+        )
+        for operand, dunder, reflected in dispatch:
+            if reflected and _one_known_type(
+                first,
+                self._operand_types(caller_node, operand, local_var_types, module_qn),
+            ):
+                continue
+            for view in self._operand_views(
+                caller_node, operand, local_var_types, module_qn
+            ):
+                self._emit_operator_dunder(
+                    operand, dunder, caller_spec, module_qn, view
+                )
+
+    def _operand_views(
+        self,
+        caller_node: Node,
+        operand: Node | None,
+        local_var_types: dict[str, str] | None,
+        module_qn: str,
+    ) -> tuple[dict[str, str] | None, ...]:
+        """The type maps an operand is resolved through at its site.
+
+        `x = A(); -x; x = B(); -x`: each `-x` reads the binding that reaches
+        it, not the one the flat map kept for the whole body. A name bound
+        once, or an attribute, is the flat map's.
+        """
+        return self._python_name_views(
+            caller_node, operand, local_var_types, module_qn
+        ) or (local_var_types,)
+
+    def _operand_types(
+        self,
+        caller_node: Node,
+        operand: Node | None,
+        local_var_types: dict[str, str] | None,
+        module_qn: str,
+    ) -> set[str]:
+        """The types an operand may hold at its site."""
+        text = safe_decode_text(operand) if operand is not None else None
+        if not text:
+            return set()
+        return {
+            bound
+            for view in self._operand_views(
+                caller_node, operand, local_var_types, module_qn
+            )
+            if view and (bound := view.get(text))
+        }
+
+    @_site_scoped
+    def _emit_iterator_advance(
+        self,
+        node: Node,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        # A loop calls `__next__` on the iterator `__iter__` returned:
+        # `Container.__iter__` returning a `Cursor` runs `Cursor.__next__`,
+        # whatever `Container` defines. An iterator whose type is not known
+        # gets no edge; one that returns itself (`return self`) is its class.
+        iterable = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+        text = safe_decode_text(iterable) if iterable is not None else None
+        if not text or any(ch in text for ch in cs.PY_OPERAND_REJECT_CHARS):
+            return
+        creator, advancer = _iteration_protocol(node)
+        for view in self._operand_views(
+            caller_node, iterable, local_var_types, module_qn
+        ):
+            if not view or not view.get(text):
+                continue
+            # The `__iter__` the loop runs, its class's own or a base's, with
+            # the concrete class it runs on: a Protocol-typed iterable's
+            # conformer iterates as that conformer, not as every one.
+            for receiver, (_label, method_qn) in sorted(
+                self._resolver.operator_dunder_receivers(text, creator, module_qn, view)
+            ):
+                if iterator := self._python_iterator_type(method_qn, receiver):
+                    self._emit_operator_dunder(
+                        iterable, advancer, caller_spec, module_qn, {text: iterator}
+                    )
+
+    def _python_iterator_type(self, method_qn: str, receiver: str) -> str | None:
+        """The type of what an `__iter__`/`__aiter__` returns.
+
+        `return self` is the receiver, whatever class defines the method:
+        a `Child` inheriting `Base.__iter__` iterates as a `Child`.
+        """
+        engine = self._resolver.type_inference.python_type_inference
+        method = engine._find_method_ast_node(method_qn)
+        if method is None:
+            return None
+        if _returns_only_self(method):
+            return receiver
+        returned = engine._get_method_return_type_from_ast(method_qn)
+        if returned and cs.SEPARATOR_DOT not in returned:
+            # A bare name is the one the method's own module sees.
+            declaring = method_qn.rsplit(cs.SEPARATOR_DOT, 2)[0]
+            return engine._resolve_class_name(returned, declaring) or returned
+        return returned
 
     @_site_scoped
     def _emit_truthiness(
