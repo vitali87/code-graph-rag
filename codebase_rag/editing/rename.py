@@ -57,6 +57,7 @@ from ..utils.path_utils import (
     python_stub_implementations,
     walk_eligible_files,
 )
+from ..utils.source_encoding import python_source_view
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
 from .occurrences import (
@@ -1710,9 +1711,15 @@ class Renamer:
         for file in files:
             rel = PurePosixPath(file.relative_to(self.repo_root).as_posix())
             try:
-                source = file.read_bytes()
+                raw = file.read_bytes()
             except OSError:
                 continue
+            # The view the patcher edits: a Python file declaring Latin-1 is
+            # its UTF-8 text, where `é` is two bytes, so a column counted in
+            # the file's own bytes misses the name there.
+            source, _codec = python_source_view(
+                raw, get_language_for_extension(file.suffix), file
+            )
             patterns = [(quoted, False)]
             if file.suffix in cs.RENAME_BARE_ENTRY_POINT_SUFFIXES:
                 patterns.append((bare, True))
@@ -2615,10 +2622,18 @@ def _python_tree(source: bytes) -> Node | None:
 def _whole_python_string(tree: Node, start: int, end: int) -> bool:
     # The bytes between the string's own quotes: `"Do not call
     # 'pkg.core.helper' directly"` holds the path, but is not it.
+    # A fragment of `"pkg.core.helper" "_v2"` is a whole string node, but
+    # the value is the concatenation, a longer path.
     node = tree.descendant_for_byte_range(start, end)
     while node is not None and node.type != cs.TS_PY_STRING:
         node = node.parent
-    if node is None or node.child_count < 2:
+    if (
+        node is None
+        or node.child_count < 2
+        or (
+            node.parent is not None and node.parent.type == cs.TS_PY_CONCATENATED_STRING
+        )
+    ):
         return False
     return node.children[0].end_byte == start and node.children[-1].start_byte == end
 

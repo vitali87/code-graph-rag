@@ -240,6 +240,40 @@ def test_an_undecodable_byte_before_the_path_keeps_its_offset(
     assert b"renstr = pkg.core:run_main" in (repo / "setup.cfg").read_bytes()
 
 
+def test_a_python_file_in_a_declared_encoding_is_read_as_the_patcher_reads_it(
+    repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A Latin-1 `\xe9` is one byte in the file and two in the UTF-8 view the
+    # patcher edits: a column counted in the file's own bytes landed one byte
+    # before the name there, and the byte check refused the whole rename.
+    latin = (
+        b'# -*- coding: latin-1 -*-\nlabel = "caf\xe9"; target = "pkg.core.helper"\n'
+    )
+    (repo / "tests" / "latin.py").write_bytes(latin)
+    _rename(repo, mock_ingestor, "pkg.core.helper", "add_one")
+    assert (repo / "tests" / "latin.py").read_bytes() == latin.replace(
+        b"pkg.core.helper", b"pkg.core.add_one"
+    )
+
+
+def test_a_fragment_of_a_concatenated_string_is_left_alone(
+    repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negatives: each fragment is a whole string node, but the value is the
+    # concatenation, `pkg.core.helper_v2`, which the rename does not touch.
+    untouched = (
+        'A = "pkg.core.helper" "_v2"\n'
+        'B = ("pkg.core.helper"\n     "_v2")\n'
+        'C = "pkg" ".core.helper"\n'
+    )
+    _repo(repo, {"tests/fragments.py": untouched})
+    _rename(repo, mock_ingestor, "pkg.core.helper", "add_one")
+    assert (repo / "tests" / "fragments.py").read_text() == untouched
+    assert (
+        'mock.patch("pkg.core.add_one"' in (repo / "tests" / "test_core.py").read_text()
+    )
+
+
 def test_a_symlinked_file_is_patched_once(repo: Path, mock_ingestor: MagicMock) -> None:
     _repo(repo, {"tests/target.py": 'TARGET = "pkg.core.helper"\n'})
     try:
