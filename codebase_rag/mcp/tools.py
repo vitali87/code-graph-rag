@@ -3754,8 +3754,11 @@ class MCPToolsRegistry:
         # None until the rename says what it left on disk: an exception out
         # of a commit can leave a written file behind when its restore fails
         # too (CodeRabbit, PR #2900), so only a returned report or a refusal,
-        # raised before any edit, settles it.
-        edits_remain: bool | None = None
+        # raised before any edit, settles it. A preview stages in memory and
+        # never commits, so it leaves nothing whatever it raises; a failed
+        # preview keeping the marker would refuse a healthy project (Greptile,
+        # PR #2900).
+        edits_remain: bool | None = False if dry_run else None
         marker_error: str | None = None
         refusal: RenameRefused | None = None
         try:

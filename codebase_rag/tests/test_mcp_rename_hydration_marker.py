@@ -152,3 +152,26 @@ async def test_a_rename_that_raises_mid_commit_keeps_its_marker(
     assert "No space left" in str(payload), payload
     assert (graph.project, True) in writes, writes
     assert (graph.project, False) not in writes, writes
+
+
+@pytest.mark.asyncio
+async def test_a_preview_that_raises_clears_the_marker_when_hydration_purged_nothing(
+    py_repo: tuple[Path, RecordedGraph],  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A preview stages in memory and never commits, so whatever it raises it
+    # leaves the tree as it was. With nothing purged the run is complete, and
+    # a marker left down would refuse a healthy project (Greptile, PR #2900).
+    root, graph = py_repo
+    registry, writes = _registry(root, graph, monkeypatch, 0)
+
+    with patch(
+        "codebase_rag.editing.rename.Renamer.plan",
+        side_effect=ConnectionError("graph read failed"),
+    ):
+        payload = await _preview(registry, graph)
+
+    assert isinstance(payload, dict), payload
+    assert "graph read failed" in str(payload), payload
+    assert "def helper" in (root / "pkg" / "util.py").read_text()
+    assert writes == [(graph.project, True), (graph.project, False)], writes
