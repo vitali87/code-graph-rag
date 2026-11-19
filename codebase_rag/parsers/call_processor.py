@@ -9760,23 +9760,9 @@ class CallProcessor:
                 continue
             dispatches = _operator_dunder_dispatches(node)
             for dispatch in dispatches:
-                first = self._operand_types(
-                    caller_node, dispatch[0][0], local_var_types, module_qn
+                self._emit_dunder_dispatch(
+                    caller_node, dispatch, caller_spec, module_qn, local_var_types
                 )
-                for operand, dunder, reflected in dispatch:
-                    if reflected and _one_known_type(
-                        first,
-                        self._operand_types(
-                            caller_node, operand, local_var_types, module_qn
-                        ),
-                    ):
-                        continue
-                    for view in self._operand_views(
-                        caller_node, operand, local_var_types, module_qn
-                    ):
-                        self._emit_operator_dunder(
-                            operand, dunder, caller_spec, module_qn, view
-                        )
             if node.type in (cs.TS_PY_FOR_STATEMENT, cs.TS_PY_FOR_IN_CLAUSE):
                 self._emit_iterator_advance(
                     node, caller_node, caller_spec, module_qn, local_var_types
@@ -9786,6 +9772,35 @@ class CallProcessor:
             for operand in _truthiness_operands(node):
                 self._emit_truthiness(operand, caller_spec, module_qn, local_var_types)
             stack.extend(node.children)
+
+    def _emit_dunder_dispatch(
+        self,
+        caller_node: Node,
+        dispatch: _DunderDispatch,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        """The dunder edges one operator implies.
+
+        A reflected dunder is skipped when both operands hold the same one
+        known type: Python never tries `__radd__` on a same-type pair.
+        """
+        first = self._operand_types(
+            caller_node, dispatch[0][0], local_var_types, module_qn
+        )
+        for operand, dunder, reflected in dispatch:
+            if reflected and _one_known_type(
+                first,
+                self._operand_types(caller_node, operand, local_var_types, module_qn),
+            ):
+                continue
+            for view in self._operand_views(
+                caller_node, operand, local_var_types, module_qn
+            ):
+                self._emit_operator_dunder(
+                    operand, dunder, caller_spec, module_qn, view
+                )
 
     def _operand_views(
         self,
