@@ -567,6 +567,8 @@ CPP_KEYWORD_INLINE = "inline"
 # The path part an unnamed namespace adds: each namespace has one, and what
 # has it in its path is file-private (PR #2952).
 CPP_UNNAMED_NAMESPACE = ""
+# The dotted namespace path a name in the global namespace is looked up from.
+CPP_GLOBAL_NAMESPACE_PATH = ""
 CPP_TYPE_ALIAS_TYPES = frozenset({"alias_declaration", "type_definition"})
 # Aliases of aliases are followed this far, so a cycle in broken code ends.
 CPP_MAX_ALIAS_HOPS = 8

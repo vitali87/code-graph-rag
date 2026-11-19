@@ -1299,6 +1299,26 @@ class FunctionLocations(dict[FunctionSpanKey, FunctionLocation]):
             super().pop(key, None)
 
 
+class CppClassLookup(NamedTuple):
+    """The class an out-of-line C++ member definition names, as C++ looks it up.
+
+    `name` is the qualifier as written, dotted and with template arguments
+    dropped (`SkipList.Iterator` for `SkipList<K, C>::Iterator::Valid`), and
+    with a type alias or using-declaration in scope replaced by what it
+    stands for. `scope` is the dotted namespace path the lookup starts from:
+    the definition's own, or the alias's when the name came through one.
+    Each enclosing namespace is tried out to the global one (issue #3137).
+
+    `declared_in` is the namespace where the definition's own file declares
+    the name's first part as a class, namespace or the like, which hides any
+    alias of it in that namespace or further out; None when it declares none.
+    """
+
+    name: str
+    scope: str
+    declared_in: str | None = None
+
+
 class CppDefinitionSpan(NamedTuple):
     """Full line span of a C/C++ function or method the tree-sitter pass ingested.
 
