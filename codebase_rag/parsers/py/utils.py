@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
+from ... import constants as cs
 from ...constants import (
     CHAR_COMMA,
     SEPARATOR_DOT,
@@ -263,3 +265,29 @@ def external_stdlib_base_method_names(parent_qns: list[str]) -> frozenset[str]:
         if isinstance(base, type):
             names.update(dir(base))
     return frozenset(names)
+
+
+def reduce_optional_annotation(text: str) -> str:
+    """`T` for an annotation that says "a T or None": `Optional[T]`,
+    `typing.Optional[T]`, `Union[T, None]`, `T | None`, any of them quoted as
+    a forward reference. Anything else (a container, a union of two classes)
+    keeps its text, so the type readers downstream see what they did before.
+    """
+    current = text.strip()
+    while (reduced := _reduce_optional_once(current)) != current:
+        current = reduced
+    return current
+
+
+def _reduce_optional_once(text: str) -> str:
+    text = text.strip().strip(cs.PY_ANNOTATION_QUOTES).strip()
+    members = split_top_level(text, cs.PY_UNION_SEPARATOR)
+    if len(members) == 1:
+        if optional := re.match(cs.PY_OPTIONAL_PATTERN, text):
+            return optional.group("inner")
+        union = re.match(cs.PY_UNION_PATTERN, text)
+        if union is None:
+            return text
+        members = split_top_level(union.group("inner"))
+    non_none = [member for member in members if member and member != cs.PY_NONE]
+    return non_none[0] if len(non_none) == 1 else text

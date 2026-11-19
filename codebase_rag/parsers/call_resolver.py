@@ -2677,6 +2677,13 @@ class CallResolver:
             self._remember_cacheable(cache_key, result)
             return True, result
 
+        # `new Range(5, 1)` naming a top-level type of a sibling file in the
+        # same package: visible without an import, so it is that type, not a
+        # bare-name guess (issue #2703).
+        if result := self._try_resolve_java_same_package_type(call):
+            self._remember_cacheable(cache_key, result)
+            return True, result
+
         if (
             call.language == cs.SupportedLanguage.GO
             and cs.SEPARATOR_DOT not in call_name
@@ -2718,6 +2725,28 @@ class CallResolver:
         ):
             return True, result
         return False, None
+
+    def _try_resolve_java_same_package_type(
+        self, call: _CallSite
+    ) -> tuple[str, str] | None:
+        if (
+            call.language != cs.SupportedLanguage.JAVA
+            or not call.constructing
+            or cs.SEPARATOR_DOT in call.call_name
+        ):
+            return None
+        # A single-type import shadows the package's other types (JLS 6.4.1):
+        # `new Date()` under `import java.util.Date;` is java.util's, so it is
+        # left to the import and external-target probes.
+        if call.call_name in (
+            self.import_processor.import_mapping.get(call.module_qn) or {}
+        ):
+            return None
+        engine = self.type_inference.java_type_inference
+        qn = engine.same_package_type_qn(call.call_name, call.module_qn)
+        if qn is None or self.function_registry.get(qn) != NodeType.CLASS:
+            return None
+        return NodeType.CLASS.value, qn
 
     def _resolve_external_target(
         self, call: _CallSite, cache_key: tuple[str, str, bool] | None
@@ -5820,7 +5849,30 @@ class CallResolver:
                 ls.CALL_IMPORT_STATIC, call_name=call_name, method_qn=method_qn
             )
             return self.function_registry[method_qn], method_qn
+        if result := self._try_resolve_js_namespace_member(
+            target, method_name, language
+        ):
+            return result
         return self._try_resolve_package_member(class_qn, method_name)
+
+    def _try_resolve_js_namespace_member(
+        self, module_qn: str, member: str, language: cs.SupportedLanguage | None
+    ) -> tuple[str, str] | None:
+        # `import * as ns from "./lib/index.js"; ns.f()` names the barrel,
+        # where nothing is registered: `f` is what its `export *` or
+        # `export { g as f }` passes on, possibly through further barrels.
+        # Named imports already followed them (#2464); a namespace member
+        # did not, and bound nothing (issue #2933).
+        if language not in cs.JS_TS_LANGUAGES:
+            return None
+        followed = self.import_processor.follow_js_reexports(
+            f"{module_qn}{cs.SEPARATOR_DOT}{member}",
+            self.type_inference.module_qn_to_file_path,
+            self.function_registry,
+        )
+        if followed not in self.function_registry:
+            return None
+        return self.function_registry[followed], followed
 
     def _try_resolve_lua_module_member(
         self,

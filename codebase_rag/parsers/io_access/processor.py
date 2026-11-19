@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
 
@@ -44,10 +45,12 @@ from .extract import (
     first_token_arg_string,
     format_call_target,
     head_is_genuine_module,
+    is_inline_callback,
     is_require_alias,
     iter_token_tree_calls,
     literal_target,
     match_normalised,
+    mode_direction,
     normalise,
     positional_arg_node,
     python_globally_rebound_before,
@@ -65,6 +68,12 @@ from .models import (
     HandleConstructor,
     IOSink,
     UrlGrammar,
+)
+from .py_handles import (
+    inherited_python_handles,
+    inline_python_handle,
+    python_binding_from_node,
+    python_stream_target,
 )
 from .registry import (
     IO_ARG_HANDLE_SINKS,
@@ -133,6 +142,10 @@ def _pattern_children(node: Node, descriptor: LanguageDescriptor) -> list[Node]:
     return []
 
 
+def _always_own_pass(_node: Node) -> bool:
+    return True
+
+
 # The call hop `dart_call_name` keeps in a receiver (`File().read`).
 _DART_CALL_HOP = "()"
 
@@ -186,6 +199,28 @@ class _LeanHandles(NamedTuple):
     # (`userClient userv1connect.UserServiceClient`): field name -> stem.
     # Injected clients are called through these, not through a local binding.
     rpc_fields: dict[str, str]
+
+
+@contextmanager
+def _child_handle_scope(
+    lean_handles: _LeanHandles | None, unbound: Iterable[str] = ()
+) -> Generator[None]:
+    # A nested block or an inline callback walked within its caller is a child
+    # lexical scope for handles too: what it binds (`const out = {}`) is out of
+    # scope afterwards, so it must not leak to, kill or replace the enclosing
+    # bindings, and a name it binds anew (a callback parameter `out`) is not the
+    # enclosing handle inside it (mirrors the in_scope shadow set, by value).
+    if lean_handles is None:
+        yield
+        return
+    snapshot = dict(lean_handles.bindings)
+    for name in unbound:
+        lean_handles.bindings.pop(name, None)
+    try:
+        yield
+    finally:
+        lean_handles.bindings.clear()
+        lean_handles.bindings.update(snapshot)
 
 
 # The connect-go constructor: `New<Stem>Client`, qualified by a generated
@@ -392,6 +427,9 @@ class IOAccessProcessor:
         # when a long-lived processor (realtime updater) re-parses ANY file
         # of the package: a re-parsed file gets a new root id.
         self._rpc_field_cache: dict[tuple[str, tuple[int, ...]], dict[str, str]] = {}
+        # Whether a nested inline callable gets a caller pass of its own; set
+        # per caller by process_io_for_caller (issue #2772).
+        self._has_own_pass: Callable[[Node], bool] = _always_own_pass
         # The module-level string constants of the module last asked about
         # (issue #2521). Callers arrive module by module, so one entry is
         # enough; holding the root keeps its tree alive, so a re-parsed
@@ -404,9 +442,14 @@ class IOAccessProcessor:
         caller_spec: tuple[str, str, str],
         module_qn: str,
         language: cs.SupportedLanguage,
+        has_own_pass: Callable[[Node], bool] | None = None,
     ) -> None:
         if not self._enabled:
             return
+        # An inline callback (`items.forEach(x => console.log(x))`) the call
+        # pass does not walk as its own caller runs as part of this one; without
+        # the predicate every nested callable is assumed to be walked alone.
+        self._has_own_pass = has_own_pass or _always_own_pass
         sinks = IO_SINKS.get(language, ())
         constructors = IO_HANDLE_CONSTRUCTORS.get(language, ())
         if not sinks and not constructors:
@@ -460,7 +503,7 @@ class IOAccessProcessor:
         # Drop inherited plain names rebound locally; the DFS re-adds them at the
         # assignment, so uses after it still resolve. Attribute keys (self.x) are
         # never locals, so they are unaffected.
-        handles = self._inherited_handles(caller_node, import_map, ctor_by_name)
+        handles = inherited_python_handles(caller_node, import_map, ctor_by_name)
         locally_assigned = self._locally_assigned_names(caller_node)
         for name in locally_assigned:
             if cs.SEPARATOR_DOT not in name:
@@ -471,145 +514,22 @@ class IOAccessProcessor:
             if node.type in PY_SCOPE_BOUNDARIES:
                 stack.extend(reversed(definition_header_nodes(node)))
                 continue
-            bound = self._binding_from_node(node, import_map, ctor_by_name, handles)
+            bound = python_binding_from_node(node, import_map, ctor_by_name, handles)
             if bound is not None:
                 var, binding = bound
                 handles[var] = binding
             elif node.type == cs.TS_PY_CALL:
-                self._emit_call(node, caller_spec, import_map, sink_by_name, handles)
+                self._emit_call(
+                    node, caller_spec, import_map, sink_by_name, handles, ctor_by_name
+                )
             elif node.type == cs.TS_PY_SUBSCRIPT:
                 self._emit_py_env_subscript(
                     node, caller_spec, import_map, caller_node, locally_assigned
                 )
             stack.extend(reversed(node.children))
 
-    def _binding_from_node(
-        self,
-        node: Node,
-        import_map: dict[str, str],
-        ctor_by_name: dict[str, HandleConstructor],
-        handles: dict[str, HandleBinding],
-    ) -> tuple[str, HandleBinding] | None:
-        # Both `f = open(...)` (assignment) and `with open(...) as f:` (as_pattern)
-        # bind a handle var to a constructor call.
-        if node.type == cs.TS_PY_ASSIGNMENT:
-            target = node.child_by_field_name(cs.TS_FIELD_LEFT)
-            call = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-        elif node.type == cs.TS_PY_AS_PATTERN:
-            call = next((c for c in node.children if c.type == cs.TS_PY_CALL), None)
-            alias = next(
-                (c for c in node.children if c.type == cs.TS_PY_AS_PATTERN_TARGET),
-                None,
-            )
-            target = alias.children[0] if alias and alias.children else None
-        else:
-            return None
-        # `f = open(...)` binds a plain name; `self.f = open(...)` binds an
-        # attribute: keep the full dotted text ("self.f") as the handle key so a
-        # later `self.f.write(...)` resolves against it.
-        if (
-            target is None
-            or call is None
-            or target.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE)
-            or call.type != cs.TS_PY_CALL
-            or target.text is None
-        ):
-            return None
-        raw = call_name(call)
-        target_name = target.text.decode(cs.ENCODING_UTF8)
-        ctor = registry_match(ctor_by_name, raw, import_map)
-        if ctor is None:
-            # Derive (`cur = conn.cursor()`, issue #714): a method on a bound
-            # handle that yields a same-resource sub-handle binds the target
-            # to the parent's resource.
-            derived = self._derived_python_binding(raw, handles)
-            return None if derived is None else (target_name, derived)
-        identity = literal_target(call, ctor.target_arg, ctor.target_kw)
-        return target_name, HandleBinding(kind=ctor.kind, identity=identity)
-
-    @staticmethod
-    def _derived_python_binding(
-        raw: str | None, handles: dict[str, HandleBinding]
-    ) -> HandleBinding | None:
-        if raw is None:
-            return None
-        receiver, sep, method = raw.rpartition(cs.SEPARATOR_DOT)
-        if not sep:
-            return None
-        parent = handles.get(receiver)
-        if parent is None or method not in IO_HANDLE_DERIVES.get(
-            parent.kind, frozenset()
-        ):
-            return None
-        return parent
-
-    def _inherited_handles(
-        self,
-        caller_node: Node,
-        import_map: dict[str, str],
-        ctor_by_name: dict[str, HandleConstructor],
-    ) -> dict[str, HandleBinding]:
-        # Handle bindings visible from ENCLOSING scopes, walked innermost-first so a
-        # nearer scope shadows a farther one (setdefault keeps the first seen). An
-        # enclosing class contributes its `self.<attr>` handles (set in any method);
-        # an enclosing function/module contributes its top-level local handles.
-        # Nested scopes are pruned; their locals are not visible.
-        handles: dict[str, HandleBinding] = {}
-        class_scanned = False
-        node = caller_node.parent
-        while node is not None:
-            if node.type == cs.TS_PY_CLASS_DEFINITION:
-                if not class_scanned:
-                    class_scanned = True
-                    self._collect_self_attr_handles(
-                        node, import_map, ctor_by_name, handles
-                    )
-            elif node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_MODULE):
-                self._collect_scope_var_handles(node, import_map, ctor_by_name, handles)
-            node = node.parent
-        return handles
-
     def _locally_assigned_names(self, caller_node: Node) -> set[str]:
         return python_locally_assigned_names(caller_node)
-
-    def _collect_scope_var_handles(
-        self,
-        scope_node: Node,
-        import_map: dict[str, str],
-        ctor_by_name: dict[str, HandleConstructor],
-        handles: dict[str, HandleBinding],
-    ) -> None:
-        # Top-level handle bindings of one scope's OWN body; nested defs/classes are
-        # pruned (their locals belong to their own scope, not this one).
-        stack = list(scope_seed_nodes(scope_node))
-        while stack:
-            node = stack.pop()
-            if node.type in PY_SCOPE_BOUNDARIES:
-                continue
-            bound = self._binding_from_node(node, import_map, ctor_by_name, handles)
-            if bound is not None:
-                handles.setdefault(bound[0], bound[1])
-            stack.extend(node.children)
-
-    def _collect_self_attr_handles(
-        self,
-        class_node: Node,
-        import_map: dict[str, str],
-        ctor_by_name: dict[str, HandleConstructor],
-        handles: dict[str, HandleBinding],
-    ) -> None:
-        # `self.<attr> = <constructor>()` bindings anywhere in the class body
-        # (descending method bodies, since __init__ is the usual site); nested
-        # classes are skipped because their `self` is a different object.
-        stack = list(scope_seed_nodes(class_node))
-        while stack:
-            node = stack.pop()
-            if node.type == cs.TS_PY_CLASS_DEFINITION:
-                continue
-            bound = self._binding_from_node(node, import_map, ctor_by_name, handles)
-            if bound is not None and bound[0].startswith(cs.PY_SELF_PREFIX):
-                handles.setdefault(bound[0], bound[1])
-            stack.extend(node.children)
 
     def _emit_direct_sinks(
         self,
@@ -622,6 +542,7 @@ class IOAccessProcessor:
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
         lean_handles: _LeanHandles | None,
+        inherited: frozenset[str] = frozenset(),
     ) -> None:
         # Lean non-Python walk (issue #714): find call sinks in the caller body,
         # crediting I/O to the scope that runs it. No handle/stream tracking yet.
@@ -645,7 +566,9 @@ class IOAccessProcessor:
             statements = [body]
         # Parameters are visible in every block of the function body and always
         # shadow a same-named builtin (a parameter is never an import alias).
-        params = self._param_names(caller_node, descriptor)
+        # An inline callback walked within its enclosing caller also sees the
+        # names in scope where it is written (`inherited`).
+        params = inherited | self._param_names(caller_node, descriptor)
         if descriptor.enclosing_scope_shadows:
             params |= self._enclosing_scope_names(caller_node, descriptor)
         self._walk_scope(
@@ -847,8 +770,26 @@ class IOAccessProcessor:
         stack = [stmt]
         while stack:
             node = stack.pop()
-            # Nested function/method: its own caller, walked separately.
+            # Nested function/method: its own caller, walked separately. An
+            # inline callback the call pass never walks alone runs here, as a
+            # Python lambda does, so its I/O lands on this caller (#2772).
             if node.type in descriptor.nested_scope_types:
+                if is_inline_callback(node, descriptor, self._has_own_pass):
+                    with _child_handle_scope(
+                        lean_handles, self._param_names(node, descriptor)
+                    ):
+                        self._emit_direct_sinks(
+                            node,
+                            caller_spec,
+                            import_map,
+                            sink_by_name,
+                            macro_sinks,
+                            stream_sinks,
+                            member_reads,
+                            descriptor,
+                            lean_handles,
+                            inherited=in_scope | body_extra,
+                        )
                 continue
             if node.type == descriptor.block_scope_type:
                 self._walk_nested_block(
@@ -896,24 +837,20 @@ class IOAccessProcessor:
         lean_handles: _LeanHandles | None,
     ) -> None:
         # A nested block is a child lexical scope for handles too: a handle declared
-        # inside it is out of scope after the block, so its binding must not leak to
-        # later statements (mirrors the in_scope shadow set, passed by value).
-        snapshot = dict(lean_handles.bindings) if lean_handles is not None else None
-        self._walk_scope(
-            list(node.named_children),
-            in_scope,
-            caller_spec,
-            import_map,
-            sink_by_name,
-            macro_sinks,
-            stream_sinks,
-            member_reads,
-            descriptor,
-            lean_handles,
-        )
-        if lean_handles is not None and snapshot is not None:
-            lean_handles.bindings.clear()
-            lean_handles.bindings.update(snapshot)
+        # inside it is out of scope after the block (_child_handle_scope).
+        with _child_handle_scope(lean_handles):
+            self._walk_scope(
+                list(node.named_children),
+                in_scope,
+                caller_spec,
+                import_map,
+                sink_by_name,
+                macro_sinks,
+                stream_sinks,
+                member_reads,
+                descriptor,
+                lean_handles,
+            )
 
     def _emit_node_sinks(
         self,
@@ -1305,13 +1242,26 @@ class IOAccessProcessor:
         # unwrapping the TS wrapper first.
         names: set[str] = set()
         params = caller_node.child_by_field_name(descriptor.params_field)
-        if params is not None:
+        if params is not None and params.type in (
+            descriptor.identifier_type,
+            cs.TS_CSHARP_IMPLICIT_PARAMETER,
+        ):
+            # A lone lambda parameter is the field itself: Java `x -> ...`,
+            # C# `x => ...`.
+            if params.text:
+                names.add(params.text.decode(cs.ENCODING_UTF8))
+        elif params is not None:
             for child in params.named_children:
                 target = child.child_by_field_name(cs.TS_FIELD_PATTERN) or child
                 self._pattern_names(target, descriptor, names)
         elif caller_node.type in cs.DART_SIGNATURE_TYPES:
             # A Dart signature's parameter list is a plain child (#2761).
             names.update(dart_parameter_names(caller_node))
+        # A JS arrow's lone parameter has a field of its own: `x => ...`.
+        if (
+            single := caller_node.child_by_field_name(cs.TS_FIELD_PARAMETER)
+        ) is not None:
+            self._pattern_names(single, descriptor, names)
         return names
 
     def _enclosing_scope_names(
@@ -1425,10 +1375,18 @@ class IOAccessProcessor:
             )
             if formatted is not None:
                 identity = formatted
+        direction = self._direct_call_direction(node, sink, descriptor)
+        self._emit(caller_spec, direction, sink.kind, identity)
+
+    def _direct_call_direction(
+        self, node: Node, sink: IOSink, descriptor: LanguageDescriptor
+    ) -> IODirection:
         direction = sink.direction
+        if sink.mode_arg is not None:
+            direction = mode_direction(node, sink, descriptor)
         if sink.method_options_arg is not None:
             direction = self._method_options_direction(node, sink, descriptor)
-        self._emit(caller_spec, direction, sink.kind, identity)
+        return direction
 
     def _emit_dart_call(
         self,
@@ -2346,14 +2304,25 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         handles: dict[str, HandleBinding],
+        ctor_by_name: dict[str, HandleConstructor],
     ) -> None:
         raw = call_name(node)
         if raw is None:
             return
-        if self._emit_handle_method(node, caller_spec, raw, handles):
+        binding = self._method_receiver_handle(
+            node, raw, handles, import_map, ctor_by_name
+        )
+        if binding is not None and self._emit_handle_method(
+            node, caller_spec, raw, binding
+        ):
             return
         sink = registry_match(sink_by_name, raw, import_map)
         if sink is None:
+            return
+        if sink.stream_kw is not None:
+            stream = python_stream_target(node, sink, import_map, ctor_by_name)
+            if stream is not None:
+                self._emit(caller_spec, sink.direction, *stream)
             return
         mode = (
             literal_target(node, sink.mode_arg, sink.mode_kw)
@@ -2482,19 +2451,32 @@ class IOAccessProcessor:
             direction if left is not None and left.id == node.id else IODirection.READ
         )
 
+    @staticmethod
+    def _method_receiver_handle(
+        call_node: Node,
+        raw_name: str,
+        handles: dict[str, HandleBinding],
+        import_map: dict[str, str],
+        ctor_by_name: dict[str, HandleConstructor],
+    ) -> HandleBinding | None:
+        # The handle a method call runs on: a bound name (`p.read_text()`),
+        # or the constructor call itself (`Path("/x").read_text()`).
+        receiver, sep, _method = raw_name.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return None
+        bound = handles.get(receiver)
+        if bound is not None:
+            return bound
+        return inline_python_handle(call_node, import_map, ctor_by_name)
+
     def _emit_handle_method(
         self,
         call_node: Node,
         caller_spec: tuple[str, str, str],
         raw_name: str,
-        handles: dict[str, HandleBinding],
+        binding: HandleBinding,
     ) -> bool:
-        receiver, sep, method = raw_name.rpartition(cs.SEPARATOR_DOT)
-        if not sep:
-            return False
-        binding = handles.get(receiver)
-        if binding is None:
-            return False
+        method = raw_name.rpartition(cs.SEPARATOR_DOT)[2]
         methods = IO_HANDLE_METHODS.get(binding.kind, {})
         direction = methods.get(method)
         if direction is None:

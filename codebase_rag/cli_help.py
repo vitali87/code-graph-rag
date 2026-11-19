@@ -145,9 +145,12 @@ CMD_GRAPH_TESTS_REACHING = (
 )
 EPILOG_GRAPH = (
     "Run 'cgr help graph COMMAND' for command-specific help.\n\n"
+    "A command that takes a qualified name also takes anything 'resolve' "
+    "does (a bare name, a dotted suffix, path:line) that names exactly one "
+    "definition.\n\n"
     "Exit status: 0 with the JSON answer, where [] means the name is in the "
     "graph and nothing matches it; 3 when the project is not indexed; 4 when "
-    "a qualified name is not in the graph."
+    "a name is not in the graph; 5 when it names several definitions."
 )
 HELP_GRAPH_PROJECT = "Project name in the graph (default: derived from --repo-path)."
 HELP_GRAPH_REPO_PATH = (
@@ -667,7 +670,8 @@ HELP_SCAN_REPO_PATH = (
     "(default: the current directory)."
 )
 HELP_DEADCODE_ENTRY_POINT = (
-    "Mark symbols ending with this qualified-name suffix as entry points. Repeatable."
+    "Mark symbols whose qualified name ends with these whole dotted segments "
+    "(main, cli.run) as entry points. Repeatable."
 )
 HELP_DEADCODE_DECORATOR_ROOT = (
     "Mark symbols with this decorator as entry points. Extends the built-in set."
