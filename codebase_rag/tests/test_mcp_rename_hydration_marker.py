@@ -78,7 +78,8 @@ async def test_a_preview_keeps_the_marker_unless_hydration_purged_nothing(
 
     payload = await _preview(registry, graph)
 
-    assert isinstance(payload, dict) and payload["applied"] is False, payload
+    assert isinstance(payload, dict), payload
+    assert payload["applied"] is False, payload
     assert (graph.project, True) in writes, writes
     assert (graph.project, False) not in writes, writes
 
@@ -117,8 +118,10 @@ async def test_a_committed_rename_that_never_reingested_keeps_its_marker(
             project=graph.project,
         )
 
-    assert isinstance(payload, dict) and payload["applied"] is True, payload
+    assert isinstance(payload, dict), payload
+    assert payload["applied"] is True, payload
     assert payload["graph_incomplete"] is True, payload
     assert "def assist" in (root / "pkg" / "util.py").read_text()
     assert (graph.project, False) not in writes, writes
-    assert writes and all(incomplete for _, incomplete in writes), writes
+    assert writes, writes
+    assert all(incomplete for _, incomplete in writes), writes
