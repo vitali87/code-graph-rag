@@ -5422,6 +5422,22 @@ class CallResolver:
             units = self._translation_unit_reach(module_qn)
         return [qn for qn in candidates if private.get(qn, module_qn) in units]
 
+    def linkable_variants(
+        self, callee_qn: str, variants: list[str], module_qn: str
+    ) -> list[str]:
+        """The variants of a C/C++ callee a call from `module_qn` may bind.
+
+        The edge fans out from the resolved `f` to each of its overloads, and
+        one written after it may be a `static` that another translation unit
+        defines: `f(1.0)` in b.cpp bound a.cpp's extern `f(double)` and then
+        its `static f(int)` too (#3154 review). The callee itself is what the
+        resolution chose, and stays.
+        """
+        if len(variants) < 2:
+            return variants
+        linkable = set(self._linkable_from(variants, module_qn))
+        return [qn for qn in variants if qn == callee_qn or qn in linkable]
+
     def _include_closure(self, module_qn: str) -> set[str]:
         imports = self.import_processor
         import_mapping = imports.import_mapping

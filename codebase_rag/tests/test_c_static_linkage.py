@@ -117,7 +117,9 @@ _INHERITED = {
 }
 # C++ overloads are two functions: `static` on `f(int)` leaves `f(double)`
 # extern, `n::k(int)` is not the file's `static k(int)`, nor the file's
-# `m(int)` n's `static m(int)` (#3154 review).
+# `m(int)` n's `static m(int)` (#3154 review). With the extern `p(double)`
+# written first, the call binds plain `a.p`, whose overloads the edge then
+# fans out to: the `static p(int)` among them is not b.cpp's to call.
 _CPP_OVERLOADS = {
     "a.cpp": (
         "static void f(int);\n"
@@ -128,11 +130,13 @@ _CPP_OVERLOADS = {
         "namespace n { void k(int) {} }\n"
         "namespace n { static void m(int); }\n"
         "void m(int) {}\n"
+        "void p(double) {}\n"
+        "static void p(int) {}\n"
     ),
     "b.cpp": (
         "void f(double);\nvoid h(double);\nnamespace n { void k(int); }\n"
-        "void m(int);\n"
-        "void g() { f(1.0); h(1.0); n::k(1); m(1); }\n"
+        "void m(int);\nvoid p(double);\n"
+        "void g() { f(1.0); h(1.0); n::k(1); m(1); p(1.0); }\n"
     ),
 }
 # A static's file is matched exactly, not as a qn prefix: main.h's module
@@ -284,10 +288,11 @@ def test_a_static_the_definition_inherits_stays_in_its_file(
 def test_a_cpp_static_overload_leaves_the_extern_one_linkable(
     tmp_path: Path,
 ) -> None:
-    # `a.f` is the `static f(int)` prototype, `a.f@2` the extern `f(double)`.
+    # `a.f` is the `static f(int)` prototype, `a.f@2` the extern `f(double)`;
+    # `a.p` is the extern `p(double)`, `a.p@10` the `static p(int)`.
     calls = _calls(tmp_path / "overloads", _CPP_OVERLOADS, "cpp")
     callees = {to for (src, to) in calls if src == "b.g"}
-    assert callees == {"a.f@2", "a.h@4", "a.n.k", "a.m"}, calls
+    assert callees == {"a.f@2", "a.h@4", "a.n.k", "a.m", "a.p"}, calls
 
 
 def test_a_static_is_matched_to_its_file_not_a_qn_prefix(tmp_path: Path) -> None:
