@@ -195,6 +195,16 @@ TRACE_CARRIED_PROPS = (
 )
 
 
+class TraceAgent(StrEnum):
+    """The tracers that run inside the traced program, by `cgr trace agent`
+    name (issue #2684)."""
+
+    C = "c"
+    LUA = "lua"
+    DART = "dart"
+    JVM = "jvm"
+
+
 class TraceUnresolvedReason(StrEnum):
     """Why a traced frame could not be mapped to a graph node."""
 
@@ -203,6 +213,9 @@ class TraceUnresolvedReason(StrEnum):
     UNKNOWN_PATH = "unknown_path"
     NO_MATCH = "no_match"
     AMBIGUOUS = "ambiguous"
+    # A call into a lambda body, anonymous function or closure that resolves to
+    # the node running it (issue #2709).
+    INTRA_NODE = "intra_node"
 
 
 # Said instead of handing back an empty result that reads as "the graph does

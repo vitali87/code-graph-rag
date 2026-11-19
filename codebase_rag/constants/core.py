@@ -61,6 +61,11 @@ ARG_LANGUAGE = "language"
 ARG_DRY_RUN = "dry_run"
 
 SEPARATOR_DOT = "."
+# The type of a span-scoped local whose type cannot be read (Go's `x := f()`
+# shadowing a range variable, a JS `const op = make()` in one `case` of
+# several): inside its span the name is untyped, and never the type another
+# declaration of it has.
+UNTYPED_SPAN_BINDING = ""
 SEPARATOR_SLASH = "/"
 SEPARATOR_BACKSLASH = "\\"
 # Splits "provider:model" both in user-supplied settings and in the model

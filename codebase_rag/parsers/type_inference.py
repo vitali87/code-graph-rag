@@ -12,6 +12,7 @@ from ..types_defs import (
     LanguageQueries,
     NodeType,
     SimpleNameLookup,
+    SpanBinding,
 )
 from .cpp import CppTypeInferenceEngine
 from .csharp.type_inference import CSharpTypeInferenceEngine
@@ -19,6 +20,7 @@ from .csharp_frontend import CallSiteKey
 from .dart.type_inference import DartTypeInferenceEngine
 from .frontends.protocol import ResolvedCallSite
 from .go import GoTypeInferenceEngine
+from .go import type_inference as go_ti
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
 from .java import JavaTypeInferenceEngine
@@ -488,16 +490,18 @@ class TypeInferenceEngine:
         caller_node: ASTNode,
         module_qn: str,
         var_types: dict[str, str] | None = None,
-    ) -> list[tuple[int, int, str, str]]:
+    ) -> list[SpanBinding]:
         """Go range variables and the locals shadowing them (issue #2483),
-        each typed as the resolver reads it in `module_qn`. A local bound to
-        a call (`s := makeOther()`) takes the call's return type, as the flat
-        map's does. A qualified `geo.Shape` is the type of the package this
-        file imports as `geo`. One naming no indexed type (an external
-        package's), or no type at all, stays a binding, untyped: its bare
-        name would bind whatever this package calls Shape, and dropping it
+        and the declarations of a name declared with different types (issue
+        #3332), each typed as the resolver reads it in `module_qn`. A local
+        bound to a call (`s := makeOther()`) takes the call's return type, as
+        the flat map's does. A qualified `geo.Shape` is the type of the
+        package this file imports as `geo`. One naming no indexed type (an
+        external package's), or no type at all, stays a binding, untyped: its
+        bare name would bind whatever this package calls Shape, and dropping it
         would let an outer declaration of the name answer for it."""
         engine = self.go_type_inference
+        bindings = go_utils.local_bindings(caller_node)
 
         def value_type(value: ASTNode) -> str | None:
             if (typed := engine.infer_value_type(value)) is not None:
@@ -507,27 +511,33 @@ class TypeInferenceEngine:
                 if value.type == cs.TS_GO_CALL_EXPRESSION
                 else None
             )
-            return (
-                self._infer_go_call_return_type(segments, module_qn, var_types or {})
-                if segments
-                else None
-            )
+            if not segments:
+                return None
+            receiver_types = dict(var_types or {})
+            # `x := src.Make()` calls the `src` declared where the call is;
+            # the flat map may hold another block's `src`.
+            if len(segments) > 1 and (
+                declared := go_ti.declared_type_at(
+                    bindings, segments[0], value.start_byte, value_type
+                )
+            ):
+                if in_scope := self._go_span_type(declared, module_qn):
+                    receiver_types[segments[0]] = in_scope
+            return self._infer_go_call_return_type(segments, module_qn, receiver_types)
 
-        return [
-            (start, end, name, self._go_span_type(type_name, module_qn))
-            for start, end, name, type_name in engine.collect_range_span_bindings(
-                caller_node, value_type
-            )
-        ]
+        def span_type(type_name: str) -> str:
+            return self._go_span_type(type_name, module_qn)
+
+        return engine.collect_local_span_bindings(caller_node, value_type, span_type)
 
     def _go_span_type(self, type_name: str, module_qn: str) -> str:
         # A qn a call's return type resolved to already is one; a written type
         # resolves through this file's imports.
         if not type_name:
-            return cs.GO_UNTYPED_BINDING
+            return cs.UNTYPED_SPAN_BINDING
         if type_name in self.function_registry:
             return type_name
-        return self._go_written_type(type_name, module_qn) or cs.GO_UNTYPED_BINDING
+        return self._go_written_type(type_name, module_qn) or cs.UNTYPED_SPAN_BINDING
 
     def _resolve_go_qualified_locals(
         self, module_qn: str, var_types: dict[str, str]

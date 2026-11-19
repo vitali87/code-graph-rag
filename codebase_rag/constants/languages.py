@@ -587,6 +587,13 @@ IGNORE_PATTERNS = frozenset(
         "venv",
     }
 )
+# Version-control metadata. Unlike the rest of IGNORE_PATTERNS, only a `!`
+# line that names a path through it rescues anything here: a negation that
+# can match at any depth (`!*.[Cc]ache/`) walked into it and recorded Git's
+# own folders as Folder nodes (issue #3642).
+VCS_METADATA_DIRS = frozenset({".git", ".hg", ".svn"})
+# The gitignore segment that matches any number of directories.
+GLOB_DOUBLE_STAR = "**"
 # Machine-generated artefacts: never hand-edited, never first-party. Matched
 # against the whole FILENAME with `str.endswith`, not against `Path.suffix`,
 # because two entries here are not suffixes in pathlib's sense:
@@ -632,6 +639,18 @@ UNCONDITIONAL_IGNORE_FILENAME_ENDINGS = tuple(sorted(UNCONDITIONAL_IGNORE_SUFFIX
 
 # pathspec style for .cgrignore / --exclude patterns (#495).
 GITWILDMATCH_STYLE = "gitignore"
+# Joins the lines of a .gitignore that has `!` lines into one exclude-set
+# entry evaluated in order (issue #2835); no pattern line can contain it.
+IGNORE_BLOCK_SEPARATOR = "\n"
+# How pathspec's gitignore regexes mark a match of a directory ABOVE the path
+# rather than of the path itself, and the regex it gives `*/` and `**/`
+# (every directory). An ordered block reads them to judge each level of a
+# path on its own, as git does (issue #2835).
+PATHSPEC_DIR_MARK_GROUP = "ps_d"
+PATHSPEC_ANY_DIR_REGEX = "(?P<ps_d>/)"
+GITIGNORE_NEGATION = "!"
+# `x/**/`: the directories inside x, which pathspec reads as `x/`.
+GITIGNORE_DIRS_INSIDE_SUFFIX = "/**/"
 
 # JDK binaries the Java frontend probes and runs (issue #1181).
 JAVAC_BIN = "javac"
