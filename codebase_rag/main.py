@@ -121,6 +121,7 @@ from .utils.path_utils import (
     derive_project_name,
     exclusions_matching,
     is_symlink_entry,
+    ordered_block_lines,
 )
 from .utils.rich_markdown import LeftAlignedMarkdown
 from .utils.token_utils import estimate_message_tokens
@@ -1987,7 +1988,13 @@ def prompt_for_unignored_directories(
     detected = detect_excludable_directories(repo_path)
     cgrignore = load_ignore_patterns(repo_path)
     cli_patterns = frozenset(cli_excludes) if cli_excludes else frozenset()
-    pre_excluded = cli_patterns | cgrignore.exclude
+    # An ordered .gitignore block is offered by its exclude lines, as before.
+    pre_excluded = cli_patterns | {
+        line
+        for pattern in cgrignore.exclude
+        for line in ordered_block_lines(pattern)
+        if not line.startswith("!")
+    }
 
     if not detected and not pre_excluded:
         return cgrignore.unignore
@@ -2121,7 +2128,7 @@ def _keeps_still_excluded(
 
 def _exclusions_of_kept_dir(keep: str, excludes: frozenset[str]) -> list[str]:
     directory = f"{keep.strip().strip(cs.SEPARATOR_SLASH)}{cs.SEPARATOR_SLASH}"
-    return sorted(exclusions_matching(directory, excludes, frozenset({keep})))
+    return sorted(exclusions_matching(directory, excludes))
 
 
 def _merge_keeps_into_ignore_file(

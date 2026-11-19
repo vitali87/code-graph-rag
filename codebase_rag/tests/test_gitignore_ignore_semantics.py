@@ -5,6 +5,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.path_utils import should_skip_path, should_skip_rel_file
@@ -99,8 +101,13 @@ class TestGitignoreUnignoreSemantics:
 
     def test_user_exclude_beats_unignore(self) -> None:
         # existing precedence: unignore rescues only built-in ignores, never
-        # an explicit user exclude of the path itself or of a directory a
-        # glob unignore reaches into.
+        # an explicit user exclude of the path itself, of the directory it
+        # sits in, or of a directory a glob unignore reaches into.
+        assert _skip(
+            "gen/x.py",
+            exclude=frozenset({"gen"}),
+            unignore=frozenset({"gen/x.py"}),
+        )
         assert _skip(
             "gen/x.py", exclude=frozenset({"gen"}), unignore=frozenset({"gen"})
         )
@@ -115,54 +122,22 @@ class TestGitignoreUnignoreSemantics:
             unignore=frozenset({"gen/x.js"}),
         )
 
-    def test_a_literal_keep_inside_an_excluded_directory_is_kept(self) -> None:
-        # Greptile review of PR 2510: a keep naming one path inside an
-        # excluded directory (what interactive setup saves) lifts only that
-        # directory's exclusion, and only for the kept path; its siblings
-        # stay excluded.
-        exclude = frozenset({"gen"})
-        unignore = frozenset({"gen/x.py"})
-        assert not _skip("gen/x.py", exclude=exclude, unignore=unignore)
-        assert _skip("gen/y.py", exclude=exclude, unignore=unignore)
-
-    def test_the_same_exclusion_still_applies_below_a_keep(self) -> None:
-        # Greptile review of PR 2510: only the enclosing directory's match
-        # gives way. With `secrets/` excluded and `!secrets/public` kept, a
-        # second `secrets/` inside the keep is a match of its own.
-        exclude = frozenset({"secrets/"})
-        unignore = frozenset({"secrets/public"})
-        assert not _skip("secrets/public/a.py", exclude=exclude, unignore=unignore)
-        assert _skip(
-            "secrets/public/secrets/config.py", exclude=exclude, unignore=unignore
-        )
-        assert _skip(
-            "secrets/public/x/secrets/y.py", exclude=exclude, unignore=unignore
-        )
-        assert _skip("secrets/other.py", exclude=exclude, unignore=unignore)
-
-    def test_a_double_star_exclusion_still_applies_below_a_keep(self) -> None:
-        # An anchored pattern with `**` matches at several depths: its match
-        # on the enclosing `a/secrets/` gives way, the one below does not.
-        exclude = frozenset({"a/**/secrets/"})
-        unignore = frozenset({"a/secrets/public"})
-        assert not _skip("a/secrets/public/x.py", exclude=exclude, unignore=unignore)
-        assert _skip(
-            "a/secrets/public/secrets/y.py", exclude=exclude, unignore=unignore
-        )
-        assert _skip(
-            "a/secrets/public/b/secrets/z.py", exclude=exclude, unignore=unignore
-        )
-        assert _skip("a/secrets/other.py", exclude=exclude, unignore=unignore)
-
-    def test_an_anchored_enclosing_exclusion_is_lifted_inside_the_keep(
-        self,
+    @pytest.mark.parametrize(
+        ("exclude", "unignore", "rel_path"),
+        [
+            ("secrets/", "secrets/public", "secrets/public/a.py"),
+            ("a/**/secrets/", "a/secrets/public", "a/secrets/public/x.py"),
+            ("/secrets/", "secrets/public", "secrets/public/secrets/config.py"),
+        ],
+    )
+    def test_a_literal_keep_does_not_open_an_excluded_directory(
+        self, exclude: str, unignore: str, rel_path: str
     ) -> None:
-        # Negative: an anchored pattern matches at one depth only, so a
-        # same-named directory deeper inside the keep is not excluded.
-        exclude = frozenset({"/secrets/"})
-        unignore = frozenset({"secrets/public"})
-        assert not _skip(
-            "secrets/public/secrets/config.py", exclude=exclude, unignore=unignore
+        # A `!` line naming one path inside an excluded directory keeps
+        # nothing there, however the directory is excluded: as in git, a
+        # path whose parent directory is excluded stays excluded (issue #2835).
+        assert _skip(
+            rel_path, exclude=frozenset({exclude}), unignore=frozenset({unignore})
         )
 
 
@@ -185,26 +160,20 @@ class TestDirPruning:
             unignore_paths=unignore,
         )
 
-    def test_excluded_dir_stays_pruned_despite_unignore(self) -> None:
-        # A glob names no single path, so it does not open the directory.
-        updater = self._updater(frozenset({"gen"}), frozenset({"gen/*.py"}))
-        assert not updater._should_keep_dir("gen", "")
-
-    def test_excluded_dir_entered_only_on_the_way_to_a_literal_keep(self) -> None:
-        # The walk and the file decision agree (the point of #596): the
-        # directory enclosing a kept path is entered, its siblings are not.
-        updater = self._updater(frozenset({"gen"}), frozenset({"gen/sub/keep.py"}))
-        assert updater._should_keep_dir("gen", "")
-        assert updater._should_keep_dir("sub", "gen/")
-        assert not updater._should_keep_dir("other", "gen/")
-
-    def test_a_repeated_exclusion_inside_a_keep_is_still_pruned(self) -> None:
-        # Greptile review of PR 2510: the walk agrees with the file decision
-        # and does not enter the second `secrets/` below the keep.
-        updater = self._updater(frozenset({"secrets/"}), frozenset({"secrets/public"}))
-        assert updater._should_keep_dir("secrets", "")
-        assert updater._should_keep_dir("public", "secrets/")
-        assert not updater._should_keep_dir("secrets", "secrets/public/")
+    @pytest.mark.parametrize(
+        ("exclude", "unignore", "dirname"),
+        [
+            ("gen", "gen/keep.py", "gen"),
+            ("gen", "gen/sub/keep.py", "gen"),
+            ("gen", "gen/*.py", "gen"),
+            ("secrets/", "secrets/public", "secrets"),
+        ],
+    )
+    def test_excluded_dir_stays_pruned_despite_unignore(
+        self, exclude: str, unignore: str, dirname: str
+    ) -> None:
+        updater = self._updater(frozenset({exclude}), frozenset({unignore}))
+        assert not updater._should_keep_dir(dirname, "")
 
     def test_builtin_pruned_dir_kept_when_unignore_targets_beneath(self) -> None:
         updater = self._updater(None, frozenset({"bin/keep.py"}))

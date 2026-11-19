@@ -123,6 +123,16 @@ def _is_root_decorator(decorator: str, root_decorators: frozenset[str]) -> bool:
     )
 
 
+def _names_entry_point(qn: str, entry: str) -> bool:
+    """Whether `entry` is the qualified name or its trailing whole segments.
+
+    A plain suffix test let `-e main` root `_remain` and `domain`, and
+    `-e cli.run` root `mycli.run`, with everything they call, so the report
+    silently lost real dead code (issue #2641).
+    """
+    return qn == entry or qn.endswith(cs.SEPARATOR_DOT + entry)
+
+
 def _is_dunder(name: str) -> bool:
     # A __dunder__ method is invoked by the Python runtime (async with,
     # iteration, operators), never by an explicit call the graph can see, so it
@@ -401,6 +411,16 @@ def _is_java_serialization_root(name: str, is_method: bool, path: str) -> bool:
         is_method
         and path.endswith(cs.EXT_JAVA)
         and name in cs.JAVA_SERIALIZATION_METHOD_NAMES
+    )
+
+
+def _is_java_annotation_root(props: PropertyDict, path: str) -> bool:
+    # A Java method carrying a container/runtime annotation (@PostConstruct,
+    # @Scheduled, @EventListener, @Bean, @GetMapping) is invoked reflectively,
+    # never by a call the graph sees, so it is a reachability root. Gated to
+    # .java so a Python `@bean` keeps its own meaning.
+    return path.endswith(cs.EXT_JAVA) and _has_root_decorator(
+        props, cs.JAVA_ROOT_ANNOTATIONS
     )
 
 
@@ -784,6 +804,7 @@ def _is_root(
             or _is_c_cpp_entry_root(leaf, is_method, path, qn, project_prefix)
         ),
         lambda: _is_java_serialization_root(bare_leaf, is_method, path),
+        lambda: _is_java_annotation_root(props, path),
         lambda: _is_csharp_attribute_root(props, path),
         lambda: _is_csharp_dispose_root(bare_leaf, is_method, path),
         lambda: _is_csharp_operator_or_finalizer_root(leaf, path),
@@ -825,7 +846,7 @@ def _is_root(
 
 
 def _is_named_entry_point(qn: str, config: DeadCodeConfig) -> bool:
-    return any(qn.endswith(entry) for entry in config.entry_points)
+    return any(_names_entry_point(qn, entry) for entry in config.entry_points)
 
 
 def _is_rooted_test_symbol(

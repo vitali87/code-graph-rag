@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path, PurePath
+from typing import NamedTuple
 
-from pathspec import PathSpec
-from pathspec.pattern import RegexPattern
+from pathspec import GitIgnoreSpec, PathSpec, RegexPattern
 
 from .. import constants as cs
 
@@ -156,17 +156,137 @@ def portable_posix(path: str) -> str:
     return posixpath.normpath(path.replace(cs.SEPARATOR_BACKSLASH, cs.SEPARATOR_SLASH))
 
 
+def ordered_ignore_block(lines: Iterable[str]) -> str:
+    """One exclude-set entry that evaluates `lines` in order, as git does.
+
+    A `.gitignore` exclude followed by `!` lines is not a set of independent
+    patterns: the last matching line decides (issue #2835). Patterns cannot
+    hold a line break, so the joined lines are one entry, compiled apart from
+    the rest of the set; a set without such an entry behaves as before.
+    """
+    return cs.IGNORE_BLOCK_SEPARATOR.join(lines)
+
+
+def ordered_block_lines(pattern: str) -> list[str]:
+    return pattern.split(cs.IGNORE_BLOCK_SEPARATOR)
+
+
+class _BlockLine(NamedTuple):
+    line: str
+    pattern: RegexPattern
+
+
+class _OrderedBlock(NamedTuple):
+    lines: tuple[_BlockLine, ...]
+    # The block's excludes alone: a path none of them reaches is kept, so
+    # most paths cost one match, not one per line and directory level.
+    excludes: GitIgnoreSpec
+
+
+class _IgnoreMatcher(NamedTuple):
+    patterns: PathSpec
+    ordered_blocks: tuple[_OrderedBlock, ...]
+
+    def match_file(self, rel_path_str: str) -> bool:
+        return self.patterns.match_file(rel_path_str) or any(
+            _git_ignores(block, rel_path_str) for block in self.ordered_blocks
+        )
+
+
+def _ordered_block(lines: list[str]) -> _OrderedBlock:
+    spec = GitIgnoreSpec.from_lines(lines)
+    return _OrderedBlock(
+        lines=tuple(
+            _BlockLine(line, pattern)
+            for line, pattern in zip(lines, spec.patterns, strict=True)
+        ),
+        excludes=GitIgnoreSpec.from_lines(
+            line for line in lines if not line.startswith(cs.GITIGNORE_NEGATION)
+        ),
+    )
+
+
+def _git_ignores(block: _OrderedBlock, rel_path_str: str) -> bool:
+    """Whether git ignores the path: at the path itself or at one of its
+    parent directories, the last line matching that level is an exclude.
+
+    So an excluded directory keeps everything beneath it excluded (`gen/`
+    then `!gen/keep.py` keeps nothing), and a `!` line re-includes only what
+    it matches itself: `!pkgs/` leaves `pkgs/a/gen/` excluded by `gen/`,
+    while `src/**` then `!src/gen/` and `!src/gen/keep.py` keeps that file,
+    since `src/**` excludes what is inside `src`, not `src`.
+    """
+    if not block.excludes.match_file(rel_path_str):
+        return False
+    is_dir = rel_path_str.endswith(cs.SEPARATOR_SLASH)
+    parts = rel_path_str.rstrip(cs.SEPARATOR_SLASH).split(cs.SEPARATOR_SLASH)
+    for depth in range(1, len(parts) + 1):
+        level = cs.SEPARATOR_SLASH.join(parts[:depth])
+        level_is_dir = is_dir or depth < len(parts)
+        ignored = False
+        for entry in block.lines:
+            if entry.pattern.include is not None and _matches_level(
+                entry, level, level_is_dir
+            ):
+                ignored = entry.pattern.include
+        if ignored:
+            return True
+    return False
+
+
+def _matches_level(entry: _BlockLine, level: str, is_dir: bool) -> bool:
+    # Whether the line matches `level` itself. pathspec's regexes also match
+    # every path beneath a matched directory, marking where that directory
+    # ends, and git judges a path beneath it by its own lines.
+    probe = f"{level}{cs.SEPARATOR_SLASH}" if is_dir else level
+    found = entry.pattern.match_file(probe)
+    if found is None:
+        return False
+    match = found.match
+    if match.re.pattern == cs.PATHSPEC_ANY_DIR_REGEX:
+        return is_dir
+    mark = cs.PATHSPEC_DIR_MARK_GROUP
+    start = match.start(mark) if mark in match.re.groupindex else -1
+    if entry.line.endswith(cs.GITIGNORE_DIRS_INSIDE_SUFFIX):
+        return is_dir and 0 <= start < len(level)
+    if start >= 0:
+        return start == len(level)
+    # `x/**` matches what is inside x, which the probe `x/` is not.
+    return not (is_dir and match.end() == len(probe))
+
+
 # #495: .cgrignore lines and --exclude values are interpreted with
 # .gitignore (gitwildmatch) semantics: bare names match at any depth (as
 # before), and globs / anchoring / dir-only trailing slash now work. The
 # spec is compiled once per pattern set (frozensets are hashable).
 @lru_cache(maxsize=64)
-def compiled_ignore_spec(patterns: frozenset[str]) -> PathSpec:
-    return PathSpec.from_lines(cs.GITWILDMATCH_STYLE, sorted(patterns))
+def compiled_ignore_spec(patterns: frozenset[str]) -> _IgnoreMatcher:
+    blocks = {p for p in patterns if cs.IGNORE_BLOCK_SEPARATOR in p}
+    return _IgnoreMatcher(
+        patterns=PathSpec.from_lines(cs.GITWILDMATCH_STYLE, sorted(patterns - blocks)),
+        ordered_blocks=tuple(
+            _ordered_block(ordered_block_lines(b)) for b in sorted(blocks)
+        ),
+    )
 
 
 def matches_ignore_patterns(rel_path_str: str, patterns: frozenset[str]) -> bool:
     return compiled_ignore_spec(patterns).match_file(rel_path_str)
+
+
+def exclusions_matching(
+    match_path: str, exclude_paths: frozenset[str]
+) -> frozenset[str]:
+    """The exclude patterns that match `match_path` (a directory ends in `/`).
+
+    The walk's decision made pattern by pattern, so a caller can name the
+    line that keeps a path out.
+    """
+    return frozenset(
+        pattern
+        for pattern in exclude_paths
+        if matches_ignore_patterns(match_path, frozenset({pattern}))
+    )
 
 
 _GLOB_MAGIC = re.compile(r"[*?\[]")
@@ -216,157 +336,6 @@ def unignore_could_match_within(pattern: str, rel_dir: str) -> bool:
     )
 
 
-@lru_cache(maxsize=64)
-def nested_keeps(unignore_paths: frozenset[str]) -> tuple[str, ...]:
-    """The unignore patterns that name one path below the repository root.
-
-    Literal and containing a slash, like the `!generated/node_modules` an
-    interactive setup saves: only such a keep has enclosing directories a
-    walk can be sent through. A bare name or a glob names no single path.
-    """
-    return tuple(
-        sorted(
-            keep
-            for pattern in unignore_paths
-            if (keep := _nested_keep(pattern)) is not None
-        )
-    )
-
-
-def _nested_keep(pattern: str) -> str | None:
-    keep = pattern.strip().strip(cs.SEPARATOR_SLASH)
-    if cs.SEPARATOR_SLASH in keep and not _GLOB_MAGIC.search(keep):
-        return keep
-    return None
-
-
-def keeps_outside_run_excludes(
-    unignore_paths: frozenset[str] | None, run_excludes: frozenset[str]
-) -> frozenset[str] | None:
-    """`unignore_paths` without the nested keeps a run's `--exclude` encloses.
-
-    A nested keep lifts the exclusion of the directories enclosing it, which
-    is meant for the ignore files it is saved in. `--exclude` is the run's
-    own choice and must win: with `!generated/node_modules` saved,
-    `--exclude generated` indexed the kept directory anyway (Greptile review
-    of PR 2510). Dropping the keep for the run, rather than telling the walk
-    which excludes came from where, keeps the recorded exclusion state the
-    exact scope that was indexed.
-    """
-    if not unignore_paths or not run_excludes:
-        return unignore_paths
-    overridden = frozenset(
-        pattern
-        for pattern in unignore_paths
-        if (keep := _nested_keep(pattern)) is not None
-        and _enclosing_excludes(keep, run_excludes)
-    )
-    return unignore_paths - overridden or None
-
-
-@lru_cache(maxsize=256)
-def _enclosing_excludes(keep: str, exclude_paths: frozenset[str]) -> frozenset[str]:
-    # The exclude patterns that match a directory enclosing `keep`.
-    parts = keep.split(cs.SEPARATOR_SLASH)
-    enclosing = [
-        f"{cs.SEPARATOR_SLASH.join(parts[:depth])}{cs.SEPARATOR_SLASH}"
-        for depth in range(1, len(parts))
-    ]
-    return frozenset(
-        pattern
-        for pattern in exclude_paths
-        if any(_single_ignore_spec(pattern).match_file(d) for d in enclosing)
-    )
-
-
-# Compiled one pattern at a time, rather than through compiled_ignore_spec,
-# whose small cache holds the walk's whole sets.
-@lru_cache(maxsize=256)
-def _single_ignore_spec(pattern: str) -> PathSpec:
-    return PathSpec.from_lines(cs.GITWILDMATCH_STYLE, [pattern])
-
-
-def excludes_applying_to(
-    match_path: str,
-    exclude_paths: frozenset[str] | None,
-    unignore_paths: frozenset[str] | None,
-) -> frozenset[str] | None:
-    """The exclude patterns that decide `match_path` (a directory ends in `/`).
-
-    Excludes win over unignores, with one exception: the exclusion of a
-    directory ENCLOSING a nested keep gives way on the path down to the keep
-    and inside it. Otherwise `!generated/node_modules` under a `.gitignore`d
-    `generated/` could never take effect -- the walk pruned `generated/`
-    first -- although setup reported it saved (Greptile review of PR 2510).
-    The files beside that path stay excluded, and a pattern that excludes
-    paths inside the keep itself (`*.js`) still wins there.
-    """
-    if not exclude_paths or not unignore_paths:
-        return exclude_paths
-    rel_path_str = match_path.rstrip(cs.SEPARATOR_SLASH)
-    lifted: set[str] = set()
-    for keep in nested_keeps(unignore_paths):
-        if keep.startswith(f"{rel_path_str}{cs.SEPARATOR_SLASH}"):
-            lifted |= _enclosing_excludes(keep, exclude_paths)
-        elif rel_path_str == keep or rel_path_str.startswith(
-            f"{keep}{cs.SEPARATOR_SLASH}"
-        ):
-            lifted |= {
-                pattern
-                for pattern in _enclosing_excludes(keep, exclude_paths)
-                if not _matches_at_or_below_keep(pattern, match_path, keep)
-            }
-    return exclude_paths - lifted if lifted else exclude_paths
-
-
-def exclusions_matching(
-    match_path: str,
-    exclude_paths: frozenset[str],
-    unignore_paths: frozenset[str] | None,
-) -> frozenset[str]:
-    """The exclude patterns that still exclude `match_path` (a directory ends in `/`).
-
-    The same decision the walk predicates make, pattern by pattern, so a
-    caller can name the line that keeps a path out.
-    """
-    applying = excludes_applying_to(match_path, exclude_paths, unignore_paths)
-    return frozenset(
-        pattern
-        for pattern in applying or ()
-        if _single_ignore_spec(pattern).match_file(match_path)
-    )
-
-
-def _matches_at_or_below_keep(pattern: str, match_path: str, keep: str) -> bool:
-    """Whether `pattern` matches `match_path` at the keep or below it.
-
-    Only the match on a directory enclosing the keep gives way. With
-    `secrets/` excluded and `!secrets/public` kept, the `secrets/` inside
-    `secrets/public/secrets/` is a match of its own and still excludes
-    (Greptile review of PR 2510), as does `a/**/secrets/` inside a kept
-    `a/secrets/public`. So each path from the keep down to `match_path` is
-    tested as itself: a gitignore pattern's regex matches a path's prefix,
-    which is how it takes in everything below a directory it names, and the
-    same regex matched in full names that one path alone.
-    """
-    regexes = [
-        compiled.regex
-        for compiled in _single_ignore_spec(pattern).patterns
-        if isinstance(compiled, RegexPattern)
-        and compiled.include
-        and compiled.regex is not None
-    ]
-    is_dir = match_path.endswith(cs.SEPARATOR_SLASH)
-    parts = match_path.rstrip(cs.SEPARATOR_SLASH).split(cs.SEPARATOR_SLASH)
-    for depth in range(keep.count(cs.SEPARATOR_SLASH) + 1, len(parts) + 1):
-        path = cs.SEPARATOR_SLASH.join(parts[:depth])
-        if depth < len(parts) or is_dir:
-            path += cs.SEPARATOR_SLASH
-        if any(regex.fullmatch(path) for regex in regexes):
-            return True
-    return False
-
-
 def should_keep_dir(
     dirname: str,
     dir_prefix: str,
@@ -381,9 +350,7 @@ def should_keep_dir(
     """
     rel_dir = f"{dir_prefix}{dirname}"
     # an explicit exclude can never be rescued by unignore (excludes win
-    # at the file level too), so prune the subtree outright -- unless it
-    # encloses a nested keep, whose way down stays open (PR 2510).
-    exclude_paths = excludes_applying_to(f"{rel_dir}/", exclude_paths, unignore_paths)
+    # at the file level too), so prune the subtree outright.
     if exclude_paths and matches_ignore_patterns(f"{rel_dir}/", exclude_paths):
         return False
     if dirname not in cs.IGNORE_PATTERNS:
@@ -471,10 +438,6 @@ def should_skip_path(
     rel_path_str = rel_path.as_posix()
     # a trailing slash marks the path as a directory for dir-only patterns.
     match_path = rel_path_str if _is_file else f"{rel_path_str}/"
-    # A directory enclosing a nested keep loses its exclusion here and is
-    # then kept by the unignore-beneath rule below, as in should_keep_dir,
-    # so the kept files get their Folder ancestry.
-    exclude_paths = excludes_applying_to(match_path, exclude_paths, unignore_paths)
     if exclude_paths and matches_ignore_patterns(match_path, exclude_paths):
         return True
     # The rescuable half, decided BEFORE the general unignore below: that check
@@ -529,7 +492,6 @@ def should_skip_rel_file(
     filename = rel_path_str.rsplit(cs.SEPARATOR_SLASH, 1)[-1]
     if is_unconditionally_ignored_filename(filename):
         return True
-    exclude_paths = excludes_applying_to(rel_path_str, exclude_paths, unignore_paths)
     if exclude_paths and matches_ignore_patterns(rel_path_str, exclude_paths):
         return True
     # Same position and rule as `should_skip_path`: the rescuable half needs a

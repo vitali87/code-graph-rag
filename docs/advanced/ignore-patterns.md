@@ -25,7 +25,7 @@ fixtures/**
 - A pattern containing a slash (`docs/*.md`, `/generated`) is anchored to the repository root
 - A trailing slash (`build/`) matches directories only
 - Lines starting with `!` un-ignore matching paths that a **default** exclusion would skip (explicit excludes always win; the name-ending rule under [Default Exclusions](#default-exclusions) is un-ignorable only for `.min.js` and `.min.css`, and only by a `!` line naming the file)
-- One exception to explicit excludes winning: a `!` line naming one path, without wildcards, inside an excluded directory (`!generated/node_modules` when `.gitignore` excludes `generated/`) keeps that path. The walk enters the excluded directory only on the way to it, so the rest of `generated/` stays out, and a pattern excluding files inside the kept path itself (`*.js`) still applies. This is what interactive setup saves when you keep a directory that sits inside an excluded one
+- In the repository's `.gitignore`, a `!` line also re-includes what an earlier line of that file excluded, as git does: the last matching line wins, and a file whose parent directory is excluded stays excluded. So `src/gen/*.py` followed by `!src/gen/handwritten.py` keeps `handwritten.py` in the graph. A `.gitignore` `!` line never undoes a `.cgrignore` exclude
 - Lines starting with `#` are comments; blank lines are ignored
 - Patterns from `.cgrignore` are merged with `--exclude` flags (which use the same syntax) and auto-detected directories
 
@@ -44,6 +44,24 @@ alongside the hash cache, in the checkout's state directory (see
 [cgr's own state](#cgrs-own-state)). An index built before that file existed
 has no recorded set, so the first run after upgrading re-runs once to
 establish it and logs why.
+
+## Keeping Directories with Interactive Setup
+
+`--interactive-setup` lists the directories a sync would leave out and asks
+which to keep. After you choose, it offers to save the new keeps to
+`.cgrignore` as `!path` lines under a ``# Kept by `cgr --interactive-setup` ``
+comment, so every later sync, including the watcher, an MCP reingest and CI,
+keeps them too. Without saving, a keep lasts for that run at most.
+
+- A keep that `.cgrignore` excludes by exactly that line has the line
+  removed, since a `.cgrignore` exclude beats its own `!` lines. A
+  `.gitignore` line of exactly that pattern is undone by the saved `!` line.
+- A keep that another line still excludes is not saved, and setup names that
+  line. A `!` line cannot keep a path inside an excluded directory, so
+  `generated/node_modules` stays out while `.gitignore` excludes
+  `generated/`; narrow or remove that line to keep it.
+- If you decline, or `.cgrignore` cannot be written, nothing is saved and
+  setup says what that means for the current run.
 
 ## cgr's own state
 

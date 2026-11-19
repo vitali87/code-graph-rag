@@ -81,6 +81,19 @@ inside a nested function is attributed to that nested function alone, never
 bubbled up to an enclosing function or the module. (This matches how `CALLS` is
 attributed, and how `FLOWS_TO` treats nested scopes below.)
 
+An inline callback is the exception: a Python `lambda`, a JS/TS arrow or
+function expression with no name of its own, a Go `func` literal, a Java or C#
+lambda, or a Rust closure. Such a callback has no caller of its own, so it runs
+as part of the function that writes it. In
+`items.forEach((x) => console.log(x))` the write is attributed to the enclosing
+function, as the callback's `CALLS` are. A value the callback reads from the
+enclosing scope flows into its sinks. A `return` inside the callback leaves the
+callback, not the enclosing function. A named callback (`const handler = (req)
+=> …`) is a function of its own and keeps its own edges. A callback bound to a
+local (`let g = || …` in Rust, `g := func() {…}` in Go, `Runnable r = () -> …`
+in Java, `Action a = () => …` in C#) counts as named too: it runs only where
+that name is called, so the enclosing function is not credited with its I/O.
+
 ## FLOWS_TO
 
 `FLOWS_TO` records **value flow**: that a value moved from one place to another.

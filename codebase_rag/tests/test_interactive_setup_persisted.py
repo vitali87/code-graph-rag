@@ -25,11 +25,7 @@ from codebase_rag import constants as cs
 from codebase_rag.cli import app
 from codebase_rag.config import CGRIGNORE_FILENAME, load_ignore_patterns
 from codebase_rag.main import prompt_for_unignored_directories
-from codebase_rag.utils.path_utils import (
-    is_eligible_rel_file,
-    should_skip_path,
-    walk_eligible_files,
-)
+from codebase_rag.utils.path_utils import should_skip_path, walk_eligible_files
 
 
 @pytest.fixture
@@ -327,47 +323,25 @@ def generated(repo: Path) -> Path:
     return repo
 
 
-def test_a_keep_inside_an_excluded_directory_is_walked(
+def test_a_keep_inside_an_excluded_directory_is_reported_not_kept(
     generated: Path, console: MagicMock
 ) -> None:
-    # Greptile review of PR 2510: `!generated/node_modules` was saved, but the
-    # walk pruned `generated/` before reaching it, so the kept files stayed
-    # out on this run and every later one. Rows: bin, generated, node_modules.
-    assert "generated/node_modules/pkg/index.js" not in _walked(generated)
-
-    kept, _ = _keep(generated, "3", confirm=True)
+    # A `!` line cannot keep a path inside an excluded directory: as in git,
+    # a path whose parent directory is excluded stays excluded (issue #2835).
+    # So keeping `generated/node_modules` under a `.gitignore`d `generated/`
+    # is reported with the line that wins, and nothing is saved. Rows: bin,
+    # generated, node_modules.
+    kept, confirm_ask = _keep(generated, "3", confirm=True)
 
     assert kept >= {"generated/node_modules"}
+    confirm_ask.assert_not_called()
+    assert not (generated / CGRIGNORE_FILENAME).exists()
+    assert "Not kept: generated/node_modules (excluded by generated/)" in _printed(
+        console
+    )
     walked = _walked(generated)
-    assert "generated/node_modules/pkg/index.js" in walked
-    # The rest of the excluded directory stays out.
-    assert "generated/out.py" not in walked
-    assert "generated/other/gen.py" not in walked
+    assert not any(rel.startswith("generated/") for rel in walked)
     assert "src/lib.py" in walked
-    # The watcher asks the same question one path at a time.
-    patterns = load_ignore_patterns(generated)
-    assert is_eligible_rel_file(
-        "generated/node_modules/pkg/index.js", patterns.exclude, patterns.unignore
-    )
-    assert not is_eligible_rel_file(
-        "generated/out.py", patterns.exclude, patterns.unignore
-    )
-    # Structure traversal enters the enclosing directory, so the kept files
-    # get their Folder ancestry, and still skips its other children.
-    assert not should_skip_path(
-        generated / "generated",
-        generated,
-        patterns.exclude,
-        patterns.unignore,
-        is_file=False,
-    )
-    assert should_skip_path(
-        generated / "generated" / "other",
-        generated,
-        patterns.exclude,
-        patterns.unignore,
-        is_file=False,
-    )
 
 
 def test_a_keep_with_no_excluded_ancestor_behaves_as_before(
@@ -382,15 +356,18 @@ def test_a_keep_with_no_excluded_ancestor_behaves_as_before(
 
 
 def test_an_excluded_file_inside_a_kept_directory_stays_excluded(
-    generated: Path, console: MagicMock
+    repo: Path, console: MagicMock
 ) -> None:
-    # Negative: only the exclusion of the ENCLOSING directory gives way; a
-    # pattern naming files inside the kept one still wins.
-    (generated / ".gitignore").write_text("generated/\n*.js\n")
+    # Negative: keeping a directory does not lift a pattern naming files
+    # inside it. Rows: *.js, bin.
+    (repo / ".gitignore").write_text("*.js\n")
+    (repo / "bin" / "tool.js").write_text("x\n")
 
-    _keep(generated, "3", confirm=True)
+    _keep(repo, "2", confirm=True)
 
-    assert "generated/node_modules/pkg/index.js" not in _walked(generated)
+    walked = _walked(repo)
+    assert "bin/cli.py" in walked
+    assert "bin/tool.js" not in walked
 
 
 @pytest.fixture
@@ -467,12 +444,11 @@ def test_keeping_the_exclusion_itself_still_lifts_it(
     assert "Not kept" not in _printed(console)
 
 
-def test_a_repeated_exclusion_inside_a_saved_keep_still_applies(
+def test_a_saved_keep_inside_an_excluded_directory_keeps_nothing(
     repo: Path, console: MagicMock
 ) -> None:
-    # Greptile review of PR 2510: the walk of a later sync, with `secrets/`
-    # excluded and `!secrets/public` saved, leaves out the `secrets/` nested
-    # inside the keep.
+    # With `secrets/` excluded, a `!secrets/public` line beside it keeps
+    # nothing below it: an exclusion wins over a keep (issue #2835).
     (repo / CGRIGNORE_FILENAME).write_text("secrets/\n!secrets/public\n")
     for rel in ("secrets/public/a.py", "secrets/public/secrets/config.py"):
         (repo / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -480,8 +456,8 @@ def test_a_repeated_exclusion_inside_a_saved_keep_still_applies(
 
     walked = _walked(repo)
 
-    assert "secrets/public/a.py" in walked
-    assert "secrets/public/secrets/config.py" not in walked
+    assert not any(rel.startswith("secrets/") for rel in walked)
+    assert "src/lib.py" in walked
 
 
 def test_concurrent_saves_both_keep_their_choice(
@@ -578,25 +554,25 @@ def test_a_run_level_exclusion_beats_a_saved_nested_keep(
     assert "src/lib.py" in walked
 
 
-def test_a_saved_nested_keep_still_lifts_an_ignore_file_exclusion(
+def test_an_ignore_file_exclusion_beats_a_saved_nested_keep(
     saved_nested_keep: Path,
 ) -> None:
-    # Negative: the same keep under a `.gitignore`d directory, with no
-    # `--exclude`, is walked as before.
+    # The same keep under a `.gitignore`d directory keeps nothing either: the
+    # directory's exclusion wins (issue #2835).
     (saved_nested_keep / ".gitignore").write_text("generated/\n")
 
     walked = _walked_by_cli(saved_nested_keep, ["start", "--update-graph"])
 
-    assert "generated/node_modules/kept.py" in walked
-    assert "generated/out.py" not in walked
+    assert not any(rel.startswith("generated/") for rel in walked)
+    assert "src/lib.py" in walked
 
 
 def test_a_run_level_file_pattern_still_applies_inside_a_kept_directory(
     saved_nested_keep: Path,
 ) -> None:
-    # Negative: an `--exclude` that encloses nothing keeps the keep, and
-    # still wins for the files it names inside it.
-    (saved_nested_keep / ".gitignore").write_text("generated/\n")
+    # Negative: with no enclosing exclusion the keep rescues the default-
+    # excluded `node_modules`, and an `--exclude` naming files inside it
+    # still wins for those files.
     (saved_nested_keep / "generated/node_modules/skip.js").write_text("x\n")
 
     walked = _walked_by_cli(
