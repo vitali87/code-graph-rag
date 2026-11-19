@@ -1,3 +1,4 @@
+import fnmatch
 import hashlib
 import os
 import posixpath
@@ -338,6 +339,8 @@ def should_keep_dir(
     # at the file level too), so prune the subtree outright.
     if exclude_paths and matches_ignore_patterns(f"{rel_dir}/", exclude_paths):
         return False
+    if dirname in cs.VCS_METADATA_DIRS:
+        return unignore_names_vcs_dir(rel_dir, unignore_paths)
     if dirname not in cs.IGNORE_PATTERNS:
         return True
     # Cargo's src/bin/ holds first-party binaries, not build output;
@@ -425,6 +428,13 @@ def should_skip_path(
     match_path = rel_path_str if _is_file else f"{rel_path_str}/"
     if exclude_paths and matches_ignore_patterns(match_path, exclude_paths):
         return True
+    dir_parts = rel_path.parent.parts if _is_file else rel_path.parts
+    if (
+        verdict := _vcs_metadata_verdict(
+            dir_parts, rel_path_str, _is_file, unignore_paths
+        )
+    ) is not None:
+        return verdict
     # The rescuable half, decided BEFORE the general unignore below: that check
     # returns False for a directory-level `!` too, since gitwildmatch matches
     # `build/js/jquery.min.js` against the pattern `build`. Requiring a pattern
@@ -434,20 +444,152 @@ def should_skip_path(
         return not (
             unignore_paths and unignore_names_this_file(rel_path_str, unignore_paths)
         )
-    # unignore rescues only built-in ignores, never explicit user excludes.
-    if unignore_paths and matches_ignore_patterns(match_path, unignore_paths):
+    if _unignore_rescues(match_path, rel_path_str, _is_file, unignore_paths):
         return False
-    if (
-        not _is_file
-        and unignore_paths
-        and any(unignore_could_match_within(u, rel_path_str) for u in unignore_paths)
-    ):
-        # structure traversal must descend into a built-in-ignored dir when
-        # an unignore pattern can match beneath it (mirrors _should_keep_dir),
-        # or rescued files get no Folder/Package ancestry in the graph.
-        return False
-    dir_parts = rel_path.parent.parts if _is_file else rel_path.parts
     return has_ignored_dir_part(dir_parts)
+
+
+def _vcs_metadata_verdict(
+    dir_parts: tuple[str, ...],
+    rel_path_str: str,
+    is_file: bool,
+    unignore_paths: frozenset[str] | None,
+) -> bool | None:
+    # Whether to skip a path for the version-control metadata dirs on it:
+    # True or False when they decide, None when they do not.
+    if has_unrescued_vcs_part(dir_parts, unignore_paths):
+        return True
+    # A metadata dir a `!` line names, and a directory in it that the line
+    # spells a path through, are kept as the walk keeps them: the built-in
+    # check after this counts `.git` itself as ignored, so a file rescued
+    # there had no Folder ancestry (CodeRabbit review of #3644).
+    if (
+        not is_file
+        and not cs.VCS_METADATA_DIRS.isdisjoint(dir_parts)
+        and unignore_names_vcs_dir(rel_path_str, unignore_paths)
+    ):
+        return False
+    return None
+
+
+def _unignore_rescues(
+    match_path: str,
+    rel_path_str: str,
+    is_file: bool,
+    unignore_paths: frozenset[str] | None,
+) -> bool:
+    if not unignore_paths:
+        return False
+    # unignore rescues only built-in ignores, never explicit user excludes.
+    if matches_ignore_patterns(match_path, unignore_paths):
+        return True
+    # structure traversal must descend into a built-in-ignored dir when
+    # an unignore pattern can match beneath it (mirrors _should_keep_dir),
+    # or rescued files get no Folder/Package ancestry in the graph.
+    return not is_file and any(
+        unignore_could_match_within(u, rel_path_str) for u in unignore_paths
+    )
+
+
+def unignore_names_vcs_dir(rel_dir: str, unignore_paths: frozenset[str] | None) -> bool:
+    """Whether an unignore spells out a path through this directory.
+
+    Asked of a version-control metadata dir, and of a directory inside one.
+    Only such a line (`!submodule1/.git`) rescues anything in it. A line that
+    can match at any depth (`!*.[Cc]ache/`, `!**/packages/build/`, both in
+    .NET's standard `.gitignore`) keeps every other built-in-ignored
+    directory walkable, but walking `.git` for it recorded Git's own folders
+    as Folder nodes (issue #3642).
+    """
+    if not unignore_paths:
+        return False
+    dir_parts = tuple(rel_dir.split(cs.SEPARATOR_SLASH))
+    for pattern in unignore_paths:
+        bare = pattern.strip(cs.SEPARATOR_SLASH)
+        if cs.SEPARATOR_SLASH not in bare:
+            # `!.git/` names a `.git` at any depth, `!/.git/` only the root's.
+            anchored = pattern.startswith(cs.SEPARATOR_SLASH)
+            if bare == dir_parts[-1] and (not anchored or len(dir_parts) == 1):
+                return True
+            continue
+        if _pattern_reaches_dir(tuple(bare.split(cs.SEPARATOR_SLASH)), dir_parts):
+            return True
+    return False
+
+
+def _pattern_reaches_dir(
+    pattern_parts: tuple[str, ...], dir_parts: tuple[str, ...]
+) -> bool:
+    # Whether the pattern's leading segments match the whole directory path.
+    # Any segment may be a glob or `**`, except a metadata dir that ends the
+    # path: it must be spelled out, since a wildcard standing in for it
+    # (`*/*/x.py`) is a broad line, not a rescue.
+    #
+    # One dir segment at a time, keeping the set of pattern positions that
+    # can stand there, so each (pattern, dir) position pair is visited once:
+    # recursing on `**` both ways was exponential in the number of `**`
+    # segments (CodeRabbit review of #3644).
+    last = len(dir_parts) - 1
+    positions = _past_empty_double_stars({0}, pattern_parts)
+    for index, part in enumerate(dir_parts):
+        literal = index == last and part in cs.VCS_METADATA_DIRS
+        positions = _past_empty_double_stars(
+            _positions_after(positions, pattern_parts, part, literal), pattern_parts
+        )
+        if not positions:
+            return False
+    return True
+
+
+def _positions_after(
+    positions: set[int], pattern_parts: tuple[str, ...], part: str, literal: bool
+) -> set[int]:
+    # The pattern positions that can follow `positions` once a directory
+    # segment `part` is consumed. A `literal` part (a metadata dir ending the
+    # path) only an identical segment matches; a `**` never stands for it.
+    advanced: set[int] = set()
+    for position in positions:
+        if position == len(pattern_parts):
+            continue
+        segment = pattern_parts[position]
+        if segment == cs.GLOB_DOUBLE_STAR:
+            if not literal:
+                advanced.add(position)
+        elif segment == part if literal else fnmatch.fnmatchcase(part, segment):
+            advanced.add(position + 1)
+    return advanced
+
+
+def _past_empty_double_stars(
+    positions: set[int], pattern_parts: tuple[str, ...]
+) -> set[int]:
+    # A `**` may match no segment at all, so the position after it is
+    # reachable wherever it is.
+    reachable = set(positions)
+    pending = list(positions)
+    while pending:
+        position = pending.pop()
+        if (
+            position < len(pattern_parts)
+            and pattern_parts[position] == cs.GLOB_DOUBLE_STAR
+            and position + 1 not in reachable
+        ):
+            reachable.add(position + 1)
+            pending.append(position + 1)
+    return reachable
+
+
+def has_unrescued_vcs_part(
+    dir_parts: tuple[str, ...], unignore_paths: frozenset[str] | None
+) -> bool:
+    # Ahead of the general unignore: the same rule `should_keep_dir` applies
+    # to the walk, so the file predicates and the walk agree (issue #3642).
+    for index, part in enumerate(dir_parts):
+        if part in cs.VCS_METADATA_DIRS and not unignore_names_vcs_dir(
+            cs.SEPARATOR_SLASH.join(dir_parts[: index + 1]), unignore_paths
+        ):
+            return True
+    return False
 
 
 def has_ignored_dir_part(dir_parts: tuple[str, ...]) -> bool:
@@ -478,6 +620,8 @@ def should_skip_rel_file(
     if is_unconditionally_ignored_filename(filename):
         return True
     if exclude_paths and matches_ignore_patterns(rel_path_str, exclude_paths):
+        return True
+    if has_unrescued_vcs_part(dir_parts, unignore_paths):
         return True
     # Same position and rule as `should_skip_path`: the rescuable half needs a
     # pattern naming the FILE, decided before the general unignore below, or a

@@ -145,9 +145,12 @@ CMD_GRAPH_TESTS_REACHING = (
 )
 EPILOG_GRAPH = (
     "Run 'cgr help graph COMMAND' for command-specific help.\n\n"
+    "A command that takes a qualified name also takes anything 'resolve' "
+    "does (a bare name, a dotted suffix, path:line) that names exactly one "
+    "definition.\n\n"
     "Exit status: 0 with the JSON answer, where [] means the name is in the "
     "graph and nothing matches it; 3 when the project is not indexed; 4 when "
-    "a qualified name is not in the graph."
+    "a name is not in the graph; 5 when it names several definitions."
 )
 HELP_GRAPH_PROJECT = "Project name in the graph (default: derived from --repo-path)."
 HELP_GRAPH_REPO_PATH = (
@@ -466,6 +469,15 @@ EXAMPLES_TRACE_PULL = (
     "      --path-map /build/src/=./my-repo/src/ \\\n"
     "      --header Authorization=Bearer $TOKEN\n\n"
     "  cgr trace ingest cgr-trace.jsonl --repo-path ./my-repo"
+)
+CMD_TRACE_AGENT = (
+    "Print where the installed tracer for a language is: the C/C++ shim, the "
+    "Lua module, or the Dart collector or JVM agent source directory."
+)
+EXAMPLES_TRACE_AGENT = (
+    "EXAMPLE\n\n"
+    '  cc -pthread -finstrument-functions -g -O0 main.c "$(cgr trace agent c)" -o app\n\n'
+    '  LUA_PATH="$(dirname "$(cgr trace agent lua)")/?.lua;;" lua -l cgr_trace main.lua'
 )
 ERR_TRACE_CONVERT_BAD_FORMAT = "Unknown --format '{format}'; supported: ebpf."
 ERR_TRACE_CONVERT_BAD_PATH_MAP = (

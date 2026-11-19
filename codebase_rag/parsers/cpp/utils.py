@@ -675,6 +675,11 @@ def _find_qualified_identifier_in_declarator(func_node: Node) -> Node | None:
     return None
 
 
+def out_of_class_qualified_name(func_node: Node) -> Node | None:
+    """The `Class::method` qualified identifier an out-of-line definition names."""
+    return _find_qualified_identifier_in_declarator(func_node)
+
+
 def is_out_of_class_method_definition(func_node: Node) -> bool:
     if func_node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
         inner = _get_inner_function_node(func_node)
