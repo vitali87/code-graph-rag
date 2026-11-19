@@ -1554,35 +1554,7 @@ class Renamer:
             for s in sites
             if s.resolution != _CHAIN or (s.path, s.line, s.col) not in covered
         ]
-        structural = [s for s in sites if s.resolution == _STRUCTURAL]
-        if structural:
-            raise RenameRefused(
-                cs.RENAME_STRUCTURAL_UNLOCATABLE.format(qn=qn, count=len(structural)),
-                structural,
-                unlocatable,
-            )
-        # Every graph-known occurrence without a rewrite location blocks,
-        # whatever bound it: `allow_heuristic` accepts rewriting through a
-        # guessed site, not leaving a known one under the old name.
-        siteless = [s for s in sites if s.kind == "unlocatable"]
-        if siteless:
-            raise RenameRefused(
-                cs.RENAME_SITELESS.format(qn=qn, count=len(siteless)),
-                siteless,
-                unlocatable,
-            )
-        # Planned, not guessed, so `allow_heuristic` does not cover it.
-        if shared := self._sites_another_namesake_binds(members, old_name, sites):
-            raise RenameRefused(
-                cs.RENAME_SHARED_SITE.format(
-                    qn=qn,
-                    count=len(shared),
-                    name=old_name,
-                    locations=_locations(shared),
-                ),
-                shared,
-                unlocatable,
-            )
+        self._refuse_unrewritable_sites(qn, members, old_name, sites, unlocatable)
         ambiguous = [
             s for s in sites if s.resolution in AMBIGUOUS or s.resolution == _CHAIN
         ]
@@ -1836,6 +1808,48 @@ class Renamer:
                     and isinstance(path := row.get(cs.KEY_PATH), str)
                 )
         return paths
+
+    def _refuse_unrewritable_sites(
+        self,
+        qn: str,
+        members: list[str],
+        old_name: str,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+    ) -> None:
+        """Refuse a rename whose planned sites cannot all be rewritten.
+
+        `allow_heuristic` opts into guessed sites, and none of these is a
+        guess: each is a known site the rename would leave behind or break.
+        """
+        structural = [s for s in sites if s.resolution == _STRUCTURAL]
+        if structural:
+            raise RenameRefused(
+                cs.RENAME_STRUCTURAL_UNLOCATABLE.format(qn=qn, count=len(structural)),
+                structural,
+                unlocatable,
+            )
+        # Every graph-known occurrence without a rewrite location blocks,
+        # whatever bound it: `allow_heuristic` accepts rewriting through a
+        # guessed site, not leaving a known one under the old name.
+        siteless = [s for s in sites if s.kind == "unlocatable"]
+        if siteless:
+            raise RenameRefused(
+                cs.RENAME_SITELESS.format(qn=qn, count=len(siteless)),
+                siteless,
+                unlocatable,
+            )
+        if shared := self._sites_another_namesake_binds(members, old_name, sites):
+            raise RenameRefused(
+                cs.RENAME_SHARED_SITE.format(
+                    qn=qn,
+                    count=len(shared),
+                    name=old_name,
+                    locations=_locations(shared),
+                ),
+                shared,
+                unlocatable,
+            )
 
     def _sites_another_namesake_binds(
         self, hierarchy: list[str], old_name: str, sites: list[RenameSite]
