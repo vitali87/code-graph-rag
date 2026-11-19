@@ -34,6 +34,7 @@ from ..types_defs import (
     NodeType,
     PropertyDict,
     ScalaBinding,
+    SpanBinding,
 )
 from ..utils import qn_markers
 from ..utils.fqn_resolver import scoped_name_parts
@@ -4972,7 +4973,7 @@ class CallProcessor:
         class_context: str | None,
         language: cs.SupportedLanguage,
         local_var_types: dict[str, str] | None,
-    ) -> list[tuple[int, int, str, str]]:
+    ) -> list[SpanBinding]:
         if local_var_types is None:
             return []
         type_inference = self._resolver.type_inference
@@ -4982,8 +4983,20 @@ class CallProcessor:
             )
         if language == cs.SupportedLanguage.GO:
             # A `for k, v := range xs` variable is the loop's own, so it holds
-            # the element type inside the loop and nowhere else (issue #2483).
+            # the element type inside the loop and nowhere else (issue #2483),
+            # and a local declared again in an inner block is another
+            # variable (issue #3332).
             return type_inference.collect_go_span_bindings(
+                caller_node, module_qn, local_var_types
+            )
+        # A `const op` in each `switch` case, `s` in each arm of an
+        # `if`/`else`: one name, a variable per block (issue #3332).
+        if language in _JS_TS_LANGUAGES:
+            return type_inference.js_type_inference.collect_scoped_declarations(
+                caller_node, module_qn, language, local_var_types
+            )
+        if language == cs.SupportedLanguage.JAVA:
+            return type_inference.java_type_inference.collect_scoped_declarations(
                 caller_node, module_qn, local_var_types
             )
         return []
@@ -4993,12 +5006,13 @@ class CallProcessor:
         call_name: str,
         call_node: Node,
         local_var_types: dict[str, str] | None,
-        span_bindings: list[tuple[int, int, str, str]],
+        span_bindings: list[SpanBinding],
     ) -> dict[str, str] | None:
         # If the call's receiver base is a span-scoped binding (match-arm
-        # variant, adaptor-closure parameter) whose range contains this call,
-        # overlay that binding's type, shadowing the flat map's value. The
-        # innermost (smallest) containing span wins for nested scopes.
+        # variant, adaptor-closure parameter, a local declared in several
+        # blocks) whose range contains this call, overlay that binding's
+        # type, shadowing the flat map's value. The innermost (smallest)
+        # containing span wins for nested scopes.
         if local_var_types is None or cs.SEPARATOR_DOT not in call_name:
             return local_var_types
         base = call_name.split(cs.SEPARATOR_DOT, 1)[0]
@@ -5011,9 +5025,9 @@ class CallProcessor:
                     best = (span, bound_type)
         if best is None or local_var_types.get(base) == best[1]:
             return local_var_types
-        if best[1] == cs.GO_UNTYPED_BINDING:
-            # A Go local nothing can type: the name is untyped here, not the
-            # type an outer declaration of it has (issue #2483).
+        if best[1] == cs.UNTYPED_SPAN_BINDING:
+            # A local nothing can type: the name is untyped here, not the type
+            # another declaration of it has (issues #2483, #3332).
             return {
                 name: type_name
                 for name, type_name in local_var_types.items()
@@ -7197,7 +7211,7 @@ class CallProcessor:
         ):
             return scala.callee
         if ctx.is_java and call_node.type == cs.TS_METHOD_INVOCATION:
-            return self._resolve_java_callee(ctx, call_node)
+            return self._resolve_java_callee(ctx, call_node, call_var_types)
         if ctx.is_csharp and call_node.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
             return self._resolve_csharp_callee(
                 ctx, call_node, call_name, call_var_types
@@ -8011,7 +8025,10 @@ class CallProcessor:
         )
 
     def _resolve_java_callee(
-        self, ctx: _CallScanContext, call_node: Node
+        self,
+        ctx: _CallScanContext,
+        call_node: Node,
+        call_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
         # The javac frontend (issue #1181): a HIT is the declaration the
         # compiler bound this call to, which the ARGUMENT TYPES select
@@ -8024,14 +8041,20 @@ class CallProcessor:
             callee_info = None
         elif callee_info is None:
             callee_info = self._resolver.resolve_java_method_call(
-                call_node, ctx.module_qn, ctx.local_var_types, ctx.caller_qn
+                call_node, ctx.module_qn, call_var_types, ctx.caller_qn
             )
             if callee_info is not None:
-                self._link_java_overload_ties(ctx, call_node, callee_info[1])
+                self._link_java_overload_ties(
+                    ctx, call_node, callee_info[1], call_var_types
+                )
         return callee_info
 
     def _link_java_overload_ties(
-        self, ctx: _CallScanContext, call_node: Node, callee_qn: str
+        self,
+        ctx: _CallScanContext,
+        call_node: Node,
+        callee_qn: str,
+        call_var_types: dict[str, str] | None,
     ) -> None:
         # Same-arity overloads the argument types cannot tell apart were
         # bound by declaration order, which is no evidence for any one of
@@ -8042,7 +8065,7 @@ class CallProcessor:
         # references emitted in between keep their own.
         engine = self._resolver.type_inference.java_type_inference
         ties = engine.java_overload_ties(
-            call_node, callee_qn, ctx.local_var_types, ctx.module_qn
+            call_node, callee_qn, call_var_types, ctx.module_qn
         )
         if not ties:
             return
