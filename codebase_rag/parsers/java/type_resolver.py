@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from typing import TYPE_CHECKING, NamedTuple
 
 from ... import constants as cs
@@ -54,6 +54,12 @@ def _declares_type_parameter(declaration: ASTNode, type_name: str) -> bool:
         for param in params.children
         if param.type == cs.TS_TYPE_PARAMETER
         for child in param.children
+    )
+
+
+def _member_declares_type_parameter(declaration: ASTNode, type_name: str) -> bool:
+    return declaration.type in _JAVA_GENERIC_MEMBER_DECL_AST_TYPES and (
+        _declares_type_parameter(declaration, type_name)
     )
 
 
@@ -281,33 +287,40 @@ class JavaTypeResolverMixin:
         # Java reads a simple type name as a member of the innermost
         # enclosing type that declares one, ahead of the file's other types
         # and its imports, so a same-named type elsewhere in the file does
-        # not make it ambiguous (Greptile, PR #2973).
+        # not make it ambiguous (Greptile, PR #2973). None hands the name
+        # back to the import and same-file lookups, as before scoping.
+        for owner, enclosing in self._scoped_member_owners(type_name, module_qn, scope):
+            if member := self._member_type(owner, enclosing, type_name):
+                return member
+        return None
+
+    def _scoped_member_owners(
+        self, type_name: str, module_qn: str, scope: ASTNode
+    ) -> Iterator[tuple[str, str]]:
+        """The types whose members `type_name` may name from `scope`, in
+        lookup order, each with the enclosing type it is read from."""
         # Each enclosing type's members include those it inherits, ahead of
         # the next type out (JLS 8.5; CodeRabbit, PR #2973).
         # A type parameter named the same is the type variable instead, in
         # javac's order: a method's ahead of every member type around it, a
         # class's after the members it declares but ahead of those it
-        # inherits (Greptile, PR #2973). None then hands the name back to
-        # the import and same-file lookups, as before scoping.
+        # inherits (Greptile, PR #2973). The walk stops there.
+        # A generator, so supertypes are only walked once the types nearer
+        # the name have missed.
         enclosing_qns = iter(self._enclosing_type_qns(scope, module_qn))
         current = scope.parent
         while current is not None:
-            if current.type in _JAVA_GENERIC_MEMBER_DECL_AST_TYPES and (
-                _declares_type_parameter(current, type_name)
-            ):
-                return None
+            if _member_declares_type_parameter(current, type_name):
+                return
             if current.type in _JAVA_TYPE_DECL_AST_TYPES:
                 if (enclosing := next(enclosing_qns, None)) is None:
-                    return None
-                if member := self._member_type(enclosing, enclosing, type_name):
-                    return member
+                    return
+                yield enclosing, enclosing
                 if _declares_type_parameter(current, type_name):
-                    return None
+                    return
                 for owner in self._type_and_supertypes(enclosing)[1:]:
-                    if member := self._member_type(owner, enclosing, type_name):
-                        return member
+                    yield owner, enclosing
             current = current.parent
-        return None
 
     def _member_type(self, owner: str, enclosing: str, type_name: str) -> str | None:
         member = f"{owner}{cs.SEPARATOR_DOT}{type_name}"
