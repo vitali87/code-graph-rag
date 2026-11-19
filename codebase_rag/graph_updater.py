@@ -10991,6 +10991,17 @@ class GraphUpdater:
             or (
                 label != "Folder" and path_utils.is_symlink_entry(self.repo_path / path)
             )
+            # The walk no longer enters `.git`, `.hg` or `.svn` unless a `!`
+            # line names a path through it, but a graph indexed before that
+            # rule holds Folders there whose directories still exist (issue
+            # #3642). The rule is in the parser fingerprint's inputs, so the
+            # first sync after the upgrade re-parses and reaches this prune.
+            or (
+                label == cs.NodeLabel.FOLDER
+                and path_utils.has_unrescued_vcs_part(
+                    tuple(path.split(cs.SEPARATOR_SLASH)), self.unignore_paths
+                )
+            )
         )
         # `_vanished`, not `exists()`: since 3.12 `Path.exists()`
         # re-raises PermissionError instead of reading it as
