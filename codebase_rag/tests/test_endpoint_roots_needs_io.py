@@ -100,6 +100,16 @@ def test_a_json_run_gets_no_empty_payload() -> None:
     assert "--capture io" in result.stderr, result.stderr
 
 
+def test_a_table_run_reports_the_refusal_on_stderr() -> None:
+    # Stdout is the table's sink, which a redirect saves as the report; the
+    # refusal goes to stderr there too, as the command's other errors do
+    # (issue #2642).
+    result = _run(_ingestor(HANDLERS), "--no-endpoint-roots")
+    assert result.exit_code == 1, result.output
+    assert result.stdout == "", result.stdout
+    assert "--capture io" in result.stderr, result.stderr
+
+
 def test_the_library_refuses_too() -> None:
     config = default_dead_code_config(include_tests=True, include_classes=False)
     ingestor = _ingestor(HANDLERS)

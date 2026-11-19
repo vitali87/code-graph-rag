@@ -184,7 +184,12 @@ MCP_PARAM_REINGEST_PATHS = (
     "Files to re-ingest, relative to the project root (created, modified, or deleted)."
 )
 MCP_PARAM_REINGEST_DELETED = (
-    "Files to remove from the graph even if a same-named file exists on disk."
+    "Files reported deleted (e.g. by a file watcher). Their old definitions "
+    "are dropped; one that exists on disk again (an editor's atomic save) is "
+    "re-parsed from its current content instead of being removed. To keep a "
+    "file out of the graph, exclude it in .cgrignore; an excluded path is "
+    "skipped here, so one already indexed keeps its definitions until "
+    "update_repository drops them."
 )
 _MCP_DETERMINISTIC_NOTE = (
     "Deterministic: fixed graph queries, no LLM, same graph gives the same "
@@ -568,6 +573,16 @@ MCP_PARAM_PROJECT = (
     "Optional. Restrict results to one indexed project; use list_projects for "
     "the available names. Omit to search every project."
 )
+# The tools that read one project and default to the server's own (issue
+# #2757): the graph tools, context, rename, move, change_signature and
+# find_duplicate_code. `{default}` is the project an omitted argument means,
+# so an empty answer is not read as a graph-wide one.
+MCP_PARAM_PROJECT_DEFAULT = (
+    "Optional. The indexed project to read; use list_projects for the "
+    "available names. Omitted, it is {default}, not every project."
+)
+MCP_PROJECT_DEFAULT_SERVER = "this server's own project ({project})"
+MCP_PROJECT_DEFAULT_WORKSPACE = "the workspace's default project"
 MCP_PARAM_SOURCE_QN = "Qualified name of the flow source (function/method)"
 MCP_PARAM_SINK_QN = "Qualified name of the flow sink (function/method)"
 
