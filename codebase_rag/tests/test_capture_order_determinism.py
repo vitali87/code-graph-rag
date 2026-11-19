@@ -155,7 +155,10 @@ DOCUMENT_ORDER = [
     # A def or class nested in the function returns for itself, not for it.
     ("m.use_nested", "m.Other.first"),
     ("m.Holder.run", "m.Other.first"),
-    ("j.useJs", "j.B.go"),
+    # The inner block's `x` is another variable, out of scope at the call
+    # (issue #3332): the call reads the outer A whatever order the two
+    # declarators come in.
+    ("j.useJs", "j.A.go"),
 ]
 
 

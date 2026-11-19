@@ -3544,6 +3544,35 @@
       "params": []
     },
     {
+      "command": "cgr trace agent",
+      "hidden": false,
+      "params": [
+        {
+          "name": "language",
+          "kind": "argument",
+          "flags": [
+            "language"
+          ],
+          "type": "choice",
+          "nargs": 1,
+          "choices": [
+            "c",
+            "lua",
+            "dart",
+            "jvm"
+          ],
+          "bounds": null,
+          "path": null,
+          "required": true,
+          "multiple": false,
+          "is_flag": false,
+          "hidden": false,
+          "default": null,
+          "envvar": []
+        }
+      ]
+    },
+    {
       "command": "cgr trace convert",
       "hidden": false,
       "params": [
@@ -4549,6 +4578,7 @@
     "CLI_EXIT_FOUND": 1,
     "CLI_EXIT_INTERRUPTED": 130,
     "CLI_EXIT_USAGE_ERROR": 2,
+    "GRAPH_EXIT_AMBIGUOUS_TARGET": 5,
     "GRAPH_EXIT_UNKNOWN_PROJECT": 3,
     "GRAPH_EXIT_UNKNOWN_TARGET": 4,
     "PORT_EXIT_DIFFERS": 1,
