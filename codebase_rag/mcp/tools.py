@@ -3751,7 +3751,11 @@ class MCPToolsRegistry:
         # Folder/File two projects own, which no probe sees for projects over
         # one root (CodeRabbit, PR #2900).
         hydration_purged: list[int | None] = []
-        edits_remain = False
+        # None until the rename says what it left on disk: an exception out
+        # of a commit can leave a written file behind when its restore fails
+        # too (CodeRabbit, PR #2900), so only a returned report or a refusal,
+        # raised before any edit, settles it.
+        edits_remain: bool | None = None
         marker_error: str | None = None
         refusal: RenameRefused | None = None
         try:
@@ -3780,6 +3784,7 @@ class MCPToolsRegistry:
             edits_remain = report.applied
         except RenameRefused as refused:
             refusal = refused
+            edits_remain = False
         finally:
             # The callback, once called, settles the marker itself (cleared,
             # or kept over a graph it may have written). Uncalled, nothing
@@ -3795,7 +3800,7 @@ class MCPToolsRegistry:
                 and guarded is not None
                 and not reingested
                 and hydration_purged == [0]
-                and not edits_remain
+                and edits_remain is False
             ):
                 marker_error = self._require_marker_cleared(project_name)
         if marker_error is None and clear_errors:

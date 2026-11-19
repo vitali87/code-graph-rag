@@ -125,3 +125,30 @@ async def test_a_committed_rename_that_never_reingested_keeps_its_marker(
     assert (graph.project, False) not in writes, writes
     assert writes, writes
     assert all(incomplete for _, incomplete in writes), writes
+
+
+@pytest.mark.asyncio
+async def test_a_rename_that_raises_mid_commit_keeps_its_marker(
+    py_repo: tuple[Path, RecordedGraph],  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A commit can raise with an edited file still on disk when its restore
+    # fails too. Nothing confirmed what is left, so the marker stays even
+    # though hydration purged nothing (CodeRabbit review of PR #2900).
+    root, graph = py_repo
+    registry, writes = _registry(root, graph, monkeypatch, 0)
+
+    with patch(
+        "codebase_rag.editing.rename.rename",
+        side_effect=OSError(28, "No space left on device"),
+    ):
+        payload = await registry.rename(
+            qualified_name=f"{graph.project}.pkg.util.helper",
+            new_name="assist",
+            project=graph.project,
+        )
+
+    assert isinstance(payload, dict), payload
+    assert "No space left" in str(payload), payload
+    assert (graph.project, True) in writes, writes
+    assert (graph.project, False) not in writes, writes
