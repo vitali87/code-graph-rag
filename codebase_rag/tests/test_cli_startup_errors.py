@@ -7,7 +7,8 @@ import pytest
 from typer.testing import CliRunner
 
 from codebase_rag.cli import app
-from codebase_rag.config import ModelConfig, settings
+from codebase_rag.config import ModelConfig
+from codebase_rag.tests.conftest import patch_active_model
 
 runner = CliRunner()
 
@@ -107,16 +108,16 @@ def test_model_preflight_failure_leaves_stdout_empty(
 ) -> None:
     (tmp_path / ".git").mkdir()
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setattr(
-        settings,
+    patch_active_model(
+        monkeypatch,
         "_active_orchestrator",
         ModelConfig(
             provider="openai" if failure == "orchestrator_key" else "ollama",
             model_id="test-model",
         ),
     )
-    monkeypatch.setattr(
-        settings,
+    patch_active_model(
+        monkeypatch,
         "_active_cypher",
         ModelConfig(
             provider="openai" if failure == "cypher_key" else "ollama",
