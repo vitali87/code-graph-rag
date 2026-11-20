@@ -20,7 +20,8 @@ from __future__ import annotations
 import ast
 import re
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
@@ -3908,18 +3909,14 @@ def _report_parse_errors(
         if (definition := before.definitions.get(qn)) is not None
         and definition.path in broken
     }
-    texts = {
-        path: (_read_or_none(repo_root / path), base_source(path))
+    edits = {
+        path: _edit_of(repo_root, path, base_source(path))
         for path in {definition.path for definition in removed.values()}
     }
     # A definition whose declaration the edit erased from the text was
     # deleted, not lost to the recovery, even with a call to it left behind:
     # its callers dangle as any removal's do.
-    lost = {
-        qn
-        for qn, definition in removed.items()
-        if not _erased_by_the_edit(definition, *texts[definition.path])
-    }
+    lost = set(removed) - _erased_by_the_edit(removed, edits)
     for qn in sorted(lost):
         broken[removed[qn].path]["unreliable"].append(qn)
     delta["symbols"]["removed"] = [
@@ -3941,44 +3938,138 @@ def _read_or_none(path: Path) -> bytes | None:
         return None
 
 
-def _erased_by_the_edit(
-    definition: Definition, edited: bytes | None, base: bytes | None
-) -> bool:
-    """True when the base declares `definition` and the edited file does not.
+class _Edit(NamedTuple):
+    """A broken file's base, both texts with every comment and string
+    blanked, and the line diff from the base to the edited text."""
 
-    No parse is trusted here: the edited tree is the broken one. A name no
-    source spells (`anonymous_3_4`), or a text that cannot be read, is left
-    to the recovery.
-    """
+    base: bytes
+    base_code: bytes
+    code: bytes
+    code_lines: list[bytes]
+    opcodes: Sequence[tuple[str, int, int, int, int]]
+
+
+def _edit_of(repo_root: Path, path: str, base: bytes | None) -> _Edit | None:
+    """The edit of `path` against `base`, both as the grammar reads them;
+    None when either text cannot be read."""
+    edited = _read_or_none(repo_root / path)
     if edited is None or base is None:
+        return None
+    language = get_language_for_extension(Path(path).suffix)
+    base_code, code = base, edited
+    if isinstance(language, cs.SupportedLanguage):
+        edited = grammar_bytes(edited, language, repo_root / path)
+        base = grammar_bytes(base, language, repo_root / path)
+        base_code, code = _code_only(base, language), _code_only(edited, language)
+    # Split as tree-sitter counts rows, which only `\n` ends.
+    opcodes = SequenceMatcher(
+        None, base.split(b"\n"), edited.split(b"\n"), autojunk=False
+    ).get_opcodes()
+    return _Edit(base, base_code, code, code.split(b"\n"), opcodes)
+
+
+def _code_only(source: bytes, language: cs.SupportedLanguage) -> bytes:
+    """`source` with every comment and string blanked, its lines kept.
+
+    The broken tree's shape is not trusted, but comments and strings are
+    tokens the lexer reads before any recovery: a declaration commented out
+    or spelled in a string declares nothing (Greptile review on PR #3307).
+    """
+    parser = load_parsers()[0].get(language)
+    if parser is None:
+        return source
+    code = bytearray(source)
+    stack = [parser.parse(source).root_node]
+    while stack:
+        node = stack.pop()
+        if any(word in node.type for word in cs.DELTA_NON_CODE_NODE_WORDS):
+            code[node.start_byte : node.end_byte] = re.sub(
+                rb"[^\n]", b" ", source[node.start_byte : node.end_byte]
+            )
+            continue
+        stack.extend(node.children)
+    return bytes(code)
+
+
+def _erased_by_the_edit(
+    removed: Mapping[str, Definition], edits: Mapping[str, _Edit | None]
+) -> set[str]:
+    """The removed definitions whose declaration the edit took out.
+
+    No parse is trusted here: the edited tree is the broken one. A
+    declaration is gone when the edited text spells it fewer times than the
+    base, comments and strings aside: a commented-out `def run` is gone,
+    and a `def run` another class keeps does not stand in for a deleted
+    `A.run` (Greptile review on PR #3307). Of the definitions one
+    declaration spells, those whose line the edit left as it was are still
+    there. A name no source spells (`anonymous_3_4`), or a text that cannot
+    be read, is left to the recovery.
+    """
+    groups: dict[tuple[str, bytes], list[tuple[str, int | None]]] = {}
+    patterns: dict[tuple[str, bytes], tuple[_Edit, re.Pattern[bytes]]] = {}
+    for qn, definition in removed.items():
+        edit = edits.get(definition.path)
+        if edit is None:
+            continue
+        declared, row = _declaration(definition, edit.base)
+        key = (definition.path, declared.pattern)
+        patterns[key] = (edit, declared)
+        groups.setdefault(key, []).append((qn, row))
+    erased: set[str] = set()
+    for key, members in groups.items():
+        edit, declared = patterns[key]
+        before = sum(1 for _ in declared.finditer(edit.base_code))
+        if before <= sum(1 for _ in declared.finditer(edit.code)):
+            continue
+        erased.update(qn for qn, row in members if not _kept(edit, declared, row))
+    return erased
+
+
+def _kept(edit: _Edit, declared: re.Pattern[bytes], row: int | None) -> bool:
+    """Whether the edit left the base line `row` as it was, still declaring."""
+    if row is None:
         return False
-    declared = _declaration(definition, base)
-    return declared.search(base) is not None and declared.search(edited) is None
+    for tag, i1, i2, j1, _j2 in edit.opcodes:
+        if tag == "equal" and i1 <= row < i2:
+            return declared.search(edit.code_lines[j1 + row - i1]) is not None
+    return False
 
 
-def _declaration(definition: Definition, base: bytes) -> re.Pattern[bytes]:
+def _declaration(
+    definition: Definition, base: bytes
+) -> tuple[re.Pattern[bytes], int | None]:
     """How the base declares `definition`, as a pattern for the edited text.
 
     The name as the first of its graph lines in the base spells it, with
     the word and marks before it there (`def f`, `function f`, `func f`,
     `class C`, `void m`, `T) m` for a Go method), or opening a line when
     nothing precedes it: a call left behind (`return f(`, `t.m(`) declares
-    nothing. The bare word when those lines do not spell it.
+    nothing. The bare word when those lines do not spell it. With the
+    pattern, the 0-based row of the base line that spells it, None for the
+    bare word.
     """
     name = re.escape(definition.name.encode(cs.ENCODING_UTF8)) + rb"(?!\w)"
     word = re.compile(rb"(?<!\w)" + name)
     # Split as tree-sitter counts rows, which only `\n` ends.
-    lines = base.split(b"\n")[max(definition.start_line - 1, 0) : definition.end_line]
-    spelt = next(((line, m) for line in lines if (m := word.search(line))), None)
+    first = max(definition.start_line - 1, 0)
+    lines = base.split(b"\n")[first : definition.end_line]
+    spelt = next(
+        (
+            (row, line, m)
+            for row, line in enumerate(lines, first)
+            if (m := word.search(line))
+        ),
+        None,
+    )
     if spelt is None:
-        return word
-    line, match = spelt
+        return word, None
+    row, line, match = spelt
     lead = re.search(cs.DELTA_DECLARATION_LEAD_PATTERN, line[: match.start()])
     if lead is None:
-        return re.compile(cs.DELTA_DECLARATION_LINE_START_PATTERN + name)
+        return re.compile(cs.DELTA_DECLARATION_LINE_START_PATTERN + name), row
     marks = [re.escape(bytes([c])) for c in lead[2] if not bytes([c]).isspace()]
     joint = rb"\s*" + rb"\s*".join(marks) + rb"\s*" if marks else rb"\s+"
-    return re.compile(rb"(?<!\w)" + re.escape(lead[1]) + joint + name)
+    return re.compile(rb"(?<!\w)" + re.escape(lead[1]) + joint + name), row
 
 
 def has_findings(delta: StructuralDelta) -> bool:

@@ -1492,6 +1492,10 @@ DELTA_PARSE_TOKEN_CHARS = 24
 # method). A call left behind (`return f(`) holds neither.
 DELTA_DECLARATION_LEAD_PATTERN = rb"(\w+)(\W*)$"
 DELTA_DECLARATION_LINE_START_PATTERN = rb"(?m)^[^\w\n]*"
+# Node types whose text is no code, in any grammar: a declaration a comment or
+# a string spells declares nothing (`comment`, `line_comment`, `string`,
+# `string_literal`, `template_string`, ...).
+DELTA_NON_CODE_NODE_WORDS = ("comment", "string")
 CONTRACT_DANGLING = "dangling callers: {sites}"
 # A dangling caller's `line_from` when its line is the base ref's: the call
 # could not be moved to where it is in the working tree (issue #3171).

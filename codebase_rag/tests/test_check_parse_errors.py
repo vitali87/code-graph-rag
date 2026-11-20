@@ -244,6 +244,59 @@ def test_typescript_and_go_deletions_beside_a_break_stay_removed(
     }
 
 
+TWINS = (
+    "class A:\n"
+    "    def run(self):\n"
+    "        return 1\n"
+    "\n"
+    "\n"
+    "class B:\n"
+    "    def run(self):\n"
+    "        return 2\n"
+    "\n"
+    "    def other(self):\n"
+    "        return 3\n"
+)
+
+
+def test_a_same_named_method_elsewhere_does_not_keep_a_deleted_one(
+    temp_repo: Path,
+) -> None:
+    # The edit deletes `A.run` and breaks `B.other`. `B.run` still spells
+    # `def run`, but it is not the declaration the edit took out, so `A.run`
+    # is removed and its caller dangles (Greptile review on PR #3307).
+    caller = "from a import A\n\n\ndef h():\n    return A().run()\n"
+    broken = TWINS.replace("    def run(self):\n        return 1\n", "    pass\n")
+    delta = _edit_and_observe(
+        temp_repo,
+        {"a.py": TWINS, "b.py": caller},
+        "a.py",
+        broken.replace("return 3", "return (3"),
+    )
+
+    (error,) = delta["parse_errors"]
+    target = f"{PROJECT}.a.A.run"
+    assert target not in error["unreliable"]
+    assert target in delta["symbols"]["removed"]
+    assert target in {c["target"] for c in delta["dangling_callers"]}
+
+
+def test_a_commented_out_definition_is_removed_beside_the_break(
+    temp_repo: Path,
+) -> None:
+    # `# def f(x):` declares nothing: the edit deleted `f` (Greptile review
+    # on PR #3307).
+    caller = "from a import f, g\n\n\ndef h():\n    return f(1) + g()\n"
+    broken = "# def f(x):\n#     return x + 1\n\n\ndef g():\n    return (1\n"
+    delta = _edit_and_observe(temp_repo, {"a.py": A, "b.py": caller}, "a.py", broken)
+
+    (error,) = delta["parse_errors"]
+    target = f"{PROJECT}.a.f"
+    assert target not in error["unreliable"]
+    assert target in delta["symbols"]["removed"]
+    assert target in {c["target"] for c in delta["dangling_callers"]}
+
+
 def test_a_file_that_did_not_parse_at_the_base_is_not_a_new_error(
     temp_repo: Path,
 ) -> None:
