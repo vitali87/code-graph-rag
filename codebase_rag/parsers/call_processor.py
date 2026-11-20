@@ -588,6 +588,16 @@ def _calls_own_member(language: cs.SupportedLanguage | None, call_node: Node) ->
     return False
 
 
+def _dart_through_this(call_node: Node) -> bool:
+    # Whether a Dart call selector's chain starts at `this` (`this.label()`):
+    # the call's name drops the receiver, but a local of the name cannot
+    # hide a member reached through it (Greptile on PR #3240).
+    prev = call_node.prev_named_sibling
+    while prev is not None and prev.type == cs.TS_DART_SELECTOR:
+        prev = prev.prev_named_sibling
+    return prev is not None and prev.type == cs.TS_DART_THIS
+
+
 def _is_this_receiver(language: cs.SupportedLanguage, member: Node) -> bool:
     """Whether a member access is `this->m` / `(*this).m` (C++) or `this.m` (Scala)."""
     if language == cs.SupportedLanguage.SCALA:
@@ -7468,8 +7478,8 @@ class CallProcessor:
         # On the caller's own object, and with no parameter or local of the
         # name in scope there: `int run(int (*label)()) { return label(); }`
         # calls the parameter, not an inherited `label` (Greptile and
-        # CodeRabbit on PR #3240). Only a bare name can be hidden; a Dart
-        # call names `this.label()` bare too, so a binding hides it as well.
+        # CodeRabbit on PR #3240). Only a bare name can be hidden: a Dart
+        # call names `this.label()` bare too, so its source decides.
         if not _calls_own_member(ctx.language, call_node):
             return False
         if cs.SEPARATOR_DOT in call_name:
@@ -7486,6 +7496,8 @@ class CallProcessor:
                 )
             )
         if ctx.language == cs.SupportedLanguage.DART:
+            if _dart_through_this(call_node):
+                return True
             spans = dart_utils.dart_binding_spans(
                 ctx.caller_node, frozenset({call_name})
             )

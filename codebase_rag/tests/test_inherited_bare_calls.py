@@ -569,6 +569,7 @@ class Other { String label() => "o"; }
 class Base { String label() => "b"; }
 class Kid extends Base {
   String run(String Function() label) => label();
+  String explicit(String Function() label) => this.label();
   String plain() => label();
 }
 """,
@@ -593,6 +594,12 @@ class PP { use First2, Second2 { First2::label insteadof Second2; } }
 class CC extends PP {
     use Second2;
     public function call(): string { return $this->label(); }
+}
+function make() {
+    return new class extends P {
+        use T;
+        public function call(): string { return $this->label(); }
+    };
 }
 """,
     },
@@ -632,6 +639,7 @@ def test_a_parameter_or_local_hides_an_inherited_method(
         ("php", "compose.C.call", "compose.T.label"),
         ("php", "compose.C2.call", "compose.C2.LABEL"),
         ("php", "compose.CC.call", "compose.Second2.label"),
+        ("dart", "lib.hide.Kid.explicit", "lib.hide.Base.label"),
     ],
     ids=[
         "cpp-unhidden",
@@ -639,9 +647,24 @@ def test_a_parameter_or_local_hides_an_inherited_method(
         "php-reused-trait",
         "php-folded-override",
         "php-own-composition",
+        "dart-explicit-this",
     ],
 )
 def test_php_composes_each_class_and_unhidden_calls_stay_exact(
     round2: dict[str, _Calls], grammar: str, caller: str, callee: str
 ) -> None:
     assert _callees(round2[grammar], caller).get(callee) == "exact", round2[grammar]
+
+
+def test_an_anonymous_php_class_composes_its_traits(
+    round2: dict[str, _Calls],
+) -> None:
+    # `new class extends P { use T; ... }`: the class's trait wins over the
+    # parent's own `label` (Greptile on PR #3240).
+    calls = round2["php"]
+    anon = {
+        to: res
+        for (src, to), res in calls.items()
+        if src.startswith("compose.make.") and src.endswith(".call")
+    }
+    assert anon == {"compose.T.label": "exact"}, calls

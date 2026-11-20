@@ -28,7 +28,11 @@ from .parameter_nodes import c_family_parameter_list
 from .php import class_names as php_class_names
 from .php.class_names import ClassPath as PhpClassPath
 from .php.class_names import ascii_fold as _php_fold
-from .php.utils import PhpTraitComposition, php_trait_composition
+from .php.utils import (
+    PhpTraitComposition,
+    anonymous_class_qn,
+    php_trait_composition,
+)
 from .py import resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
@@ -2556,8 +2560,14 @@ class CallResolver:
         stack = [root] if root is not None else []
         while stack:
             node = stack.pop()
+            # An anonymous class has no name: it is matched by the qn the
+            # definition pass registers it under (Greptile on PR #3240).
             if node.type in _PHP_TYPE_DECLARATIONS and (
                 safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)) == simple
+                or (
+                    module_qn is not None
+                    and anonymous_class_qn(node, module_qn) == class_qn
+                )
             ):
                 found = php_trait_composition(node)
                 traits |= found.traits
