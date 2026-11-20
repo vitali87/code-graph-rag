@@ -25,27 +25,35 @@ from .. import logs as ls
 from ..constants import (
     CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES,
     CYPHER_EXPLAIN_PREFIX,
+    CYPHER_SHOW_VERSION,
     EG_MEMORY_PATH,
     ERR_SUBSTR_ALREADY_EXISTS,
     ERR_SUBSTR_CONSTRAINT,
     FAILED_REL_ROWS_SHOWN,
     KEY_CREATED,
+    KEY_EXPECTED_ROOT,
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
     KEY_NAME,
+    KEY_PATH,
     KEY_PROJECT_NAME,
     KEY_PROJECT_NAMES,
     KEY_PROJECT_PREFIX,
     KEY_PROPS,
     KEY_PURGED,
+    KEY_ROOT_PATH,
+    KEY_RUN_ID,
     KEY_TO_MISSING,
     KEY_TO_VAL,
     LEGACY_NODE_CONSTRAINTS,
+    MEMGRAPH_MIN_MAJOR_VERSION,
+    MEMGRAPH_VERSION_SEPARATOR,
     MERGE_KEY_PROPS_BY_REL,
     MG_TRANSIENT_RETRY_ATTEMPTS,
     MG_TRANSIENT_RETRY_BASE_DELAY_S,
     NEO4J_EXCEPTIONS_MODULE,
     NODE_NAME_INDEXES,
+    NODE_PATH_INDEXES,
     NODE_UNIQUE_CONSTRAINTS,
     REL_ENDPOINT_JOINER,
     REL_ENDPOINT_SOURCE,
@@ -58,11 +66,14 @@ from ..cypher_queries import (
     CYPHER_DELETE_ALL,
     CYPHER_DELETE_PROJECT,
     CYPHER_DELETE_PROJECT_CUT_OFF_UNITS,
+    CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE,
+    CYPHER_DELETE_PROJECT_IF_ROOT,
     CYPHER_EXPORT_NODES,
     CYPHER_EXPORT_PROJECT_NODES,
     CYPHER_EXPORT_PROJECT_RELATIONSHIPS,
     CYPHER_EXPORT_RELATIONSHIPS,
     CYPHER_LIST_PROJECTS,
+    CYPHER_PROJECT_ROOT_PATH,
     CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
     CYPHER_PURGE_CROSS_ROOT_STRUCTURE,
     CYPHER_PURGE_KEYLESS_STRUCTURE,
@@ -137,6 +148,38 @@ def _apply_memory_limit(
     return (dialect or get_dialect(settings.GRAPH_BACKEND)).apply_memory_limit(
         query, mb
     )
+
+
+# Servers already named as unsupported in this process.
+_warned_versions: set[str] = set()
+
+
+def memgraph_version(conn: ConnectionProtocol) -> str | None:
+    """The server's `SHOW VERSION`, or None when it cannot be read."""
+    try:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(CYPHER_SHOW_VERSION)
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+    except Exception:
+        return None
+    if not isinstance(rows, list) or not rows:
+        return None
+    first = rows[0]
+    value = first[0] if isinstance(first, tuple) and first else None
+    return value if isinstance(value, str) and value else None
+
+
+def unsupported_memgraph_version(version: str) -> bool:
+    """Whether a version string reads as a major below the supported one.
+
+    Unparseable reads as supported: the check exists to name a known-old
+    server, never to refuse one it cannot read.
+    """
+    major = version.split(MEMGRAPH_VERSION_SEPARATOR, 1)[0]
+    return major.isdigit() and int(major) < MEMGRAPH_MIN_MAJOR_VERSION
 
 
 def _group_by_merge_keys(
@@ -395,7 +438,31 @@ class MemgraphIngestor:
                 max_workers=settings.FLUSH_THREAD_POOL_SIZE
             )
         logger.debug(ls.MG_CONNECTED)
+        # Memgraph only: the embedded engine answers `SHOW VERSION` with rows
+        # of its own, which would be read as a version string.
+        if self._dialect.name == DIALECT_MEMGRAPH:
+            self._warn_if_unsupported(self.conn)
         return self
+
+    def _warn_if_unsupported(self, conn: ConnectionProtocol) -> None:
+        # Named once per server and process: a Memgraph older than cgr
+        # supports otherwise fails each query it cannot parse with a bare
+        # parser error (issue #2906).
+        version = memgraph_version(conn)
+        if version is None or not unsupported_memgraph_version(version):
+            return
+        endpoint = f"{self._host}:{self._port}:{version}"
+        if endpoint in _warned_versions:
+            return
+        _warned_versions.add(endpoint)
+        logger.warning(
+            ls.MG_UNSUPPORTED_VERSION.format(
+                version=version,
+                host=self._host,
+                port=self._port,
+                major=MEMGRAPH_MIN_MAJOR_VERSION,
+            )
+        )
 
     def _unavailable_message(self, error: Exception) -> str:
         # Memgraph refuses a login with the same exception type as a refused
@@ -652,25 +719,81 @@ class MemgraphIngestor:
     def list_project_roots(self) -> dict[str, str | None]:
         return project_roots_from_rows(self.fetch_all(CYPHER_LIST_PROJECTS))
 
-    def delete_project(self, project_name: str) -> None:
+    def delete_project(
+        self,
+        project_name: str,
+        expected_root: str | None = None,
+        own_run_id: str = "",
+    ) -> bool:
+        """Delete one project; when `expected_root` is given, only if it still
+        names that root (issue #2479).
+
+        The conditional form puts the root check inside the delete statement,
+        so a concurrent sync repointing the project's root between `cgr
+        prune`'s check and its purge leaves the project alone. It returns
+        whether the project was deleted: False when no project of that name
+        holds that root, or when one of that name is still there after the
+        delete, which is what a run of it that began writing leaves (the
+        statement checks for one, all but `own_run_id`, the caller's own
+        marker). Only a delete that fired runs the cut-off sweep, which
+        matches by name and would otherwise take a live project's units. The
+        unconditional form keeps returning True for every caller that
+        ignores the answer.
+        """
         logger.info(ls.MG_DELETING_PROJECT.format(project_name=project_name))
-        self._execute_query(CYPHER_DELETE_PROJECT, {KEY_PROJECT_NAME: project_name})
-        self._execute_query(
-            CYPHER_DELETE_PROJECT_CUT_OFF_UNITS,
-            {
-                KEY_PROJECT_NAME: project_name,
-                KEY_PROJECT_PREFIX: f"{project_name}{SEPARATOR_DOT}",
-            },
-        )
+        name_params: dict[str, PropertyValue] = {KEY_PROJECT_NAME: project_name}
+        if expected_root is None:
+            self._execute_query(CYPHER_DELETE_PROJECT, name_params)
+        else:
+            if not self._project_has_root(project_name, expected_root):
+                logger.info(ls.MG_PROJECT_NOT_DELETED.format(project_name=project_name))
+                return False
+            self._execute_query(
+                CYPHER_DELETE_PROJECT_IF_ROOT,
+                {
+                    KEY_PROJECT_NAME: project_name,
+                    KEY_EXPECTED_ROOT: expected_root,
+                    KEY_RUN_ID: own_run_id,
+                },
+            )
+            if self.fetch_all(CYPHER_PROJECT_ROOT_PATH, name_params):
+                # Repointed between the read above and the delete: the
+                # delete matched nothing, and the project is live.
+                logger.info(ls.MG_PROJECT_NOT_DELETED.format(project_name=project_name))
+                return False
+        # The conditional form's sweep re-checks in its own statement that no
+        # project of the name exists, so one a sync recreated since the read
+        # above keeps its units.
+        sweep_params: dict[str, PropertyValue] = {
+            KEY_PROJECT_NAME: project_name,
+            KEY_PROJECT_PREFIX: f"{project_name}{SEPARATOR_DOT}",
+        }
+        if expected_root is None:
+            self._execute_query(CYPHER_DELETE_PROJECT_CUT_OFF_UNITS, sweep_params)
+        else:
+            self._execute_query(
+                CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE,
+                sweep_params | {KEY_RUN_ID: own_run_id},
+            )
         # Shared prefix-less nodes (Resources, ExternalModules) only lose
         # their edges above; drop the ones this project alone anchored.
         prune_unanchored_resources(self)
         self._execute_query(CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
         logger.info(ls.MG_PROJECT_DELETED.format(project_name=project_name))
+        return True
 
-    def ensure_constraints(self) -> None:
+    def _project_has_root(self, project_name: str, root: str) -> bool:
+        rows = self.fetch_all(
+            CYPHER_PROJECT_ROOT_PATH, {KEY_PROJECT_NAME: project_name}
+        )
+        return any(row.get(KEY_ROOT_PATH) == root for row in rows)
+
+    def ensure_constraints(self) -> int:
+        """Ensure the schema; returns how many legacy Folder/File nodes the
+        issue #897 migration purged, so a caller knows whether the graph
+        lost structure it must rebuild."""
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
-        self._migrate_legacy_path_keys()
+        purged = self._migrate_legacy_path_keys()
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(self._dialect.create_constraint(label, prop))
@@ -678,8 +801,9 @@ class MemgraphIngestor:
                 pass
         logger.info(ls.MG_CONSTRAINTS_DONE)
         self._ensure_indexes()
+        return purged
 
-    def _migrate_legacy_path_keys(self) -> None:
+    def _migrate_legacy_path_keys(self) -> int:
         """Retire the superseded Folder/File relative-path keys (issue #897).
 
         A database that still enforces the legacy constraints was written by
@@ -722,7 +846,7 @@ class MemgraphIngestor:
                 self._execute_query(CYPHER_ANY_KEYLESS_STRUCTURE)
             )
         if not damaged:
-            return
+            return 0
         purged = 0
         for purge_query in (cross_project_purge, CYPHER_PURGE_KEYLESS_STRUCTURE):
             rows = self._execute_query(purge_query)
@@ -730,6 +854,7 @@ class MemgraphIngestor:
                 purged += int(str(rows[0][KEY_PURGED]))
         if purged:
             logger.warning(ls.MG_LEGACY_PURGE.format(count=purged))
+        return purged
 
     def _ensure_indexes(self) -> None:
         logger.info(ls.MG_ENSURING_INDEXES)
@@ -744,6 +869,11 @@ class MemgraphIngestor:
         for label in NODE_NAME_INDEXES:
             try:
                 self._execute_query(self._dialect.create_index(label, KEY_NAME))
+            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
+                pass
+        for label in NODE_PATH_INDEXES:
+            try:
+                self._execute_query(self._dialect.create_index(label, KEY_PATH))
             except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
                 pass
         logger.info(ls.MG_INDEXES_DONE)

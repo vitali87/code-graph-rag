@@ -22,6 +22,10 @@ rules:
       kind: function_call
       has: { kind: identifier, regex: '^(dofile|loadfile)$' }
   - id: hardcoded_secret
+    # The credential word must END the name, optionally followed by key
+    # words and digits (SECRET_KEY, secret_key_base, AWS_SECRET_ACCESS_KEY,
+    # password2): `tokenizer`, `token_count` and `password_prompt` only
+    # contain one, and name no credential (issue #2870).
     # Security rule: favour recall. Target name matches a credential keyword and
     # the value is a non-trivial string literal. Covers both `local secret = ...`
     # (assignment wrapped in variable_declaration) and bare `secret = ...` globals
@@ -32,7 +36,7 @@ rules:
       all:
         - has:
             kind: variable_list
-            has: { kind: identifier, regex: '(?i)(password|secret|api_key|token)', stopBy: end }
+            has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)', stopBy: end }
         # The string must be the assigned VALUE, reached from the
         # expression_list without crossing a function_call boundary. This
         # traverses parenthesized_expression wrappers (so `password = ("...")`

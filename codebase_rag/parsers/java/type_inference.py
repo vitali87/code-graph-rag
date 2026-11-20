@@ -100,12 +100,15 @@ class JavaTypeInferenceEngine(
         "_lookup_cache",
         "_lookup_in_progress",
         "_fqn_to_module_qn",
+        "class_owner_module",
+        "rehydrated_definition_paths",
         "java_call_sites",
         "java_external_sites",
         "function_locations",
         "_rel_to_module",
         "_family_picks",
         "_class_headers",
+        "_supertype_walks",
     )
 
     def __init__(
@@ -119,6 +122,8 @@ class JavaTypeInferenceEngine(
         module_qn_to_file_path: dict[str, Path],
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,
+        class_owner_module: dict[str, str] | None = None,
+        rehydrated_definition_paths: dict[str, str] | None = None,
         java_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
         java_external_sites: set[CallSiteKey] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
@@ -132,6 +137,26 @@ class JavaTypeInferenceEngine(
         self.module_qn_to_file_path = module_qn_to_file_path
         self.class_inheritance = class_inheritance
         self.simple_name_lookup = simple_name_lookup
+        # Shared reference (as with class_inheritance): {class qn: module
+        # qn of the file that declared it}, written at class ingest
+        # (issue #1772). The variable analyzer reads it to tell the file
+        # that declares a nested class from a same-named file in a
+        # subpackage (Greptile P1 on #3525).
+        self.class_owner_module = (
+            class_owner_module if class_owner_module is not None else {}
+        )
+        # Shared reference (as with class_owner_module): {class qn: the
+        # repo-relative path its definition was rehydrated from}, written
+        # when a row is read back from the graph. A rehydrated class has
+        # no `class_owner_module` entry, so the variable analyzer reads
+        # this record to tell the file that declares a nested class from
+        # a same-named file in a subpackage on an incremental run
+        # (Greptile P1 on #3525).
+        self.rehydrated_definition_paths = (
+            rehydrated_definition_paths
+            if rehydrated_definition_paths is not None
+            else {}
+        )
 
         self.java_call_sites = java_call_sites if java_call_sites is not None else {}
         self.java_external_sites = (
@@ -146,13 +171,15 @@ class JavaTypeInferenceEngine(
         self._lookup_cache: dict[str, str | None] = {}
         self._lookup_in_progress: set[str] = set()
         self._class_headers: dict[Path, JavaClassHeaders] = {}
+        self._supertype_walks: dict[str, tuple[str, ...]] = {}
 
         self._fqn_to_module_qn: dict[str, list[str]] = self._build_fqn_lookup_map()
 
     def reset_resolution_memos(self) -> None:
         # A file re-parsed since the last call pass has a new tree to read
-        # its class headers from.
+        # its class headers and implemented interfaces from.
         self._class_headers.clear()
+        self._supertype_walks.clear()
 
     def resolve_java_call_site(
         self, call_node: ASTNode, module_qn: str
