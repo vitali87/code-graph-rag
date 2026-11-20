@@ -344,6 +344,21 @@ JAVA_LANG_CLASS_NAMES = JAVA_WRAPPER_TYPES | frozenset(
     }
 )
 
+# The methods a JDK supertype declares for its subtypes and calls by name
+# (`Thread.start()` runs `run()`, `try`-with-resources calls `close()`).
+# Java asks no @Override of an implementation, so an unmarked one is known
+# by its name alone; the keys are the qualified names the Java pass gives
+# these supertypes.
+JAVA_STDLIB_CONTRACT_METHODS: dict[str, frozenset[str]] = {
+    "java.lang.Runnable": frozenset({"run"}),
+    "java.lang.Thread": frozenset({"run"}),
+    "java.lang.Comparable": frozenset({"compareTo"}),
+    "java.lang.Iterable": frozenset({"iterator"}),
+    "java.lang.AutoCloseable": frozenset({"close"}),
+    "java.io.Closeable": frozenset({"close"}),
+    "java.util.concurrent.Callable": frozenset({"call"}),
+}
+
 # C# base class library / framework roots. A qualified name under one of
 # these namespaces (`System.Collections.Generic.List`) is external stdlib,
 # not first-party code, so stdlib extraction folds the trailing PascalCase

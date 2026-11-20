@@ -101,6 +101,15 @@ _Span = tuple[str, tuple[int, int], tuple[int, int]]
 _MEMBER_NAME_TYPES = frozenset(
     {cs.TS_IDENTIFIER, cs.TS_PROPERTY_IDENTIFIER, "field_identifier"}
 )
+# A Python `__name__` method is called by the interpreter (`str()`, `with`,
+# `len()`), never by a site the graph records.
+_PY_PROTOCOL_NAME = re.compile(r"__\w+__")
+# The module-level functions the interpreter calls by name (PEP 562); any
+# other module-level `__name__` function or class is an ordinary name.
+_PY_MODULE_HOOKS = frozenset({"__getattr__", "__dir__"})
+# `@Override` / `@java.lang.Override` (Java, Kotlin, Scala, Dart `@override`)
+# and the `override` modifier (Kotlin, C#, TypeScript, Swift).
+_OVERRIDE_MARKER = "override"
 
 
 # The same shapes `ImportRewriter.rename_in_all` rewrites. Kept identical so
@@ -835,6 +844,8 @@ class Renamer:
         after_apply: Callable[[list[str]], None] | None = None,
         reingest: Reingest | None = None,
         heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
+        allow_external_override: bool = False,
+        external_override_opt_in: str = cs.MCPParamName.ALLOW_EXTERNAL_OVERRIDE,
     ) -> None:
         self.repo_root = repo_root.resolve()
         self.fetch_all = fetch_all
@@ -851,6 +862,8 @@ class Renamer:
         # How the caller spells the opt-in the heuristic refusal tells the
         # user to pass: a CLI flag is not an MCP parameter (issue #2886).
         self.heuristic_opt_in = heuristic_opt_in
+        self.allow_external_override = allow_external_override
+        self.external_override_opt_in = external_override_opt_in
         # The members of the hierarchy being planned that only a guessed
         # OVERRIDES edge reaches: their declarations are guessed sites.
         self._guessed_members: frozenset[str] = frozenset()
@@ -1559,18 +1572,9 @@ class Renamer:
                 [],
                 [],
             )
-        sites: list[RenameSite] = []
-        unlocatable: list[str] = []
-        old_name: str | None = None
-        label: str | None = None
-        for member in members:
-            member_sites, member_unlocatable, member_name, member_label = self._collect(
-                member
-            )
-            old_name = old_name or member_name
-            label = label or member_label
-            sites.extend(member_sites)
-            unlocatable.extend(member_unlocatable)
+        if not self.allow_external_override:
+            self._refuse_external_overrides(qn, members)
+        sites, unlocatable, old_name, label = self._collect_members(members)
         assert old_name is not None
         covered = {(s.path, s.line, s.col) for s in sites if s.resolution != _CHAIN}
         sites = [
@@ -1660,6 +1664,160 @@ class Renamer:
             unplanned=tuple(unplanned),
             companions=companions,
         )
+
+    def _collect_members(
+        self, members: list[str]
+    ) -> tuple[list[RenameSite], list[str], str | None, str | None]:
+        """Every hierarchy member's sites and unlocatable occurrences, with
+        the first old name and label a member reports."""
+        sites: list[RenameSite] = []
+        unlocatable: list[str] = []
+        old_name: str | None = None
+        label: str | None = None
+        for member in members:
+            member_sites, member_unlocatable, member_name, member_label = self._collect(
+                member
+            )
+            old_name = old_name or member_name
+            label = label or member_label
+            sites.extend(member_sites)
+            unlocatable.extend(member_unlocatable)
+        return sites, unlocatable, old_name, label
+
+    def _refuse_external_overrides(self, qn: str, members: list[str]) -> None:
+        """Refuse a rename that would silently stop an override (issue #3226).
+
+        The graph's override hierarchy holds project methods only, so
+        renaming it whole keeps those consistent. A member that overrides a
+        library base (`Thread.run`, `TestCase.setUp`), declares an override
+        the project does not define (`@Override toString()`), or is a Python
+        protocol method is called by code outside the project under its old
+        name: after the rename nothing calls it, and no site shows why.
+        """
+        prefix = f"{self.project}{cs.SEPARATOR_DOT}"
+        facts = {
+            member: row
+            for member in members
+            for row in self.fetch_all(
+                cq.CYPHER_RENAME_OVERRIDE_FACTS,
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: member},
+            )[:1]
+        }
+        # A class that defines a member of the hierarchy answers for the
+        # supertypes above it through that member's own facts.
+        owners = {
+            owner
+            for row in facts.values()
+            if isinstance(owner := row.get(cs.RENAME_FACT_OWNER), str)
+        }
+        reasons = [
+            reason
+            for member, row in facts.items()
+            if (reason := self._member_override_reason(member, row, owners, prefix))
+            is not None
+        ]
+        if reasons:
+            raise RenameRefused(
+                cs.RENAME_EXTERNAL_OVERRIDE.format(
+                    qn=qn,
+                    reasons="; ".join(reasons),
+                    option=self.external_override_opt_in,
+                ),
+                [],
+                [],
+            )
+
+    def _member_override_reason(
+        self, member: str, row: ResultRow, owners: set[str], prefix: str
+    ) -> str | None:
+        """Why renaming `member` would stop it answering something outside
+        the project, or None."""
+        owner = row.get(cs.RENAME_FACT_OWNER)
+        if not isinstance(owner, str):
+            return _external_override_reason(member, row)
+        row = dict(row)
+        # A display, not the bare `sorted` list: the row's lists hold
+        # `ResultScalar`, and a `list[str]` is not one (lists are invariant).
+        row[cs.RENAME_FACT_OUTSIDE_SUPERTYPES] = [
+            *sorted(self._outside_supertypes(owner, owners, prefix))
+        ]
+        if (reason := _external_override_reason(member, row)) is not None:
+            return reason
+        name = str(row.get(cs.KEY_NAME) or member.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        return self._inherited_contract_reason(member, name, owner, owners, prefix)
+
+    def _inherited_contract_reason(
+        self, qn: str, name: str, owner: str, owners: set[str], prefix: str
+    ) -> str | None:
+        """Why a project class that inherits `qn` needs its name, or None.
+
+        `Task extends Base implements Runnable` declares no `run()`: the one
+        it inherits from `Base` implements `Runnable`, so renaming `Base.run()`
+        leaves `Task` owing it, though `Base` itself implements nothing. A
+        class that declares a member of the hierarchy answers for itself and
+        the classes below it. Only a JDK contract method's name can be owed
+        this way, so other names skip the walk.
+        """
+        if not any(name in names for names in cs.JAVA_STDLIB_CONTRACT_METHODS.values()):
+            return None
+        seen = {owner}
+        frontier = [owner]
+        while frontier:
+            step: list[str] = []
+            for row in self.fetch_all(
+                cq.CYPHER_RENAME_SUBTYPES,
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: frontier},
+            ):
+                subclass = row.get(cs.KEY_QUALIFIED_NAME)
+                if not isinstance(subclass, str) or subclass in seen | owners:
+                    continue
+                seen.add(subclass)
+                declaring = _contract_declarers(
+                    name, sorted(self._outside_supertypes(subclass, owners, prefix))
+                )
+                if declaring:
+                    return cs.RENAME_INHERITED_IMPLEMENTS_OUTSIDE.format(
+                        qn=qn,
+                        subclass=subclass,
+                        name=name,
+                        supertypes=cs.SEPARATOR_COMMA_SPACE.join(declaring),
+                    )
+                step.append(subclass)
+            frontier = step
+        return None
+
+    def _outside_supertypes(self, owner: str, stops: set[str], prefix: str) -> set[str]:
+        """The supertypes outside the project that `owner` extends or
+        implements, directly or through project classes up its chain.
+
+        `Task extends Bridge` and `Bridge implements Runnable`: renaming
+        `Task.run` with its project base `Base.run` leaves `Task` owing
+        `Runnable.run`. The walk does not climb past a class in `stops`,
+        which defines a member of the hierarchy itself.
+        """
+        outside: set[str] = set()
+        seen = {owner}
+        frontier = [owner]
+        while frontier:
+            step: list[str] = []
+            for row in self.fetch_all(
+                cq.CYPHER_RENAME_SUPERTYPES,
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: frontier},
+            ):
+                supertype = row.get(cs.RENAME_FACT_SUPERTYPE)
+                if not isinstance(supertype, str) or supertype in seen:
+                    continue
+                seen.add(supertype)
+                labels = row.get(cs.KEY_LABELS)
+                if not supertype.startswith(prefix) or (
+                    isinstance(labels, list)
+                    and cs.NodeLabel.EXTERNAL_MODULE.value in labels
+                ):
+                    outside.add(supertype)
+                elif supertype not in stops:
+                    step.append(supertype)
+            frontier = step
+        return outside
 
     def _dotted_path_sites(self, members: list[str], old_name: str) -> list[RenameSite]:
         """Strings spelling a member's whole import path, at its name.
@@ -2636,6 +2794,79 @@ class Renamer:
         )
 
 
+def _external_override_reason(qn: str, row: ResultRow) -> str | None:
+    if row.get(cs.KEY_OVERRIDES_EXTERNAL) is True:
+        return cs.RENAME_OVERRIDES_EXTERNAL.format(qn=qn)
+    name = str(row.get(cs.KEY_NAME) or qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+    path = row.get(cs.KEY_PATH)
+    if (
+        isinstance(path, str)
+        and get_language_for_extension(Path(path).suffix) == cs.SupportedLanguage.PYTHON
+        and _PY_PROTOCOL_NAME.fullmatch(name)
+        and (
+            row.get(cs.KEY_LABEL) == cs.NodeLabel.METHOD
+            or (
+                row.get(cs.KEY_LABEL) == cs.NodeLabel.FUNCTION
+                and name in _PY_MODULE_HOOKS
+            )
+        )
+    ):
+        return cs.RENAME_PROTOCOL_METHOD.format(qn=qn, name=name)
+    outside = row.get(cs.RENAME_FACT_OUTSIDE_SUPERTYPES)
+    supertypes = sorted(str(s) for s in outside) if isinstance(outside, list) else []
+    # A project base explains an override marker only when the class has no
+    # supertype outside the project that may declare the method as well
+    # (`Task extends Base implements Runnable`).
+    if row.get(cs.RENAME_FACT_BASES) and not supertypes:
+        return None
+    marker = _override_marker(row)
+    if marker is None:
+        return _implemented_outside(qn, name, supertypes)
+    if row.get(cs.RENAME_FACT_BASES):
+        return cs.RENAME_OVERRIDE_ALSO_OUTSIDE.format(
+            qn=qn, marker=marker, supertypes=cs.SEPARATOR_COMMA_SPACE.join(supertypes)
+        )
+    return cs.RENAME_UNMATCHED_OVERRIDE.format(qn=qn, marker=marker)
+
+
+def _implemented_outside(qn: str, name: str, supertypes: list[str]) -> str | None:
+    """Why an unmarked member is the implementation of a JDK contract.
+
+    `Base implements Runnable` with an unmarked `run()`, and `Leaf extends
+    Base` with `@Override run()`: `Base.run()` explains the marker, so no
+    marker points at `Runnable`. Carrying `Base`'s supertypes down to the
+    marked `Leaf.run()` would also refuse `Sub.plain()` over `Task
+    implements Runnable`, the same shape; only the name tells them apart.
+    """
+    declaring = _contract_declarers(name, supertypes)
+    if not declaring:
+        return None
+    return cs.RENAME_IMPLEMENTS_OUTSIDE.format(
+        qn=qn, name=name, supertypes=cs.SEPARATOR_COMMA_SPACE.join(declaring)
+    )
+
+
+def _contract_declarers(name: str, supertypes: list[str]) -> list[str]:
+    """The JDK types among `supertypes` whose contract requires `name`."""
+    return [
+        supertype
+        for supertype in supertypes
+        if name in cs.JAVA_STDLIB_CONTRACT_METHODS.get(supertype, frozenset())
+    ]
+
+
+def _override_marker(row: ResultRow) -> str | None:
+    decorators = row.get(cs.KEY_DECORATORS)
+    for decorator in decorators if isinstance(decorators, list) else ():
+        text = str(decorator).lstrip("@").split("(", 1)[0].strip()
+        if text.rsplit(cs.SEPARATOR_DOT, 1)[-1].lower() == _OVERRIDE_MARKER:
+            return str(decorator)
+    modifiers = row.get(cs.KEY_MODIFIERS)
+    if isinstance(modifiers, list) and _OVERRIDE_MARKER in modifiers:
+        return _OVERRIDE_MARKER
+    return None
+
+
 class _Spelling(NamedTuple):
     """A string spelling of a member's import path: the member, its module's
     file, the dotted module path it goes through and the import root that
@@ -2858,6 +3089,8 @@ def rename(
     after_apply: Callable[[list[str]], None] | None = None,
     reingest: Reingest | None = None,
     heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
+    allow_external_override: bool = False,
+    external_override_opt_in: str = cs.MCPParamName.ALLOW_EXTERNAL_OVERRIDE,
 ) -> RenameReport:
     """The op: plan (and refuse on ambiguity) or plan and apply.
 
@@ -2872,6 +3105,8 @@ def rename(
         after_apply=after_apply,
         reingest=reingest,
         heuristic_opt_in=heuristic_opt_in,
+        allow_external_override=allow_external_override,
+        external_override_opt_in=external_override_opt_in,
     )
     if dry_run:
         return renamer.preview(qualified_name, new_name, allow_heuristic)

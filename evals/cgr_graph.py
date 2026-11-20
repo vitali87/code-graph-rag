@@ -1040,6 +1040,57 @@ class _StatefulIngestor:
                 }
         return [rows[qn] for qn in sorted(rows)]
 
+    def _rename_supertype_rows(self, params: PropertyDict) -> list[ResultRow]:
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        wanted = params.get(cs.KEY_QNS)
+        qns = {_str(q) for q in wanted} if isinstance(wanted, list) else set()
+        rows: dict[tuple[str, str], ResultRow] = {}
+        for (label, uid), edges in self._out.items():
+            source = _str(self.nodes.get((label, uid), {}).get(cs.KEY_QUALIFIED_NAME))
+            if source not in qns or not source.startswith(prefix):
+                continue
+            for edge in edges:
+                if edge[2] not in (
+                    cs.RelationshipType.INHERITS.value,
+                    cs.RelationshipType.IMPLEMENTS.value,
+                ):
+                    continue
+                target = _str(
+                    self.nodes.get((edge[3], edge[4]), {}).get(
+                        cs.KEY_QUALIFIED_NAME, edge[4]
+                    )
+                )
+                rows[(source, target)] = {
+                    cs.KEY_QUALIFIED_NAME: source,
+                    cs.RENAME_FACT_SUPERTYPE: target,
+                    cs.KEY_LABELS: list[ResultScalar]([str(edge[3])]),
+                }
+        return [rows[key] for key in sorted(rows)]
+
+    def _rename_subtype_rows(self, params: PropertyDict) -> list[ResultRow]:
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        wanted = params.get(cs.KEY_QNS)
+        qns = {_str(q) for q in wanted} if isinstance(wanted, list) else set()
+        sources: set[str] = set()
+        for (label, uid), edges in self._out.items():
+            source = _str(self.nodes.get((label, uid), {}).get(cs.KEY_QUALIFIED_NAME))
+            if not source.startswith(prefix):
+                continue
+            for edge in edges:
+                if edge[2] not in (
+                    cs.RelationshipType.INHERITS.value,
+                    cs.RelationshipType.IMPLEMENTS.value,
+                ):
+                    continue
+                target = _str(
+                    self.nodes.get((edge[3], edge[4]), {}).get(
+                        cs.KEY_QUALIFIED_NAME, edge[4]
+                    )
+                )
+                if target in qns:
+                    sources.add(source)
+        return [{cs.KEY_QUALIFIED_NAME: source} for source in sorted(sources)]
+
     def _project_rows(self) -> list[ResultRow]:
         return [
             {
@@ -1089,6 +1140,55 @@ class _StatefulIngestor:
                 row: ResultRow = {cs.KEY_LABEL: label}
                 for key in self._GRAPH_DEFINITION_KEYS:
                     row[key] = _result(props.get(key))
+                return [row]
+            return []
+        if query == cq.CYPHER_RENAME_OVERRIDE_FACTS:
+            for target in targets:
+                props = self.nodes[target]
+                row = {
+                    key: _result(props.get(key))
+                    for key in (
+                        cs.KEY_QUALIFIED_NAME,
+                        cs.KEY_NAME,
+                        cs.KEY_PATH,
+                        cs.KEY_OVERRIDES_EXTERNAL,
+                        cs.KEY_DECORATORS,
+                        cs.KEY_MODIFIERS,
+                    )
+                }
+                row[cs.KEY_LABEL] = target[0]
+                row[cs.RENAME_FACT_BASES] = sum(
+                    edge[2] == cs.RelationshipType.OVERRIDES.value
+                    for edge in self._out.get(target, ())
+                )
+                owners = [
+                    (edge[0], edge[1])
+                    for edge in self._in.get(target, ())
+                    if edge[2] == cs.RelationshipType.DEFINES_METHOD.value
+                ]
+                row[cs.RENAME_FACT_OUTSIDE_SUPERTYPES] = list[ResultScalar](
+                    sorted(
+                        {
+                            str(edge[4])
+                            for owner in owners
+                            for edge in self._out.get(owner, ())
+                            if edge[2]
+                            in (
+                                cs.RelationshipType.INHERITS.value,
+                                cs.RelationshipType.IMPLEMENTS.value,
+                            )
+                            and (
+                                edge[3] == cs.NodeLabel.EXTERNAL_MODULE.value
+                                or not self._in_project((edge[3], edge[4]), prefix)
+                            )
+                        }
+                    )
+                )
+                row[cs.RENAME_FACT_OWNER] = (
+                    _result(self.nodes[min(owners)].get(cs.KEY_QUALIFIED_NAME))
+                    if owners
+                    else None
+                )
                 return [row]
             return []
         rows: list[ResultRow] = []
@@ -1427,6 +1527,7 @@ class _StatefulIngestor:
                 return self._mark_claimed_project(params or {})
             case (
                 cq.CYPHER_GRAPH_DEFINITION
+                | cq.CYPHER_RENAME_OVERRIDE_FACTS
                 | cq.CYPHER_GRAPH_CALLERS
                 | cq.CYPHER_GRAPH_REFERENCES
                 | cq.CYPHER_GRAPH_TYPE_EDGES
@@ -1445,6 +1546,10 @@ class _StatefulIngestor:
                 return self._same_named_csharp_type_rows(params or {})
             case cq.CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN:
                 return self._go_implementers_unknown_rows(params or {})
+            case cq.CYPHER_RENAME_SUPERTYPES:
+                return self._rename_supertype_rows(params or {})
+            case cq.CYPHER_RENAME_SUBTYPES:
+                return self._rename_subtype_rows(params or {})
             case (
                 cq.CYPHER_CONTEXT_HOTNESS
                 | cq.CYPHER_CONTEXT_TYPES

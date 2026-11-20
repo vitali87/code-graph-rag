@@ -198,6 +198,7 @@ class MCPParamName(StrEnum):
     THROUGH_REEXPORTS = "through_reexports"
     NEW_NAME = "new_name"
     ALLOW_HEURISTIC = "allow_heuristic"
+    ALLOW_EXTERNAL_OVERRIDE = "allow_external_override"
     NEW_PARAMS = "new_params"
     MAPPING = "mapping"
     TARGET_MODULE = "target_module"
