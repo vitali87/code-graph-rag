@@ -127,6 +127,8 @@ All pull requests are automatically validated by our CI workflow, which runs in 
 
 6. **Greptile 5/5 Gate** - Greptile reviews every push, and the check fails when it scores the PR's latest commit below 5/5. If Greptile doesn't score that commit (out of credits, paused), the check passes with a warning
 
+7. **Reference Graphs** - The graphs of pinned public repositories, one or more per language, listed in `fixtures/reference_graphs/repos.json`. The job indexes each with `cgr`, exports it, and compares it line by line with the recorded `.graph` file; it indexes each twice more, at another path under another `PYTHONHASHSEED`, and fails if any run differs. A pull request that changes what the indexer records changes these files too: run `uv run --extra treesitter-full --extra ast-grep python scripts/reference_graphs.py record` (or name the repositories it touches) and commit the result, so the difference shows in the review. The graphs are recorded and checked with every language tier installed, as the job installs them; `environment.txt` beside them says what the recording could parse, and the job stops first, naming what is missing, on a machine that parses something else. The Rust rewrite ([RUST_REWRITE_PLAN.md](docs/reports/RUST_REWRITE_PLAN.md)) is held to these graphs.
+
 All checks run in parallel and must pass before a PR can be merged. A summary job verifies all checks succeeded.
 
 **Run checks locally before pushing:**

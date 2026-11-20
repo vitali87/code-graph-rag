@@ -86,6 +86,7 @@ AGGREGATED_JOBS = (
     "Wheel Smoke (unlocked resolution)",
     "Go Frontend",
     "Toolchain Tests",
+    "Reference Graphs",
     "Sonar Zero Issues Gate",
     "Greptile 5/5 Gate",
 )
