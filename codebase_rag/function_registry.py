@@ -177,6 +177,10 @@ class FunctionRegistryTrie:
         `const api = { fetchUser() {} }` registers `fetchUser` under its scope,
         without the object's name; this is how `api.fetchUser()` finds it.
         """
+        # A member bound before under another name (the object renamed)
+        # leaves that binding first.
+        if self._object_binding_of.get(qualified_name) != (binding_qn, key):
+            self._forget_object_binding(qualified_name)
         self._object_bindings.setdefault(binding_qn, {}).setdefault(key, set()).add(
             qualified_name
         )

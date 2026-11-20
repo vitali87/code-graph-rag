@@ -2390,11 +2390,47 @@ def _js_enclosing_introductions(caller_node: Node) -> js_ts_utils.JsLocalIntros:
                         start,
                         end,
                         kind == _JS_DECL_PLAIN and js_ts_utils.is_object_literal(value),
+                        scope.start_byte,
                     )
                     for start, end, kind, value in intros
                 )
+            _js_nested_callable_introductions(scope, scope is caller_node, found)
         scope = scope.parent
     return {name: tuple(intros) for name, intros in found.items()}
+
+
+def _js_nested_callable_introductions(
+    scope: Node,
+    is_caller: bool,
+    found: defaultdict[str, list[js_ts_utils.JsLocalIntro]],
+) -> None:
+    """What the callables nested in `scope` introduce for `api.run()` (#2763
+    review): a `function api() {}` declared there shadows a module `api` in
+    the block that holds it, and inside the caller, an inline callback's
+    parameter (`api => api.run()`, walked as part of the caller) shadows it
+    in that callback. Neither is an object literal."""
+    stack: list[Node] = list(scope.children)
+    while stack:
+        node = stack.pop()
+        if node.type not in cs.JS_TS_FUNCTION_NODES:
+            stack.extend(node.children)
+            continue
+        holder = node.parent
+        name = safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
+        if node.type == cs.TS_FUNCTION_DECLARATION and name and holder is not None:
+            found[name].append(
+                js_ts_utils.JsLocalIntro(
+                    holder.start_byte, holder.end_byte, False, scope.start_byte
+                )
+            )
+        if is_caller:
+            for param in _js_param_names(node):
+                found[param].append(
+                    js_ts_utils.JsLocalIntro(
+                        node.start_byte, node.end_byte, False, node.start_byte
+                    )
+                )
+            stack.extend(node.children)
 
 
 def _js_innermost_enclosing(

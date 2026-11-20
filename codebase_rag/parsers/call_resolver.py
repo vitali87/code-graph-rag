@@ -2508,7 +2508,11 @@ class CallResolver:
         local = self._js_local_receiver(call, head)
         if local is None:
             result = self._js_module_object_member(call, head, rest, key)
-        elif local.object_literal and not rest:
+        elif (
+            local.object_literal
+            and not rest
+            and not self._js_shared_binding(call, head, local)
+        ):
             result = self._js_local_object_member(call, head, key)
         else:
             result = None
@@ -2516,6 +2520,16 @@ class CallResolver:
             return False, None
         self.last_bound_member = result[1]
         return True, result
+
+    def _js_shared_binding(
+        self, call: _CallSite, head: str, local: js_ts_utils.JsLocalIntro
+    ) -> bool:
+        # Two literals one function binds to the name (in sibling blocks)
+        # register their members under one binding qn, whatever keys each
+        # has, so which literal a call means is not known there (#2763
+        # review).
+        intros = self.js_local_scopes.get(call.caller_qn or "", {}).get(head, ())
+        return sum(1 for i in intros if i.object_literal and i.owner == local.owner) > 1
 
     def _js_local_object_member(
         self, call: _CallSite, head: str, key: str

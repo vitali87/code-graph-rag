@@ -638,12 +638,14 @@ _OBJECT_LITERAL_WRAPPERS = frozenset(
 
 
 class JsLocalIntro(NamedTuple):
-    """One introduction of a name by a function: the byte span it governs and
-    whether the name is bound to an object literal there (issue #2763)."""
+    """One introduction of a name by a function: the byte span it governs,
+    whether the name is bound to an object literal there (issue #2763), and
+    where the function owning it starts (its literals share one binding)."""
 
     start: int
     end: int
     object_literal: bool
+    owner: int = -1
 
 
 # A caller's introductions, its own and those of every function around it, by

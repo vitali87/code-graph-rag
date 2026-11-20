@@ -17,10 +17,12 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.editing.rename import rename
+from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 from codebase_rag.tests.test_rename_op import _index
+from codebase_rag.types_defs import NodeType
 from evals.cgr_graph import _StatefulIngestor
 
 _API = (
@@ -104,6 +106,33 @@ _FILES = {
         "    return api.run();\n"
         "  }\n"
         "}\n"
+    ),
+    # CodeRabbit, PR #3118: sibling blocks with different keys share the
+    # binding too; a local `function api` and a callback's `api` parameter
+    # shadow the module's `api`.
+    "keys.mjs": (
+        "export function differentKeys(flag) {\n"
+        "  if (flag) {\n"
+        "    const api = { run() { return 1; } };\n"
+        "    return api.run();\n"
+        "  }\n"
+        "  {\n"
+        "    const api = { other() { return 2; } };\n"
+        "    return api.run();\n"
+        "  }\n"
+        "}\n"
+    ),
+    "fnshadow.mjs": (
+        "const api = { run() { return 1; } };\n"
+        "export function viaDeclaration() {\n"
+        "  function api() {}\n"
+        "  api.run = () => 2;\n"
+        "  return api.run();\n"
+        "}\n"
+        "export function viaCallback(items) {\n"
+        "  return items.map((api) => api.run());\n"
+        "}\n"
+        "export function stillModule() { return api.run(); }\n"
     ),
     "exported.mjs": (
         "const api = { run() { return 1; } };\n"
@@ -269,3 +298,41 @@ def test_an_import_reaches_the_binding_the_module_exports(
         callee for callee, res in targets.items() if res == cs.EdgeResolution.EXACT
     ]
     assert len(exact) == 1 and exact[0].startswith("exported.run@"), targets
+
+
+def test_sibling_blocks_with_different_keys_pick_no_member(
+    calls: dict[tuple[str, str], str],
+) -> None:
+    # The second block's `api` has no `run`; the first block's must not be
+    # what its `api.run()` calls.
+    targets = _targets(calls, "keys.differentKeys")
+    assert cs.EdgeResolution.EXACT not in targets.values(), targets
+
+
+@pytest.mark.parametrize("caller", ["fnshadow.viaDeclaration", "fnshadow.viaCallback"])
+def test_a_local_function_or_callback_parameter_shadows_the_module_object(
+    calls: dict[tuple[str, str], str], caller: str
+) -> None:
+    exact = {
+        callee
+        for (src, callee), res in calls.items()
+        if src.startswith(caller)
+        and callee == "fnshadow.run"
+        and res == cs.EdgeResolution.EXACT
+    }
+    assert not exact, calls
+    assert _targets(calls, "fnshadow.stillModule") == {
+        "fnshadow.run": cs.EdgeResolution.EXACT
+    }
+
+
+def test_a_member_marked_under_a_new_binding_leaves_the_old_one() -> None:
+    # CodeRabbit, PR #3118: an object renamed from `api` to `service` keeps
+    # its member under the new binding only.
+    registry = FunctionRegistryTrie()
+    registry["m.run"] = NodeType.FUNCTION
+    registry.mark_object_binding("m.run", "m.api", "run")
+    registry.mark_object_binding("m.run", "m.service", "run")
+
+    assert registry.object_binding_member("m.api", "run") is None
+    assert registry.object_binding_member("m.service", "run") == "m.run"
