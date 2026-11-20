@@ -1,3 +1,8 @@
+# Instructions for changes
+
+When writing or changing code, follow [AGENTS.md](../AGENTS.md) and
+[CONTRIBUTING.md](../CONTRIBUTING.md).
+
 # Code review guidelines
 
 When reviewing pull requests:

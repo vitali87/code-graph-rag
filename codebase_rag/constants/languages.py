@@ -266,6 +266,9 @@ TS_COMPILER_OPTIONS_KEY = "compilerOptions"
 TS_PATHS_KEY = "paths"
 TS_BASE_URL_KEY = "baseUrl"
 TS_EXTENDS_KEY = "extends"
+# TypeScript 5 conditions a tsconfig adds to the `exports` keys it selects
+# (issue #2935).
+TS_CUSTOM_CONDITIONS_KEY = "customConditions"
 TSCONFIG_EXTENSION = EXT_JSON
 PATH_RELATIVE_PREFIX = "./"
 PATH_PARENT_PREFIX = "../"
@@ -315,6 +318,50 @@ DECLARED_ARITY_LANGUAGES = frozenset(
 ARITY_REJECTS_MISSING = DECLARED_ARITY_LANGUAGES - {SupportedLanguage.JS}
 # Where a surplus argument fails too. PHP and JavaScript drop it at run time.
 ARITY_REJECTS_SURPLUS = ARITY_REJECTS_MISSING - {SupportedLanguage.PHP}
+
+# Languages whose decorators or modifiers the structural delta reads as a
+# calling convention (issue #3259): Python's `@property`, `@staticmethod` and
+# `@classmethod`, the JavaScript and TypeScript `get`, `set` and `static`,
+# and Java's `static`, each with the visibility below where it has one.
+CONVENTION_LANGUAGES = frozenset(
+    {
+        SupportedLanguage.PYTHON,
+        SupportedLanguage.JS,
+        SupportedLanguage.TS,
+        SupportedLanguage.TSX,
+        SupportedLanguage.JAVA,
+    }
+)
+# Where a call through an instance of a static method fails: TypeScript does
+# not type-check it and JavaScript finds no such member. Java allows it.
+STATIC_REJECTS_INSTANCE_CALL = frozenset(
+    {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
+)
+# Visibility modifiers ranked by reach. Java's `protected` reaches its whole
+# package as well as subclasses, so it outranks a member with no modifier,
+# which is package-private in a class but public in an interface; the node
+# does not say which, so a Java member with none is not ranked.
+VISIBILITY_PRIVATE = 0
+VISIBILITY_PROTECTED = 1
+VISIBILITY_PUBLIC = 2
+VISIBILITY_RANKS: dict[SupportedLanguage, dict[str, int]] = {
+    language: {
+        "private": VISIBILITY_PRIVATE,
+        "protected": VISIBILITY_PROTECTED,
+        "public": VISIBILITY_PUBLIC,
+    }
+    for language in (
+        SupportedLanguage.TS,
+        SupportedLanguage.TSX,
+        SupportedLanguage.JAVA,
+    )
+}
+# The rank of a member written with no visibility modifier, where the
+# language fixes it: a TypeScript member is public.
+VISIBILITY_DEFAULT: dict[SupportedLanguage, int] = {
+    SupportedLanguage.TS: VISIBILITY_PUBLIC,
+    SupportedLanguage.TSX: VISIBILITY_PUBLIC,
+}
 
 
 class LanguageStatus(StrEnum):
@@ -422,6 +469,10 @@ INDEX_LUA_INIT = "init"
 MODULE_INDEX_FILE_STEMS = frozenset(
     {INDEX_INIT, INDEX_INDEX, INDEX_MOD, INDEX_LUA_INIT}
 )
+# What an import is pointed at when only modules of another language family
+# hold its name (`require("./util")` beside a lone `util.py`): nothing the
+# importer can load, so no module or definition answers to it (issue #2756).
+IMPORT_TARGET_UNREACHABLE = "unresolved"
 # A Rust library crate's root, where its `pub use` facade lives.
 INDEX_RS_LIB = "lib"
 # Stems of the files a package exposes its internals through (issue #2573):
@@ -536,6 +587,13 @@ IGNORE_PATTERNS = frozenset(
         "venv",
     }
 )
+# Version-control metadata. Unlike the rest of IGNORE_PATTERNS, only a `!`
+# line that names a path through it rescues anything here: a negation that
+# can match at any depth (`!*.[Cc]ache/`) walked into it and recorded Git's
+# own folders as Folder nodes (issue #3642).
+VCS_METADATA_DIRS = frozenset({".git", ".hg", ".svn"})
+# The gitignore segment that matches any number of directories.
+GLOB_DOUBLE_STAR = "**"
 # Machine-generated artefacts: never hand-edited, never first-party. Matched
 # against the whole FILENAME with `str.endswith`, not against `Path.suffix`,
 # because two entries here are not suffixes in pathlib's sense:
@@ -581,6 +639,18 @@ UNCONDITIONAL_IGNORE_FILENAME_ENDINGS = tuple(sorted(UNCONDITIONAL_IGNORE_SUFFIX
 
 # pathspec style for .cgrignore / --exclude patterns (#495).
 GITWILDMATCH_STYLE = "gitignore"
+# Joins the lines of a .gitignore that has `!` lines into one exclude-set
+# entry evaluated in order (issue #2835); no pattern line can contain it.
+IGNORE_BLOCK_SEPARATOR = "\n"
+# How pathspec's gitignore regexes mark a match of a directory ABOVE the path
+# rather than of the path itself, and the regex it gives `*/` and `**/`
+# (every directory). An ordered block reads them to judge each level of a
+# path on its own, as git does (issue #2835).
+PATHSPEC_DIR_MARK_GROUP = "ps_d"
+PATHSPEC_ANY_DIR_REGEX = "(?P<ps_d>/)"
+GITIGNORE_NEGATION = "!"
+# `x/**/`: the directories inside x, which pathspec reads as `x/`.
+GITIGNORE_DIRS_INSIDE_SUFFIX = "/**/"
 
 # JDK binaries the Java frontend probes and runs (issue #1181).
 JAVAC_BIN = "javac"
