@@ -578,6 +578,16 @@ def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
     return False
 
 
+def _in_member_initializer(call_node: Node) -> bool:
+    # Whether a C++ call sits in a constructor's member-initializer list.
+    node = call_node.parent
+    while node is not None and node.type not in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+        if node.type == cs.CppNodeType.FIELD_INITIALIZER_LIST:
+            return True
+        node = node.parent
+    return False
+
+
 def _has_no_receiver(call_node: Node, language: cs.SupportedLanguage) -> bool:
     # PHP and C/C++ name a member call by its bare method name too
     # (`$bag->count()` and `count($xs)` both read `count`; `a.b.max()` reads
@@ -7441,9 +7451,14 @@ class CallProcessor:
             # A C++ constructor's member initializer (`head_(NewNode(0))`)
             # is read with its module's calls, though it runs in the
             # constructor and names the class's own members there; with no
-            # class to look in, that caller keeps the name fallback
+            # class to look in, that call keeps the name fallback
             # (leveldb's `SkipList::NewNode`, `PosixWritableFile::Dirname`).
-            and not (ctx.is_cpp and ctx.caller_spec[0] == cs.NodeLabel.MODULE),
+            # Any other module-level call does not (CodeRabbit, PR #2948).
+            and not (
+                ctx.is_cpp
+                and ctx.caller_spec[0] == cs.NodeLabel.MODULE
+                and _in_member_initializer(call_node)
+            ),
         )
         return self._judge_resolved_callee(ctx, call_node, call_name, callee_info)
 

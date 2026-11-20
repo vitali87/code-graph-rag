@@ -28,7 +28,12 @@ def _scope_declarations(scope: Node | None) -> list[tuple[Node, int]]:
     pending = [(scope, scope.end_byte)] if scope is not None else []
     while pending:
         node, block_end = pending.pop()
-        if node.type == cs.CppNodeType.COMPOUND_STATEMENT:
+        # A `for`/`if`/`while`/`switch` header's declaration ends with its
+        # statement (CodeRabbit, PR #2948).
+        if (
+            node.type == cs.CppNodeType.COMPOUND_STATEMENT
+            or node.type in cs.CPP_HEADER_SCOPED_STATEMENTS
+        ):
             block_end = node.end_byte
         for child in node.children:
             if child.type not in cs.CPP_NESTED_SCOPE_NODE_TYPES:

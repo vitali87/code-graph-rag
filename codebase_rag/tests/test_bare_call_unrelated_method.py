@@ -135,6 +135,17 @@ FILES = {
         "class Seq {\n public:\n  Seq() : next_(Start()) {}\n"
         "  static int Start() { return 0; }\n  int next_;\n};\n"
     ),
+    # A file-scope call is no member initializer: it keeps the method filter.
+    "c/glob.cpp": '#include "stat.h"\nint g = max(1, 2);\n',
+    # Third review round (CodeRabbit, PR #2948): a `for` header's local ends
+    # with the loop, and a nested class reaches its enclosing class's bases.
+    "c/scopes.h": (
+        "class SB {\n public:\n  void dispatch() {}\n  static void ping() {}\n};\n"
+        "class SD : public SB {\n public:\n"
+        "  void loop() {\n    for (auto dispatch = [] {}; false;) { dispatch(); }\n"
+        "    dispatch();\n  }\n"
+        "  struct Inner { void run() { ping(); } };\n};\n"
+    ),
     # Lua: a colon method beside a bare call of its name (CodeRabbit, PR
     # #2948); `flush()` is a global, never `M:flush`.
     "lua_m.lua": "local M = {}\nfunction M:flush() return 1 end\nreturn M\n",
@@ -192,6 +203,7 @@ def _callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
         ("c.free.pick", "c.stat.h.Stat.max"),
         ("c.free.lone", "c.other.h.Other.helper"),
         ("c.free.lone", "c.base.Base.helper"),
+        ("c.glob", "c.stat.h.Stat.max"),
         ("lua_use.go", "lua_m.M:flush"),
     ],
 )
@@ -280,6 +292,20 @@ def test_a_function_local_class_keeps_its_members_bare_calls(
     assert _callees(graph, "c.local.work.Res.acquire") == {
         "c.local.work.LB.helper": "exact"
     }
+
+
+@pytest.mark.parametrize(
+    ("caller", "method"),
+    [
+        ("c.scopes.SD.loop", "c.scopes.SB.dispatch"),
+        ("c.scopes.SD.Inner.run", "c.scopes.SB.ping"),
+    ],
+    ids=["after-a-for-header-local", "through-the-enclosing-class"],
+)
+def test_a_cpp_inherited_member_found_past_a_closed_scope(
+    graph: RecordedGraph, caller: str, method: str
+) -> None:
+    assert _callees(graph, caller).get(method) == "exact"
 
 
 def test_a_cpp_member_initializer_keeps_its_call_of_a_member(

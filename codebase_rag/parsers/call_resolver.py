@@ -2484,8 +2484,24 @@ class CallResolver:
         # parameter, not an inherited `B::dispatch` (CodeRabbit, PR #2948).
         if self._local_in_scope(call, self.cpp_local_scopes):
             return None
-        if (owner := self._enclosing_class(call.caller_qn)) is None:
-            return None
+        # A class nested in another looks the name up in its own scope and
+        # bases first, then in each enclosing class's: `Outer::Inner::run`
+        # reaches `Base::ping` through `Outer : Base` (CodeRabbit, PR #2948).
+        owner = self._enclosing_class(call.caller_qn)
+        while owner is not None:
+            found = self._cpp_member_lookup(owner, call.call_name)
+            if found is not None:
+                return found or None
+            owner = self._enclosing_class(owner)
+        return None
+
+    def _cpp_member_lookup(
+        self, owner: str, call_name: str
+    ) -> tuple[str, str] | tuple[()] | None:
+        """C++ unqualified lookup of `call_name` in `owner` and its bases: the
+        method found, `()` when the name is found but is no single method
+        (a data member, or an ambiguous lookup), or None when nothing in
+        this class scope declares it."""
         # `Base(1)` names the class, not its constructor: unqualified lookup
         # never finds a constructor, so the construction path must bind it
         # (INSTANTIATES and the destructor edge) instead (CodeRabbit, PR #2948).
@@ -2497,12 +2513,14 @@ class CallResolver:
             class_qn
             for class_qn in self._mro(owner)
             if qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
-            != call.call_name
+            != call_name
             and (
-                self._declares_cpp_method(class_qn, call.call_name)
-                or self._declares_cpp_field(class_qn, call.call_name)
+                self._declares_cpp_method(class_qn, call_name)
+                or self._declares_cpp_field(class_qn, call_name)
             )
         ]
+        if not definers:
+            return None
         # A member hides the name in every base its class derives from, so
         # lookup finds the definers no other definer derives from: in a
         # virtual diamond, DB::probe over DA::probe, though a breadth-first
@@ -2515,11 +2533,11 @@ class CallResolver:
                 other != class_qn and class_qn in self._mro(other) for other in definers
             )
         ]
-        if len(found) != 1 or not self._declares_cpp_method(found[0], call.call_name):
-            return None
+        if len(found) != 1 or not self._declares_cpp_method(found[0], call_name):
+            return ()
         return (
             cs.NodeLabel.METHOD.value,
-            f"{found[0]}{cs.SEPARATOR_DOT}{call.call_name}",
+            f"{found[0]}{cs.SEPARATOR_DOT}{call_name}",
         )
 
     def _declares_cpp_method(self, class_qn: str, name: str) -> bool:
