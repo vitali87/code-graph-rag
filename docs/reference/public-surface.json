@@ -3046,6 +3046,24 @@
           "hidden": false,
           "default": false,
           "envvar": []
+        },
+        {
+          "name": "allow_external_override",
+          "kind": "option",
+          "flags": [
+            "--allow-external-override"
+          ],
+          "type": "boolean",
+          "nargs": 1,
+          "choices": null,
+          "bounds": null,
+          "path": null,
+          "required": false,
+          "multiple": false,
+          "is_flag": true,
+          "hidden": false,
+          "default": false,
+          "envvar": []
         }
       ]
     },
@@ -5328,6 +5346,9 @@
       "name": "rename",
       "input_schema": {
         "properties": {
+          "allow_external_override": {
+            "type": "boolean"
+          },
           "allow_heuristic": {
             "type": "boolean"
           },
@@ -9293,7 +9314,7 @@
         },
         {
           "name": "ensure_constraints",
-          "signature": "(self) -> 'None'",
+          "signature": "(self) -> 'int'",
           "is_async": false
         },
         {
