@@ -118,11 +118,30 @@ export function ownReadonly(s: unknown) {
 """
 
 
+# Greptile and CodeRabbit, PR #2959: a function's own `class Readonly<T>`
+# is not the utility, and a cast to a type parameter names the constraint's
+# members, never the module class sharing its name.
+SCOPED = """\
+export class Service { handle(): number { return 1; } }
+export class Other { handle(): number { return 2; } }
+
+export function localReadonly(s: unknown) {
+  class Readonly<T> { handle(): number { return 3; } }
+  return (s as Readonly<Service>).handle();
+}
+
+export function typeParameter<Service extends Other>(s: unknown) {
+  return (s as Service).handle();
+}
+"""
+
+
 @pytest.fixture(scope="module")
 def utility_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     root = tmp_path_factory.mktemp("tsutility") / "tsutility"
     _write(root, "util.ts", UTILITY)
     _write(root, "own.ts", OWN_READONLY)
+    _write(root, "scoped.ts", SCOPED)
     return _index(root, MagicMock())
 
 
@@ -150,6 +169,13 @@ def test_a_readonly_the_module_declares_is_that_class(
     assert _module_callees(utility_graph, "own.ownReadonly") == {
         "own.Readonly.handle": "exact"
     }
+
+
+@pytest.mark.parametrize("caller", ["scoped.localReadonly", "scoped.typeParameter"])
+def test_a_cast_to_a_name_declared_in_scope_is_not_the_module_class(
+    utility_graph: RecordedGraph, caller: str
+) -> None:
+    assert "scoped.Service.handle" not in _module_callees(utility_graph, caller)
 
 
 # Negative: what must not change.

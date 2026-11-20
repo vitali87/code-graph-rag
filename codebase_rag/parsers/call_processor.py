@@ -2334,15 +2334,40 @@ def _ts_named_type_text(target: Node) -> str | None:
     return decode_node_text(named.text)
 
 
+def _ts_names_type_parameter(anchor: Node, name: str) -> bool:
+    # Whether the nearest scope around `anchor` that declares the type `name`
+    # binds it as a type parameter (`function f<Service>()`): such a cast
+    # names the constraint's members, never a module class of that name.
+    current = anchor.parent
+    while current is not None:
+        params = current.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+        if params is not None and any(
+            safe_decode_text(param.child_by_field_name(cs.FIELD_NAME)) == name
+            for param in params.named_children
+        ):
+            return True
+        if any(
+            child.type in cs.TS_TYPE_DECLARATION_NODES
+            and safe_decode_text(child.child_by_field_name(cs.FIELD_NAME)) == name
+            for child in current.named_children
+        ):
+            return False
+        current = current.parent
+    return False
+
+
 def _ts_cast_receiver_call_name(member: Node) -> str | None:
     # `(s as Service).handle()` and `(<Service>s).handle()` name the
     # receiver's type at the call site, so the call is `Service.handle`, which
     # the resolver binds as it binds a typed receiver; the cast's own text was
-    # a call name it could not read (issue #2890).
+    # a call name it could not read (issue #2890). A cast to a type parameter
+    # names no class (CodeRabbit, PR #2959).
     if (cast := _ts_cast_target(member)) is None:
         return None
     target, method = cast
     if (type_name := _ts_named_type_text(target)) is None:
+        return None
+    if _ts_names_type_parameter(target, type_name.partition(cs.SEPARATOR_DOT)[0]):
         return None
     return f"{type_name}{cs.SEPARATOR_DOT}{method}"
 
@@ -6915,8 +6940,14 @@ class CallProcessor:
             if name is None or name not in cs.TS_MEMBER_PRESERVING_UTILITY_TYPES:
                 break
             arguments = target.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS)
+            # Any declaration of the name in scope, a function's own `class
+            # Readonly<T>` or a type parameter included, is not the utility
+            # (Greptile, PR #2959).
             if (
-                self._ts_type_name_declaration(name, target, ctx.module_qn, arguments)
+                self._ts_lexical_type(target, name) is not None
+                or self._ts_type_name_declaration(
+                    name, target, ctx.module_qn, arguments
+                )
                 is not None
             ):
                 break
@@ -6925,7 +6956,11 @@ class CallProcessor:
                 return call_name
             target = first
         type_name = _ts_named_type_text(target)
-        return f"{type_name}{cs.SEPARATOR_DOT}{method}" if type_name else call_name
+        if type_name is None or _ts_names_type_parameter(
+            target, type_name.partition(cs.SEPARATOR_DOT)[0]
+        ):
+            return call_name
+        return f"{type_name}{cs.SEPARATOR_DOT}{method}"
 
     def _csharp_argument_target_name(
         self, ctx: _CallScanContext, creation_node: Node
