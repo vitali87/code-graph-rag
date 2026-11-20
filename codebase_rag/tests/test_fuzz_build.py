@@ -192,8 +192,17 @@ def _code(path: Path) -> str:
     )
 
 
-def exact_pin(dockerfile: str, package: str) -> str | None:
-    match = re.search(rf'"{re.escape(package)}==([0-9][0-9A-Za-z.]*)"', dockerfile)
+FUZZ_REQUIREMENTS = CFLITE_DIR / "requirements.txt"
+
+
+def exact_pin(requirements: str, package: str) -> str | None:
+    """The version `package` is pinned to in a pip requirements file, when
+    it is pinned exactly and carries at least one hash."""
+    joined = re.sub(r"[ \t]*\\\n\s*", " ", requirements)
+    match = re.search(
+        rf"(?m)^{re.escape(package)}==([0-9][0-9A-Za-z.]*)((?: --hash=sha256:[0-9a-f]{{64}})+)\s*$",
+        joined,
+    )
     return match.group(1) if match else None
 
 
@@ -201,13 +210,24 @@ def exact_pin(dockerfile: str, package: str) -> str | None:
 def test_the_image_pins_every_tool_it_installs(package: str) -> None:
     """An unpinned atheris is a different fuzzing engine from one day to the
     next, and a coverage.py newer than the data format the runner reads
-    produces a report the runner cannot open."""
-    assert exact_pin(_code(CFLITE_DIR / "Dockerfile"), package)
+    produces a report the runner cannot open. The image installs the tools
+    from the requirements file, hash-checked."""
+    assert exact_pin(FUZZ_REQUIREMENTS.read_text(encoding="utf-8"), package)
+    image = _code(CFLITE_DIR / "Dockerfile")
+    assert "COPY .clusterfuzzlite/requirements.txt /tmp/fuzz-requirements.txt" in image
+    assert "--require-hashes -r /tmp/fuzz-requirements.txt" in image
 
 
-def test_the_pin_check_refuses_a_range() -> None:
-    assert exact_pin('pip install "atheris>=2.3.0"', "atheris") is None
-    assert exact_pin('pip install "atheris==3.1.0"', "atheris") == "3.1.0"
+def test_the_pin_check_refuses_a_range_or_a_missing_hash() -> None:
+    digest = "0" * 64
+    assert (
+        exact_pin(f"atheris>=2.3.0 \\\n    --hash=sha256:{digest}\n", "atheris") is None
+    )
+    assert exact_pin("atheris==3.1.0\n", "atheris") is None
+    assert (
+        exact_pin(f"atheris==3.1.0 \\\n    --hash=sha256:{digest}\n", "atheris")
+        == "3.1.0"
+    )
 
 
 # --- build.sh, run against stand-ins for every tool it calls ----------------
@@ -268,6 +288,8 @@ def _run_build(
             "OUT": str(out),
             "STUB_LOG": str(log),
             "SANITIZER": "address",
+            # ClusterFuzzLite always sets it; build.sh builds one language.
+            "FUZZING_LANGUAGE": "python",
             "HOME": str(tmp_path),
             **env,
         },
@@ -389,12 +411,82 @@ def test_every_clusterfuzzlite_job_has_a_timeout(workflow: Path) -> None:
     assert all(isinstance(j.get("timeout-minutes"), int) for j in jobs.values())
 
 
+# The languages ClusterFuzzLite builds: the harnesses in fuzz/, and the Rust
+# extension's cargo-fuzz targets. build.sh builds one per job.
+FUZZ_LANGUAGES = {"python", "rust"}
+MATRIX_LANGUAGE = "${{ matrix.language }}"
+
+
+def languages(job: dict[str, Any], value: str | None) -> list[str]:
+    """What a step's `language` input is in each of the job's runs."""
+    if value == MATRIX_LANGUAGE:
+        return list(job["strategy"]["matrix"]["language"])
+    return [] if value is None else [value]
+
+
+def _runs(workflow: dict[str, Any], mode: str, language: str) -> list[str]:
+    """The jobs whose run step works in `mode` on `language`'s build."""
+    return [
+        job_name
+        for job_name, inputs in _steps(workflow, "run_fuzzers")
+        if inputs["mode"] == mode
+        and language in languages(workflow["jobs"][job_name], inputs.get("language"))
+    ]
+
+
 @pytest.mark.parametrize("workflow", CFLITE_WORKFLOWS, ids=_ids)
-def test_every_run_names_python(workflow: Path) -> None:
+def test_every_run_names_the_language_its_job_built(workflow: Path) -> None:
     """The run action picks its reproduce timeout from `language`: python
-    gets 120s, anything else 30s, too short for a frozen target to start."""
-    for _, inputs in _steps(_workflow(workflow.name), "run_fuzzers"):
-        assert inputs.get("language") == "python", inputs
+    gets 120s, anything else 30s, too short for a frozen target to start.
+    So a run must name the language its job's build holds, python included."""
+    parsed = _workflow(workflow.name)
+    built = {
+        job: inputs.get("language") for job, inputs in _steps(parsed, "build_fuzzers")
+    }
+    for job_name, inputs in _steps(parsed, "run_fuzzers"):
+        assert inputs.get("language") == built[job_name], (job_name, inputs)
+        job = parsed["jobs"][job_name]
+        assert set(languages(job, inputs.get("language"))) <= FUZZ_LANGUAGES, job_name
+        assert languages(job, inputs.get("language")), job_name
+
+
+def test_the_language_reader_expands_the_matrix() -> None:
+    job = {"strategy": {"matrix": {"language": ["python", "rust"]}}}
+    assert languages(job, MATRIX_LANGUAGE) == ["python", "rust"]
+    assert languages(job, "python") == ["python"]
+    assert languages(job, None) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "mode"),
+    [
+        ("cflite_pr.yml", "code-change"),
+        ("cflite_batch.yml", "batch"),
+        ("cflite_cron.yml", "prune"),
+    ],
+)
+def test_the_rust_targets_are_fuzzed_beside_the_harnesses(name: str, mode: str) -> None:
+    workflow = _workflow(name)
+    assert _runs(workflow, mode, "python"), name
+    assert _runs(workflow, mode, "rust"), name
+
+
+def test_only_the_harnesses_upload_a_main_build_and_a_coverage_report() -> None:
+    """ClusterFuzzLite names the build and coverage artifacts by sanitizer
+    (and commit), not by language, so a Rust one would replace the Python
+    one the PR job reads."""
+    build = _workflow("cflite_build.yml")
+    uploads = [
+        (job, inputs)
+        for job, inputs in _steps(build, "build_fuzzers")
+        if str(inputs.get("upload-build")).lower() == "true"
+    ]
+    assert uploads
+    for job, inputs in uploads:
+        assert languages(build["jobs"][job], inputs.get("language")) == ["python"]
+    cron = _workflow("cflite_cron.yml")
+    assert _runs(cron, "coverage", "python")
+    assert not _runs(cron, "coverage", "rust")
 
 
 def holds_a_pull_request(job: dict[str, Any], inputs: dict[str, Any]) -> bool:
@@ -441,12 +533,17 @@ def test_the_budget_reader_refuses_an_input_without_a_default() -> None:
 PER_TARGET_RUNS = [("cflite_batch.yml", "batch"), ("cflite_cron.yml", "prune")]
 
 
-def _run_job(name: str, mode: str) -> tuple[dict[str, Any], dict[str, Any]]:
+def _python_run(name: str, mode: str) -> tuple[str, dict[str, Any]]:
+    """The one job of `name` that runs the harnesses in `mode`."""
     workflow = _workflow(name)
-    [(job_name, inputs)] = [
-        (j, i) for j, i in _steps(workflow, "run_fuzzers") if i["mode"] == mode
-    ]
-    return workflow["jobs"][job_name], inputs
+    [job_name] = _runs(workflow, mode, "python")
+    [inputs] = [i for j, i in _steps(workflow, "run_fuzzers") if j == job_name]
+    return job_name, inputs
+
+
+def _run_job(name: str, mode: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    job_name, inputs = _python_run(name, mode)
+    return _workflow(name)["jobs"][job_name], inputs
 
 
 def test_the_batch_gives_every_target_a_job_of_its_own_on_every_core() -> None:
@@ -616,17 +713,15 @@ def test_the_upload_check_refuses_a_sarif_left_on_disk() -> None:
 
 def test_the_cron_workflow_prunes_and_measures_coverage() -> None:
     workflow = _workflow("cflite_cron.yml")
-    modes = {
-        inputs["mode"]: (job, inputs) for job, inputs in _steps(workflow, "run_fuzzers")
-    }
-    assert set(modes) == {"prune", "coverage"}
-    coverage_job, coverage_run = modes["coverage"]
+    runs = _steps(workflow, "run_fuzzers")
+    assert {inputs["mode"] for _, inputs in runs} == {"prune", "coverage"}
+    coverage_job, coverage_run = _python_run("cflite_cron.yml", "coverage")
     assert coverage_run["sanitizer"] == "coverage"
     [build] = [i for j, i in _steps(workflow, "build_fuzzers") if j == coverage_job]
     assert build["sanitizer"] == "coverage"
     # Coverage replays the corpora the prune has just merged, and still runs
     # when one target's prune failed.
-    prune_job, _ = modes["prune"]
+    prune_job, _ = _python_run("cflite_cron.yml", "prune")
     coverage = workflow["jobs"][coverage_job]
     assert coverage["needs"] in (prune_job, [prune_job])
     assert "!cancelled()" in coverage["if"]

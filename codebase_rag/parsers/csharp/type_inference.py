@@ -28,11 +28,15 @@ from .arity import spellings as arity_spellings
 from .utils import (
     _normalize_type_name,
     annotate_type_ref,
+    array_element_text,
+    collection_element_text,
     generic_arity_of_type_text,
     leaf_type_segment,
     split_type_ref,
     strip_generic_arguments,
     unique_carrier,
+    value_binder_at,
+    value_binders_at,
 )
 
 if TYPE_CHECKING:
@@ -45,6 +49,27 @@ _TYPE_DECLS = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
 # and must NOT fall back to the name-only trie, which would fabricate an
 # edge onto an unrelated same-name first-party member.
 CSHARP_EXTERNAL_TARGET: tuple[str, str] = ("", "")
+
+
+def _method_base(method_qn: str) -> str:
+    """A signature-suffixed qn without its signature: `N.Exts.Ext(Calc,int)` -> `N.Exts.Ext`."""
+    return method_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+
+
+def _member_call_type_argument_count(call_node: Node) -> int:
+    """How many type arguments a member call spells: `c.Ext<int, string>(5)`
+    -> 2, `c.Ext(5)` -> 0."""
+    func = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    if func is None or func.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+        return 0
+    name = func.child_by_field_name(cs.FIELD_NAME)
+    if name is None or name.type != cs.TS_CSHARP_GENERIC_NAME:
+        return 0
+    type_args = next(
+        (c for c in name.named_children if c.type == cs.TS_CSHARP_TYPE_ARGUMENT_LIST),
+        None,
+    )
+    return len(type_args.named_children) if type_args is not None else 0
 
 
 def _arity(leaf: str) -> int:
@@ -188,6 +213,14 @@ _IN_PROGRESS = _Sentinel()
 type _MemoEntry = tuple[str, str] | None | _Sentinel
 
 
+def _namespaced_receiver(recv_type: str, ext_namespace: str) -> str:
+    # A qualified `this` type is taken as written; an unqualified one names
+    # the type of that name in the extension's own namespace.
+    if cs.SEPARATOR_DOT in recv_type or not ext_namespace:
+        return recv_type
+    return f"{ext_namespace}{cs.SEPARATOR_DOT}{recv_type}"
+
+
 def _extension_receiver_matches(
     receiver_type_name: str,
     recv_type: str,
@@ -209,15 +242,86 @@ def _extension_receiver_matches(
     if recv_qualified and cand_qualified:
         return recv_type == receiver_type_name
     if recv_qualified:
-        cand_qualified_name = (
-            f"{ext_namespace}{cs.SEPARATOR_DOT}{recv_type}"
-            if ext_namespace
-            else recv_type
-        )
-        return cand_qualified_name == receiver_type_name
+        return _namespaced_receiver(recv_type, ext_namespace) == receiver_type_name
     if cand_qualified:
         return False
     return not ambiguous_unqualified
+
+
+# Binders that write their name's type in a `type` field.
+_TYPED_BINDERS = frozenset(
+    {
+        cs.TS_CSHARP_PARAMETER,
+        cs.TS_CSHARP_PARAMETER_LIST,
+        cs.TS_CSHARP_DECLARATION_PATTERN,
+        cs.TS_CSHARP_RECURSIVE_PATTERN,
+        cs.TS_CSHARP_DECLARATION_EXPRESSION,
+        cs.TS_CSHARP_CATCH_DECLARATION,
+        cs.TS_CSHARP_FROM_CLAUSE,
+        cs.TS_CSHARP_JOIN_CLAUSE,
+        cs.TS_CSHARP_PROPERTY_DECLARATION,
+    }
+)
+# Callables whose calls resolve with the enclosing method's type map.
+_INLINE_CALLABLES = frozenset(
+    {cs.TS_CSHARP_LAMBDA_EXPRESSION, cs.TS_CSHARP_ANONYMOUS_METHOD_EXPRESSION}
+)
+
+
+def _declarator_named(declarator: Node, name: str) -> bool:
+    return (
+        declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR
+        and safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME)) == name
+    )
+
+
+def _written_type_text(owner: Node) -> str | None:
+    type_node = owner.child_by_field_name(cs.FIELD_TYPE)
+    if type_node is None or type_node.type == cs.TS_CSHARP_IMPLICIT_TYPE:
+        return None
+    return safe_decode_text(type_node)
+
+
+def _held_by_map(binder: Node) -> bool:
+    """Whether the method's type map models `binder`: a declared local, or a
+    parameter of the method itself or of a local function, whose calls get
+    their own map. A lambda's parameters are not in the map its calls use."""
+    owner = binder.parent
+    if owner is not None and owner.type == cs.TS_CSHARP_VARIABLE_DECLARATOR:
+        return True
+    if owner is not None and owner.type == cs.TS_CSHARP_PARAMETER:
+        owner = owner.parent
+    return (
+        owner is not None
+        and owner.type == cs.TS_CSHARP_PARAMETER_LIST
+        and (owner.parent is None or owner.parent.type not in _INLINE_CALLABLES)
+    )
+
+
+def _local_declarator_type_text(type_node: Node | None, declarator: Node) -> str | None:
+    """The declared type of a local's declarator, or for `var` the type its
+    initializer constructs (None when neither is read)."""
+    if type_node is not None and type_node.type != cs.TS_CSHARP_IMPLICIT_TYPE:
+        return safe_decode_text(type_node)
+    # Only a direct `new T(...)`: a creation among a call's arguments
+    # (`Make(new List<ISink>())`) is not what the call returns (bot review on
+    # PR #2990).
+    name_node = declarator.child_by_field_name(cs.FIELD_NAME)
+    value = next(
+        (c for c in reversed(declarator.named_children) if c != name_node),
+        None,
+    )
+    if value is not None and value.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
+        return safe_decode_text(value.child_by_field_name(cs.FIELD_TYPE))
+    return None
+
+
+def _enclosing_type_body(node: Node) -> Node | None:
+    # The body of the type declaration that encloses `node`, if any.
+    owner = node.parent
+    while owner is not None and owner.type not in cs.CSHARP_TYPE_DECLARATION_NODES:
+        owner = owner.parent
+    return owner.child_by_field_name(cs.FIELD_BODY) if owner is not None else None
 
 
 class CSharpTypeInferenceEngine:
@@ -402,12 +506,143 @@ class CSharpTypeInferenceEngine:
                 if declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR:
                     self._record_local(declarator, declared, types, conflicted)
 
+    def site_types(self, site: Node, types: dict[str, str]) -> dict[str, str]:
+        """The method's type map as seen at `site`.
+
+        The map holds the method's parameters and declared locals, one type
+        per name for the whole method. Every other binder (a `foreach`,
+        pattern, out, deconstruction, `catch` or query variable, or a
+        lambda's parameter) holds its name in its own scope alone, so at a
+        site in that scope the name takes that binder's type, or none when
+        the binder gives none, and never a field's or another binder's
+        (issue #2938, bot review on PR #2990).
+        """
+        view = types
+        for name, binder in value_binders_at(site).items():
+            if _held_by_map(binder):
+                continue
+            if view is types:
+                view = dict(types)
+            if text := self._binder_type_text(binder):
+                view[name] = annotate_type_ref(text)
+            else:
+                view.pop(name, None)
+        return view
+
+    def _binder_type_text(self, binder: Node) -> str | None:
+        """The type `binder` gives its name: the written one, or for `var`
+        the one its value is read to have (None when neither is read)."""
+        owner = binder.parent
+        if owner is None:
+            return None
+        if owner.type == cs.TS_CSHARP_VARIABLE_DECLARATOR:
+            decl = owner.parent
+            return _local_declarator_type_text(
+                decl.child_by_field_name(cs.FIELD_TYPE) if decl is not None else None,
+                owner,
+            )
+        if owner.type == cs.TS_CSHARP_FOREACH_STATEMENT:
+            return _written_type_text(owner) or self._foreach_element_text(owner)
+        if owner.type in _TYPED_BINDERS:
+            return _written_type_text(owner)
+        return None
+
+    def _foreach_element_text(self, loop: Node) -> str | None:
+        # A `var` loop variable takes the element type of its collection's
+        # declared type, when the collection is a variable in scope at the
+        # loop or a field and that type is an array or a known collection
+        # (issue #2938).
+        collection = loop.child_by_field_name(cs.FIELD_RIGHT)
+        if collection is None:
+            return None
+        if collection.type == cs.TS_CSHARP_IDENTIFIER:
+            name = safe_decode_text(collection)
+            if not name:
+                return None
+            # Any binder of the name in scope hides the field, even one whose
+            # type is not read (bot review on PR #2990).
+            binder = value_binder_at(collection, name)
+            declared = (
+                self._field_type_text(loop, name)
+                if binder is None
+                else self._binder_type_text(binder)
+            )
+        elif (
+            collection.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION
+            and (
+                receiver := collection.child_by_field_name(
+                    cs.TS_CSHARP_FIELD_EXPRESSION
+                )
+            )
+            is not None
+            and receiver.type == cs.TS_CSHARP_THIS
+            and (
+                name := safe_decode_text(collection.child_by_field_name(cs.FIELD_NAME))
+            )
+        ):
+            declared = self._field_type_text(loop, name)
+        else:
+            return None
+        return self._element_text(declared) if declared else None
+
+    def _element_text(self, declared: str) -> str | None:
+        # An array's element type is the array's own, whatever type it names.
+        # A project type named like a known collection (`Acme.List<T>`)
+        # enumerates whatever its own GetEnumerator yields, so only a name no
+        # registered type shares is read as the BCL one (bot review on PR
+        # #2990).
+        if (element := array_element_text(declared)) is not None:
+            return element
+        head, angle, _rest = declared.partition(cs.CHAR_ANGLE_OPEN)
+        if angle and self._may_name_project_type(head.strip()):
+            return None
+        return collection_element_text(declared)
+
+    def _may_name_project_type(self, written: str) -> bool:
+        # A path rooted at `System` (`System.Collections.Generic.List`)
+        # names the BCL type unless a project type is declared under that
+        # very path: a same-named type elsewhere does not hide it (bot review
+        # on PR #2990). A bare name, an alias or a project namespace may name
+        # any registered type of that simple name.
+        path = written.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+        path = path.removeprefix(f"{cs.TS_CSHARP_GLOBAL}{cs.SEPARATOR_DOT}")
+        types = [
+            qn
+            for qn in self.simple_name_lookup.get(
+                path.rsplit(cs.SEPARATOR_DOT, 1)[-1], set()
+            )
+            if self.function_registry.get(qn) in _TYPE_DECLS
+        ]
+        if not path.startswith(cs.CSHARP_SYSTEM_PREFIX):
+            return bool(types)
+        return any(self.csharp_class_namespaced.get(qn) == path for qn in types)
+
+    @staticmethod
+    def _field_type_text(at: Node, name: str) -> str | None:
+        # A field of the type that declares the member holding `at`, read off
+        # the syntax: the per-class field map is keyed by class qn, unknown
+        # here.
+        body = _enclosing_type_body(at)
+        for member in body.named_children if body is not None else ():
+            if member.type != cs.TS_CSHARP_FIELD_DECLARATION:
+                continue
+            for decl in member.named_children:
+                if decl.type != cs.TS_CSHARP_VARIABLE_DECLARATION:
+                    continue
+                if any(
+                    _declarator_named(declarator, name)
+                    for declarator in decl.named_children
+                ):
+                    return safe_decode_text(decl.child_by_field_name(cs.FIELD_TYPE))
+        return None
+
     def _binds_local(self, node: Node, name: str) -> bool:
         """Whether a local in scope at `node` binds `name`.
 
         Two binders, both of which can leave the name out of
         `local_var_types` and so read as a TYPE: a `foreach (var name in
-        ...)` loop, whose element type is not inferred, and a local declared
+        ...)` loop whose element type is not read (a call's result, a
+        dictionary), and a local declared
         in an enclosing block whose initializer is not inferred
         (`var Config = Ext.Make();`, Copilot, #2011).
 
@@ -594,6 +829,9 @@ class CSharpTypeInferenceEngine:
         if receiver.type == cs.TS_CSHARP_BASE_EXPRESSION:
             return self._resolve_base_call(method_name, arg_count, caller_qn)
 
+        # A `foreach`, pattern or lambda variable holds its name only in its
+        # own scope, which the method-wide map cannot say (issue #2938).
+        local_var_types = self.site_types(call_node, local_var_types or {})
         receiver_class_qn = self._resolve_receiver_class_qn(
             receiver, local_var_types or {}, module_qn, caller_qn
         )
@@ -621,6 +859,7 @@ class CSharpTypeInferenceEngine:
             caller_qn,
             method_name,
             arg_count,
+            _member_call_type_argument_count(call_node),
         ):
             return cs.NodeLabel.METHOD.value, ext
         if receiver_class_qn is not None and (
@@ -740,8 +979,8 @@ class CSharpTypeInferenceEngine:
         # on an untyped receiver resolves to System.Object.
         if method_name in cs.CSHARP_OBJECT_VIRTUALS:
             return True
-        # A `foreach (var x in ...)` binding is a LOCAL whose element type is
-        # not inferred, so it never reaches `local_var_types`. Left to the
+        # A `foreach (var x in ...)` binding is a LOCAL whose element type
+        # may not be read, so it may not reach `local_var_types`. Left to the
         # checks below it read as an external TYPE when PascalCase and fell
         # to the name trie otherwise, which bound the call to a registered
         # class of the same name: `foreach (var Config in items) {
@@ -791,7 +1030,8 @@ class CSharpTypeInferenceEngine:
     def _is_untyped_local(self, bound: Node, local_var_types: dict[str, str]) -> bool:
         # Only an IMPLICIT binding: `foreach (Item it in ...)` declares a
         # type, reaches local_var_types, and resolves normally -- this
-        # branch is never reached for it. Guarding on the `var` form
+        # branch is never reached for it, nor for a `var` binding whose
+        # element type was read (issue #2938). Guarding on the `var` form
         # keeps that path working.
         if bound.type != cs.TS_CSHARP_IDENTIFIER:
             return False
@@ -1145,6 +1385,11 @@ class CSharpTypeInferenceEngine:
         if not caller_qn:
             return
         scope = caller_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        # A caller that IS a registered type (a Class-node caller, issue
+        # #3339) is itself the first enclosing-type candidate; peeling
+        # starts from the namespace otherwise and never tries the class.
+        if self.function_registry.get(scope) in _TYPE_DECLS:
+            yield scope
         while cs.SEPARATOR_DOT in scope:
             scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
             if len(scope) <= len(module_qn):
@@ -1255,6 +1500,7 @@ class CSharpTypeInferenceEngine:
         caller_qn: str | None,
         method_name: str,
         arg_count: int,
+        type_arg_count: int,
     ) -> str | None:
         if not self.csharp_extension_methods:
             return None
@@ -1268,6 +1514,7 @@ class CSharpTypeInferenceEngine:
             method_name,
             arg_count,
             self._receiver_type_arity(receiver, local_var_types, module_qn, caller_qn),
+            type_arg_count,
         )
 
     def _receiver_type_name(
@@ -1286,11 +1533,11 @@ class CSharpTypeInferenceEngine:
         if unwrapped is None:
             return None
         receiver = unwrapped
-        # `((Widget)o).Ext()`: the cast target IS the receiver type, so an
-        # extension-only method still binds on a cast receiver; same for a
-        # `new Widget(...)` receiver.
+        # `((Widget)o).Ext()` or `(o as Widget).Ext()`: the cast target IS the
+        # receiver type, so an extension-only method still binds on a cast
+        # receiver; same for a `new Widget(...)` receiver.
         if receiver.type in (
-            cs.TS_CSHARP_CAST_EXPRESSION,
+            *cs.TS_CSHARP_CAST_RECEIVERS,
             cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
         ):
             return self._annotated_type_field(receiver)
@@ -1311,7 +1558,7 @@ class CSharpTypeInferenceEngine:
         return None
 
     def _annotated_type_field(self, receiver: Node) -> str | None:
-        type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+        type_node = _receiver_type_node(receiver)
         raw = safe_decode_text(type_node) if type_node else None
         return annotate_type_ref(raw) if raw else None
 
@@ -1322,15 +1569,44 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None,
     ) -> str | None:
-        inner = self.resolve_csharp_method_call(
+        if entry := self._invocation_return_entry(
             receiver, local_var_types, module_qn, caller_qn
-        )
-        if inner is None:
-            return None
-        if entry := self.csharp_method_return_types.get(inner[1]):
+        ):
             rname, rarity = entry
             return f"{rname}`{rarity}" if rarity else rname
         return None
+
+    def _invocation_return_entry(
+        self,
+        invocation: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> tuple[str, int] | None:
+        """The recorded return type of the call `invocation` resolves to.
+
+        An extension call bound to one of an overload set may run any of them
+        (issue #2839), so its return type types the next hop only when every
+        overload returns the same type. Every lookup typing a chained call
+        goes through here: refusing the type on one path while another still
+        read it let `c.Ext(5).Run()` skip `IntResult`'s instance `Run` and
+        bind an extension `Run(this IntResult)` instead. A Roslyn fact
+        pinning the site is the compiler's own choice and stands.
+        """
+        inner = self.resolve_csharp_method_call(
+            invocation, local_var_types, module_qn, caller_qn
+        )
+        if inner is None:
+            return None
+        entry = self.csharp_method_return_types.get(inner[1])
+        if entry is None:
+            return None
+        if not self.semantic_fact_resolved(invocation, module_qn) and any(
+            self.csharp_method_return_types.get(qn) != entry
+            for qn in self.csharp_extension_overloads(inner[1], invocation)
+        ):
+            return None
+        return entry
 
     def _unwrap_receiver(self, receiver: Node) -> Node | None:
         # Peel interleaved parens and null-forgiving postfix wrappers
@@ -1406,9 +1682,9 @@ class CSharpTypeInferenceEngine:
         receiver = unwrapped
         if receiver.type in (
             cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
-            cs.TS_CSHARP_CAST_EXPRESSION,
+            *cs.TS_CSHARP_CAST_RECEIVERS,
         ):
-            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+            type_node = _receiver_type_node(receiver)
             raw = safe_decode_text(type_node) if type_node else None
             return generic_arity_of_type_text(raw) if raw else None
         if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
@@ -1430,11 +1706,8 @@ class CSharpTypeInferenceEngine:
     ) -> int | None:
         # Full caller context: locals and imports participate in the inner
         # resolution exactly as they did for the instance path.
-        inner = self.resolve_csharp_method_call(
+        if entry := self._invocation_return_entry(
             invocation, local_var_types, module_qn, caller_qn
-        )
-        if inner is not None and (
-            entry := self.csharp_method_return_types.get(inner[1])
         ):
             return entry[1]
         return None
@@ -1458,6 +1731,7 @@ class CSharpTypeInferenceEngine:
         method_name: str,
         arg_count: int,
         receiver_arity: int | None = None,
+        type_arg_count: int = 0,
     ) -> str | None:
         candidates = self.csharp_extension_methods.get(method_name)
         if not candidates:
@@ -1489,9 +1763,68 @@ class CSharpTypeInferenceEngine:
                 receiver_type_name, recv_type, ext_namespace, ambiguous_unqualified
             ):
                 matches.append(qn)
-        # Bind only on a unique match; an ambiguous name across static classes
-        # is left unresolved rather than guessed.
-        return matches[0] if len(matches) == 1 else None
+        # A type argument (`c.Ext<int>(5)`) cannot bind a non-generic method,
+        # nor one declaring a different number of type parameters
+        # (`Ext<T, U>`). With no known generic match the matches stand, as for
+        # a bare call (_find_bare_call_matches): genericness is only recorded
+        # for parsed methods.
+        if type_arg_count and (
+            generic := [
+                qn for qn in matches if self._takes_type_args(qn, type_arg_count)
+            ]
+        ):
+            matches = generic
+        # Matches from different static classes are a name colliding across
+        # them and are left unresolved rather than guessed. Several from ONE
+        # class are an overload set of that extension, differing in types
+        # arity cannot tell apart: bind one, and the call site fans out to
+        # the rest (csharp_extension_overloads), as a bare call's same-arity
+        # family does (issue #2839).
+        owners = {_method_base(qn) for qn in matches}
+        return min(matches) if len(owners) == 1 else None
+
+    def csharp_extension_overloads(self, ext_qn: str, call_node: Node) -> list[str]:
+        """The other overloads call `call_node`, bound to extension `ext_qn`, may run.
+
+        Same static class, same `this` receiver type and same arity, and,
+        when the call carries type arguments, declaring that many type
+        parameters: the set
+        `_find_extension_method` chose one of. An overload extending another
+        type is not one a receiver of this type can bind.
+        """
+        type_arg_count = _member_call_type_argument_count(call_node)
+        generic_only = ext_qn in self.csharp_generic_methods and type_arg_count > 0
+        base = _method_base(ext_qn)
+        candidates = self.csharp_extension_methods.get(
+            base.rsplit(cs.SEPARATOR_DOT, 1)[-1], []
+        )
+        # Receivers compare by the type they name, not as written: in
+        # namespace N, `this N.Calc` and `this Calc` are one receiver.
+        receiver = next(
+            (_namespaced_receiver(c[1], c[2]) for c in candidates if c[0] == ext_qn),
+            None,
+        )
+        if receiver is None:
+            return []
+        arity = _arity(ext_qn)
+        return [
+            qn
+            for qn, recv_type, namespace, _recv_arity in candidates
+            if qn != ext_qn
+            and _namespaced_receiver(recv_type, namespace) == receiver
+            and _method_base(qn) == base
+            and _arity(qn) == arity
+            and (not generic_only or self._takes_type_args(qn, type_arg_count))
+        ]
+
+    def _takes_type_args(self, qn: str, type_arg_count: int) -> bool:
+        """Whether generic method `qn` can take `type_arg_count` explicit type
+        arguments: it must declare exactly that many type parameters. A method
+        whose shape was not recorded keeps the old test, genericness alone."""
+        if qn not in self.csharp_generic_methods:
+            return False
+        shape = self.csharp_call_shapes.get(qn)
+        return shape is None or shape.type_params == type_arg_count
 
     def _count_arguments(self, call_node: Node) -> int:
         arg_list = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
@@ -1507,14 +1840,15 @@ class CSharpTypeInferenceEngine:
         caller_qn: str | None,
     ) -> str | None:
         # A cast receiver `((Component)s!).Reload()` (Polly's
-        # CancellationToken.Register callback): the cast TYPE is the
+        # CancellationToken.Register callback), or the safe cast
+        # `(s as Component).Reload()` (issue #2892): the cast TYPE is the
         # receiver's type by construction (mirrors the Java cast-receiver
         # handling).
         unwrapped = self._unwrap_receiver(receiver)
         if unwrapped is None:
             return None
         receiver = unwrapped
-        if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+        if receiver.type in cs.TS_CSHARP_CAST_RECEIVERS:
             return self._cast_receiver_qn(receiver, module_qn)
         # `new Builder().Add()`: an object-creation receiver IS its type.
         if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
@@ -1549,7 +1883,7 @@ class CSharpTypeInferenceEngine:
         return None
 
     def _cast_receiver_qn(self, receiver: Node, module_qn: str) -> str | None:
-        type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+        type_node = _receiver_type_node(receiver)
         return self._written_type_qn(type_node, module_qn) if type_node else None
 
     def _written_type_qn(self, type_node: Node, module_qn: str) -> str | None:
@@ -1583,15 +1917,13 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None,
     ) -> str | None:
-        inner = self.resolve_csharp_method_call(
+        entry = self._invocation_return_entry(
             receiver, local_var_types, module_qn, caller_qn
         )
-        if inner is None:
+        if entry is None:
             return None
-        if entry := self.csharp_method_return_types.get(inner[1]):
-            rtype, rarity = entry
-            return self._type_name_to_qn(rtype, module_qn, rarity)
-        return None
+        rtype, rarity = entry
+        return self._type_name_to_qn(rtype, module_qn, rarity)
 
     def _member_access_receiver_qn(
         self,
@@ -1646,14 +1978,15 @@ class CSharpTypeInferenceEngine:
         type_name = local_var_types.get(name)
         if type_name is not None:
             return self._type_name_to_qn(type_name, module_qn)
-        # A `foreach (var x in ...)` binding is a LOCAL whose type comes
-        # from the sequence and is not inferred, so it never reaches
-        # `local_var_types`. Falling through to the static branch below
-        # read the name as a TYPE: `foreach (var Config in items) {
-        # Config.Each(); }` emitted an edge to the registered class
-        # `N.Config` (Copilot, PR #1998). A local owns the name here
-        # whatever its type, so the receiver is unresolved, not static.
-        if self._binds_local(receiver, name):
+        # A `foreach (var x in ...)` binding is a LOCAL whose type may not be
+        # read, so it may not reach `local_var_types`. Falling through to the
+        # static branch below read the name as a TYPE: `foreach (var Config
+        # in items) { Config.Each(); }` emitted an edge to the registered
+        # class `N.Config` (Copilot, PR #1998), and a pattern or out variable
+        # named like a field took the field's type (bot review on PR #2990).
+        # A local owns the name here whatever its type, so the receiver is
+        # unresolved, neither a field nor static.
+        if value_binder_at(receiver, name) is not None:
             return None
         if class_qn := self._containing_class_qn(caller_qn):
             if ftype := self._field_type(class_qn, name):
@@ -1731,6 +2064,12 @@ class CSharpTypeInferenceEngine:
         # Strip any parameter signature before splitting off the method leaf,
         # so a qualified param type (`M(System.String)`) does not fool rsplit.
         base = caller_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        # A caller that IS a registered type (a Class-node caller, as for
+        # field initializers with no single constructor, issue #3339) is
+        # its own containing class; peeling a leaf off it would land on
+        # the namespace and lose every enclosing-type member.
+        if self.function_registry.get(base) in _TYPE_DECLS:
+            return base
         class_qn = base.rsplit(cs.SEPARATOR_DOT, 1)[0]
         return class_qn if self.function_registry.get(class_qn) in _TYPE_DECLS else None
 
@@ -2216,3 +2555,11 @@ class CSharpTypeInferenceEngine:
                 found.append(current)
             stack.extend(current.children)
         return found
+
+
+def _receiver_type_node(receiver: Node) -> Node | None:
+    # The type a receiver names: a C-style cast's and a `new`'s `type` field,
+    # an `as` cast's right operand (issue #2892).
+    if receiver.type == cs.TS_CSHARP_AS_EXPRESSION:
+        return receiver.child_by_field_name(cs.TS_FIELD_RIGHT)
+    return receiver.child_by_field_name(cs.FIELD_TYPE)

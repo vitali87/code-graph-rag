@@ -3,7 +3,6 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
-import tomli_w
 from loguru import logger
 
 from codebase_rag.models import Dependency
@@ -20,6 +19,7 @@ from codebase_rag.parsers.dependency_parser import (
     _extract_pep508_package_name,
     parse_dependencies,
 )
+from codebase_rag.utils import toml_writer
 
 
 @pytest.fixture
@@ -116,7 +116,7 @@ class TestPyProjectTomlParser:
     def test_project_dependencies(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
-            tomli_w.dumps(
+            toml_writer.dumps(
                 {
                     "project": {
                         "name": "my-project",
@@ -135,7 +135,7 @@ class TestPyProjectTomlParser:
     def test_optional_dependencies(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
-            tomli_w.dumps(
+            toml_writer.dumps(
                 {
                     "project": {
                         "name": "my-project",
@@ -160,7 +160,7 @@ class TestPyProjectTomlParser:
     def test_poetry_dependencies(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
-            tomli_w.dumps(
+            toml_writer.dumps(
                 {
                     "tool": {
                         "poetry": {
@@ -185,7 +185,7 @@ class TestPyProjectTomlParser:
 
     def test_empty_dependencies(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(tomli_w.dumps({"project": {"name": "my-project"}}))
+        pyproject.write_text(toml_writer.dumps({"project": {"name": "my-project"}}))
         parser = PyProjectTomlParser()
         deps = parser.parse(pyproject)
 
@@ -240,7 +240,7 @@ class TestPyProjectTomlParser:
     def test_both_project_and_poetry(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
-            tomli_w.dumps(
+            toml_writer.dumps(
                 {
                     "project": {"dependencies": ["click>=8.0"]},
                     "tool": {"poetry": {"dependencies": {"requests": "^2.28"}}},
@@ -407,7 +407,7 @@ class TestCargoTomlParser:
     def test_simple_dependencies(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
         cargo.write_text(
-            tomli_w.dumps(
+            toml_writer.dumps(
                 {
                     "package": {"name": "my-app", "version": "0.1.0"},
                     "dependencies": {"clap": "4.0", "serde": "1.0"},
@@ -424,7 +424,7 @@ class TestCargoTomlParser:
     def test_complex_dependencies(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
         cargo.write_text(
-            tomli_w.dumps(
+            toml_writer.dumps(
                 {
                     "package": {"name": "my-app"},
                     "dependencies": {
@@ -444,7 +444,7 @@ class TestCargoTomlParser:
     def test_dev_dependencies(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
         cargo.write_text(
-            tomli_w.dumps(
+            toml_writer.dumps(
                 {
                     "package": {"name": "my-app"},
                     "dev-dependencies": {"criterion": "0.5", "mockall": "0.11"},
@@ -462,7 +462,7 @@ class TestCargoTomlParser:
     def test_both_dep_types(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
         cargo.write_text(
-            tomli_w.dumps(
+            toml_writer.dumps(
                 {
                     "package": {"name": "my-app"},
                     "dependencies": {"clap": "4.0"},
@@ -478,7 +478,7 @@ class TestCargoTomlParser:
     def test_dependency_without_version(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
         cargo.write_text(
-            tomli_w.dumps(
+            toml_writer.dumps(
                 {
                     "package": {"name": "my-app"},
                     "dependencies": {"local-crate": {"path": "../local-crate"}},
@@ -494,7 +494,7 @@ class TestCargoTomlParser:
 
     def test_empty_dependencies(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
-        cargo.write_text(tomli_w.dumps({"package": {"name": "my-app"}}))
+        cargo.write_text(toml_writer.dumps({"package": {"name": "my-app"}}))
         parser = CargoTomlParser()
         deps = parser.parse(cargo)
 
@@ -878,7 +878,7 @@ class TestParseDependencies:
     def test_pyproject_toml(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
-            tomli_w.dumps({"project": {"dependencies": ["flask>=2.0"]}})
+            toml_writer.dumps({"project": {"dependencies": ["flask>=2.0"]}})
         )
         deps = parse_dependencies(pyproject)
 
@@ -903,7 +903,7 @@ class TestParseDependencies:
 
     def test_cargo_toml(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
-        cargo.write_text(tomli_w.dumps({"dependencies": {"clap": "4.0"}}))
+        cargo.write_text(toml_writer.dumps({"dependencies": {"clap": "4.0"}}))
         deps = parse_dependencies(cargo)
 
         assert len(deps) == 1
@@ -961,7 +961,7 @@ class TestParseDependencies:
 
     def test_cargo_toml_case_insensitive(self, tmp_path: Path) -> None:
         cargo = tmp_path / "CARGO.TOML"
-        cargo.write_text(tomli_w.dumps({"dependencies": {"clap": "4.0"}}))
+        cargo.write_text(toml_writer.dumps({"dependencies": {"clap": "4.0"}}))
         deps = parse_dependencies(cargo)
 
         assert len(deps) == 1

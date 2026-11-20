@@ -15,32 +15,47 @@ from . import exceptions as ex
 from . import logs as ls
 from .language_spec import LANGUAGE_SPECS, LanguageSpec
 from .query_predicates import compile_query
+from .source_checkout import source_checkout_root
 from .types_defs import LanguageImport, LanguageLoader, LanguageQueries
 
 
-def _submodule_path(lang_name: str) -> Path:
-    return Path(cs.GRAMMARS_DIR) / f"{cs.TREE_SITTER_PREFIX}{lang_name}"
+def _package_dir() -> Path:
+    return Path(__file__).resolve().parent
 
 
-def _submodule_bindings_path(lang_name: str) -> Path:
-    return _submodule_path(lang_name) / cs.BINDINGS_DIR / cs.SupportedLanguage.PYTHON
+def _submodule_path(lang_name: str) -> Path | None:
+    # The grammars `cgr language add-grammar` registers, in cgr's own checkout,
+    # and never under the cwd: an MCP client starts cgr inside the repo it
+    # indexes, so a cwd-relative grammars/ there would have its setup.py run
+    # and its binding imported. An installed cgr has no such fallback.
+    root = source_checkout_root(_package_dir())
+    if root is None:
+        return None
+    return root / cs.GRAMMARS_DIR / f"{cs.TREE_SITTER_PREFIX}{lang_name}"
+
+
+def _bindings_path(submodule_path: Path) -> Path:
+    return submodule_path / cs.BINDINGS_DIR / cs.SupportedLanguage.PYTHON
 
 
 def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
-    if not _submodule_bindings_path(lang_name).exists():
+    submodule_path = _submodule_path(lang_name)
+    if submodule_path is None:
+        return None
+    bindings_path = _bindings_path(submodule_path)
+    if not bindings_path.exists():
         return None
     try:
-        if not _build_submodule(lang_name):
+        if not _build_submodule(lang_name, submodule_path):
             return None
     except Exception as e:
         logger.debug(ls.SUBMODULE_LOAD_FAILED, lang=lang_name, error=e)
         return None
-    return _import_submodule(lang_name)
+    return _import_submodule(lang_name, bindings_path)
 
 
-def _build_submodule(lang_name: str) -> bool:
+def _build_submodule(lang_name: str, submodule_path: Path) -> bool:
     """Build the submodule's binding in place; False when the build fails."""
-    submodule_path = _submodule_path(lang_name)
     if not (submodule_path / cs.SETUP_PY).exists():
         return True
     logger.debug(ls.BUILDING_BINDINGS, lang=lang_name)
@@ -64,9 +79,9 @@ def _build_submodule(lang_name: str) -> bool:
     return True
 
 
-def _import_submodule(lang_name: str) -> LanguageLoader:
+def _import_submodule(lang_name: str, bindings_path: Path) -> LanguageLoader:
     """The language loader the submodule's built binding exports, or None."""
-    python_bindings_str = str(_submodule_bindings_path(lang_name))
+    python_bindings_str = str(bindings_path)
     try:
         if python_bindings_str not in sys.path:
             sys.path.insert(0, python_bindings_str)
@@ -260,7 +275,10 @@ def _submodule_binding_built(lang_name: str) -> bool:
     # module the loader imports: inside its package (tree-sitter grammars
     # build `_binding.abi3.so` there) or as the module itself. Only the
     # suffixes this interpreter can load count.
-    bindings = _submodule_bindings_path(lang_name)
+    submodule_path = _submodule_path(lang_name)
+    if submodule_path is None:
+        return False
+    bindings = _bindings_path(submodule_path)
     module_name = f"{cs.TREE_SITTER_MODULE_PREFIX}{lang_name.replace('-', '_')}"
     if any(
         (bindings / f"{module_name}{suffix}").is_file()
@@ -386,6 +404,36 @@ def _create_highlights_query(
         )
 
     return None
+
+
+def missing_grammars() -> list[cs.SupportedLanguage]:
+    """Supported languages a sync could not parse for want of a grammar.
+
+    The base package ships Python's grammar only; the rest come from the
+    `treesitter-full` extra (issue #2905). An installed pip grammar must also
+    load, as a sync loads it: one built for another tree-sitter ABI is
+    dropped there, so it counts as missing here. A grammar checkout is
+    never imported or built, by `grammar_installed`'s rule that a yes/no
+    must not run checkout code: its built binding counts as present.
+    """
+    return sorted(lang for lang in LANGUAGE_SPECS if not _grammar_loads(lang))
+
+
+def _grammar_loads(lang_name: cs.SupportedLanguage) -> bool:
+    lang_import = _IMPORT_SPECS.get(lang_name)
+    loader = (
+        None
+        if lang_import is None
+        else _import_pip_grammar(lang_import.module_path, lang_import.attr_name)
+    )
+    if loader is None:
+        return grammar_installed(lang_name)
+    try:
+        Language(loader())
+    except Exception:
+        # `_process_language` drops the language on the same failure.
+        return False
+    return True
 
 
 COMBINED_FUNC_CLASS_QUERIES: dict[cs.SupportedLanguage, Query | None] = {}

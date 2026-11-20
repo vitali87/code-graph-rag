@@ -4,14 +4,18 @@
 #
 # * prune merges every corpus down to the inputs that still add coverage, so
 #   the PR job does not spend its short budget replaying redundant inputs.
-#   Each target prunes in a job of its own: a merge that outlasts its budget
-#   raises before the replacement corpus is uploaded, so it loses nothing,
-#   but cifuzz does not catch it, and in a shared job every target after the
-#   slow one would go unpruned for good.
-# * coverage then replays the pruned corpora under coverage.py and uploads
-#   the HTML report as the `cifuzz-coverage-latest` artifact, which shows
-#   what the fuzzers actually reach. The PR job reads the same artifact to
-#   skip the targets a change cannot affect.
+#   Each harness in fuzz/ prunes in a job of its own: a merge that outlasts
+#   its budget raises before the replacement corpus is uploaded, so it loses
+#   nothing, but cifuzz does not catch it, and in a shared job every target
+#   after the slow one would go unpruned for good. The cargo-fuzz targets in
+#   rust/cgr_graph_rs/fuzz share one job, as they do in the batch.
+# * coverage then replays the harnesses' pruned corpora under coverage.py
+#   and uploads the HTML report as the `cifuzz-coverage-latest` artifact,
+#   which shows what the fuzzers actually reach. The PR job reads the same
+#   artifact to skip the targets a change cannot affect, and fuzzes any
+#   target the report does not cover, the Rust ones included. ClusterFuzzLite
+#   names that artifact by sanitizer alone, not by language, so a Rust
+#   coverage job would overwrite the Python report; there is none.
 
 name: ClusterFuzzLite Cron
 
@@ -32,6 +36,12 @@ jobs:
     name: Prune ${{ matrix.target }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Reading the corpora, builds and coverage the earlier runs uploaded is
+    # all the token does here; the action uploads with the runner's own
+    # credentials.
+    permissions:
+      actions: read
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -42,7 +52,7 @@ jobs:
           - fuzz_parse_source
           - fuzz_shell_command
     steps:
-      - name: Build fuzzers
+      - name: Build fuzzers (python)
         uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           sanitizer: address
@@ -79,6 +89,32 @@ jobs:
           sanitizer: address
           language: python
 
+  pruning-rust:
+    name: Prune (rust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Reading the corpora, builds and coverage the earlier runs uploaded is
+    # all the token does here; the action uploads with the runner's own
+    # credentials.
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Build fuzzers (rust)
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          sanitizer: address
+          language: rust
+
+      - name: Prune (rust)
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 1500
+          mode: 'prune'
+          sanitizer: address
+          language: rust
+
   coverage:
     name: Measure coverage
     needs: pruning
@@ -87,6 +123,12 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Reading the corpora, builds and coverage the earlier runs uploaded is
+    # all the token does here; the action uploads with the runner's own
+    # credentials.
+    permissions:
+      actions: read
+      contents: read
     steps:
       # A coverage build prepends coverage.py's tracer to every harness,
       # which is why no harness may use `from __future__` imports.

@@ -24,14 +24,13 @@
 FROM gcr.io/oss-fuzz-base/base-builder-python@sha256:21f6fab17ace4dc76e1c56de91ee95d3d03da021df94b41056ba036f6c6f55e9
 
 # pip trusts this store as well as its own certifi, and Ubuntu 20.04's newest
-# ca-certificates (20240203~20.04.1) still carries emSign ECC Root CA - G3,
-# so that root is deselected and the store rebuilt before anything is fetched.
+# ca-certificates (20240203~20.04.1) still carries every distrusted eMudhra
+# root, so they are deselected and the store rebuilt before anything is fetched.
+COPY --chmod=755 scripts/distrust_ca_roots.sh /usr/local/sbin/
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates git && \
     rm -rf /var/lib/apt/lists/* && \
-    sed -i 's|^mozilla/emSign_ECC_Root_CA_-_G3\.crt$|!&|' /etc/ca-certificates.conf && \
-    update-ca-certificates --fresh > /dev/null && \
-    test ! -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem
+    distrust_ca_roots.sh
 
 # uv is fetched as a pinned release artifact and checked against the SHA-256
 # its publisher ships, rather than by piping https://astral.sh/uv/install.sh
@@ -53,10 +52,12 @@ RUN uv python install 3.12
 # wrapper but no toolchain behind it, so install one where the wrapper looks
 # (/rust/bin), checked against the SHA-256 rustup publishes, as uv is above.
 # That wrapper sits at /usr/local/bin/cargo, which rustup-init would otherwise
-# take for another Rust install.
+# take for another Rust install. cargo refuses a toolchain older than any
+# locked dependency's rust-version; tree-sitter-language, which the tree-sitter
+# crate pulls in, needs 1.90.
 ARG RUSTUP_VERSION=1.28.2
 ARG RUSTUP_SHA256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c
-ARG RUST_TOOLCHAIN=1.85.0
+ARG RUST_TOOLCHAIN=1.97.0
 ENV CARGO_HOME=/rust RUSTUP_HOME=/rust/rustup PATH=$PATH:/rust/bin
 RUN curl -fsSLO "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init" && \
     echo "${RUSTUP_SHA256}  rustup-init" | sha256sum -c - && \
@@ -66,32 +67,51 @@ RUN curl -fsSLO "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x
     rm rustup-init && \
     cargo --version
 
+# The graph-rs fuzz targets (rust/cgr_graph_rs/fuzz) are cargo-fuzz targets,
+# built by the `language: rust` job. OSS-Fuzz's compile hands Rust builds
+# -Zsanitizer through RUSTFLAGS, which only a nightly accepts, so they get the
+# nightly and the cargo-fuzz release base-builder-rust pins, the pair OSS-Fuzz
+# builds against this image's clang. The nightly must be new enough for the
+# crate's dependencies, as RUST_TOOLCHAIN above must. A rust build also copies
+# the DEFAULT toolchain's std sources (for coverage reports) and stops if they
+# are missing, so the stable toolchain carries rust-src.
+ARG CARGO_FUZZ_VERSION=0.13.2
+ENV RUST_FUZZ_TOOLCHAIN=nightly-2025-09-05
+RUN rustup toolchain install "${RUST_FUZZ_TOOLCHAIN}" --profile minimal && \
+    rustup component add rust-src --toolchain "${RUST_TOOLCHAIN}" && \
+    cargo install cargo-fuzz --locked --version "${CARGO_FUZZ_VERSION}" && \
+    rm -rf /rust/registry && \
+    cargo fuzz --version
+
 # Make that interpreter the default `python3` so compile_python_fuzzer and
 # build.sh use it without either knowing where it came from.
 RUN ln -sf "$(uv python find 3.12)" /usr/local/bin/python3 && \
     python3 --version
 
 # The interpreter's bundled pip may predate the emSign distrust (pip 26.2.2),
-# so the first thing it fetches is pip itself, from a wheel it checks against
-# a pinned SHA-256. The installs below and build.sh's then run on that pip.
+# so the first thing it fetches is pip itself, the release
+# scripts/pip-requirements.txt pins, checked against its SHA-256s. The installs
+# below then run on that pip (build.sh installs the project with uv, from the
+# lockfile).
+COPY scripts/pip-requirements.txt /tmp/
 RUN python3 -m pip install --no-cache-dir --break-system-packages \
-        "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
+        --require-hashes -r /tmp/pip-requirements.txt
 
 # atheris and pyinstaller belong to the base image's 3.11 and are invisible to
 # 3.12, so install them for the interpreter that will actually freeze the
-# targets. atheris 3.1.0 is published only as manylinux wheels carrying their
-# own libFuzzer, so nothing here is compiled against the image's.
+# targets, from requirements.txt, which pins them and what they pull in by
+# hash. atheris links the image's libFuzzer rather than building its own,
+# the same way base-builder's install_python.sh does it. coverage is there
+# for the coverage build, whose stub runs `import coverage` inside every
+# frozen target; it is a dev dependency, so build.sh's lockfile install
+# does not bring it.
 # uv's standalone interpreters ship an EXTERNALLY-MANAGED marker; this image
 # has no other Python for 3.12, so installing into it directly is intended.
-#
-# Every tool is pinned: an unpinned atheris is a different fuzzing engine
-# from one day to the next. coverage is here for the coverage build, whose
-# stub runs `import coverage` inside the frozen target; it is a dev
-# dependency, so the lockfile install in build.sh does not bring it, and the
-# pin matches the version uv.lock resolves for development.
-RUN PYI_STATIC_ZLIB=1 \
+COPY .clusterfuzzlite/requirements.txt /tmp/fuzz-requirements.txt
+RUN LIBFUZZER_LIB=$(echo /usr/local/lib/clang/*/lib/x86_64-unknown-linux-gnu/libclang_rt.fuzzer_no_main.a) \
+    PYI_STATIC_ZLIB=1 \
     python3 -m pip install --no-cache-dir --break-system-packages \
-        "atheris==3.1.0" "pyinstaller==6.10.0" "coverage==7.16.2"
+        --require-hashes -r /tmp/fuzz-requirements.txt
 
 COPY . $SRC/code-graph-rag
 WORKDIR $SRC/code-graph-rag

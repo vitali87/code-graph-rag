@@ -1,11 +1,13 @@
 # ClusterFuzzLite on pull requests.
 #
-# Runs each harness in fuzz/ for a short budget against the PR's head, seeded
-# from the corpus the nightly batch has grown (or fuzz/corpus/ before there is
+# Runs each harness in fuzz/ for a short budget against the PR's head, and
+# each cargo-fuzz target in rust/cgr_graph_rs/fuzz in a job of its own (see
+# .clusterfuzzlite/build.sh for why a job builds one language), seeded from
+# the corpus the nightly batch has grown (or fuzz/corpus/ before there is
 # one). A crash fails the job with the reproducing input attached as an
 # artifact, and its report goes to code scanning.
 #
-# The job is bounded so it never holds a pull request for long: about ten
+# Each job is bounded so it never holds a pull request for long: about ten
 # minutes of build and corpus download, ten of fuzzing on every core, and a
 # hard stop at thirty. The long runs belong to cflite_batch.yml.
 #
@@ -26,7 +28,7 @@ concurrency:
 
 jobs:
   fuzzing:
-    name: Fuzz (${{ matrix.sanitizer }})
+    name: Fuzz (${{ matrix.language }}, ${{ matrix.sanitizer }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -34,16 +36,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        language: [python, rust]
         sanitizer: [address]
     steps:
-      - name: Build fuzzers (${{ matrix.sanitizer }})
+      - name: Build fuzzers (${{ matrix.language }}, ${{ matrix.sanitizer }})
         uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           sanitizer: ${{ matrix.sanitizer }}
-          language: python
+          language: ${{ matrix.language }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run fuzzers (${{ matrix.sanitizer }})
+      - name: Run fuzzers (${{ matrix.language }}, ${{ matrix.sanitizer }})
         uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -56,7 +59,7 @@ jobs:
           # 30s default). A PyInstaller-frozen Python target is slow to start,
           # so dropping this risks real crashes being written off as
           # unreproducible.
-          language: python
+          language: ${{ matrix.language }}
           # -jobs/-workers on every core of the runner, for the same ten
           # minutes of wall time.
           parallel-fuzzing: true
@@ -65,11 +68,12 @@ jobs:
       # output-sarif only writes the report into the workspace; this step is
       # what puts it in front of code scanning. It runs after a crash has
       # failed the step above, and is skipped when fuzzing never got as far
-      # as writing a report.
+      # as writing a report. Each language reports under a category of its
+      # own, so one job's upload does not replace the other's.
       - name: Upload SARIF
         if: always() && hashFiles('cifuzz-sarif/results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: cifuzz-sarif/results.sarif
           checkout_path: cifuzz-sarif
-          category: clusterfuzzlite-pr
+          category: clusterfuzzlite-pr-${{ matrix.language }}
