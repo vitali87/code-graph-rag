@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
+import sys
 from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -61,7 +63,7 @@ def ingestor(events: list[str]) -> MagicMock:
 @pytest.fixture
 def updater(events: list[str]) -> MagicMock:
     instance = MagicMock()
-    instance.run.side_effect = lambda: events.append("run")
+    instance.run.side_effect = lambda force=False: events.append("run")
     instance.skipped_because_in_sync = False
     # A bare MagicMock attribute is truthy, which would read every interrupt
     # as one that landed after the run committed.
@@ -132,7 +134,7 @@ def test_a_sync_marks_before_writing_and_clears_after_running(
 def test_a_failed_sync_keeps_its_marker(
     tmp_path: Path, sync_env: MagicMock, updater: MagicMock, events: list[str]
 ) -> None:
-    def interrupted() -> None:
+    def interrupted(force: bool = False) -> None:
         events.append("run")
         raise KeyboardInterrupt
 
@@ -141,6 +143,148 @@ def test_a_failed_sync_keeps_its_marker(
         _sync(tmp_path)
 
     assert events == ["mark", "constraints", "run"], events
+
+
+def _gone_pid() -> int:
+    """The pid of a process that has exited and been reaped."""
+    child = subprocess.Popen([sys.executable, "-c", ""])
+    child.wait()
+    return child.pid
+
+
+@pytest.fixture
+def identified_process_table() -> Generator[None, None, None]:
+    """A host whose name tells its process table apart, as Linux's does.
+
+    On macOS and Windows the name is the hostname alone, and no run is
+    stranded there (review of PR #3496).
+    """
+    with patch("codebase_rag.sync_guard.process_table_identified", return_value=True):
+        yield
+
+
+def _strand(ingestor: MagicMock, events: list[str], runs: list[dict]) -> None:
+    """Markers of other writers' runs that got past their first write (PR #3493).
+
+    The MCP server marks with a run id of its own, and nothing but that run
+    cleared its marker, so one whose process died left the project refused
+    for good.
+    """
+    marker_write = ingestor.execute_write.side_effect
+
+    def read(query: str, params: dict | None = None) -> list[dict]:
+        if query == cq.CYPHER_STRANDED_RUN_IDS:
+            events.append("stranded")
+            return runs
+        return []
+
+    def write(query: str, params: dict | None = None) -> None:
+        if query == cq.CYPHER_RETIRE_STRANDED_RUN:
+            events.append("retire")
+        marker_write(query, params)
+
+    ingestor.fetch_all.side_effect = read
+    ingestor.execute_write.side_effect = write
+
+
+def _run(run_id: str, pid: int, host: str | None = None) -> dict:
+    return {
+        cs.KEY_RUN_ID: run_id,
+        cs.KEY_OWNER_HOST: process_host() if host is None else host,
+        cs.KEY_OWNER_PID: pid,
+    }
+
+
+@pytest.mark.usefixtures("identified_process_table")
+def test_a_sync_over_a_run_whose_process_exited_rebuilds_then_retires_it(
+    tmp_path: Path,
+    sync_env: MagicMock,
+    ingestor: MagicMock,
+    updater: MagicMock,
+    events: list[str],
+) -> None:
+    dead = _gone_pid()
+    _strand(ingestor, events, [_run("mcp-dead", dead)])
+
+    _sync(tmp_path)
+
+    # Read before this sync marks; retired only once its own marker is off.
+    assert events == ["stranded", "mark", "constraints", "run", "clear", "retire"]
+    # Forced: a stopped re-ingest may have deleted an unchanged dependent's
+    # definitions, which an incremental run skips by its saved hash.
+    updater.run.assert_called_once_with(force=True)
+    (read,) = [
+        call.args[1]
+        for call in ingestor.fetch_all.call_args_list
+        if call.args[0] == cq.CYPHER_STRANDED_RUN_IDS
+    ]
+    assert read == {cs.KEY_PROJECT_NAME: "proj", cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID}
+    # Deleted only while it still names that process.
+    assert _marker_writes(ingestor, cq.CYPHER_RETIRE_STRANDED_RUN) == [
+        {cs.KEY_PROJECT_NAME: "proj"} | _run("mcp-dead", dead)
+    ]
+
+
+@pytest.mark.usefixtures("identified_process_table")
+def test_a_sync_with_nothing_stranded_stays_incremental(
+    tmp_path: Path,
+    sync_env: MagicMock,
+    ingestor: MagicMock,
+    updater: MagicMock,
+    events: list[str],
+) -> None:
+    _strand(ingestor, events, [])
+
+    _sync(tmp_path)
+
+    updater.run.assert_called_once_with(force=False)
+    assert "retire" not in events
+
+
+@pytest.mark.usefixtures("identified_process_table")
+@pytest.mark.parametrize(
+    "run",
+    [
+        # Review of PR #3496: a run of the same project from another checkout,
+        # or under another CGR_HOME, is not held off by this checkout's lock
+        # and may still be writing.
+        pytest.param(_run("mcp-live", os.getppid()), id="live-process"),
+        pytest.param(_run("mcp-mine", os.getpid()), id="this-process"),
+        pytest.param(_run("mcp-far", 4242, host="elsewhere"), id="other-host"),
+        pytest.param({cs.KEY_RUN_ID: "mcp-old"}, id="names-no-process"),
+    ],
+)
+def test_a_sync_leaves_a_run_that_may_still_be_writing(
+    tmp_path: Path,
+    sync_env: MagicMock,
+    ingestor: MagicMock,
+    updater: MagicMock,
+    events: list[str],
+    run: dict,
+) -> None:
+    _strand(ingestor, events, [run])
+
+    _sync(tmp_path)
+
+    assert "retire" not in events
+    updater.run.assert_called_once_with(force=False)
+
+
+@pytest.mark.usefixtures("identified_process_table")
+def test_a_sync_that_stops_short_retires_nothing(
+    tmp_path: Path,
+    sync_env: MagicMock,
+    ingestor: MagicMock,
+    updater: MagicMock,
+    events: list[str],
+) -> None:
+    _strand(ingestor, events, [_run("mcp-dead", _gone_pid())])
+    updater.run.side_effect = RuntimeError("killed mid-sync")
+
+    with pytest.raises(RuntimeError):
+        _sync(tmp_path)
+
+    assert "retire" not in events
 
 
 def test_a_clean_sync_marks_after_the_wipe(

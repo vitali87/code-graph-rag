@@ -24,7 +24,7 @@
 //! bridge cannot read exactly, such as a source that is not `bytes`, raises
 //! `NotBorrowed` and the caller runs the Python twin.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::mem::size_of;
 
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTypeError, PyValueError};
@@ -32,8 +32,12 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyString, PyType};
 use tree_sitter::{ffi, Node};
 
+use super::aliases::{local_aliases, AliasRules};
+use super::interface::{
+    callable_parameter_indices, interface_fingerprint, Flavor, InterfaceRules, LanguageRules, ScanRules,
+};
 use super::scopes::{inner_scope_only_names, scope_facts, ScopeRules};
-use super::{anchor_hash, ast_fingerprint, kind, Rules, Source, DIGEST_SIZE};
+use super::{anchor_hash, ast_fingerprint, kind, NodeMap, NodeTypes, Rules, Source, DIGEST_SIZE};
 
 /// The py-tree-sitter release whose object layout and C runtime this was
 /// checked against; any other turns the bridge off.
@@ -60,6 +64,10 @@ type Described = (u16, String, bool, usize, usize, (usize, usize), (usize, usize
 /// (name, import paths) pairs, declared names and `nonlocal` names.
 type NativeScopeFacts = (Vec<String>, Vec<String>, Vec<(String, Vec<String>)>, Vec<String>, Vec<String>);
 
+/// One alias as Python receives it: the local, its candidate leaves and
+/// reflected leaves as descendant indices under the scope, and the dunder.
+type NativeAlias = (String, Vec<usize>, Option<String>, Vec<usize>);
+
 #[pyclass(frozen, module = "cgr_graph_rs")]
 pub struct TreeBridge {
     node_type: Py<PyType>,
@@ -68,6 +76,10 @@ pub struct TreeBridge {
     header: usize,
     rules: Rules,
     scope_rules: ScopeRules,
+    interface_rules: InterfaceRules,
+    /// None for rules from a code-graph-rag that predates the alias walk:
+    /// it never asks for the walk, and the rest of the bridge still runs.
+    alias_rules: Option<AliasRules>,
 }
 
 /// Reads a `T` at `offset` bytes into a Python object.
@@ -187,6 +199,11 @@ impl TreeBridge {
             header,
             rules: rules_from(rules)?,
             scope_rules: scope_rules_from(&item(rules, "scopes")?.cast_into::<PyDict>()?)?,
+            interface_rules: interface_rules_from(&item(rules, "interface")?.cast_into::<PyDict>()?)?,
+            alias_rules: match rules.get_item("aliases")? {
+                Some(aliases) => Some(alias_rules_from(&aliases.cast_into::<PyDict>()?)?),
+                None => None,
+            },
         })
     }
 
@@ -219,6 +236,49 @@ impl TreeBridge {
     /// `_inner_scope_only_names(caller)`, sorted.
     fn inner_scope_only_names(&self, caller: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
         self.with_source(caller, |node, source| inner_scope_only_names(node, source, &self.scope_rules))
+    }
+
+    /// `interface_fingerprint(root_node, language)`, or None for a language
+    /// without rules.
+    fn interface_fingerprint(&self, root_node: &Bound<'_, PyAny>, language: &str) -> PyResult<Option<String>> {
+        let Some(language) = self.interface_rules.languages.get(language) else {
+            return Ok(None);
+        };
+        self.with_source(root_node, |node, source| {
+            Some(interface_fingerprint(node, source, language, &self.interface_rules, &self.scope_rules))
+        })
+    }
+
+    /// `callable_parameter_indices(func_node, language)` as (name, index)
+    /// pairs in parameter order, or None for a language the twin scans.
+    fn callable_parameter_indices(
+        &self,
+        func_node: &Bound<'_, PyAny>,
+        language: &str,
+    ) -> PyResult<Option<Vec<(String, usize)>>> {
+        let Some(language) = self.interface_rules.languages.get(language) else {
+            return Ok(None);
+        };
+        if language.flavor == Flavor::Other {
+            return Ok(None);
+        }
+        self.with_source(func_node, |node, source| {
+            callable_parameter_indices(node, source, language, &self.interface_rules, &self.scope_rules)
+        })
+    }
+
+    /// `python_local_aliases(caller)`, in its order, each leaf as its
+    /// descendant index under `caller`.
+    fn local_aliases(&self, caller: &Bound<'_, PyAny>) -> PyResult<Vec<NativeAlias>> {
+        let Some(alias_rules) = &self.alias_rules else {
+            return Err(NotBorrowed::new_err("rules without the alias walk's"));
+        };
+        self.with_source(caller, |node, source| {
+            local_aliases(node, source, alias_rules)
+                .into_iter()
+                .map(|alias| (alias.local, alias.candidates, alias.dunder, alias.reflected))
+                .collect()
+        })
     }
 
     /// Every node under `node` in a cursor's pre-order, as this runtime reads
@@ -276,7 +336,7 @@ fn list(rules: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<Vec<u8>>> {
     item(rules, key)?.try_iter()?.map(|value| as_bytes(&value?)).collect()
 }
 
-fn set(rules: &Bound<'_, PyDict>, key: &str) -> PyResult<HashSet<Vec<u8>>> {
+fn set(rules: &Bound<'_, PyDict>, key: &str) -> PyResult<NodeTypes> {
     Ok(list(rules, key)?.into_iter().collect())
 }
 
@@ -347,6 +407,155 @@ fn scope_rules_from(rules: &Bound<'_, PyDict>) -> PyResult<ScopeRules> {
         parameters_field: text(rules, "parameters_field")?,
         body_field: text(rules, "body_field")?,
         attribute_field: text(rules, "attribute_field")?,
+    })
+}
+
+fn dict<'py>(rules: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyDict>> {
+    Ok(item(rules, key)?.cast_into::<PyDict>()?)
+}
+
+fn alias_rules_from(rules: &Bound<'_, PyDict>) -> PyResult<AliasRules> {
+    Ok(AliasRules {
+        boundaries: set(rules, "boundaries")?,
+        assignment: text(rules, "assignment")?,
+        identifier: text(rules, "identifier")?,
+        attribute: text(rules, "attribute")?,
+        call: text(rules, "call")?,
+        binary_operator: text(rules, "binary_operator")?,
+        boolean_operator: text(rules, "boolean_operator")?,
+        conditional_expression: text(rules, "conditional_expression")?,
+        parenthesized_expression: text(rules, "parenthesized_expression")?,
+        left_field: text(rules, "left_field")?,
+        right_field: text(rules, "right_field")?,
+        operator_field: text(rules, "operator_field")?,
+        and_operator: str_rule(rules, "and_operator")?,
+        dunders: item(rules, "dunders")?.extract()?,
+        max_depth: item(rules, "max_depth")?.extract()?,
+    })
+}
+
+fn strings(rules: &Bound<'_, PyDict>, key: &str) -> PyResult<HashSet<String>> {
+    item(rules, key)?.try_iter()?.map(|value| value?.extract()).collect()
+}
+
+/// The tokens' length prefix the Rust walk writes: 4 bytes, big-endian.
+const LENGTH_BYTES: usize = 4;
+const BYTE_ORDER: &str = "big";
+
+fn flavor_from(flavor: &str) -> PyResult<Flavor> {
+    match flavor {
+        "python" => Ok(Flavor::Python),
+        "js" => Ok(Flavor::Js),
+        "other" => Ok(Flavor::Other),
+        _ => Err(PyValueError::new_err(format!("interface flavor {flavor}"))),
+    }
+}
+
+fn language_rules_from(rules: &Bound<'_, PyDict>) -> PyResult<LanguageRules> {
+    Ok(LanguageRules {
+        flavor: flavor_from(&str_rule(rules, "flavor")?)?,
+        functions: set(rules, "functions")?,
+        blocks: set(rules, "blocks")?,
+        definitions: set(rules, "definitions")?,
+        blockers: set(rules, "blockers")?,
+        kept_names: strings(rules, "kept_names")?,
+        calls: set(rules, "calls")?,
+        returns: set(rules, "returns")?,
+    })
+}
+
+fn scan_rules_from(rules: &Bound<'_, PyDict>) -> PyResult<ScanRules> {
+    Ok(ScanRules {
+        call: text(rules, "call")?,
+        identifier: text(rules, "identifier")?,
+        closures: set(rules, "closures")?,
+        opaque: set(rules, "opaque")?,
+    })
+}
+
+fn interface_rules_from(rules: &Bound<'_, PyDict>) -> PyResult<InterfaceRules> {
+    let length_bytes: usize = item(rules, "length_bytes")?.extract()?;
+    let byte_order = str_rule(rules, "byte_order")?;
+    if length_bytes != LENGTH_BYTES || byte_order != BYTE_ORDER {
+        return Err(PyValueError::new_err(format!(
+            "a {length_bytes}-byte {byte_order}-endian length prefix, not {LENGTH_BYTES}-byte {BYTE_ORDER}-endian"
+        )));
+    }
+    let mut languages = HashMap::new();
+    for (name, language) in dict(rules, "languages")?.iter() {
+        languages.insert(name.extract()?, language_rules_from(&language.cast_into::<PyDict>()?)?);
+    }
+    let mut js_binder_fields = NodeMap::default();
+    for (node_type, fields) in dict(rules, "js_binder_fields")?.iter() {
+        let fields = fields.try_iter()?.map(|field| as_bytes(&field?)).collect::<PyResult<Vec<_>>>()?;
+        js_binder_fields.insert(as_bytes(&node_type)?, fields);
+    }
+    Ok(InterfaceRules {
+        languages,
+        version: text(rules, "version")?,
+        open: text(rules, "open")?,
+        close: text(rules, "close")?,
+        leaf: text(rules, "leaf")?,
+        missing: text(rules, "missing")?,
+        elided_body: text(rules, "elided_body")?,
+        returned: text(rules, "returned")?,
+        call: text(rules, "call")?,
+        argument: text(rules, "argument")?,
+        local: text(rules, "local")?,
+        comment: text(rules, "comment")?,
+        dunder: str_rule(rules, "dunder")?,
+        body_field: text(rules, "body_field")?,
+        name_field: str_rule(rules, "name_field")?,
+        left_field: text(rules, "left_field")?,
+        arguments_field: text(rules, "arguments_field")?,
+        value_field: text(rules, "value_field")?,
+        key_field: text(rules, "key_field")?,
+        function_field: text(rules, "function_field")?,
+        property_field: text(rules, "property_field")?,
+        object_field: text(rules, "object_field")?,
+        parameters_field: text(rules, "parameters_field")?,
+        parameter_field: text(rules, "parameter_field")?,
+        pattern_field: text(rules, "pattern_field")?,
+        alias_field: text(rules, "alias_field")?,
+        callee_fields: list(rules, "callee_fields")?,
+        identifier: text(rules, "identifier")?,
+        keyword_argument: text(rules, "keyword_argument")?,
+        name_arguments: set(rules, "name_arguments")?,
+        cast_wrappers: set(rules, "cast_wrappers")?,
+        call_expression: text(rules, "call_expression")?,
+        member_expression: text(rules, "member_expression")?,
+        prototype_methods: strings(rules, "prototype_methods")?,
+        js_binder_fields,
+        js_bound_names: set(rules, "js_bound_names")?,
+        js_return: text(rules, "js_return")?,
+        js_pair: text(rules, "js_pair")?,
+        js_computed_property_name: text(rules, "js_computed_property_name")?,
+        js_require: str_rule(rules, "js_require")?,
+        js_typed_parameters: set(rules, "js_typed_parameters")?,
+        py_identifier: text(rules, "py_identifier")?,
+        py_call: text(rules, "py_call")?,
+        py_attribute: text(rules, "py_attribute")?,
+        py_return: text(rules, "py_return")?,
+        py_read_returns: set(rules, "py_read_returns")?,
+        receivers: strings(rules, "receivers")?,
+        py_target_holders: set(rules, "py_target_holders")?,
+        py_target_wrappers: set(rules, "py_target_wrappers")?,
+        py_member_targets: set(rules, "py_member_targets")?,
+        py_caller_scope: text(rules, "py_caller_scope")?,
+        py_named_parameters: set(rules, "py_named_parameters")?,
+        py_typed_parameter: text(rules, "py_typed_parameter")?,
+        py_scope_boundaries: set(rules, "py_scope_boundaries")?,
+        py_decorated_definition: text(rules, "py_decorated_definition")?,
+        py_decorated_definitions: set(rules, "py_decorated_definitions")?,
+        py_shadow_binders: set(rules, "py_shadow_binders")?,
+        py_as_pattern_target: text(rules, "py_as_pattern_target")?,
+        py_imports: set(rules, "py_imports")?,
+        py_global: text(rules, "py_global")?,
+        py_case_pattern: text(rules, "py_case_pattern")?,
+        py_dotted_name: text(rules, "py_dotted_name")?,
+        py_aliased_import: text(rules, "py_aliased_import")?,
+        python_scan: scan_rules_from(&dict(rules, "python_scan")?)?,
+        js_scan: scan_rules_from(&dict(rules, "js_scan")?)?,
     })
 }
 

@@ -2,12 +2,22 @@
 # (gitwildmatch): globs, anchoring, dir-only trailing slash, and `!` unignore
 # lines rescuing built-in ignores. Bare-name patterns keep their existing
 # match-at-any-depth behavior, so old ignore files stay valid.
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.utils.path_utils import should_skip_path, should_skip_rel_file
+from codebase_rag.utils.path_utils import (
+    should_keep_dir,
+    should_skip_path,
+    should_skip_rel_file,
+)
+from evals.cgr_graph import _StatefulIngestor
 
 
 def _skip(
@@ -98,12 +108,44 @@ class TestGitignoreUnignoreSemantics:
         assert _skip("bin/other/x.py", unignore=frozenset({"bin/keep"}))
 
     def test_user_exclude_beats_unignore(self) -> None:
-        # existing precedence: unignore rescues only built-in ignores,
-        # never explicit user excludes.
+        # existing precedence: unignore rescues only built-in ignores, never
+        # an explicit user exclude of the path itself, of the directory it
+        # sits in, or of a directory a glob unignore reaches into.
         assert _skip(
             "gen/x.py",
             exclude=frozenset({"gen"}),
             unignore=frozenset({"gen/x.py"}),
+        )
+        assert _skip(
+            "gen/x.py", exclude=frozenset({"gen"}), unignore=frozenset({"gen"})
+        )
+        assert _skip(
+            "gen/x.py",
+            exclude=frozenset({"gen"}),
+            unignore=frozenset({"gen/*.py"}),
+        )
+        assert _skip(
+            "gen/x.js",
+            exclude=frozenset({"*.js"}),
+            unignore=frozenset({"gen/x.js"}),
+        )
+
+    @pytest.mark.parametrize(
+        ("exclude", "unignore", "rel_path"),
+        [
+            ("secrets/", "secrets/public", "secrets/public/a.py"),
+            ("a/**/secrets/", "a/secrets/public", "a/secrets/public/x.py"),
+            ("/secrets/", "secrets/public", "secrets/public/secrets/config.py"),
+        ],
+    )
+    def test_a_literal_keep_does_not_open_an_excluded_directory(
+        self, exclude: str, unignore: str, rel_path: str
+    ) -> None:
+        # A `!` line naming one path inside an excluded directory keeps
+        # nothing there, however the directory is excluded: as in git, a
+        # path whose parent directory is excluded stays excluded (issue #2835).
+        assert _skip(
+            rel_path, exclude=frozenset({exclude}), unignore=frozenset({unignore})
         )
 
 
@@ -126,9 +168,20 @@ class TestDirPruning:
             unignore_paths=unignore,
         )
 
-    def test_excluded_dir_stays_pruned_despite_unignore(self) -> None:
-        updater = self._updater(frozenset({"gen"}), frozenset({"gen/keep.py"}))
-        assert not updater._should_keep_dir("gen", "")
+    @pytest.mark.parametrize(
+        ("exclude", "unignore", "dirname"),
+        [
+            ("gen", "gen/keep.py", "gen"),
+            ("gen", "gen/sub/keep.py", "gen"),
+            ("gen", "gen/*.py", "gen"),
+            ("secrets/", "secrets/public", "secrets"),
+        ],
+    )
+    def test_excluded_dir_stays_pruned_despite_unignore(
+        self, exclude: str, unignore: str, dirname: str
+    ) -> None:
+        updater = self._updater(frozenset({exclude}), frozenset({unignore}))
+        assert not updater._should_keep_dir(dirname, "")
 
     def test_builtin_pruned_dir_kept_when_unignore_targets_beneath(self) -> None:
         updater = self._updater(None, frozenset({"bin/keep.py"}))
@@ -163,3 +216,254 @@ class TestDirectoryStructureRescue:
             unignore_paths=frozenset({"gen/*.py"}),
             is_file=False,
         )
+
+
+class TestVcsMetadataNeverWalked:
+    """A `!` line can rescue a built-in-ignored directory, never `.git`
+    (issue #3642): .NET's standard `.gitignore` has `!*.[Cc]ache/` and
+    `!**/packages/build/`, and either one walked into `.git`."""
+
+    UNANCHORED = frozenset({"**/packages/build/", "*.[Cc]ache/"})
+
+    def test_a_metadata_dir_stays_pruned_whatever_the_unignores(self) -> None:
+        for name in (".git", ".hg", ".svn"):
+            assert not should_keep_dir(name, "", None, self.UNANCHORED), name
+            assert not should_keep_dir(name, "pkg/", None, self.UNANCHORED), name
+
+    def test_another_builtin_dir_is_still_rescued(self) -> None:
+        assert should_keep_dir("node_modules", "", None, self.UNANCHORED)
+
+    def test_the_structure_walk_skips_a_metadata_dir(self, tmp_path: Path) -> None:
+        assert should_skip_path(
+            tmp_path / ".git" / "hooks",
+            tmp_path,
+            unignore_paths=self.UNANCHORED,
+            is_file=False,
+        )
+
+    def test_no_metadata_folder_reaches_the_graph(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "a.py").write_text("def f():\n    return 1\n")
+        for folder in ("hooks", "objects/12", "refs/heads"):
+            (tmp_path / ".git" / folder).mkdir(parents=True)
+        ingestor = MagicMock()
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=ingestor,
+            repo_path=tmp_path,
+            parsers=parsers,
+            queries=queries,
+            unignore_paths=self.UNANCHORED,
+        ).run(force=True)
+
+        folders = {
+            call.args[1].get("path")
+            for call in ingestor.ensure_node_batch.call_args_list
+            if call.args[0] == "Folder"
+        }
+
+        assert "src" in folders
+        assert not any(str(path).startswith(".git") for path in folders), folders
+
+    def test_a_file_under_a_metadata_dir_is_skipped_by_both_predicates(
+        self, tmp_path: Path
+    ) -> None:
+        unignore = frozenset({"*.py"})
+        assert should_skip_path(
+            tmp_path / ".git" / "hooks" / "x.py",
+            tmp_path,
+            unignore_paths=unignore,
+            is_file=True,
+        )
+        assert should_skip_rel_file(
+            ".git/hooks/x.py", (".git", "hooks"), unignore_paths=unignore
+        )
+
+    def test_a_line_that_names_the_metadata_dir_still_rescues_it(
+        self, tmp_path: Path
+    ) -> None:
+        named = frozenset({"submodule1/.git"})
+        assert should_keep_dir(".git", "submodule1/", None, named)
+        assert not should_keep_dir(".git", "", None, named)
+        assert not should_skip_path(
+            tmp_path / "submodule1" / ".git" / "config",
+            tmp_path,
+            unignore_paths=named,
+            is_file=True,
+        )
+
+    def test_a_named_line_may_glob_the_segments_before_the_metadata_dir(
+        self,
+    ) -> None:
+        # Codex review of #3644: `!submodule*/.git/keep.py` names `.git`.
+        assert should_keep_dir(
+            ".git", "submodule1/", None, frozenset({"submodule*/.git/keep.py"})
+        )
+        assert should_keep_dir(".git", "a/b/", None, frozenset({"**/.git/keep.py"}))
+
+    def test_a_wildcard_standing_for_the_metadata_dir_does_not_rescue_it(
+        self,
+    ) -> None:
+        assert not should_keep_dir(".git", "sub/", None, frozenset({"*/*/x.py"}))
+        assert not should_keep_dir(".git", "", None, frozenset({"**/*/x.py"}))
+
+    def test_a_glob_that_continues_the_dirs_name_does_not_rescue_it(
+        self, tmp_path: Path
+    ) -> None:
+        # CodeRabbit review of #3644: `!.git[0-9]/config` never matches `.git`.
+        broad = frozenset({".git[0-9]/config", "*.[Cc]ache/"})
+        assert not should_keep_dir(".git", "", None, broad)
+        assert should_skip_path(
+            tmp_path / ".git" / "objects", tmp_path, unignore_paths=broad, is_file=False
+        )
+        assert should_keep_dir(".git", "", None, frozenset({".git/hooks/*.py"}))
+
+    def test_a_root_anchored_line_rescues_only_the_root_metadata_dir(
+        self, tmp_path: Path
+    ) -> None:
+        # CodeRabbit review of #3644: `!/.git/` names the root's `.git` alone.
+        anchored = frozenset({"/.git/", "*.py"})
+        assert should_keep_dir(".git", "", None, anchored)
+        assert not should_keep_dir(".git", "pkg/", None, anchored)
+        assert should_skip_path(
+            tmp_path / "pkg" / ".git" / "hooks" / "x.py",
+            tmp_path,
+            unignore_paths=anchored,
+            is_file=True,
+        )
+        assert should_skip_rel_file(
+            "pkg/.git/hooks/x.py", ("pkg", ".git", "hooks"), unignore_paths=anchored
+        )
+        assert should_keep_dir(".git", "pkg/", None, frozenset({".git/"}))
+
+    def test_the_structure_walk_keeps_a_named_metadata_dir(
+        self, tmp_path: Path
+    ) -> None:
+        # CodeRabbit review of #3644: the file walk entered `submodule1/.git`
+        # for these lines, but the structure predicate dropped it, so the
+        # rescued files had no Folder ancestry.
+        named = frozenset({"submodule*/.git/keep.py", "submodule*/.git/sub/keep.py"})
+        for kept in ("submodule1/.git", "submodule1/.git/sub"):
+            assert not should_skip_path(
+                tmp_path / kept, tmp_path, unignore_paths=named, is_file=False
+            ), kept
+        for skipped in (".git", "submodule1/.git/objects", "submodule1/.git/sub/x"):
+            assert should_skip_path(
+                tmp_path / skipped, tmp_path, unignore_paths=named, is_file=False
+            ), skipped
+
+    def test_a_rescued_file_in_a_metadata_dir_gets_its_folders(
+        self, tmp_path: Path
+    ) -> None:
+        sub = tmp_path / "submodule1" / ".git" / "sub"
+        sub.mkdir(parents=True)
+        (sub / "keep.py").write_text("def kept():\n    return 1\n")
+        (tmp_path / "submodule1" / ".git" / "objects" / "12").mkdir(parents=True)
+        ingestor = MagicMock()
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=ingestor,
+            repo_path=tmp_path,
+            parsers=parsers,
+            queries=queries,
+            unignore_paths=frozenset({"submodule*/.git/sub/keep.py"}),
+        ).run(force=True)
+
+        paths = {
+            (call.args[0], call.args[1].get("path"))
+            for call in ingestor.ensure_node_batch.call_args_list
+        }
+
+        assert (cs.NodeLabel.FILE, "submodule1/.git/sub/keep.py") in paths
+        folders = {path for label, path in paths if label == cs.NodeLabel.FOLDER}
+        assert {"submodule1", "submodule1/.git", "submodule1/.git/sub"} <= folders
+        assert not any("objects" in str(path) for path in folders), folders
+
+    def test_many_double_stars_are_matched_at_once(self) -> None:
+        # CodeRabbit review of #3644: recursing on `**` both ways took time
+        # exponential in the number of `**` segments.
+        stars = [cs.GLOB_DOUBLE_STAR] * 20
+        pattern = frozenset({"/".join([*stars, "nomatch", ".git", "x.py"])})
+        parent = "".join(f"d{index}/" for index in range(20))
+        started = time.perf_counter()
+
+        assert not should_keep_dir(".git", parent, None, pattern)
+        assert should_keep_dir(".git", f"{parent}nomatch/", None, pattern)
+        assert should_keep_dir(".git", "nomatch/", None, pattern)
+        assert time.perf_counter() - started < 1
+
+
+def _folder_paths(store: _StatefulIngestor) -> set[str]:
+    return {
+        str(props[cs.KEY_PATH])
+        for (label, _uid), props in store.nodes.items()
+        if label == cs.NodeLabel.FOLDER.value
+    }
+
+
+class TestVcsMetadataLeavesAnOlderGraph:
+    """A graph indexed before #3642 holds Folders inside `.git`, and their
+    directories still exist, so the orphan prune kept them (CodeRabbit review
+    of #3644). The first sync after the upgrade drops them."""
+
+    def _index(
+        self,
+        repo: Path,
+        store: _StatefulIngestor,
+        unignore: frozenset[str] = TestVcsMetadataNeverWalked.UNANCHORED,
+    ) -> None:
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=store,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+            unignore_paths=unignore,
+        ).run()
+
+    def _stamp_an_older_parser(self, repo: Path) -> None:
+        state_file(repo, cs.PARSER_FINGERPRINT_FILENAME).write_text(
+            "built-before-3642", encoding="utf-8"
+        )
+
+    def test_an_older_index_loses_its_metadata_folders_on_the_next_sync(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The walk rule is a fingerprint input, so an upgrade that changes it
+        # makes the next sync re-parse and prune rather than take the in-sync
+        # fast path.
+        assert "utils/path_utils.py" in cs.PARSER_FINGERPRINT_SOURCE_FILES
+        repo = tmp_path / "repo"
+        (repo / "src").mkdir(parents=True)
+        (repo / "src" / "a.py").write_text("def f():\n    return 1\n")
+        for folder in ("hooks", "objects/12", "refs/heads"):
+            (repo / ".git" / folder).mkdir(parents=True)
+        store = _StatefulIngestor()
+        with monkeypatch.context() as old_rule:
+            old_rule.setattr(cs, "VCS_METADATA_DIRS", frozenset())
+            self._index(repo, store)
+        assert ".git/objects/12" in _folder_paths(store)
+        self._stamp_an_older_parser(repo)
+
+        self._index(repo, store)
+
+        folders = _folder_paths(store)
+        assert "src" in folders
+        assert not any(path.startswith(".git") for path in folders), folders
+
+    def test_a_named_metadata_dir_keeps_its_folders(self, tmp_path: Path) -> None:
+        # Negative: a `.git` a `!` line names is still walked, so the prune
+        # leaves its Folders.
+        repo = tmp_path / "repo"
+        (repo / "submodule1" / ".git" / "hooks").mkdir(parents=True)
+        (repo / ".git" / "objects").mkdir(parents=True)
+        named = frozenset({"submodule1/.git"})
+        store = _StatefulIngestor()
+        self._index(repo, store, named)
+        self._stamp_an_older_parser(repo)
+
+        self._index(repo, store, named)
+
+        folders = _folder_paths(store)
+        assert {"submodule1/.git", "submodule1/.git/hooks"} <= folders, folders
+        assert not {".git", ".git/objects"} & folders, folders

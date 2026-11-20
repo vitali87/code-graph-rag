@@ -7,7 +7,9 @@ on:
     branches: [main, master, develop]
   workflow_dispatch:
 
-permissions: read-all
+# Every job reads the code; a job that needs more grants it on itself.
+permissions:
+  contents: read
 
 concurrency:
   # PRs group by ref so rapid pushes cancel superseded runs (saves minutes).
@@ -26,6 +28,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -35,7 +39,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -100,6 +104,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -109,7 +115,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -160,6 +166,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         # The go/types helper's tests build it with the Go on PATH, and the
@@ -177,7 +184,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -281,7 +288,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -310,6 +317,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Start Memgraph
         run: |
@@ -332,7 +340,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -380,6 +388,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -389,7 +398,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -430,7 +439,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -480,10 +489,13 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     timeout-minutes: 5
+    # The action reads the pull request's current title through the API.
+    permissions:
+      pull-requests: read
 
     steps:
       - name: Check PR title format
-        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        uses: amannn/action-semantic-pull-request@2252a14e810aa9b85c2d560bd7070c802206ecf6 # v6.1.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -521,6 +533,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -536,7 +549,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -562,6 +575,141 @@ jobs:
       - name: Run Go frontend tests
         run: |
           uv run --no-sync pytest codebase_rag/tests/test_go_frontend.py -v --tb=short
+
+  # Tests that need a toolchain skip where it is missing, and the unit jobs
+  # install only Go: `tsc`, a .NET 10 SDK and Lua were absent on every runner,
+  # so a test that needs one never ran, and #3628 failed only off CI. This job
+  # installs them and runs every test file that probes for one.
+  toolchain-tests:
+    name: Toolchain Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ">=1.27.2"
+          cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
+
+      # The C# oracle targets net10.0 (evals/oracles/csharp_oracle/Oracle.csproj).
+      - name: Set up .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: "10.0.x"
+
+      # `tsc` from the TypeScript oracle's lockfile, the version the evals
+      # already pin, rather than an unpinned global install.
+      - name: Install the TypeScript compiler and Lua
+        run: |
+          npm ci --prefix evals/oracles/ts_oracle
+          echo "$GITHUB_WORKSPACE/evals/oracles/ts_oracle/node_modules/.bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends lua5.4
+
+      - name: Show the toolchains
+        run: |
+          go version
+          dotnet --list-sdks
+          node --version
+          tsc --version
+          javac -version
+          lua5.4 -v
+          cargo --version
+
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv sync --extra treesitter-full --extra test --group dev
+
+      # Every test file that looks for a toolchain before running. `-rs`
+      # prints why anything still skipped, so a toolchain the job lost shows.
+      - name: Run the toolchain-dependent tests
+        run: |
+          mapfile -t files < <(grep -rlE \
+            'shutil\.which\("(go|dotnet|dotnet-trace|tsc|node|javac|java|lua|php|phpunit|cargo|dart)"|needs_tsc|needs_javac|oracle_available|go_available|java_available|cargo_available|lua_available|dotnet' \
+            codebase_rag/tests --include='test_*.py' | sort)
+          echo "${#files[@]} test files"
+          uv run --no-sync pytest -n auto -m "not integration" --tb=short -rs "${files[@]}"
+
+  # The graphs of pinned public repositories, one or more per language
+  # (fixtures/reference_graphs, issue #3629). A change to what the indexer
+  # records must come with the regenerated graph, so it shows in the pull
+  # request; the second and third runs index a copy at another path under
+  # another hash seed and must give the same graph.
+  reference-graphs:
+    name: Reference Graphs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      # What the graphs are recorded with (REFERENCE_EXTRAS in
+      # codebase_rag/constants/reference_graphs.py): every tier's extra.
+      # Without ast-grep, Ruby and shell files give no nodes; the check
+      # compares fixtures/reference_graphs/environment.txt first and names
+      # what this machine cannot parse.
+      - name: Install dependencies
+        run: uv sync --extra treesitter-full --extra ast-grep
+
+      # Keyed on the manifest: a pinned commit never changes, so a hit is
+      # always the same checkout.
+      - name: Cache the pinned repositories
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/cgr-reference-repos
+          key: reference-repos-${{ hashFiles('fixtures/reference_graphs/repos.json') }}
+
+      - name: Check the reference graphs
+        run: uv run --no-sync python scripts/reference_graphs.py check --runs 3
 
   rust-graph-core:
     name: Rust Graph Core
@@ -590,7 +738,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -619,6 +767,37 @@ jobs:
       - name: Run the engine's tests on the Rust parser
         run: |
           uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_engine.py codebase_rag/tests/test_embedded_graph_memgraph_parity.py codebase_rag/tests/test_embedded_graph_default.py --tb=short
+
+  greptile-gate:
+    name: Greptile 5/5 Gate
+    runs-on: ubuntu-latest
+    # Every pull request: Greptile reviews forks, Dependabot and every base,
+    # and greptile.json has it review each push and draft. The gate fails
+    # only on a score below 5/5; with Greptile absent (out of credits,
+    # paused) it passes with a warning, so billing never blocks a merge.
+    if: github.event_name == 'pull_request'
+    # The script waits up to 10 min for Greptile to start and up to 45 min
+    # for a review in progress to post its score; this cap only bounds a hang.
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      # Greptile's score is in its summary comment on the pull request, and
+      # its "Greptile Review" check run shows whether a review is in flight.
+      pull-requests: read
+      checks: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fail if Greptile scores the head commit below 5/5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/greptile_gate.py "$PR" "$HEAD_SHA"
 
   sonar-gate:
     name: Sonar Zero Issues Gate
@@ -745,8 +924,11 @@ jobs:
         binary-smoke,
         wheel-fresh-resolution,
         go-frontend,
+        toolchain-tests,
+        reference-graphs,
         rust-graph-core,
         sonar-gate,
+        greptile-gate,
       ]
     timeout-minutes: 5
 
@@ -760,6 +942,8 @@ jobs:
           echo "Binary Smoke: ${{ needs.binary-smoke.result }}"
           echo "Wheel Smoke: ${{ needs.wheel-fresh-resolution.result }}"
           echo "Go Frontend: ${{ needs.go-frontend.result }}"
+          echo "Toolchain Tests: ${{ needs.toolchain-tests.result }}"
+          echo "Reference Graphs: ${{ needs.reference-graphs.result }}"
           echo "Rust Graph Core: ${{ needs.rust-graph-core.result }}"
 
           if [[ "${{ needs.lint.result }}" != "success" ]]; then
@@ -794,6 +978,14 @@ jobs:
             echo "❌ Go frontend job failed"
             exit 1
           fi
+          if [[ "${{ needs.toolchain-tests.result }}" != "success" ]]; then
+            echo "❌ Toolchain tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.reference-graphs.result }}" != "success" ]]; then
+            echo "❌ Reference graphs differ: see the job's log"
+            exit 1
+          fi
           if [[ "${{ needs.rust-graph-core.result }}" != "success" ]]; then
             echo "❌ Rust graph core job failed"
             exit 1
@@ -804,6 +996,13 @@ jobs:
           if [[ "${{ needs.sonar-gate.result }}" != "success" \
              && "${{ needs.sonar-gate.result }}" != "skipped" ]]; then
             echo "❌ Sonar gate failed: zero open SonarCloud issues on the head commit are required"
+            exit 1
+          fi
+          # Skipped only outside a pull request (a push to main, a dispatch);
+          # on every pull request anything but success blocks the merge.
+          if [[ "${{ needs.greptile-gate.result }}" != "success" \
+             && "${{ needs.greptile-gate.result }}" != "skipped" ]]; then
+            echo "❌ Greptile gate failed: Greptile scored the head commit below 5/5"
             exit 1
           fi
           echo "✅ All checks passed!"

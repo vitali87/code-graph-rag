@@ -6,7 +6,7 @@ from collections.abc import Iterable, Sequence
 from tree_sitter import Node, Parser
 
 from ... import constants as cs
-from ...types_defs import FunctionRegistryTrieProtocol
+from ...types_defs import FunctionRegistryTrieProtocol, PropertyDict
 from ..utils import safe_decode_text
 
 # `#[path = "support/helpers.rs"]` redirects the mod declaration it sits on
@@ -610,6 +610,27 @@ def use_visibility_path(node: Node) -> str | None:
         if child.type not in cs.RS_VISIBILITY_SYNTAX_TOKENS
     ]
     return safe_decode_text(restriction[0]) if restriction else None
+
+
+def function_visibility_props(node: Node) -> PropertyDict:
+    """A fn's `rust_visibility`, the path its visibility is restricted to.
+
+    Only a plain `pub` fn has none. A glob imports only what is visible
+    where it is written, so the resolver needs the declared scope, which
+    `is_exported` (plain `pub` or not) cannot tell apart: a `pub(crate)` fn
+    is visible to its whole crate, a private one to its module alone. An
+    `extern` block's declarations take visibility as a fn does. A
+    `macro_rules!` macro is never an item of its module's path namespace
+    (`#[macro_export]` places it at the crate root), so a glob of the module
+    does not import it: it reads as private, seen by name only below it.
+    """
+    if node.type == cs.TS_RS_MACRO_DEFINITION:
+        return {cs.KEY_RUST_VISIBILITY: cs.KEYWORD_SELF}
+    if node.type not in cs.RS_VISIBILITY_FN_TYPES:
+        return {}
+    if (path := use_visibility_path(node)) is None:
+        return {}
+    return {cs.KEY_RUST_VISIBILITY: path}
 
 
 def enclosing_mod_names(node: Node) -> frozenset[str]:
