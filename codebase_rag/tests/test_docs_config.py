@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import yaml
 
@@ -93,3 +94,135 @@ def test_the_docs_use_only_the_builtin_search_plugin() -> None:
     # htmlmin2 last released in 2017, 2022 and 2023), and Zensical, the MkDocs
     # successor, accepts the plugin name but silently skips it.
     assert _plugin_names(_mkdocs_config()) == ["search"]
+
+
+# The website (code-graph-rag.com) theme the docs share: light by default with
+# the logo's blue as the accent and Geist type, plus a matching dark scheme
+# behind the toggle. Keep the light tokens in step with the site.
+WEBSITE_TOKENS = {
+    "--cgr-bg": "#F6F7F9",
+    "--cgr-surface": "#FFFFFF",
+    "--cgr-ink": "#12151A",
+    "--cgr-muted": "#4A5361",
+    "--cgr-line": "#E3E6EB",
+    "--cgr-brand": "#2F64B5",
+    "--cgr-brand-dark": "#1F4A8C",
+}
+DARK_TOKENS = [
+    "--cgr-dark-bg",
+    "--cgr-dark-surface",
+    "--cgr-dark-ink",
+    "--cgr-dark-muted",
+    "--cgr-dark-line",
+    "--cgr-dark-brand",
+]
+WEBSITE_URL = "https://code-graph-rag.com"
+EXTRA_CSS = REPO_ROOT / "docs" / "stylesheets" / "extra.css"
+
+
+def _css() -> str:
+    return EXTRA_CSS.read_text(encoding=cs.ENCODING_UTF8)
+
+
+def _css_tokens() -> dict[str, str]:
+    return {
+        m.group(1): m.group(2).upper()
+        for m in re.finditer(r"(--cgr-[a-z-]+):\s*(#[0-9a-fA-F]{6})\s*;", _css())
+    }
+
+
+def _luminance(hex_colour: str) -> float:
+    channels = [int(hex_colour[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+    r, g, b = (
+        c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels
+    )
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast(a: str, b: str) -> float:
+    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+class _PaletteToggle(TypedDict):
+    icon: str
+    name: str
+
+
+class _PaletteScheme(TypedDict):
+    scheme: str
+    primary: str
+    accent: str
+    toggle: _PaletteToggle
+
+
+def _schemes() -> list[_PaletteScheme]:
+    palette = _mkdocs_config()["theme"]["palette"]
+    return palette if isinstance(palette, list) else [palette]
+
+
+def test_the_docs_open_in_light_with_a_dark_toggle() -> None:
+    schemes = _schemes()
+    assert [p["scheme"] for p in schemes] == ["default", "slate"], schemes
+    assert all("toggle" in p for p in schemes), schemes
+
+
+def test_the_docs_never_open_in_dark_by_default() -> None:
+    # Negative test. The first palette is the one a new visitor gets.
+    assert _schemes()[0]["scheme"] != "slate"
+
+
+def test_the_docs_use_the_websites_fonts() -> None:
+    assert _mkdocs_config()["theme"]["font"] == {"text": "Geist", "code": "Geist Mono"}
+
+
+def test_the_docs_stylesheet_uses_the_websites_colour_tokens() -> None:
+    tokens = _css_tokens()
+    for name, value in WEBSITE_TOKENS.items():
+        assert tokens.get(name) == value, (name, tokens.get(name))
+    for name in DARK_TOKENS:
+        assert name in tokens, name
+
+
+def test_both_schemes_keep_text_readable() -> None:
+    # WCAG AA for body text: 4.5:1, in the light scheme and the dark one.
+    t = _css_tokens()
+    pairs = [
+        ("--cgr-ink", "--cgr-bg"),
+        ("--cgr-muted", "--cgr-bg"),
+        ("--cgr-brand", "--cgr-surface"),
+        ("--cgr-dark-ink", "--cgr-dark-bg"),
+        ("--cgr-dark-muted", "--cgr-dark-bg"),
+        ("--cgr-dark-brand", "--cgr-dark-surface"),
+    ]
+    for fg, bg in pairs:
+        assert fg in t, fg
+        assert bg in t, bg
+        assert _contrast(t[fg], t[bg]) >= 4.5, (fg, bg)
+
+
+def test_each_scheme_is_driven_by_its_own_tokens() -> None:
+    css = _css()
+    assert re.search(
+        r'\[data-md-color-scheme="default"\]\s*\{[^}]*--md-default-bg-color:\s*var\(--cgr-bg\)',
+        css,
+    )
+    assert re.search(
+        r'\[data-md-color-scheme="slate"\]\s*\{[^}]*--md-default-bg-color:\s*var\(--cgr-dark-bg\)',
+        css,
+    )
+
+
+def test_the_docs_stylesheet_keeps_none_of_the_old_palette() -> None:
+    # Negative test. The old indigo and Inter would bring back a look the
+    # website no longer uses.
+    css = _css()
+    assert "#6366f1" not in css.lower()
+    assert "#818cf8" not in css.lower()
+    assert "Inter" not in css
+
+
+def test_the_docs_link_back_to_the_website() -> None:
+    nav = _mkdocs_config()["nav"]
+    targets = [v for item in nav if isinstance(item, dict) for v in item.values()]
+    assert WEBSITE_URL in targets, targets

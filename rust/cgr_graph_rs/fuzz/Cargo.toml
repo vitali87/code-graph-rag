@@ -23,7 +23,7 @@ path = "src/lib.rs"
 cgr_graph_rs = { path = ".." }
 libfuzzer-sys = "0.4"
 # The crate's own pin, for the in-memory database the SQLite target builds.
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 
 [workspace]
 members = ["."]
@@ -55,6 +55,13 @@ bench = false
 [[bin]]
 name = "sqlite_graph"
 path = "fuzz_targets/sqlite_graph.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xml_elements"
+path = "fuzz_targets/xml_elements.rs"
 test = false
 doc = false
 bench = false

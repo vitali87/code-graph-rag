@@ -408,3 +408,94 @@ fn interface_fingerprint_sees_what_callers_read() {
         assert_ne!(interface_of(&edit), base, "{edit}");
     }
 }
+
+const CALLABLES: &str = "\
+def run(self, cb, items, done=None):
+    for item in items:
+        cb(item)
+    def later():
+        done()
+    def shadow(cb):
+        cb()
+    return later, shadow
+
+def none(a, b):
+    return a.b()
+";
+
+#[test]
+fn callable_parameter_indices_match_the_python_twin() {
+    let rules = interface_rules();
+    let tree = parse(CALLABLES);
+    let root = tree.root_node();
+    let mut cursor = root.walk();
+    let functions: Vec<Node> = root.children(&mut cursor).filter(|n| n.kind() == "function_definition").collect();
+    let indices = |func: Node| {
+        interface::callable_parameter_indices(func, CALLABLES.as_bytes(), &rules.languages["python"], &rules, &scope_rules())
+    };
+    // `self` is dropped, `done` is called from a closure that captures it,
+    // and the `cb` a nested def binds itself is not the outer one.
+    assert_eq!(indices(functions[0]), Some(vec![("cb".to_string(), 0), ("done".to_string(), 2)]));
+    assert_eq!(indices(functions[1]), Some(Vec::new()));
+}
+
+fn alias_rules() -> aliases::AliasRules {
+    let dunders = [("+", "__add__"), ("/", "__truediv__"), ("*", "__mul__")];
+    aliases::AliasRules {
+        boundaries: set(&["class_definition", "function_definition"]),
+        assignment: b"assignment".to_vec(),
+        identifier: b"identifier".to_vec(),
+        attribute: b"attribute".to_vec(),
+        call: b"call".to_vec(),
+        binary_operator: b"binary_operator".to_vec(),
+        boolean_operator: b"boolean_operator".to_vec(),
+        conditional_expression: b"conditional_expression".to_vec(),
+        parenthesized_expression: b"parenthesized_expression".to_vec(),
+        left_field: b"left".to_vec(),
+        right_field: b"right".to_vec(),
+        operator_field: b"operator".to_vec(),
+        and_operator: "and".into(),
+        dunders: dunders.iter().map(|(token, dunder)| (token.to_string(), dunder.to_string())).collect(),
+        max_depth: 32,
+    }
+}
+
+const ALIASES: &str = "\
+def f(a, b, cb):
+    x = a or b.c
+    y = a and Make()
+    w = (a) / b
+    x = b
+    def nested():
+        hidden = a
+    return x, y, w
+";
+
+#[test]
+fn local_aliases_match_the_python_twin() {
+    let tree = parse(ALIASES);
+    let function = first_function(&tree);
+    let found = aliases::local_aliases(function, ALIASES.as_bytes(), &alias_rules());
+    let text = |index: usize| {
+        let mut cursor = function.walk();
+        cursor.goto_descendant(index);
+        cursor.node().utf8_text(ALIASES.as_bytes()).unwrap().to_string()
+    };
+    let described: Vec<(String, Vec<(usize, String)>, Option<String>, Vec<(usize, String)>)> = found
+        .into_iter()
+        .map(|alias| {
+            let leaves = |indices: Vec<usize>| indices.into_iter().map(|i| (i, text(i))).collect();
+            (alias.local, leaves(alias.candidates), alias.dunder, leaves(alias.reflected))
+        })
+        .collect();
+    // The walk takes the last statement first, so the later `x = b` wins,
+    // and the nested def's `hidden` is its own.
+    assert_eq!(
+        described,
+        vec![
+            ("x".into(), vec![(51, "b".into())], None, vec![]),
+            ("w".into(), vec![(43, "a".into())], Some("__truediv__".into()), vec![(46, "b".into())]),
+            ("y".into(), vec![(31, "Make()".into())], None, vec![]),
+        ]
+    );
+}

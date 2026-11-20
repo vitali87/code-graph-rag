@@ -16,12 +16,17 @@
 //! - `scopes`: the Python scope walks in
 //!   `codebase_rag/parsers/py/ast_analyzer.py`;
 //! - `interface`: `codebase_rag/parsers/interface_fingerprint.py`, for every
-//!   language it has rules for.
+//!   language it has rules for, and the callable-parameter scan
+//!   (`callable_parameter_indices` in `codebase_rag/parsers/utils.py`) for
+//!   Python and JS/TS;
+//! - `aliases`: `python_local_aliases` in
+//!   `codebase_rag/parsers/py/variable_analyzer.py`.
 //!
 //! What they classify (which node types are punctuation, identifiers,
 //! literals, blocks, bindings, ...) is not spelled here: Python hands over
-//! its own constants as `Rules`, `scopes::ScopeRules` and
-//! `interface::InterfaceRules`, so the two twins cannot disagree on them.
+//! its own constants as `Rules`, `scopes::ScopeRules`,
+//! `interface::InterfaceRules` and `aliases::AliasRules`, so the two twins
+//! cannot disagree on them.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::CStr;
@@ -32,6 +37,7 @@ use blake2::Blake2b;
 use sha2::{Digest, Sha256};
 use tree_sitter::{ffi, Node};
 
+pub mod aliases;
 pub mod interface;
 #[cfg(feature = "python")]
 pub mod python;
