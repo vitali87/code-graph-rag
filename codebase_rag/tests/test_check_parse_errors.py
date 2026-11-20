@@ -445,7 +445,9 @@ def test_the_pre_write_read_stays_inside_the_root(tmp_path: Path) -> None:
     outside.write_text('API_TOKEN = "not-a-real-secret"\n', encoding="utf-8")
     root = tmp_path / "project"
     root.mkdir()
-    (root / "a.py").write_text(A, encoding="utf-8")
+    # Bytes, not text: Windows would write `\r\n` and the read is compared
+    # byte for byte.
+    (root / "a.py").write_bytes(A.encode("utf-8"))
     (root / "linked.py").symlink_to(outside)
     registry = MCPToolsRegistry(
         project_root=str(root), ingestor=MagicMock(), cypher_gen=MagicMock()
