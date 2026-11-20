@@ -71,6 +71,15 @@ TS_TRY_WITH_RESOURCES_STATEMENT = "try_with_resources_statement"
 # One declaration inside a try-with-resources header; binds via `name`/`value`
 # fields exactly like a variable_declarator.
 TS_JAVA_RESOURCE = "resource"
+# A catch clause's parameter: its type lives in a `catch_type` child (a
+# `catch_type` holds one type, or several `|`-separated types for a
+# multi-catch), never in a `type` field.
+TS_CATCH_FORMAL_PARAMETER = "catch_formal_parameter"
+TS_JAVA_CATCH_TYPE = "catch_type"
+TS_JAVA_CONSTRUCTOR_BODY = "constructor_body"
+TS_JAVA_SWITCH_BLOCK = "switch_block"
+TS_JAVA_FOR_STATEMENT = "for_statement"
+TS_JAVA_CLASS_BODY = "class_body"
 TS_RECORD_DECLARATION = "record_declaration"
 TS_TRUE = "true"
 TS_FALSE = "false"
@@ -82,6 +91,17 @@ TS_FALSE = "false"
 # IO_MEMBER_READS entry -- Java env access is a call, System.getenv, not a member).
 TS_JAVA_STRING_LITERAL = "string_literal"
 TS_JAVA_BLOCK = "block"
+# The nodes a local variable declaration is scoped to, the innermost one
+# around it ending its scope: a block, a constructor body, a switch block
+# (whose colon groups share one scope) and a for statement (its header's).
+JAVA_LOCAL_SCOPE_TYPES = frozenset(
+    {
+        TS_JAVA_BLOCK,
+        TS_JAVA_CONSTRUCTOR_BODY,
+        TS_JAVA_SWITCH_BLOCK,
+        TS_JAVA_FOR_STATEMENT,
+    }
+)
 TS_JAVA_LAMBDA_EXPRESSION = "lambda_expression"
 TS_JAVA_ARRAY_ACCESS = "array_access"
 JAVA_FIELD_FIELD = "field"
@@ -160,6 +180,11 @@ JAVA_HEURISTIC_ORDER = "Order"
 TS_PACKAGE_DECLARATION = "package_declaration"
 TS_ANNOTATION_TYPE_DECLARATION = "annotation_type_declaration"
 TS_CONSTRUCTOR_DECLARATION = "constructor_declaration"
+# A record's compact canonical constructor (`public Range { ... }`): no
+# parameter list of its own, it takes the record header's components.
+TS_COMPACT_CONSTRUCTOR_DECLARATION = "compact_constructor_declaration"
+# `this(...)` / `super(...)` as a constructor's first statement.
+TS_EXPLICIT_CONSTRUCTOR_INVOCATION = "explicit_constructor_invocation"
 TS_ANNOTATION = "annotation"
 TS_MARKER_ANNOTATION = "marker_annotation"
 TS_GENERIC_TYPE = "generic_type"
@@ -245,6 +270,7 @@ JAVA_METHOD_NODE_TYPES = frozenset(
     {
         TS_METHOD_DECLARATION,
         TS_CONSTRUCTOR_DECLARATION,
+        TS_COMPACT_CONSTRUCTOR_DECLARATION,
     }
 )
 

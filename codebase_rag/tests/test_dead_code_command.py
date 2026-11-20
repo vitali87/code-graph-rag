@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from loguru import logger
 from typer.testing import CliRunner
 
+from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
+from codebase_rag.config import settings
 from codebase_rag.types_defs import PropertyValue, ResultRow
 
 
@@ -405,3 +409,49 @@ def test_json_output_stays_parseable_with_the_single_project_notice(
         "myproj.mod.orphan_one",
         "myproj.mod.Thing.orphan_two",
     }
+
+
+@pytest.fixture
+def quiet_restored(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+    # `--quiet` sets a process-wide flag and swaps loguru's sinks.
+    monkeypatch.setattr(settings, "QUIET", settings.QUIET)
+    yield
+    logger.remove()
+
+
+def _flat(text: str) -> str:
+    # The console wraps long lines, so compare words, not line breaks.
+    return " ".join(text.split())
+
+
+@pytest.mark.usefixtures("quiet_restored")
+@pytest.mark.parametrize(("flags", "shown"), [([], True), (["--quiet"], False)])
+def test_quiet_hides_the_scanning_line(
+    runner: CliRunner, dead_rows: list[ResultRow], flags: list[str], shown: bool
+) -> None:
+    """--quiet hides the progress line on both streams (issue #3499); the
+    table is printed either way."""
+    mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
+    with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        result = runner.invoke(app, [*flags, "dead-code"])
+
+    assert result.exit_code == 0
+    assert (cs.CLI_DEADCODE_CONNECTING in _flat(result.output)) is shown
+    assert "orphan_one" in result.stdout
+
+
+@pytest.mark.usefixtures("quiet_restored")
+def test_quiet_moves_the_single_project_notice_to_stderr(
+    runner: CliRunner, dead_rows: list[ResultRow]
+) -> None:
+    """The notice qualifies the result rather than reporting progress, so
+    --quiet keeps it, on stderr as with --format json, and stdout carries
+    only the table."""
+    mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
+    with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        result = runner.invoke(app, ["--quiet", "dead-code", "--no-endpoint-roots"])
+
+    assert result.exit_code == 0
+    assert cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS not in _flat(result.stdout)
+    assert cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS in _flat(result.stderr)
+    assert "orphan_one" in result.stdout
