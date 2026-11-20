@@ -1906,6 +1906,7 @@ class ImportProcessor:
         "unresolved_specifiers",
         "unresolved_references",
         "js_export_bindings",
+        "_js_missing_file_modules",
         "_import_sites",
         "_import_site_owners",
         "_import_site_writers",
@@ -2071,6 +2072,10 @@ class ImportProcessor:
         # only through it, since a module's own imports are not its exports
         # (issue #2464).
         self.js_export_bindings: dict[str, dict[str, JsExport]] = {}
+        # Module qns an explicit-extension specifier (`./fmt.js`) names where
+        # no such file exists, only a `fmt/` directory: they name no module,
+        # so the export walk must not read them as the directory's index.
+        self._js_missing_file_modules: set[str] = set()
         # Per scope qn: the site props of each bound import name (#1522),
         # attached to the IMPORTS edge when the deferred edge flushes.
         self._import_sites: dict[str, dict[str, PropertyDict]] = {}
@@ -6235,13 +6240,21 @@ class ImportProcessor:
             )
         parts = self._js_relative_target_parts(import_path, current_module)
         # An explicit extension (`./fmt.js`) names a file, never a directory.
-        explicit_file = self._strip_js_extension(import_path) != import_path
-        return JsImportTarget(
-            cs.SEPARATOR_DOT.join(parts)
-            if explicit_file
-            else self._js_directory_index_qn(parts),
-            False,
-        )
+        if self._strip_js_extension(import_path) == import_path:
+            return JsImportTarget(self._js_directory_index_qn(parts), False)
+        module_qn = cs.SEPARATOR_DOT.join(parts)
+        if self._js_names_directory_only(parts):
+            self._js_missing_file_modules.add(module_qn)
+        return JsImportTarget(module_qn, False)
+
+    def _js_names_directory_only(self, parts: list[str]) -> bool:
+        # Whether the project path `parts` spells has no module file of its
+        # own, only a directory's `index`.
+        if len(parts) < 2 or parts[0] != self.project_name:
+            return False
+        rel = cs.SEPARATOR_SLASH.join(parts[1:])
+        on_disk = self._js_module_rel_on_disk(rel)
+        return on_disk is not None and on_disk != rel
 
     def _js_directory_index_qn(self, parts: list[str]) -> str:
         """`./fmt` as Node and TypeScript resolve it: `fmt.ts`/`fmt.js` when
@@ -6581,6 +6594,11 @@ class ImportProcessor:
     ) -> str:
         """Where a JS/TS import of `qn` leads through the barrels re-exporting
         it; see `js_ts.reexports.follow_js_reexports`."""
+        if qn.rpartition(cs.SEPARATOR_DOT)[0] in self._js_missing_file_modules:
+            # `import { trim } from "./fmt.js"` beside only `fmt/index.js`:
+            # Node and TypeScript never resolve it to the index (bot review
+            # on PR #3282), so neither does the walk.
+            return qn
         return follow_js_reexports(
             qn,
             self.import_mapping,
