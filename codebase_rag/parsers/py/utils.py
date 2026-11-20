@@ -17,7 +17,12 @@ from ...constants import (
     TS_PY_IDENTIFIER,
 )
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
-from ..utils import follow_reexports, get_cached_query, safe_decode_text
+from ..utils import (
+    follow_reexports,
+    get_cached_query,
+    safe_decode_text,
+    sorted_captures,
+)
 
 if TYPE_CHECKING:
     from tree_sitter import Language, Node
@@ -374,7 +379,8 @@ def unrun_annotation_spans(
         cursor = QueryCursor(
             get_cached_query(language, cs.PY_ANNOTATED_ASSIGNMENT_QUERY)
         )
-        for annotation in cursor.captures(body).get(cs.CAPTURE_PY_ANNOTATION, []):
+        captures = sorted_captures(cursor, body)
+        for annotation in captures.get(cs.CAPTURE_PY_ANNOTATION, []):
             if (
                 annotation.parent is not None
                 and _nearest_scope_type(annotation.parent)
