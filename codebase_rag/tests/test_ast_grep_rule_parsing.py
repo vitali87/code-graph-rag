@@ -149,3 +149,35 @@ def test_a_rule_without_a_selector_matches_nothing(tmp_path: Path) -> None:
     tier = AstGrepTier(MagicMock(), tmp_path, "proj")
     root = SgRoot("x = 1", "python").root()
     assert tier._find_all(root, _Rule(), tmp_path / "x.py") == []
+
+
+def test_name_paths_are_preserved_and_kind_only() -> None:
+    paths = ["prefix_id/operator", "infix/infix_id/variable", "infix/operator"]
+    assert _parse({"kind": "function", "name_child": 7, "name_paths": paths}) == _Rule(
+        kind="function", name_child="7", name_paths=tuple(paths)
+    )
+    with pytest.raises(ValueError, match="'name_paths' applies to 'kind'"):
+        _parse({"pattern": "p", "name_paths": paths})
+    with pytest.raises(ValueError, match="'name_child' applies to 'kind'"):
+        _parse({"pattern": "p", "name_child": "n", "name_paths": paths})
+
+
+def test_a_scalar_name_paths_is_rejected() -> None:
+    # A string is iterable, so accepting it would store one-letter kind paths
+    # and every match would be silently unnamed.
+    with pytest.raises(ValueError, match="'name_paths' must be a list"):
+        _parse({"kind": "function", "name_paths": "prefix_id/operator"})
+
+
+def test_name_paths_do_not_fall_back_to_other_identifiers(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock
+
+    from ast_grep_py import SgRoot
+
+    from codebase_rag.parsers.ast_grep_tier import AstGrepTier
+
+    tier = AstGrepTier(MagicMock(), tmp_path, "proj")
+    root = SgRoot("f x = x", "haskell").root()
+    rule = _Rule(kind="function", has_child="match", name_paths=("infix/operator",))
+    (node,) = tier._find_all(root, rule, tmp_path / "F.hs")
+    assert tier._definition_name(node, rule) is None

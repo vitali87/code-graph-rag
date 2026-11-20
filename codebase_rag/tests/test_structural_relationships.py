@@ -3,10 +3,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-import tomli_w
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.utils import toml_writer
 
 
 @pytest.fixture
@@ -101,7 +101,7 @@ def dependency_project(tmp_path: Path) -> Path:
     )
 
     (project_path / "pyproject.toml").write_text(
-        tomli_w.dumps(
+        toml_writer.dumps(
             {
                 "build-system": {
                     "requires": ["setuptools>=45", "wheel"],
@@ -142,7 +142,7 @@ def dependency_project(tmp_path: Path) -> Path:
     )
 
     (project_path / "Cargo.toml").write_text(
-        tomli_w.dumps(
+        toml_writer.dumps(
             {
                 "package": {
                     "name": "my-rust-app",

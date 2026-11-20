@@ -59,8 +59,39 @@ DEFAULT_ROOT_DECORATORS: frozenset[str] = frozenset(
         "hybrid_property",
         "setter",
         "deleter",
+        # Registration idioms whose handler the framework or the interpreter
+        # calls with no call site in the code (issue #2736): Celery's
+        # `@shared_task`, Flask's error handler and request hooks, FastAPI /
+        # Starlette's exception handler and middleware, Django's signal
+        # `@receiver`, SQLAlchemy's `@event.listens_for`, `@atexit.register`
+        # and Django's `@admin.register`. Those two are dotted, so a bare
+        # `@registry.register` of the project's own is not rooted by default;
+        # a singledispatch implementation's `@generic.register` lives with its
+        # generic (SINGLEDISPATCH_DECORATORS).
+        "shared_task",
+        "errorhandler",
+        "before_request",
+        "after_request",
+        "teardown_request",
+        "before_app_request",
+        "after_app_request",
+        "teardown_app_request",
+        "exception_handler",
+        "middleware",
+        "receiver",
+        "listens_for",
+        "atexit.register",
+        "admin.register",
     }
 )
+
+# A function decorated with one of these dispatches to the implementations
+# registered with `@<it>.register`, so each implementation is reachable exactly
+# when the generic is (issue #2736).
+SINGLEDISPATCH_DECORATORS: frozenset[str] = frozenset(
+    {"singledispatch", "singledispatchmethod"}
+)
+DISPATCH_REGISTER_DECORATOR = "register"
 
 # Go functions the runtime invokes with no explicit call site: `func init()`
 # runs at package load (any number per package), `func main()` is the program
@@ -166,6 +197,55 @@ JAVA_SERIALIZATION_METHOD_NAMES: frozenset[str] = frozenset(
         "readObjectNoData",
         "readResolve",
         "writeReplace",
+    }
+)
+
+# Java annotations that mark a method as invoked by a container or runtime
+# rather than a first-party call the graph can see, so an annotated method is
+# a reachability root, gated by the .java extension (the Java counterpart of
+# CSHARP_ROOT_ATTRIBUTES). Such methods are usually package-private, so the
+# exported rule does not cover them. Names are the lowercased,
+# argument-stripped last segment _norm_decorator produces.
+JAVA_ROOT_ANNOTATIONS: frozenset[str] = frozenset(
+    {
+        # Jakarta/JSR-250 lifecycle callbacks.
+        "postconstruct",
+        "predestroy",
+        # Spring container, scheduling and event dispatch.
+        "bean",
+        "scheduled",
+        "schedules",
+        "eventlistener",
+        "transactionaleventlistener",
+        "exceptionhandler",
+        "modelattribute",
+        "initbinder",
+        # Spring MVC request mappings (not parsed as routes, so the
+        # endpoint-roots switch has nothing to link them to).
+        "requestmapping",
+        "getmapping",
+        "postmapping",
+        "putmapping",
+        "deletemapping",
+        "patchmapping",
+        # Message listeners.
+        "kafkalistener",
+        "rabbitlistener",
+        "jmslistener",
+        "sqslistener",
+        # JAX-RS resource methods (`get`/`post`/`put`/`delete`/`patch` are
+        # already in DEFAULT_ROOT_DECORATORS for every language).
+        "path",
+        "head",
+        "options",
+        # JPA entity lifecycle callbacks.
+        "prepersist",
+        "postpersist",
+        "preupdate",
+        "postupdate",
+        "preremove",
+        "postremove",
+        "postload",
     }
 )
 
@@ -376,6 +456,27 @@ PY_ENUM_HOOK_METHOD_NAMES: frozenset[str] = frozenset(
     {
         "_generate_next_value_",
         "_missing_",
+    }
+)
+# IPython/Jupyter's rich-display protocol: the display machinery looks each
+# one up by NAME on the object it shows (`getattr(obj, "_repr_html_")`), so,
+# like a dunder, none has a call site the graph can see (issue #2858; rich's
+# `_repr_mimebundle_`). A closed set, as IPython's formatters define it.
+PY_IPYTHON_DISPLAY_METHOD_NAMES: frozenset[str] = frozenset(
+    {
+        "_repr_html_",
+        "_repr_markdown_",
+        "_repr_svg_",
+        "_repr_png_",
+        "_repr_jpeg_",
+        "_repr_latex_",
+        "_repr_json_",
+        "_repr_javascript_",
+        "_repr_pdf_",
+        "_repr_mimebundle_",
+        "_repr_pretty_",
+        "_ipython_display_",
+        "_ipython_key_completions_",
     }
 )
 
