@@ -85,7 +85,10 @@ AGGREGATED_JOBS = (
     "Binary Smoke Test",
     "Wheel Smoke (unlocked resolution)",
     "Go Frontend",
+    "Toolchain Tests",
+    "Reference Graphs",
     "Sonar Zero Issues Gate",
+    "Greptile 5/5 Gate",
 )
 
 # A review artifact must POSITIVELY carry a verdict. The alternative --

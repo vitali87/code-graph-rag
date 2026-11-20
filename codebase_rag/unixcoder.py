@@ -2,6 +2,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from collections.abc import Callable
+
 import torch
 from torch import nn
 from transformers import RobertaConfig, RobertaModel, RobertaTokenizer
@@ -96,7 +98,7 @@ class UniXcoder(nn.Module):
             predictions.append(prediction)
         return predictions
 
-    def forward(self, source_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def _embed(self, source_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         pad_id = self.config.pad_token_id
         assert pad_id is not None
         mask = source_ids.ne(pad_id)
@@ -106,6 +108,12 @@ class UniXcoder(nn.Module):
             -1
         ).unsqueeze(-1)
         return token_embeddings, sentence_embeddings
+
+    # nn.Module declares `forward` as a writable Callable attribute, and ty
+    # rejects a `def forward` as narrowing it (invalid-mutable-override,
+    # astral-sh/ty issue 4823). Assigning the method to an attribute of that
+    # declared shape keeps the override valid and the return type precise.
+    forward: Callable[..., tuple[torch.Tensor, torch.Tensor]] = _embed
 
     def generate(
         self,

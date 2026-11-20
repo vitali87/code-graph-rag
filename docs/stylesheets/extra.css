@@ -1,262 +1,150 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Theme shared with code-graph-rag.com: light by default, a matching dark
+   scheme behind the toggle. Accents come from the logo's blue node.
+   Fonts (Geist, Geist Mono) are set in mkdocs.yml. */
 
 :root {
-  --cgr-bg: #030712;
-  --cgr-surface: #111827;
-  --cgr-surface-lighter: #1f2937;
-  --cgr-brand: #6366f1;
-  --cgr-brand-light: #818cf8;
-  --cgr-brand-dark: #4f46e5;
-  --cgr-gray-50: #f9fafb;
-  --cgr-gray-400: #99a1af;
-  --cgr-gray-500: #6a7282;
-  --cgr-gray-800: #1e2939;
-  --cgr-indigo-700: #432dd7;
+  /* Light: the website's tokens. */
+  --cgr-bg: #F6F7F9;
+  --cgr-surface: #FFFFFF;
+  --cgr-surface-lighter: #F0F2F5;
+  --cgr-ink: #12151A;
+  --cgr-muted: #4A5361;
+  --cgr-subtle: #8A93A1;
+  --cgr-line: #E3E6EB;
+  --cgr-brand: #2F64B5;
+  --cgr-brand-dark: #1F4A8C;
+  --cgr-highlight: #FDF3D3;
+
+  /* Dark: the same roles on an ink background. */
+  --cgr-dark-bg: #0F1217;
+  --cgr-dark-surface: #171B22;
+  --cgr-dark-surface-lighter: #1E232C;
+  --cgr-dark-ink: #E8EBF0;
+  --cgr-dark-muted: #A3ACB9;
+  --cgr-dark-subtle: #7D8796;
+  --cgr-dark-line: #262C36;
+  --cgr-dark-brand: #7FA6E6;
+  --cgr-dark-highlight: #3A3220;
 }
 
-/* Dark mode */
-[data-md-color-scheme="slate"] {
+[data-md-color-scheme="default"] {
   --md-default-bg-color: var(--cgr-bg);
-  --md-default-fg-color: var(--cgr-gray-50);
-  --md-default-fg-color--light: var(--cgr-gray-400);
-  --md-default-fg-color--lighter: var(--cgr-gray-500);
-  --md-default-fg-color--lightest: var(--cgr-gray-800);
+  --md-default-fg-color: var(--cgr-ink);
+  --md-default-fg-color--light: var(--cgr-muted);
+  --md-default-fg-color--lighter: var(--cgr-subtle);
+  --md-default-fg-color--lightest: var(--cgr-line);
   --md-primary-fg-color: var(--cgr-brand);
-  --md-primary-fg-color--light: var(--cgr-brand-light);
+  --md-primary-fg-color--light: var(--cgr-brand);
   --md-primary-fg-color--dark: var(--cgr-brand-dark);
-  --md-primary-bg-color: var(--cgr-gray-50);
-  --md-primary-bg-color--light: var(--cgr-gray-400);
-  --md-accent-fg-color: var(--cgr-brand-light);
-  --md-accent-fg-color--transparent: rgba(129, 140, 248, 0.1);
-  --md-accent-bg-color: var(--cgr-brand);
-  --md-code-bg-color: var(--cgr-surface);
-  --md-code-fg-color: #e2e8f0;
-  --md-code-hl-color: var(--cgr-surface-lighter);
-  --md-code-hl-number-color: #fbbf24;
-  --md-code-hl-string-color: #34d399;
-  --md-code-hl-keyword-color: #c084fc;
-  --md-code-hl-function-color: #60a5fa;
-  --md-code-hl-comment-color: var(--cgr-gray-500);
-  --md-code-hl-constant-color: #f472b6;
-  --md-code-hl-operator-color: #fbbf24;
-  --md-code-hl-punctuation-color: var(--cgr-gray-400);
-  --md-code-hl-special-color: #fb923c;
-  --md-code-hl-name-color: var(--cgr-gray-50);
-  --md-code-hl-generic-color: var(--cgr-gray-50);
-  --md-code-hl-variable-color: #f9fafb;
-  --md-footer-bg-color: var(--cgr-bg);
-  --md-footer-bg-color--dark: var(--cgr-bg);
-  --md-footer-fg-color: var(--cgr-gray-400);
-  --md-footer-fg-color--light: var(--cgr-gray-500);
-  --md-footer-fg-color--lighter: var(--cgr-gray-500);
-  --md-typeset-a-color: var(--cgr-brand-light);
-  --md-typeset-color: var(--cgr-gray-50);
-  --md-typeset-table-color: rgba(99, 102, 241, 0.05);
-  --md-typeset-table-color--light: rgba(99, 102, 241, 0.02);
+  --md-primary-bg-color: #FFFFFF;
+  --md-primary-bg-color--light: rgba(255, 255, 255, 0.7);
+  --md-accent-fg-color: var(--cgr-brand-dark);
+  --md-accent-fg-color--transparent: rgba(47, 100, 181, 0.1);
+  --md-accent-bg-color: #FFFFFF;
+  --md-typeset-color: var(--cgr-ink);
+  --md-typeset-a-color: var(--cgr-brand);
   --md-admonition-bg-color: var(--cgr-surface);
+  --md-typeset-table-color: var(--cgr-line);
+  --md-typeset-table-color--light: var(--cgr-surface-lighter);
+  --md-footer-bg-color: var(--cgr-surface);
+  --md-footer-bg-color--dark: var(--cgr-bg);
+  --md-footer-fg-color: var(--cgr-ink);
+  --md-footer-fg-color--light: var(--cgr-muted);
+  --md-footer-fg-color--lighter: var(--cgr-muted);
+  --cgr-inline-code-bg: var(--cgr-surface-lighter);
+  --cgr-panel: var(--cgr-surface);
+  /* Code: GitHub's light syntax colours, as on the website. */
+  --md-code-bg-color: var(--cgr-surface);
+  --md-code-fg-color: var(--cgr-ink);
+  --md-code-hl-color: var(--cgr-highlight);
+  --md-code-hl-color--light: var(--cgr-highlight);
+  --md-code-hl-number-color: #005CC5;
+  --md-code-hl-string-color: #032F62;
+  --md-code-hl-keyword-color: #D73A49;
+  --md-code-hl-function-color: #6F42C1;
+  --md-code-hl-comment-color: #6A737D;
+  --md-code-hl-constant-color: #005CC5;
+  --md-code-hl-operator-color: #D73A49;
+  --md-code-hl-punctuation-color: var(--cgr-ink);
+  --md-code-hl-special-color: #22863A;
+  --md-code-hl-name-color: var(--cgr-ink);
+  --md-code-hl-generic-color: var(--cgr-muted);
+  --md-code-hl-variable-color: #E36209;
   --md-shadow-z1: 0 0 0 transparent;
   --md-shadow-z2: 0 0 0 transparent;
   --md-shadow-z3: 0 0 0 transparent;
 }
 
-[data-md-color-scheme="slate"] .md-header,
-[data-md-color-scheme="slate"] .md-tabs {
-  background-color: var(--cgr-surface);
-  border-bottom: 1px solid var(--cgr-gray-800);
-}
-
-[data-md-color-scheme="slate"] .md-tabs__link {
-  color: var(--cgr-gray-400);
-  opacity: 1;
-  transition: color 0.2s ease;
-}
-
-[data-md-color-scheme="slate"] .md-tabs__link:hover {
-  color: var(--cgr-gray-50);
-}
-
-[data-md-color-scheme="slate"] .md-tabs__link--active {
-  color: var(--cgr-brand-light);
-}
-
-[data-md-color-scheme="slate"] .md-nav--primary .md-nav__item--active > .md-nav__link {
-  color: var(--cgr-brand-light);
-}
-
-[data-md-color-scheme="slate"] .md-sidebar {
-  background-color: var(--cgr-bg);
-}
-
-[data-md-color-scheme="slate"] .md-nav__link {
-  color: var(--cgr-gray-400);
-  transition: color 0.2s ease;
-}
-
-[data-md-color-scheme="slate"] .md-nav__link:hover {
-  color: var(--cgr-gray-50);
-}
-
-[data-md-color-scheme="slate"] .md-nav__link--active {
-  color: var(--cgr-brand-light);
-  font-weight: 500;
-}
-
-[data-md-color-scheme="slate"] .md-search__form {
-  background-color: var(--cgr-surface);
-  border: 1px solid var(--cgr-gray-800);
-}
-
-[data-md-color-scheme="slate"] .md-search__input::placeholder {
-  color: var(--cgr-gray-500);
-}
-
-[data-md-color-scheme="slate"] .md-typeset code {
-  background-color: var(--cgr-surface);
-  border: 1px solid var(--cgr-gray-800);
-  color: var(--cgr-brand-light);
-}
-
-[data-md-color-scheme="slate"] .md-typeset .admonition,
-[data-md-color-scheme="slate"] .md-typeset details {
-  background-color: var(--cgr-surface);
-  border-color: var(--cgr-gray-800);
-}
-
-[data-md-color-scheme="slate"] .md-typeset .md-typeset__table table {
-  border: 1px solid var(--cgr-gray-800);
-}
-
-[data-md-color-scheme="slate"] .md-typeset .md-typeset__table th {
-  background-color: var(--cgr-surface);
-  border-color: var(--cgr-gray-800);
-}
-
-[data-md-color-scheme="slate"] .md-typeset .md-typeset__table td {
-  border-color: var(--cgr-gray-800);
-}
-
-[data-md-color-scheme="slate"] .md-typeset hr {
-  border-color: var(--cgr-gray-800);
-}
-
-/* Light mode */
-[data-md-color-scheme="default"] {
-  --md-primary-fg-color: var(--cgr-brand-dark);
-  --md-primary-fg-color--light: var(--cgr-brand);
-  --md-primary-fg-color--dark: var(--cgr-indigo-700);
-  --md-primary-bg-color: #ffffff;
-  --md-accent-fg-color: var(--cgr-brand);
-  --md-accent-fg-color--transparent: rgba(99, 102, 241, 0.1);
-  --md-typeset-a-color: var(--cgr-brand-dark);
-  --md-code-bg-color: #f8f9fc;
-  --md-code-fg-color: #1e293b;
-  --md-code-hl-color: rgba(99, 102, 241, 0.08);
-  --md-code-hl-number-color: #b45309;
-  --md-code-hl-string-color: #059669;
-  --md-code-hl-keyword-color: #7c3aed;
-  --md-code-hl-function-color: #2563eb;
-  --md-code-hl-comment-color: #9ca3af;
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: var(--cgr-dark-bg);
+  --md-default-fg-color: var(--cgr-dark-ink);
+  --md-default-fg-color--light: var(--cgr-dark-muted);
+  --md-default-fg-color--lighter: var(--cgr-dark-subtle);
+  --md-default-fg-color--lightest: var(--cgr-dark-line);
+  --md-primary-fg-color: var(--cgr-brand);
+  --md-primary-fg-color--light: var(--cgr-dark-brand);
+  --md-primary-fg-color--dark: var(--cgr-brand-dark);
+  --md-primary-bg-color: #FFFFFF;
+  --md-primary-bg-color--light: rgba(255, 255, 255, 0.7);
+  --md-accent-fg-color: var(--cgr-dark-brand);
+  --md-accent-fg-color--transparent: rgba(127, 166, 230, 0.12);
+  --md-accent-bg-color: var(--cgr-dark-bg);
+  --md-typeset-color: var(--cgr-dark-ink);
+  --md-typeset-a-color: var(--cgr-dark-brand);
+  --md-admonition-bg-color: var(--cgr-dark-surface);
+  --md-typeset-table-color: var(--cgr-dark-line);
+  --md-typeset-table-color--light: var(--cgr-dark-surface-lighter);
+  --md-footer-bg-color: var(--cgr-dark-surface);
+  --md-footer-bg-color--dark: var(--cgr-dark-bg);
+  --md-footer-fg-color: var(--cgr-dark-ink);
+  --md-footer-fg-color--light: var(--cgr-dark-muted);
+  --md-footer-fg-color--lighter: var(--cgr-dark-muted);
+  --cgr-inline-code-bg: var(--cgr-dark-surface-lighter);
+  --cgr-panel: var(--cgr-dark-surface);
+  /* Code: GitHub's dark syntax colours. */
+  --md-code-bg-color: var(--cgr-dark-surface);
+  --md-code-fg-color: var(--cgr-dark-ink);
+  --md-code-hl-color: var(--cgr-dark-highlight);
+  --md-code-hl-color--light: var(--cgr-dark-highlight);
+  --md-code-hl-number-color: #79C0FF;
+  --md-code-hl-string-color: #A5D6FF;
+  --md-code-hl-keyword-color: #FF7B72;
+  --md-code-hl-function-color: #D2A8FF;
+  --md-code-hl-comment-color: #8B949E;
+  --md-code-hl-constant-color: #79C0FF;
+  --md-code-hl-operator-color: #FF7B72;
+  --md-code-hl-punctuation-color: var(--cgr-dark-ink);
+  --md-code-hl-special-color: #7EE787;
+  --md-code-hl-name-color: var(--cgr-dark-ink);
+  --md-code-hl-generic-color: var(--cgr-dark-muted);
+  --md-code-hl-variable-color: #FFA657;
   --md-shadow-z1: 0 0 0 transparent;
-  --md-shadow-z2: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --md-shadow-z2: 0 0 0 transparent;
+  --md-shadow-z3: 0 0 0 transparent;
 }
 
-[data-md-color-scheme="default"] .md-header {
-  background-color: #ffffff;
-  border-bottom: 1px solid #e5e7eb;
-  color: #1e293b;
+/* Header and tabs: the page colour with a hairline, like the website's navbar. */
+.md-header,
+.md-tabs {
+  background-color: var(--md-default-bg-color);
+  color: var(--md-default-fg-color);
 }
 
-[data-md-color-scheme="default"] .md-header .md-header__title {
-  color: #1e293b;
+.md-header {
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  box-shadow: none;
 }
 
-[data-md-color-scheme="default"] .md-header .md-header__topic {
-  color: #1e293b;
-}
-
-[data-md-color-scheme="default"] .md-header .md-header__button {
-  color: #475569;
-}
-
-[data-md-color-scheme="default"] .md-tabs {
-  background-color: #ffffff;
-  border-bottom: 1px solid #e5e7eb;
-}
-
-[data-md-color-scheme="default"] .md-tabs__link {
-  color: #64748b;
-  opacity: 1;
-}
-
-[data-md-color-scheme="default"] .md-tabs__link:hover {
-  color: #1e293b;
-}
-
-[data-md-color-scheme="default"] .md-tabs__link--active {
-  color: var(--cgr-brand-dark);
-}
-
-[data-md-color-scheme="default"] .md-typeset code {
-  background-color: #f1f5f9;
-  border: 1px solid #e2e8f0;
-  color: var(--cgr-brand-dark);
-}
-
-[data-md-color-scheme="default"] .md-search__form {
-  background-color: #f1f5f9;
-  border: 1px solid #e2e8f0;
-}
-
-/* Shared styles */
-.md-typeset {
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 0.82rem;
-  line-height: 1.7;
-}
-
-.md-typeset code,
-.md-typeset pre,
-.md-typeset kbd {
-  font-family: "JetBrains Mono", "SF Mono", "Cascadia Code", "Fira Code", monospace;
-  font-size: 0.82em;
-}
-
-.md-typeset h1 {
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-
-.md-typeset h2 {
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.md-typeset h3,
-.md-typeset h4 {
-  font-weight: 600;
-}
-
-.md-typeset a {
-  transition: color 0.2s ease;
-}
-
-[data-md-color-scheme="slate"] .md-typeset a:hover {
-  color: var(--cgr-brand-light);
-}
-
-[data-md-color-scheme="default"] .md-typeset a:hover {
-  color: var(--cgr-indigo-700);
+.md-tabs {
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
 }
 
 .md-header__title,
-.md-tabs__link,
-.md-nav__link,
-.md-button,
-.md-typeset .admonition-title,
-.md-typeset summary,
-.md-footer,
-.md-typeset table:not([class]) th {
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+.md-header__topic,
+.md-header__button,
+.md-header__source,
+.md-source {
+  color: var(--md-default-fg-color);
 }
 
 .md-header__title {
@@ -264,49 +152,102 @@
 }
 
 .md-tabs__link {
+  color: var(--md-default-fg-color--light);
+  opacity: 1;
   font-weight: 500;
   font-size: 0.78rem;
-  letter-spacing: 0.01em;
 }
 
+.md-tabs__link:hover,
+.md-tabs__item--active .md-tabs__link {
+  color: var(--md-default-fg-color);
+}
+
+.md-search__form {
+  background-color: var(--cgr-panel);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 8px;
+}
+
+.md-search__input,
+.md-search__icon {
+  color: var(--md-default-fg-color);
+}
+
+.md-search__input::placeholder {
+  color: var(--md-default-fg-color--light);
+}
+
+/* Navigation */
 .md-nav__link {
   font-size: 0.76rem;
 }
 
-.md-button {
-  font-weight: 500;
-  border-radius: 8px;
-  padding: 0.6em 1.4em;
-  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+.md-nav--primary .md-nav__item--active > .md-nav__link,
+.md-nav__link--active {
+  color: var(--md-typeset-a-color);
 }
 
-.md-button--primary {
-  background-color: var(--cgr-brand);
-  border-color: var(--cgr-brand);
-  color: #ffffff;
+@media screen and (min-width: 76.25em) {
+  .md-sidebar--primary {
+    width: 13rem;
+  }
 }
 
-.md-button--primary:hover {
-  background-color: var(--cgr-brand-dark);
-  border-color: var(--cgr-brand-dark);
-  color: #ffffff;
-}
-
-.md-typeset .md-button:hover {
-  transform: translateY(-1px);
-}
-
+/* Content */
 .md-content {
   max-width: 52rem;
 }
 
+.md-typeset {
+  font-size: 0.82rem;
+  line-height: 1.7;
+}
+
+.md-typeset h1 {
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.md-typeset h2 {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.md-typeset h3,
+.md-typeset h4 {
+  font-weight: 600;
+}
+
+.md-typeset a:hover {
+  color: var(--md-accent-fg-color);
+}
+
+.md-typeset code {
+  background-color: var(--cgr-inline-code-bg);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 4px;
+  font-size: 0.82em;
+}
+
+/* Code blocks: white cards with a hairline border, as on the website. */
 .md-typeset pre > code {
-  border-radius: 8px;
+  background-color: var(--md-code-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 12px;
+}
+
+.md-typeset .highlight .filename {
+  background-color: var(--cgr-panel);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  color: var(--md-default-fg-color--light);
 }
 
 .md-typeset .admonition,
 .md-typeset details {
-  border-radius: 8px;
+  border-radius: 12px;
   border-width: 1px;
   border-left-width: 4px;
 }
@@ -316,24 +257,44 @@
   font-weight: 600;
 }
 
-.md-search__form {
-  border-radius: 8px;
-}
-
 .md-typeset table:not([class]) {
   font-size: 0.8rem;
-  border-radius: 8px;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 12px;
   overflow: hidden;
 }
 
 .md-typeset table:not([class]) th {
   font-weight: 600;
+  background-color: var(--cgr-panel);
 }
 
-@media screen and (min-width: 76.25em) {
-  .md-sidebar--primary {
-    width: 13rem;
-  }
+.md-typeset hr {
+  border-color: var(--md-default-fg-color--lightest);
+}
+
+/* Buttons: the website's primary button in both schemes. */
+.md-button {
+  font-weight: 500;
+  border-radius: 8px;
+  padding: 0.6em 1.4em;
+}
+
+.md-typeset .md-button--primary {
+  background-color: var(--cgr-brand);
+  border-color: var(--cgr-brand);
+  color: #FFFFFF;
+}
+
+.md-typeset .md-button--primary:hover {
+  background-color: var(--cgr-brand-dark);
+  border-color: var(--cgr-brand-dark);
+  color: #FFFFFF;
+}
+
+/* Footer: light surface with a hairline, like the website. */
+.md-footer {
+  border-top: 1px solid var(--md-default-fg-color--lightest);
 }
 
 /* Data-flow edge diagram — used in architecture/data-flow-edges.md */
