@@ -9567,6 +9567,10 @@ class CallProcessor:
             ],
             ctx.caller_qn,
         )
+        if ctx.language in _C_FAMILY_LANGUAGES:
+            targets = self._resolver.linkable_variants(
+                callee_qn, targets, ctx.module_qn
+            )
         if ctx.language in (
             cs.SupportedLanguage.RUST,
             cs.SupportedLanguage.JULIA,

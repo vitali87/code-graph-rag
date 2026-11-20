@@ -61,6 +61,7 @@ class FunctionRegistryTrie:
         "_body_scoped_names",
         "_callable_params",
         "_reserved",
+        "_internal_linkage",
         "_same_definition",
     )
 
@@ -115,6 +116,10 @@ class FunctionRegistryTrie:
         self._body_scoped_names: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
         self._reserved: dict[QualifiedName, tuple[int, int]] = {}
+        # C/C++ functions with internal linkage (`static` at file scope),
+        # by the module of the file defining them: callable only from their
+        # own translation unit (issue #3154).
+        self._internal_linkage: dict[QualifiedName, str] = {}
         # Names one source definition is registered under twice (JS
         # `View.prototype.lookup = function lookup()` is `View.lookup` and
         # module-flat `view.lookup`), each mapped to the other.
@@ -181,6 +186,15 @@ class FunctionRegistryTrie:
 
     def is_body_scoped_name(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._body_scoped_names
+
+    def mark_internal_linkage(
+        self, qualified_name: QualifiedName, module_qn: str
+    ) -> None:
+        self._internal_linkage[qualified_name] = module_qn
+
+    def internal_linkage_module(self, qualified_name: QualifiedName) -> str | None:
+        """The module defining `qualified_name` if it has internal linkage."""
+        return self._internal_linkage.get(qualified_name)
 
     def mark_same_definition(self, first: QualifiedName, second: QualifiedName) -> None:
         if first != second:
@@ -521,6 +535,7 @@ class FunctionRegistryTrie:
         self._module_private.discard(qualified_name)
         self._rust_visibility.pop(qualified_name, None)
         self._body_scoped_names.discard(qualified_name)
+        self._internal_linkage.pop(qualified_name, None)
         self._callable_params.pop(qualified_name, None)
         self._forget_same_definition(qualified_name)
 

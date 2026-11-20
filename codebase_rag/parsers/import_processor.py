@@ -1913,6 +1913,7 @@ class ImportProcessor:
         "_csharp_module_namespaces",
         "_csharp_module_identifiers",
         "_cpp_declaration_mappings",
+        "_cpp_include_targets",
         "_cpp_shadowed_include_targets",
         "_js_side_effect_imports",
         "_dart_packages",
@@ -2298,6 +2299,9 @@ class ImportProcessor:
         # `export module X;`, `import :partition;`). They exist for name resolution
         # only; a declaration is not an import, so no IMPORTS edge is emitted.
         self._cpp_declaration_mappings: set[tuple[str, str]] = set()
+        # (module, target) of every `#include` a file makes: its `module foo;`
+        # can bind the same qn a real `#include "foo.h"` reaches.
+        self._cpp_include_targets: set[tuple[str, str]] = set()
         # Include targets whose LOCAL name was taken by a later include in
         # the same file. `<std>` and `<std.h>` both bind `std`, so the second
         # overwrote the first in `import_mapping` and only one IMPORTS edge
@@ -2526,6 +2530,9 @@ class ImportProcessor:
         self._cpp_declaration_mappings = {
             entry for entry in self._cpp_declaration_mappings if entry[0] != module_qn
         }
+        self._cpp_include_targets = {
+            entry for entry in self._cpp_include_targets if entry[0] != module_qn
+        }
         # Re-derived from the export statements the re-parse finds.
         self.js_export_bindings.pop(module_qn, None)
         # The Dart prefix maps share the same invariant. Both are written
@@ -2548,6 +2555,15 @@ class ImportProcessor:
         }
         self.dart_exposed_libraries.pop(module_qn, None)
         self._retract_import_sites(module_qn)
+
+    def declares_cpp_module(self, module_qn: str, target: str) -> bool:
+        """Whether the file's binding to `target` is its own `module X;`
+        declaration alone, which includes nothing: a global module fragment's
+        `#include "foo.h"` before `export module foo;` still includes it."""
+        return (module_qn, target) in self._cpp_declaration_mappings and (
+            module_qn,
+            target,
+        ) not in self._cpp_include_targets
 
     def displaced_include_targets(self) -> dict[str, frozenset[str]]:
         """The headers each file includes under a local name a later include
@@ -7582,6 +7598,7 @@ class ImportProcessor:
         if displaced is not None and displaced != full_name:
             self._cpp_shadowed_include_targets.add((module_qn, displaced))
         self.import_mapping[module_qn][local_name] = full_name
+        self._cpp_include_targets.add((module_qn, full_name))
         self._record_import_site(module_qn, local_name, include_node, include_path)
         logger.debug(
             ls.IMP_CPP_INCLUDE,
