@@ -14,6 +14,7 @@ counts the rebinding only when the assignment can run first:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -80,10 +81,20 @@ def receiver_annotation(call: Node, receiver: str) -> str | None:
             continue
         if name is not None and safe_decode_text(name) == receiver:
             text = safe_decode_text(param.child_by_field_name(cs.TS_FIELD_TYPE))
-            spelled = (text or "").strip().strip(cs.PY_ANNOTATION_QUOTES)
-            head = spelled.split(cs.PY_ANNOTATION_ARGS_OPEN, 1)[0]
-            return head.rsplit(cs.SEPARATOR_DOT, 1)[-1].strip()
+            return _annotated_class(text or "")
     return None
+
+
+def _annotated_class(text: str) -> str:
+    # The class an annotation names, without quotes or arguments and keeping
+    # a qualifier: `type["A"]` / `typing.Type[A]` name the class `A` itself,
+    # as a classmethod's `cls` holds it (CodeRabbit, PR #2908).
+    spelled = text.strip().strip(cs.PY_ANNOTATION_QUOTES).strip()
+    head, _, rest = spelled.partition(cs.PY_ANNOTATION_ARGS_OPEN)
+    head = head.strip()
+    if rest and head.rsplit(cs.SEPARATOR_DOT, 1)[-1] in cs.PY_CLASS_OBJECT_TYPES:
+        return _annotated_class(rest.rsplit(cs.PY_ANNOTATION_ARGS_CLOSE, 1)[0])
+    return head
 
 
 def instance_attribute_names(class_node: Node) -> frozenset[str]:
@@ -100,24 +111,32 @@ def instance_attribute_names(class_node: Node) -> frozenset[str]:
             continue
         if node.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT):
             target = node.child_by_field_name(cs.TS_FIELD_LEFT)
-            receiver = (
-                target.child_by_field_name(cs.FIELD_OBJECT)
-                if target is not None and target.type == cs.TS_PY_ATTRIBUTE
-                else None
-            )
-            attribute = (
-                target.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
-                if target is not None and receiver is not None
-                else None
-            )
-            if (
-                receiver is not None
-                and safe_decode_text(receiver) in cs.PY_RECEIVER_NAMES
-                and (name := safe_decode_text(attribute))
-            ):
-                names.add(name)
+            names.update(_receiver_attributes(target) if target is not None else ())
         stack.extend(node.children)
     return frozenset(names)
+
+
+def _receiver_attributes(target: Node) -> Iterator[str]:
+    # The receiver attributes an assignment target writes, through tuple,
+    # list and parenthesised targets (`self.m, self.x = cb, 0`; CodeRabbit,
+    # PR #2908). An attribute's own object is a read, never a write.
+    pending = [target]
+    while pending:
+        node = pending.pop()
+        if node.type == cs.TS_PY_ATTRIBUTE:
+            receiver = node.child_by_field_name(cs.FIELD_OBJECT)
+            if (
+                receiver is not None
+                and (safe_decode_text(receiver) in cs.PY_RECEIVER_NAMES)
+                and (
+                    name := safe_decode_text(
+                        node.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+                    )
+                )
+            ):
+                yield name
+        elif node.type in cs.PY_ATTRIBUTE_TARGET_CONTAINERS:
+            pending.extend(node.named_children)
 
 
 def _enclosing_function(node: Node) -> Node | None:

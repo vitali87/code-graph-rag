@@ -162,6 +162,20 @@ class PythonTypeInferenceEngine(
         return cls._has_decorator(def_node, cs.STATIC_DECORATORS)
 
     @classmethod
+    def in_static_method(cls, caller_node: Node) -> bool:
+        """Whether `caller_node` is, or sits in, a static method of its
+        class: its `self` is then whatever the caller passed, not an
+        instance of the class (CodeRabbit, PR #2908)."""
+        node: Node | None = caller_node
+        while node is not None and node.type != cs.TS_PY_CLASS_DEFINITION:
+            if node.type == cs.TS_PY_FUNCTION_DEFINITION and cls._is_static_method(
+                node
+            ):
+                return True
+            node = node.parent
+        return False
+
+    @classmethod
     def receiver_is_the_class(cls, caller_node: Node) -> bool:
         """Whether the method enclosing `caller_node` receives the class itself.
 

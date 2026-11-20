@@ -69,6 +69,12 @@ TS_PY_LIST_SPLAT = "list_splat"
 TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
 TS_PY_DEFAULT_PARAMETER = "default_parameter"
 TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
+# Where an assignment can write an attribute inside its target: the
+# unpacking forms, a starred item and parentheses.
+PY_ATTRIBUTE_TARGET_CONTAINERS = PY_UNPACKING_TARGET_TYPES | {
+    TS_PY_LIST_SPLAT_PATTERN,
+    TS_PY_PARENTHESIZED_EXPRESSION,
+}
 # `from __future__ import annotations` (PEP 563) keeps every annotation in
 # its module as a string that never runs.
 TS_PY_FUTURE_IMPORT_STATEMENT = "future_import_statement"
@@ -410,6 +416,9 @@ PY_UNION_PATTERN = r"^(?:typing\.)?Union\[(?P<inner>.+)\]$"
 PY_ANNOTATION_QUOTES = "\"'"
 # Opens a subscripted annotation's arguments: `Base[T]` names `Base`.
 PY_ANNOTATION_ARGS_OPEN = "["
+PY_ANNOTATION_ARGS_CLOSE = "]"
+# `type[A]` and `typing.Type[A]` annotate the class `A` itself.
+PY_CLASS_OBJECT_TYPES = frozenset({"type", "Type"})
 PY_LIST_TYPE_PREFIX = "list["
 PY_LIST_TYPE_FORMAT = "list[{element}]"
 

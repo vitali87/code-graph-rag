@@ -15,7 +15,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.editing.rename import QueryFn, rename
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.py.receiver_rebinding import receiver_annotation
 from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
 from codebase_rag.types_defs import PropertyParams, ResultRow
 
@@ -122,6 +125,19 @@ FILES = {
         "class Mine3:\n    def mm(self):\n        return 1\n\n"
         "    def run(self, supplied):\n        match supplied:\n"
         "            case _ as self:\n                return self.mm()\n"
+    ),
+    # Third review round (Greptile, CodeRabbit, PR #2908).
+    # A static method's `self` is whatever its caller passed.
+    "static_untyped.py": (
+        "class SHost:\n    def sm(self):\n        return 1\n\n"
+        "    @staticmethod\n    def run(self):\n        return self.sm()\n"
+    ),
+    # A tuple target writes the instance attribute too.
+    "tuple_attr.py": (
+        "def cb():\n    return 0\n\n\n"
+        "class THolder:\n    def __init__(self):\n        self.tm2, self.x = cb, 0\n\n"
+        "    def tm2(self):\n        return 1\n\n"
+        "    def run(self):\n        return self.tm2()\n"
     ),
     # A base the graph holds no class for, ahead of the one defining the
     # method, may define it first; a builtin one is read for the name
@@ -279,15 +295,44 @@ def test_an_annotation_naming_the_class_still_dispatches_to_overrides(
         ("shadowed.Holder.run", "shadowed.Holder.m3"),
         ("mangled.MD.run", "mangled.MB.__pm"),
         ("matched.Mine3.run", "matched.Mine3.mm"),
+        ("static_untyped.SHost.run", "static_untyped.SHost.sm"),
+        ("tuple_attr.THolder.run", "tuple_attr.THolder.tm2"),
     ],
     ids=[
         "later-rebinding",
         "instance-attribute",
         "mangled-private",
         "pattern-binding",
+        "static-untyped-self",
+        "tuple-target-attribute",
     ],
 )
 def test_a_self_call_the_class_may_not_answer_is_not_exact(
     graph: RecordedGraph, caller: str, callee: str
 ) -> None:
     assert _calls(graph, caller).get(callee) != "exact"
+
+
+@pytest.mark.parametrize(
+    ("annotation", "named"),
+    [
+        ('type["TBase"]', "TBase"),
+        ("typing.Type[TBase]", "TBase"),
+        ('"pkg.Host"', "pkg.Host"),
+        ("Other", "Other"),
+    ],
+)
+def test_a_receiver_annotation_names_the_class_it_holds(
+    annotation: str, named: str
+) -> None:
+    # `type[X]` holds the class X itself, so a classmethod's `cls: type[X]`
+    # names X; a qualifier is kept for the full-name check (CodeRabbit,
+    # Greptile, PR #2908).
+    parsers, _ = load_parsers()
+    source = f"def run(cls: {annotation}):\n    return cls.m()\n".encode()
+    tree = parsers[cs.SupportedLanguage.PYTHON].parse(source)
+    call = tree.root_node.descendant_for_byte_range(
+        source.index(b"cls.m()"), source.index(b"cls.m()") + len(b"cls.m()")
+    )
+    assert call is not None
+    assert receiver_annotation(call, "cls") == named

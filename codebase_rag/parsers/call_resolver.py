@@ -313,6 +313,7 @@ class CallResolver:
         "go_local_scopes",
         "python_local_names",
         "python_rebound_receivers",
+        "python_static_callers",
         "_py_instance_attrs_memo",
         "js_parameter_names",
         "function_registry",
@@ -398,6 +399,9 @@ class CallResolver:
         # call through one may run on whatever was assigned (CodeRabbit, PR
         # #2908).
         self.python_rebound_receivers: dict[str, frozenset[str]] = {}
+        # Python callers that are, or sit in, a static method: their `self`
+        # is a plain parameter, filled alongside python_rebound_receivers.
+        self.python_static_callers: set[str] = set()
         # Python module qn -> {class name: the attributes its methods assign
         # on their receiver}, read from the module's tree once per pass.
         self._py_instance_attrs_memo: dict[str, dict[str, frozenset[str]]] = {}
@@ -831,6 +835,9 @@ class CallResolver:
             # class is no certain target (CodeRabbit, PR #2908).
             or receiver
             in self.python_rebound_receivers.get(call.caller_qn or "", frozenset())
+            # A static method's `self` is whatever its caller passed
+            # (CodeRabbit, PR #2908).
+            or call.caller_qn in self.python_static_callers
         ):
             return None
         if method_name.startswith(cs.PY_NAME_DUNDER) and not method_name.endswith(

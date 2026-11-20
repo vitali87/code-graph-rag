@@ -6232,6 +6232,10 @@ class CallProcessor:
             self._resolver.python_rebound_receivers[caller_qn] = rebound
         else:
             self._resolver.python_rebound_receivers.pop(caller_qn, None)
+        if PythonTypeInferenceEngine.in_static_method(caller_node):
+            self._resolver.python_static_callers.add(caller_qn)
+        else:
+            self._resolver.python_static_callers.discard(caller_qn)
         self._record_python_name_typed_params(caller_node, caller_qn, module_qn)
 
     def _record_python_name_typed_params(
@@ -9193,6 +9197,9 @@ class CallProcessor:
                 receiver_annotation(
                     call_node, call_name.partition(cs.SEPARATOR_DOT)[0]
                 ),
+                (ctx.local_var_types or {}).get(
+                    call_name.partition(cs.SEPARATOR_DOT)[0]
+                ),
             )
             # A call that runs after `self = Other()` on every path calls
             # through that value's type, which the resolved edge follows.
@@ -9311,17 +9318,19 @@ class CallProcessor:
         return receiver_rebinding(call_node, receiver)
 
     def _receiver_annotated_elsewhere(
-        self, class_qn: str, annotation: str | None
+        self, class_qn: str, annotation: str | None, typed: str | None
     ) -> bool:
         # Whether a receiver annotation names a type other than the class
-        # or one of its bases.
+        # or one of its bases. A qualified one (`self: pkg.Host`) may name
+        # another class of the same short name, so it counts as the class
+        # only through the full name the type map resolved it to (Greptile,
+        # PR #2908).
         if annotation is None or annotation == cs.PY_ANNOTATION_SELF:
             return False
-        own = {
-            qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-            for qn in self._resolver.python_class_mro(class_qn)
-        }
-        return annotation not in own
+        mro = self._resolver.python_class_mro(class_qn)
+        if cs.SEPARATOR_DOT in annotation:
+            return typed is None or typed not in mro
+        return annotation not in {qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] for qn in mro}
 
     def _emit_python_self_dispatch(
         self, ctx: _CallScanContext, class_context: str, call_name: str
