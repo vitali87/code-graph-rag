@@ -238,6 +238,19 @@ public class Nearest {
     }
   }
 
+  Handler afterResource() {
+    try (Other codec = new Other()) {
+      return null;
+    } finally {
+      new Handler() {
+        @Override
+        public String handle(String in) {
+          return codec.encode(in); // resource-out-of-scope
+        }
+      };
+    }
+  }
+
   static Base anonymousInherited(final Codec codec) {
     return new Base() {
       String run(String in) {
@@ -350,6 +363,16 @@ def test_the_nearest_binding_of_the_name_types_the_receiver(
     line = _scoped_line(marker, NEAREST)
     assert _callers_of_encode(graph, OTHER_ENCODE, "Nearest").get(line) == "exact"
     assert line not in _callers_of_encode(graph, source="Nearest")
+
+
+def test_a_resource_is_not_captured_in_its_finally_block(
+    graph: RecordedGraph,
+) -> None:
+    # Bot review on PR #2991: in `finally` the resource is out of scope, so
+    # `codec` there is the class's `Codec codec` field.
+    line = _scoped_line("resource-out-of-scope", NEAREST)
+    assert _callers_of_encode(graph, source="Nearest").get(line) == "exact"
+    assert line not in _callers_of_encode(graph, OTHER_ENCODE, "Nearest")
 
 
 # Negative: what must not change.

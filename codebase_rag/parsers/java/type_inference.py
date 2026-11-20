@@ -78,6 +78,21 @@ def _capture_base_name(site: ASTNode) -> str | None:
     return text.split(cs.CHAR_ANGLE_OPEN, 1)[0] if text else None
 
 
+def _resource_in_scope_at(resource: ASTNode, site: ASTNode) -> bool:
+    # A try-with-resources variable is in scope in the later resources and
+    # the try block, never in its `catch` or `finally` (JLS 14.20.3; bot
+    # review on PR #2991).
+    specification = resource.parent
+    if specification is None or resource.end_byte > site.start_byte:
+        return False
+    if (statement := specification.parent) is None:
+        return False
+    body = statement.child_by_field_name(cs.FIELD_BODY)
+    return (body is not None and _encloses(body, site)) or _encloses(
+        specification, site
+    )
+
+
 def _encloses(container: ASTNode, node: ASTNode) -> bool:
     return (
         container.start_byte <= node.start_byte and node.end_byte <= container.end_byte
@@ -337,12 +352,7 @@ class JavaTypeInferenceEngine(
             if param.parent is not None and _encloses(param.parent, site):
                 self._process_catch_formal_parameter(param, types, module_qn)
         for resource in _nodes_of_type(enclosing, cs.TS_JAVA_RESOURCE):
-            statement = resource.parent.parent if resource.parent else None
-            if (
-                statement is not None
-                and resource.end_byte <= site.start_byte
-                and _encloses(statement, site)
-            ):
+            if _resource_in_scope_at(resource, site):
                 self._process_java_resource(resource, types, module_qn)
         # A lambda around `site` binds its parameters nearer than the fields
         # and the method's own names, outermost first so the innermost wins
