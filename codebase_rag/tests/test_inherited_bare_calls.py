@@ -544,3 +544,104 @@ def test_an_inherited_factory_still_types_the_chain_it_starts(
         "receivers.Base.getA": "exact",
         "receivers.Archive.label": "exact",
     }, receivers["cpp"]
+
+
+# Second review round (Greptile, CodeRabbit, PR #3240): a parameter or local
+# hides an inherited method of its name, and PHP composes each class's traits
+# on its own, names folded.
+_ROUND2 = {
+    "cpp": {
+        "hide.cpp": """\
+class Other { public: int label() { return 0; } };
+class Base { public: int label() { return 1; } };
+class Kid : public Base {
+ public:
+  int run(int (*label)()) { return label(); }
+  int local() { auto label = [] { return 2; }; return label(); }
+  int plain() { return label(); }
+};
+""",
+    },
+    "dart": {
+        "pubspec.yaml": 'name: shapes\nenvironment:\n  sdk: ">=3.0.0 <4.0.0"\n',
+        "lib/hide.dart": """\
+class Other { String label() => "o"; }
+class Base { String label() => "b"; }
+class Kid extends Base {
+  String run(String Function() label) => label();
+  String plain() => label();
+}
+""",
+    },
+    "php": {
+        "compose.php": """\
+<?php
+trait T { public function label(): string { return "t"; } }
+class P { use T; public function label(): string { return "p"; } }
+class C extends P {
+    use T;
+    public function call(): string { return $this->label(); }
+}
+class B2 { public function label(): string { return "b2"; } }
+class C2 extends B2 {
+    public function LABEL(): string { return "c2"; }
+    public function call(): string { return $this->label(); }
+}
+trait First2 { public function label(): string { return "1"; } }
+trait Second2 { public function label(): string { return "2"; } }
+class PP { use First2, Second2 { First2::label insteadof Second2; } }
+class CC extends PP {
+    use Second2;
+    public function call(): string { return $this->label(); }
+}
+""",
+    },
+}
+
+
+@pytest.fixture(scope="module")
+def round2(tmp_path_factory: pytest.TempPathFactory) -> dict[str, _Calls]:
+    return {
+        grammar: _calls(
+            tmp_path_factory.mktemp(f"{grammar}3240r") / "r2", files, grammar
+        )
+        for grammar, files in _ROUND2.items()
+    }
+
+
+@pytest.mark.parametrize(
+    ("grammar", "caller", "method"),
+    [
+        ("cpp", "hide.Kid.run", "hide.Base.label"),
+        ("cpp", "hide.Kid.local", "hide.Base.label"),
+        ("dart", "lib.hide.Kid.run", "lib.hide.Base.label"),
+    ],
+    ids=["cpp-parameter", "cpp-local", "dart-parameter"],
+)
+def test_a_parameter_or_local_hides_an_inherited_method(
+    round2: dict[str, _Calls], grammar: str, caller: str, method: str
+) -> None:
+    assert _callees(round2[grammar], caller).get(method) != "exact", round2[grammar]
+
+
+@pytest.mark.parametrize(
+    ("grammar", "caller", "callee"),
+    [
+        ("cpp", "hide.Kid.plain", "hide.Base.label"),
+        ("dart", "lib.hide.Kid.plain", "lib.hide.Base.label"),
+        ("php", "compose.C.call", "compose.T.label"),
+        ("php", "compose.C2.call", "compose.C2.LABEL"),
+        ("php", "compose.CC.call", "compose.Second2.label"),
+    ],
+    ids=[
+        "cpp-unhidden",
+        "dart-unhidden",
+        "php-reused-trait",
+        "php-folded-override",
+        "php-own-composition",
+    ],
+)
+def test_php_composes_each_class_and_unhidden_calls_stay_exact(
+    round2: dict[str, _Calls], grammar: str, caller: str, callee: str
+) -> None:
+    assert _callees(round2[grammar], caller).get(callee) == "exact", round2[grammar]

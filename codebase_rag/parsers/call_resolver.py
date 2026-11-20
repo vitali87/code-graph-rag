@@ -28,7 +28,7 @@ from .parameter_nodes import c_family_parameter_list
 from .php import class_names as php_class_names
 from .php.class_names import ClassPath as PhpClassPath
 from .php.class_names import ascii_fold as _php_fold
-from .php.utils import php_insteadof_exclusions
+from .php.utils import PhpTraitComposition, php_trait_composition
 from .py import resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
@@ -115,13 +115,18 @@ _INHERITED_BARE_CALL_LANGUAGES = frozenset(
 # `label()` is a function call, never a method, and is kept out altogether.
 _LEXICAL_FIRST_LANGUAGES = frozenset({cs.SupportedLanguage.DART})
 # And the ones whose trait or mixin overrides the superclass: Dart and Scala
-# look the last `with` type up first, and a PHP class takes a used trait's
-# method over its parent's, while their bases are recorded superclass first.
+# look the last `with` type up first, while their bases are recorded
+# superclass first. A PHP class composes its traits on its own instead.
 _LINEARIZED_LANGUAGES = frozenset(
-    {cs.SupportedLanguage.DART, cs.SupportedLanguage.SCALA, cs.SupportedLanguage.PHP}
+    {cs.SupportedLanguage.DART, cs.SupportedLanguage.SCALA}
 )
 # The PHP declarations a trait `use` can sit in.
 _PHP_TYPE_DECLARATIONS = frozenset(cs.SPEC_PHP_CLASS_TYPES)
+
+
+def _php_simple(qualified_name: str) -> str:
+    # A PHP type's simple name, folded as PHP compares names.
+    return _php_fold(qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1])
 
 
 # Languages whose `recv.name()` member syntax reaches only methods, so the
@@ -377,7 +382,7 @@ class CallResolver:
         "cpp_callable_fields",
         "go_package_names",
         "_php_class_namespaces",
-        "_php_insteadof_memo",
+        "_php_composition_memo",
         "_php_cased_index",
         "_js_return_class_cache",
     )
@@ -508,9 +513,10 @@ class CallResolver:
         # {PHP module qn: {class qn: folded namespace it is declared in}},
         # read off each file's declarations on first use (issue #2466).
         self._php_class_namespaces: dict[str, dict[str, PhpClassPath]] = {}
-        # PHP class qn -> the (method, trait) pairs its `insteadof` clauses
-        # exclude, read from its file once per pass.
-        self._php_insteadof_memo: dict[str, frozenset[tuple[str, str]]] = {}
+        # PHP class qn -> the traits its `use` declarations compose and the
+        # methods their `insteadof` clauses exclude, read from its file once
+        # per pass.
+        self._php_composition_memo: dict[str, PhpTraitComposition] = {}
         self._php_cased_index: _PhpCasedIndex | None = None
         # {JS/TS callable qn: the class a call to it returns}, read off its
         # declaration on first use (issue #2468).
@@ -735,8 +741,8 @@ class CallResolver:
         self._c_unit_reach_cache.clear()
         # A re-parsed PHP file may have moved a class between namespaces.
         self._php_class_namespaces.clear()
-        # Or changed which trait method its `insteadof` clauses pick.
-        self._php_insteadof_memo.clear()
+        # Or changed which traits it uses and which methods it takes.
+        self._php_composition_memo.clear()
         self._php_cased_index = None
         # A re-parsed TS file may declare a different return.
         self._js_return_class_cache.clear()
@@ -2488,69 +2494,78 @@ class CallResolver:
             name, call.module_qn
         ):
             return None
-        hit = (
-            self._linearized_method(class_qn, name, call.language)
-            if call.language in _LINEARIZED_LANGUAGES
-            else self._resolve_inherited_method(class_qn, name)
-        )
+        if call.language == cs.SupportedLanguage.PHP:
+            hit = self._php_member(class_qn, name, frozenset({class_qn}))
+        elif call.language in _LINEARIZED_LANGUAGES:
+            hit = self._linearized_method(class_qn, name)
+        else:
+            hit = self._resolve_inherited_method(class_qn, name)
         if hit is None or hit[0] != cs.NodeLabel.METHOD.value:
             return None
         return hit
 
-    def _linearized_method(
-        self, class_qn: str, name: str, language: cs.SupportedLanguage | None
-    ) -> tuple[str, str] | None:
-        # The first of the class's linearized bases defining `name`, but a
-        # PHP trait an `insteadof` clause of the class or a base excludes
-        # for `name`: `use A, B { A::label insteadof B; }` runs `A::label`,
-        # though B comes first in the order (Greptile on PR #3240).
-        bases = self._linearized_bases(class_qn, frozenset({class_qn}), {})
-        excluded = (
-            self._php_excluded_traits(name, [class_qn, *bases])
-            if language == cs.SupportedLanguage.PHP
-            else frozenset()
-        )
-        for base in bases:
+    def _linearized_method(self, class_qn: str, name: str) -> tuple[str, str] | None:
+        # The first of the class's linearized bases defining `name`.
+        for base in self._linearized_bases(class_qn, frozenset({class_qn}), {}):
             qn = f"{base}{cs.SEPARATOR_DOT}{name}"
-            if (
-                qn in self.function_registry
-                and base.rsplit(cs.SEPARATOR_DOT, 1)[-1].lower() not in excluded
-            ):
+            if qn in self.function_registry:
                 return self.function_registry[qn], qn
         return None
 
-    def _php_excluded_traits(self, name: str, classes: list[str]) -> frozenset[str]:
-        # The folded simple names of the traits whose `name` the classes'
-        # `insteadof` clauses exclude.
-        folded = name.lower()
-        return frozenset(
-            trait
-            for class_qn in classes
-            for method, trait in self._php_insteadof(class_qn)
-            if method == folded
-        )
+    def _php_member(
+        self, class_qn: str, name: str, seen: frozenset[str]
+    ) -> tuple[str, str] | None:
+        # PHP composes each class on its own: its methods, else those of the
+        # traits it uses, less what its `insteadof` clauses exclude, else
+        # its parent's, found the same way. So a child's `use T` overrides a
+        # parent's own `label` even when the parent uses T too, and a
+        # parent's `insteadof` never reaches the child's `use` (CodeRabbit,
+        # Greptile on PR #3240). Names are case-insensitive: a child's
+        # `LABEL()` overrides a base's `label()`.
+        folded = _php_fold(name)
+        if own := self._php_declared_method(class_qn, name, folded):
+            return cs.NodeLabel.METHOD.value, own
+        composition = self._php_composition(class_qn)
+        bases = [
+            base
+            for base in self.class_inheritance.get(class_qn, [])
+            if base not in seen
+        ]
+        traits = [base for base in bases if _php_simple(base) in composition.traits]
+        for base in [*traits, *(base for base in bases if base not in traits)]:
+            if base in traits and (folded, _php_simple(base)) in composition.exclusions:
+                continue
+            if hit := self._php_member(base, name, seen | {base}):
+                return hit
+        return None
 
-    def _php_insteadof(self, class_qn: str) -> frozenset[tuple[str, str]]:
+    def _php_composition(self, class_qn: str) -> PhpTraitComposition:
         # Read from the class's declaration in its file, which the AST cache
-        # re-parses when it was evicted or this is an incremental pass.
-        if (known := self._php_insteadof_memo.get(class_qn)) is not None:
+        # re-parses when it was evicted or this is an incremental pass. A
+        # class whose file is not read composes nothing known, so its bases
+        # are walked in their recorded order.
+        if (known := self._php_composition_memo.get(class_qn)) is not None:
             return known
         module_qn = module_qn_for_entity(
             class_qn, self.type_inference.module_qn_to_file_path
         )
         root = self._cached_module_root(module_qn) if module_qn else None
         simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        found: set[tuple[str, str]] = set()
+        traits: set[str] = set()
+        exclusions: set[tuple[str, str]] = set()
         stack = [root] if root is not None else []
         while stack:
             node = stack.pop()
             if node.type in _PHP_TYPE_DECLARATIONS and (
                 safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)) == simple
             ):
-                found |= php_insteadof_exclusions(node)
+                found = php_trait_composition(node)
+                traits |= found.traits
+                exclusions |= found.exclusions
             stack.extend(node.children)
-        self._php_insteadof_memo[class_qn] = frozenset(found)
-        return self._php_insteadof_memo[class_qn]
+        composition = PhpTraitComposition(frozenset(traits), frozenset(exclusions))
+        self._php_composition_memo[class_qn] = composition
+        return composition
 
     def _linearized_bases(
         self, class_qn: str, seen: frozenset[str], memo: dict[str, list[str]]

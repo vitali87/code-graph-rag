@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import NamedTuple
 
 from tree_sitter import Node
 
@@ -8,6 +9,7 @@ from ... import constants as cs
 from ...language_spec import LANGUAGE_FQN_SPECS
 from ...utils.fqn_resolver import scoped_name_parts
 from ..utils import safe_decode_text
+from .class_names import ascii_fold
 
 # Where an anonymous class's anchor stops: the nearest type or namespace,
 # which the FQN scope walk names on its own.
@@ -17,12 +19,20 @@ _ANCHOR_STOP_TYPES = frozenset(cs.FQN_PHP_SCOPE_TYPES) | frozenset(
 _CALLABLE_TYPES = frozenset(cs.FQN_PHP_FUNCTION_TYPES)
 
 
-def php_insteadof_exclusions(type_node: Node) -> frozenset[tuple[str, str]]:
-    """(method, trait) pairs a class's `insteadof` clauses exclude:
-    `use A, B { A::label insteadof B; }` gives ("label", "b"), the
-    ASCII-folded simple name of the trait whose `label` the class does not
-    take (Greptile on PR #3240). PHP names are case-insensitive."""
-    found: set[tuple[str, str]] = set()
+class PhpTraitComposition(NamedTuple):
+    """What a class's own `use` declarations compose, PHP names folded:
+    the traits it uses, and the (method, trait) pairs its `insteadof`
+    clauses exclude (`use A, B { A::label insteadof B; }` excludes
+    ("label", "b")). Each class composes its own traits; a parent's
+    adaptations never reach a child's `use` (CodeRabbit, PR #3240)."""
+
+    traits: frozenset[str]
+    exclusions: frozenset[tuple[str, str]]
+
+
+def php_trait_composition(type_node: Node) -> PhpTraitComposition:
+    traits: set[str] = set()
+    exclusions: set[tuple[str, str]] = set()
     for body in type_node.children:
         if body.type != cs.TS_PHP_DECLARATION_LIST:
             continue
@@ -31,8 +41,19 @@ def php_insteadof_exclusions(type_node: Node) -> frozenset[tuple[str, str]]:
                 continue
             for listed in use.children:
                 if listed.type == cs.TS_PHP_USE_LIST:
-                    found.update(_insteadof_pairs(listed))
-    return frozenset(found)
+                    exclusions.update(_insteadof_pairs(listed))
+                elif simple := _simple_name(listed):
+                    traits.add(ascii_fold(simple))
+    return PhpTraitComposition(frozenset(traits), frozenset(exclusions))
+
+
+def _simple_name(node: Node) -> str | None:
+    # A `name`, or the trailing `name` of a `qualified_name`.
+    if node.type == cs.TS_PHP_NAME:
+        return safe_decode_text(node)
+    if node.type == cs.TS_PHP_QUALIFIED_NAME and node.named_children:
+        return safe_decode_text(node.named_children[-1])
+    return None
 
 
 def _insteadof_pairs(use_list: Node) -> Iterator[tuple[str, str]]:
@@ -45,9 +66,8 @@ def _insteadof_pairs(use_list: Node) -> Iterator[tuple[str, str]]:
         if not (method_name := safe_decode_text(method)):
             continue
         for trait in excluded:
-            names = [trait] if trait.type == cs.TS_PHP_NAME else trait.named_children
-            if names and (simple := safe_decode_text(names[-1])):
-                yield method_name.lower(), simple.lower()
+            if simple := _simple_name(trait):
+                yield ascii_fold(method_name), ascii_fold(simple)
 
 
 def _positional_name(node: Node) -> str:

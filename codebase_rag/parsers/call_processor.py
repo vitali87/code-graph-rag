@@ -7455,9 +7455,44 @@ class CallProcessor:
             constructing=ctx.language in _NEW_CONSTRUCTS_LANGUAGES
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
             # `$this->label()` and `$other->label()` reach the resolver alike.
-            implicit_receiver=_calls_own_member(ctx.language, call_node),
+            implicit_receiver=self._calls_unhidden_own_member(
+                ctx, call_node, call_name
+            ),
         )
         return self._judge_resolved_callee(ctx, call_node, call_name, callee_info)
+
+    @staticmethod
+    def _calls_unhidden_own_member(
+        ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> bool:
+        # On the caller's own object, and with no parameter or local of the
+        # name in scope there: `int run(int (*label)()) { return label(); }`
+        # calls the parameter, not an inherited `label` (Greptile and
+        # CodeRabbit on PR #3240). Only a bare name can be hidden; a Dart
+        # call names `this.label()` bare too, so a binding hides it as well.
+        if not _calls_own_member(ctx.language, call_node):
+            return False
+        if cs.SEPARATOR_DOT in call_name:
+            return True
+        point = call_node.start_byte
+        if ctx.language == cs.SupportedLanguage.CPP:
+            callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+            if callee is None or callee.type != cs.TS_IDENTIFIER:
+                return True
+            return not any(
+                name == call_name and start <= point < end
+                for start, end, name, _ in CppTypeInferenceEngine().declaration_scopes(
+                    ctx.caller_node
+                )
+            )
+        if ctx.language == cs.SupportedLanguage.DART:
+            spans = dart_utils.dart_binding_spans(
+                ctx.caller_node, frozenset({call_name})
+            )
+            return not any(
+                start <= point < end for start, end in spans.get(call_name, ())
+            )
+        return True
 
     def _judge_resolved_callee(
         self,
