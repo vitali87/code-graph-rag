@@ -1,8 +1,9 @@
 name: Poor Quality PR Management
 
+# A daily sweep rather than a run per label event: commenting on a fork's
+# pull request from a label-triggered run needs pull_request_target, which
+# runs with a write token in reach of the pull request.
 on:
-  pull_request_target:
-    types: [labeled]
   schedule:
     - cron: "0 9 * * *"
   workflow_dispatch:
@@ -10,21 +11,27 @@ on:
 permissions: read-all
 
 jobs:
-  notify-poor-quality:
-    name: Notify Poor Quality PR
-    if: github.event_name == 'pull_request_target' && github.event.label.name == 'poor-quality'
+  close-stale-poor-quality:
+    name: Warn and Close Poor Quality PRs
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       pull-requests: write
       issues: write
 
     steps:
-      - name: Add warning comment
+      - name: Warn labelled PRs, and close those warned over 7 days ago
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const message = `⚠️ **This PR has been marked as poor-quality.**
+            const LABEL_NAME = 'poor-quality';
+            const DAYS_THRESHOLD = 7;
+            const BOT = 'github-actions[bot]';
+            const WARNING_MARKER = '⚠️ **This PR has been marked as poor-quality.**';
+            const cutoffDate = new Date();
+            cutoffDate.setDate(cutoffDate.getDate() - DAYS_THRESHOLD);
+
+            const warning = (closeOn) => `${WARNING_MARKER}
 
             **Action Required:** This PR will be **automatically closed in 7 days** unless updated to meet our contribution standards.
 
@@ -55,43 +62,20 @@ jobs:
             💡 **Need help?** Please ask questions in the comments, and we'll guide you.
 
             ---
-            *This PR will be automatically closed on ${new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString()} if not updated.*`;
+            *This PR will be automatically closed on ${closeOn.toLocaleDateString()} if not updated.*`;
 
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: message
-            });
+            console.log(`Checking for poor-quality PRs warned before ${cutoffDate.toISOString()}`);
 
-  close-stale-poor-quality:
-    name: Close Stale Poor Quality PRs
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      pull-requests: write
-      issues: write
-
-    steps:
-      - name: Close PRs with poor-quality label older than 7 days
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const LABEL_NAME = 'poor-quality';
-            const DAYS_THRESHOLD = 7;
-            const cutoffDate = new Date();
-            cutoffDate.setDate(cutoffDate.getDate() - DAYS_THRESHOLD);
-
-            console.log(`Checking for poor-quality PRs labeled before ${cutoffDate.toISOString()}`);
-
-            const { data: prs } = await github.rest.pulls.list({
+            // Every page: the sweep is the only thing that warns, so a pull
+            // request it does not see is never warned or closed.
+            const prs = await github.paginate(github.rest.pulls.list, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'open',
               per_page: 100
             });
 
+            let warnedCount = 0;
             let closedCount = 0;
 
             for (const pr of prs) {
@@ -99,7 +83,7 @@ jobs:
               if (!hasLabel) continue;
 
               // Get all events for this PR
-              const { data: events } = await github.rest.issues.listEvents({
+              const events = await github.paginate(github.rest.issues.listEvents, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: pr.number,
@@ -118,19 +102,47 @@ jobs:
 
               const labeledAt = new Date(labelEvent.created_at);
 
-              // Check if PR was updated after being labeled
-              const prUpdatedAt = new Date(pr.updated_at);
-              const wasUpdatedAfterLabel = prUpdatedAt > labeledAt;
+              // Only the bot's own warning, posted since the latest
+              // labelling, counts: a pull request labelled again is warned
+              // again, and nobody else's comment starts the clock.
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                per_page: 100
+              });
+              const warningComment = comments
+                .filter(c => c.user?.login === BOT
+                  && c.body?.startsWith(WARNING_MARKER)
+                  && new Date(c.created_at) >= labeledAt)
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
 
-              if (wasUpdatedAfterLabel) {
-                console.log(`PR #${pr.number}: Updated after label (${prUpdatedAt.toISOString()}), skipping`);
+              if (!warningComment) {
+                const closeOn = new Date(Date.now() + DAYS_THRESHOLD * 24 * 60 * 60 * 1000);
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  body: warning(closeOn)
+                });
+                console.log(`PR #${pr.number}: Warned, closes on ${closeOn.toISOString()} unless updated`);
+                warnedCount++;
                 continue;
               }
 
-              // Check if label is old enough
-              if (labeledAt > cutoffDate) {
-                const daysOld = Math.floor((Date.now() - labeledAt.getTime()) / (1000 * 60 * 60 * 24));
-                console.log(`PR #${pr.number}: Only ${daysOld} days old, needs ${DAYS_THRESHOLD} days`);
+              // The warning itself may move updated_at to its own time, so
+              // only a later update counts.
+              const warnedAt = new Date(warningComment.created_at);
+              const prUpdatedAt = new Date(pr.updated_at);
+
+              if (prUpdatedAt > warnedAt) {
+                console.log(`PR #${pr.number}: Updated after warning (${prUpdatedAt.toISOString()}), skipping`);
+                continue;
+              }
+
+              if (warnedAt > cutoffDate) {
+                const daysOld = Math.floor((Date.now() - warnedAt.getTime()) / (1000 * 60 * 60 * 24));
+                console.log(`PR #${pr.number}: Warned only ${daysOld} days ago, needs ${DAYS_THRESHOLD} days`);
                 continue;
               }
 
@@ -169,8 +181,4 @@ jobs:
               closedCount++;
             }
 
-            console.log(`✅ Closed ${closedCount} stale poor-quality PR(s)`);
-
-            if (closedCount === 0) {
-              console.log('No stale poor-quality PRs found');
-            }
+            console.log(`Warned ${warnedCount} and closed ${closedCount} poor-quality PR(s)`);

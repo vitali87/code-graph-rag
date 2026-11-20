@@ -14,6 +14,7 @@ from codebase_rag.parsers.cpp_frontend import (
     run_cpp_frontend_hybrid,
 )
 from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.types_defs import PropertyDict
 from evals.cgr_graph import _StatefulIngestor
 
 pytestmark = pytest.mark.skipif(
@@ -615,3 +616,422 @@ def test_hybrid_incremental_expansion_call_reaches_unchanged_callee_file(
         if rel_type == cs.RelationshipType.CALLS.value
     }
     assert ("hybincexp.drv.driver", "hybincexp.tgt.target") in calls, sorted(calls)
+
+
+# Issue #2944: libclang and tree-sitter BOTH see a function-like macro call
+# and an `#include`. The libclang edge must carry the same site as
+# tree-sitter's so the two MERGE into one located edge, instead of a second,
+# site-less edge beside it. base.h is included from a header, indented, so
+# the site must be the directive's `#`, not the line start or the filename.
+# No base.cpp exists, so base.h claims the plain module qn `base`.
+_DUP_BASE_H = """\
+#ifndef BASE_H
+#define BASE_H
+#define LIMIT 10
+#endif
+"""
+
+_DUP_CALC_H = """\
+#ifndef CALC_H
+#define CALC_H
+  #  include "base.h"
+#define DOUBLE(x) ((x) + (x))
+int twice(int n);
+#endif
+"""
+
+_DUP_CALC_SRC = """\
+#include "calc.h"
+int twice(int n) {
+    return DOUBLE(n);
+}
+int cap(int n) { return n > LIMIT ? LIMIT : n; }
+"""
+
+
+def _write_dup(root: Path) -> None:
+    root.mkdir()
+    (root / "base.h").write_text(_DUP_BASE_H, encoding="utf-8")
+    (root / "calc.h").write_text(_DUP_CALC_H, encoding="utf-8")
+    (root / "calc.cpp").write_text(_DUP_CALC_SRC, encoding="utf-8")
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "calc.cpp")]), encoding="utf-8"
+    )
+
+
+def _index_dup(
+    root: Path, monkeypatch: pytest.MonkeyPatch, store: _StatefulIngestor
+) -> None:
+    monkeypatch.setattr(gu.settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+    parsers, queries = load_parsers()
+    gu.GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
+    ).run(force=True)
+
+
+def _sites(
+    store: _StatefulIngestor, rel_type: cs.RelationshipType, src: str, dst: str
+) -> list[PropertyDict]:
+    # One entry per edge the store would hold after MERGE: the site props
+    # are the part of the edge identity beyond its endpoints.
+    return sorted(
+        (
+            dict(site)
+            for _fl, from_val, rel, _tl, to_val, site in store.keyed_edges
+            if rel == rel_type.value and from_val == src and to_val == dst
+        ),
+        key=repr,
+    )
+
+
+def test_hybrid_function_like_macro_call_is_one_located_edge(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = temp_repo / "hybdup"
+    _write_dup(root)
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    sites = _sites(
+        store, cs.RelationshipType.CALLS, "hybdup.calc.twice", "hybdup.calc.h.DOUBLE"
+    )
+    assert sites == [{cs.KEY_LINE: 3, cs.KEY_COL: 11}], sites
+
+
+def test_hybrid_object_like_macro_uses_keep_one_edge_per_site(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Tree-sitter sees LIMIT as a bare identifier, so these edges are
+    # libclang's alone: each use keeps its own located edge, and the two
+    # uses on one line are not collapsed into one.
+    root = temp_repo / "hybdupobj"
+    _write_dup(root)
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    line = _DUP_CALC_SRC.splitlines()[4]
+    first = line.index("LIMIT")
+    second = line.index("LIMIT", first + 1)
+    sites = _sites(
+        store, cs.RelationshipType.CALLS, "hybdupobj.calc.cap", "hybdupobj.base.LIMIT"
+    )
+    assert sites == [
+        {cs.KEY_LINE: 5, cs.KEY_COL: first},
+        {cs.KEY_LINE: 5, cs.KEY_COL: second},
+    ], sites
+    edge = next(
+        e
+        for e in store.keyed_edges
+        if e[1] == "hybdupobj.calc.cap" and dict(e[5]).get(cs.KEY_COL) == first
+    )
+    props = store.edge_props[edge]
+    assert props[cs.KEY_END_LINE] == 5, props
+    assert props[cs.KEY_END_COL] == first + len("LIMIT"), props
+    assert props[cs.KEY_RESOLUTION] == cs.EdgeResolution.EXACT, props
+
+
+def test_hybrid_include_is_one_located_edge(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = temp_repo / "hybdupinc"
+    _write_dup(root)
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    calc = _sites(
+        store, cs.RelationshipType.IMPORTS, "hybdupinc.calc", "hybdupinc.calc.h"
+    )
+    assert calc == [{cs.KEY_LINE: 1, cs.KEY_COL: 0, cs.KEY_ALIAS: "calc"}], calc
+    base = _sites(
+        store, cs.RelationshipType.IMPORTS, "hybdupinc.calc.h", "hybdupinc.base"
+    )
+    assert base == [{cs.KEY_LINE: 3, cs.KEY_COL: 2, cs.KEY_ALIAS: "base"}], base
+
+
+def test_hybrid_incremental_run_keeps_one_edge_for_unchanged_file(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # libclang re-parses calc.cpp on every run, so its include is emitted
+    # again for the unchanged file: it must land on the edge already stored.
+    root = temp_repo / "hybdupincr"
+    _write_dup(root)
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    (root / "other.cpp").write_text("int other_fn() { return 0; }\n", encoding="utf-8")
+    parsers, queries = load_parsers()
+    gu.GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
+    ).run(force=False)
+    imports = _sites(
+        store, cs.RelationshipType.IMPORTS, "hybdupincr.calc", "hybdupincr.calc.h"
+    )
+    assert len(imports) == 1, imports
+    calls = _sites(
+        store,
+        cs.RelationshipType.CALLS,
+        "hybdupincr.calc.twice",
+        "hybdupincr.calc.h.DOUBLE",
+    )
+    assert len(calls) == 1, calls
+
+
+def test_hybrid_continued_include_is_one_located_edge(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A backslash puts the filename on the next line: libclang locates the
+    # inclusion there, tree-sitter at the directive's `#`, and the edge
+    # still lands on the `#`.
+    root = temp_repo / "hybcont"
+    root.mkdir()
+    (root / "base.h").write_text(_DUP_BASE_H, encoding="utf-8")
+    (root / "calc.cpp").write_text(
+        '#include \\\n  "base.h"\nint cap(int n) { return n > LIMIT ? LIMIT : n; }\n',
+        encoding="utf-8",
+    )
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "calc.cpp")]), encoding="utf-8"
+    )
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    sites = _sites(store, cs.RelationshipType.IMPORTS, "hybcont.calc", "hybcont.base")
+    assert sites == [{cs.KEY_LINE: 1, cs.KEY_COL: 0, cs.KEY_ALIAS: "base"}], sites
+
+
+def test_hybrid_include_whose_name_a_later_include_took_is_one_located_edge(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `a/util.h` and `b/util.h` both bind `util`: tree-sitter keeps the
+    # displaced include's edge at its own directive, where libclang's lands.
+    root = temp_repo / "hybshadow"
+    for name in ("a", "b"):
+        (root / name).mkdir(parents=True)
+        (root / name / "util.h").write_text(
+            f"#define {name.upper()}_UTIL 1\n", encoding="utf-8"
+        )
+    (root / "calc.cpp").write_text(
+        '#include "a/util.h"\n#include "b/util.h"\n'
+        "int both() { return A_UTIL + B_UTIL; }\n",
+        encoding="utf-8",
+    )
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "calc.cpp")]), encoding="utf-8"
+    )
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    first = _sites(
+        store, cs.RelationshipType.IMPORTS, "hybshadow.calc", "hybshadow.a.util"
+    )
+    assert first == [{cs.KEY_LINE: 1, cs.KEY_COL: 0, cs.KEY_ALIAS: "util"}], first
+    second = _sites(
+        store, cs.RelationshipType.IMPORTS, "hybshadow.calc", "hybshadow.b.util"
+    )
+    assert second == [{cs.KEY_LINE: 2, cs.KEY_COL: 0, cs.KEY_ALIAS: "util"}], second
+
+
+def test_hybrid_macro_use_belongs_to_the_definition_holding_its_column(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two definitions on one line: each use is its own definition's, so the
+    # located edge merges with tree-sitter's instead of naming the first.
+    root = temp_repo / "hybline"
+    root.mkdir()
+    (root / "calc.h").write_text("#define DOUBLE(x) ((x) + (x))\n", encoding="utf-8")
+    source = (
+        '#include "calc.h"\n'
+        "int one() { return DOUBLE(1); } int two() { return DOUBLE(2); }\n"
+    )
+    (root / "calc.cpp").write_text(source, encoding="utf-8")
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "calc.cpp")]), encoding="utf-8"
+    )
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    line = source.splitlines()[1]
+    first = line.index("DOUBLE")
+    second = line.index("DOUBLE", first + 1)
+    one = _sites(
+        store, cs.RelationshipType.CALLS, "hybline.calc.one", "hybline.calc.h.DOUBLE"
+    )
+    two = _sites(
+        store, cs.RelationshipType.CALLS, "hybline.calc.two", "hybline.calc.h.DOUBLE"
+    )
+    assert one == [{cs.KEY_LINE: 2, cs.KEY_COL: first}], one
+    assert two == [{cs.KEY_LINE: 2, cs.KEY_COL: second}], two
+
+
+def test_hybrid_include_expanded_twice_keeps_each_targets_name(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An unguarded dispatch.h holds `#include CHOSEN` and is included twice,
+    # with CHOSEN first "a.h" and then "b.h": both expansions put their
+    # directive on dispatch.h's line 1, and each edge keeps its own header's
+    # name instead of the last one's.
+    root = temp_repo / "hybtwice"
+    root.mkdir()
+    (root / "a.h").write_text("#define FROM_A 1\n", encoding="utf-8")
+    (root / "b.h").write_text("#define FROM_B 2\n", encoding="utf-8")
+    (root / "dispatch.h").write_text("#include CHOSEN\n", encoding="utf-8")
+    (root / "main.cpp").write_text(
+        '#define CHOSEN "a.h"\n#include "dispatch.h"\n#undef CHOSEN\n'
+        '#define CHOSEN "b.h"\n#include "dispatch.h"\n'
+        "int both() { return FROM_A + FROM_B; }\n",
+        encoding="utf-8",
+    )
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "main.cpp")]), encoding="utf-8"
+    )
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    for header in ("a", "b"):
+        sites = _sites(
+            store,
+            cs.RelationshipType.IMPORTS,
+            "hybtwice.dispatch",
+            f"hybtwice.{header}",
+        )
+        assert sites == [{cs.KEY_LINE: 1, cs.KEY_COL: 0, cs.KEY_ALIAS: header}], (
+            header,
+            sites,
+        )
+
+
+def test_hybrid_unfound_include_leaves_the_found_one_located(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # libclang finds no missing.h, so that directive has no included file
+    # (the bindings assert on reading it): the run must go on, and the
+    # include beside it keep its located edge.
+    root = temp_repo / "hybmissing"
+    root.mkdir()
+    (root / "base.h").write_text(_DUP_BASE_H, encoding="utf-8")
+    (root / "calc.cpp").write_text(
+        '#include "missing.h"\n#include "base.h"\n'
+        "int cap(int n) { return n > LIMIT ? LIMIT : n; }\n",
+        encoding="utf-8",
+    )
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "calc.cpp")]), encoding="utf-8"
+    )
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    sites = _sites(
+        store, cs.RelationshipType.IMPORTS, "hybmissing.calc", "hybmissing.base"
+    )
+    assert sites == [{cs.KEY_LINE: 2, cs.KEY_COL: 0, cs.KEY_ALIAS: "base"}], sites
+
+
+def _write_two_limits(root: Path, use_h: str, one: str, two: str) -> None:
+    root.mkdir()
+    (root / "a.h").write_text("#define LIMIT 3\n", encoding="utf-8")
+    (root / "b.h").write_text("#define LIMIT 4\n", encoding="utf-8")
+    (root / "use.h").write_text(use_h, encoding="utf-8")
+    (root / "one.cpp").write_text(one, encoding="utf-8")
+    (root / "two.cpp").write_text(two, encoding="utf-8")
+    (root / "compile_commands.json").write_text(
+        json.dumps(
+            [
+                _compdb_entry(root, root / "one.cpp"),
+                _compdb_entry(root, root / "two.cpp"),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("macro", ["a.LIMIT", "b.LIMIT"])
+@pytest.mark.parametrize("function_like", [False, True], ids=["object", "function"])
+def test_hybrid_rename_refuses_a_use_another_same_named_macro_binds(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, macro: str, function_like: bool
+) -> None:
+    # use.h is compiled after a.h in one.cpp and after b.h in two.cpp, so
+    # its one LIMIT token is each macro's: renaming it for one leaves the
+    # other unit without LIMIT.
+    from codebase_rag.editing.rename import RenameRefused, rename
+
+    root = temp_repo / "twolimits"
+    _write_two_limits(
+        root,
+        "static inline int cap(int n) { return n > LIMIT(n) ? LIMIT(n) : n; }\n"
+        if function_like
+        else "static inline int cap(int n) { return n > LIMIT ? LIMIT : n; }\n",
+        '#include "a.h"\n#include "use.h"\nint one() { return cap(1); }\n',
+        '#include "b.h"\n#include "use.h"\nint two() { return cap(2); }\n',
+    )
+    if function_like:
+        (root / "a.h").write_text("#define LIMIT(x) 3\n", encoding="utf-8")
+        (root / "b.h").write_text("#define LIMIT(x) 4\n", encoding="utf-8")
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            store.fetch_all,
+            "twolimits",
+            f"twolimits.{macro}",
+            "CAP",
+            dry_run=True,
+            allow_heuristic=True,
+        )
+    assert "another definition of LIMIT" in str(refused.value), refused.value
+    assert (root / "use.h").read_text(encoding="utf-8").count("LIMIT") == 2
+
+
+def test_hybrid_rename_of_a_macro_with_uses_of_its_own_still_plans(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: each LIMIT is used in its own unit only.
+    from codebase_rag.editing.rename import rename
+
+    root = temp_repo / "ownlimits"
+    _write_two_limits(
+        root,
+        "int unused();\n",
+        '#include "a.h"\nint one() { return LIMIT; }\n',
+        '#include "b.h"\nint two() { return LIMIT; }\n',
+    )
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    report = rename(
+        root, store.fetch_all, "ownlimits", "ownlimits.a.LIMIT", "CAP", dry_run=True
+    )
+    assert "+#define CAP 3" in report.diff, report.message
+    assert "+int one() { return CAP; }" in report.diff, report.diff
+    assert "two.cpp" not in report.diff, report.diff
+
+
+def test_an_overload_fan_out_is_no_second_binding_of_a_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: `f(1)` fans out to both overloads with `resolution: overload`,
+    # a guess `allow_heuristic` decides, so the shared-site refusal (which
+    # needs both bindings proven) leaves it to that opt-in.
+    from codebase_rag import graph_query
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    def site(owner: str, kind: str, line: int, resolution: str) -> RenameSite:
+        return RenameSite(
+            kind, "m.cpp", line, 4 if kind == "definition" else 17, owner, resolution
+        )
+
+    planned = [
+        site("p.m.f", "definition", 1, cs.EdgeResolution.EXACT),
+        site("p.m.g", "call", 3, cs.EdgeResolution.OVERLOAD),
+    ]
+    sibling = [
+        site("p.m.f@2", "definition", 2, cs.EdgeResolution.EXACT),
+        site("p.m.g", "call", 3, cs.EdgeResolution.OVERLOAD),
+    ]
+    monkeypatch.setattr(
+        graph_query,
+        "resolve",
+        lambda *_args: [{"qualified_name": "p.m.f"}, {"qualified_name": "p.m.f@2"}],
+    )
+    renamer = Renamer(tmp_path, lambda *_args: [], "p")
+    monkeypatch.setattr(renamer, "_collect", lambda _qn: (sibling, [], "f", "Function"))
+    assert renamer._sites_another_namesake_binds(["p.m.f"], "f", planned) == []
+    # The same site bound for both is the macro case, and is refused, also
+    # where tree-sitter's `heuristic` label won the merge for a
+    # function-like macro.
+    for resolution in (cs.EdgeResolution.EXACT, cs.EdgeResolution.HEURISTIC):
+        bound = [s._replace(resolution=resolution) for s in planned]
+        sibling[:] = [s._replace(resolution=resolution) for s in sibling]
+        assert renamer._sites_another_namesake_binds(["p.m.f"], "f", bound) == [
+            bound[1]
+        ], resolution

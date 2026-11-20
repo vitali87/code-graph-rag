@@ -43,25 +43,41 @@ qualified name has the form `resource::<KIND>::<identity>`:
   path, an environment variable name) and `<dynamic>` when the target is not a
   compile-time constant (for example `open(path)` where `path` is a variable,
   or standard streams that have no literal target).
-- `KIND` is one of eight values. The table shows what each represents and, for
+- `KIND` is one of the values below. The table shows what each represents and, for
   the current Python registry, which calls produce it and in which direction.
 
 | `KIND` | Represents | Detected from (Python) | Direction |
 |--------|------------|------------------------|-----------|
-| `FILE` | A file on disk | `open(...)` and its handle methods (`.read`, `.write`, …); `json.load` / `json.dump` | read + write |
-| `ENV` | An environment variable | `os.getenv(...)`, `os.environ.get(...)` | read |
+| `FILE` | A file on disk | `open(...)` and `pathlib.Path(...)`, and their handle methods (`.read`, `.write`, `.read_text`, …), bound (`p = Path(x); p.read_text()`) or inline (`Path(x).read_text()`); `json.load` / `json.dump` | read + write |
+| `ENV` | An environment variable | `os.getenv(...)`, `os.environ.get(...)`, `os.environ["K"]` (read); `os.environ["K"] = v` (write); `os.environ.setdefault(...)` (read + write) | read + write |
 | `NETWORK` | A network endpoint / URL | `requests.get` / `.head`, `urllib.request.urlopen`, `httpx.get` (read); `requests.post` / `.put` / `.patch` / `.delete`, `httpx.post` (write); `httpx.Client` / `AsyncClient` and `aiohttp.ClientSession` handle methods | read + write |
 | `DATABASE` | A database connection | `sqlite3.connect(...)` handle methods (`.execute`, `.fetchone`, `.commit`, …) | read + write |
 | `SOCKET` | A network socket | `socket.socket(...)` handle methods (`.recv`, `.send`, …) | read + write |
-| `STDOUT` | Standard output | `print(...)` | write |
+| `STDOUT` | Standard output | `print(...)`, `print(..., file=sys.stdout)`, `sys.stdout.write` / `.writelines` | write |
 | `STDIN` | Standard input | *(defined in the schema; no Python source registered yet)* | — |
-| `STDERR` | Standard error | *(defined in the schema; no Python source registered yet)* | — |
+| `STDERR` | Standard error | `print(..., file=sys.stderr)`, `sys.stderr.write` / `.writelines` | write |
+| `PROCESS` | A command being run; a tainted value reaching it models command injection | `subprocess.run` / `call` / `check_call` / `check_output` / `Popen`, `os.system`, `os.popen` | write |
+| `ENDPOINT` | An HTTP route a handler serves | *(not an I/O call: written by endpoint detection)* | — |
+| `RPC` | A codegen contract operation, shared by its client stubs and server implementations | *(not an I/O call: written by RPC linking)* | — |
+| `DISPATCH` | A string key that task-queue and workflow handlers are registered under | *(not an I/O call: written by dispatch linking)* | — |
+| `CONTRACT` | An operation a contract file declares | *(not an I/O call: written by contract linking)* | — |
 
 Example: `os.getenv("K")` refers to `resource::ENV::K`; `print(x)` refers to
 `resource::STDOUT::<dynamic>`. The registry is extended in
 `codebase_rag/parsers/io_access/registry.py`. The Python registry does not yet
-register `STDIN` or `STDERR` sources/sinks, but other languages emit them
-(for example C `scanf`, C++ `std::cerr`, Java `System.err`, C# `Console.Error`).
+register `STDIN` sources, but other languages emit them (for example C
+`scanf`).
+
+`print(x, file=...)` writes where its `file=` argument says:
+- `sys.stdout` or `sys.stderr` (also through `from sys import stderr`) is that
+  stream;
+- a name or `self.<attr>` bound to a handle (`f = open("out.txt", "w")`) is
+  that handle's resource, `FILE::out.txt`: the binding in effect where the
+  print runs, so a rebind in a sibling `if`/`else` branch does not count, a
+  name rebound to `None` is stdout again, and a local named like an imported
+  stream (`err = open(...)` after `from sys import stderr as err`) is its file;
+- any other stream, such as a parameter, records no edge rather than claiming
+  stdout.
 
 ## READS_FROM and WRITES_TO
 
@@ -72,6 +88,7 @@ by the call and (for file handles) its mode:
 |------|------|
 | `os.getenv("K")` | `Function -READS_FROM-> Resource(ENV::K)` |
 | `print(x)` | `Function -WRITES_TO-> Resource(STDOUT::<dynamic>)` |
+| `print(x, file=sys.stderr)` | `Function -WRITES_TO-> Resource(STDERR::<dynamic>)` |
 | `open("out.txt", "w")` | `Function -WRITES_TO-> Resource(FILE::out.txt)` |
 | `open("cfg.yaml")` | `Function -READS_FROM-> Resource(FILE::cfg.yaml)` |
 
@@ -80,6 +97,19 @@ The source of the edge is the **immediate** enclosing scope of the call — the
 inside a nested function is attributed to that nested function alone, never
 bubbled up to an enclosing function or the module. (This matches how `CALLS` is
 attributed, and how `FLOWS_TO` treats nested scopes below.)
+
+An inline callback is the exception: a Python `lambda`, a JS/TS arrow or
+function expression with no name of its own, a Go `func` literal, a Java or C#
+lambda, or a Rust closure. Such a callback has no caller of its own, so it runs
+as part of the function that writes it. In
+`items.forEach((x) => console.log(x))` the write is attributed to the enclosing
+function, as the callback's `CALLS` are. A value the callback reads from the
+enclosing scope flows into its sinks. A `return` inside the callback leaves the
+callback, not the enclosing function. A named callback (`const handler = (req)
+=> …`) is a function of its own and keeps its own edges. A callback bound to a
+local (`let g = || …` in Rust, `g := func() {…}` in Go, `Runnable r = () -> …`
+in Java, `Action a = () => …` in C#) counts as named too: it runs only where
+that name is called, so the enclosing function is not credited with its I/O.
 
 ## FLOWS_TO
 
@@ -154,7 +184,7 @@ A value read from one resource reaches a write to another within a function
 body. No `via`.
 
 ```
-Resource(ENV::K) -FLOWS_TO {kind: resource}-> Resource(STDOUT::<dynamic>)
+Resource(ENV::K) -FLOWS_TO {kind: resource, scope: flow.leak}-> Resource(STDOUT::<dynamic>)
 ```
 
 `x` is read from `ENV::K`, then passed to `print(x)`, which writes `STDOUT`. Both
@@ -165,13 +195,26 @@ The source and the sink need not share a body. `t` carries `ENV::T` into
 `forward`, whose `print(v)` writes `STDOUT`, so the same body also records
 
 ```
-Resource(ENV::T) -FLOWS_TO {kind: resource}-> Resource(STDOUT::<dynamic>)
+Resource(ENV::T) -FLOWS_TO {kind: resource, scope: flow.leak}-> Resource(STDOUT::<dynamic>)
 ```
 
 beside the shape 2 edge for the call itself (see the forward argument taint
 under [Scope of the current phase](#scope-of-the-current-phase)). `print(r)`
 adds no fifth edge: `r` carries `ENV::K` back from `build`, the same
-`ENV::K → STDOUT` pair as `print(x)`, and an edge is recorded once per pair.
+`ENV::K → STDOUT` pair as `print(x)` in the same `scope`, and an edge is
+recorded once per pair and scope.
+
+`scope` is the qualified name of the function whose body produced the flow, or
+the module's for top-level code. Both endpoints are shared Resource nodes, so
+the edge is owned through it. Two functions that leak the same value give two
+edges. Each edge is removed when its function's file is re-parsed or its
+project is deleted, so a fixed leak does not stay in the graph. An edge that
+runs through a function in a file the incremental run leaves alone
+(`log(os.getenv("K"))`, where an unchanged `log` prints) cannot be rebuilt
+from the re-parsed caller. Such a composed edge lists in `through` the
+functions it was derived through, and it is put back as long as the caller
+still makes a call through one of them with the same origin, or prints what
+one of them returns. A direct edge, with no `through`, is never put back.
 
 ### Shape 2 — caller to callee (`kind = arg`)
 
@@ -276,6 +319,16 @@ Within a function body, taint moves and disappears by these rules:
 - **Copy.** `b = a` copies `a`'s taint (and its origin resource) to `b`.
 - **Rebind to a new source.** `x = os.getenv("B")` after `x = os.getenv("A")`
   makes `x` carry `ENV::B`; the discarded `ENV::A` no longer flows from `x`.
+- **Unpack and walrus.** In Python, every name an assignment binds takes the
+  taint of what it is bound to. `user, pw = getenv("U"), getenv("P")` pairs
+  by position, so `pw` carries `ENV::P` and not `ENV::U`. `first, *rest = ...`
+  gives `rest` the union of the leftover elements. Unpacking a value that is
+  not a literal sequence (`a, b = pair`) gives every name the whole value's
+  taint. Every target of `a = b = value` is bound, and a walrus
+  (`if (tok := getenv("K")):`) binds `tok` for the code the condition guards.
+  A walrus Python may skip (the right of `and`/`or`, a conditional arm, a
+  chained comparison past its first link, a comprehension, an assert, a
+  `case` guard) leaves the name's old taint in place as well.
 - **Transform.** A value built from a tainted one is still tainted, with the
   union of its operands' origins. In Python this covers a builtin or library
   call (`float(raw)`, `json.dumps(cfg)`), a method on the value
@@ -372,9 +425,10 @@ the provenance questions the edges are designed for:
 
 ```cypher
 // Every value that flows from an environment variable to standard output.
+// One edge per producing function, so DISTINCT for the pairs alone.
 MATCH (a:Resource)-[r:FLOWS_TO {kind: 'resource'}]->(b:Resource)
 WHERE a.kind = 'ENV' AND b.kind = 'STDOUT'
-RETURN a.qualified_name, b.qualified_name;
+RETURN DISTINCT a.qualified_name, b.qualified_name;
 
 // Multi-hop reachability: does any source reach any sink across calls?
 MATCH p = (src:Resource)-[:FLOWS_TO*1..8]->(dst:Resource)
@@ -579,8 +633,18 @@ the distinction queryable:
       returned.
     - `NO_FLOW` — no path, and every module of the project was inside
       analysed coverage.
-    - `UNKNOWN` — no path was found, but part of the project sits outside
-      coverage; the uncovered files are named.
+    - `UNKNOWN` — no path was found, but one cannot be ruled out: part of
+      the project sits outside coverage (the uncovered files are named), or,
+      for a question with a resource at either end, the walk reached a
+      function it cannot follow the value through (that function is
+      named). A handler a value was sent to, and a function other than the
+      source whose writes can go on to the sink (it writes the sink, a
+      resource whose own flows lead there, or a NETWORK resource another
+      handler serves), are such functions: a write records no value, so
+      `print("ok")` and `print(item)` leave the same edge. A question
+      between two functions keeps the function-level walk: it goes on
+      through what every function it reaches writes, into the handler of an
+      endpoint that function calls.
 
 The coverage read is deliberately project-wide rather than restricted to the
 query's reachable surface: without path sensitivity, a flow through an
