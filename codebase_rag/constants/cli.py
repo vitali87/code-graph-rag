@@ -79,6 +79,9 @@ CLI_ERR_SYNC_HOME_OR_ROOT = (
 CLI_ERR_INVALID_SETTING = "Error: {problem}"
 # click's own exit status for a bad parameter value.
 CLI_EXIT_USAGE_ERROR = 2
+# `--fail-on-found` on check, dead-code and duplicates: the command found what
+# it looks for. CI scripts gate on this status.
+CLI_EXIT_FOUND = 1
 # `-o` checks, made before a graph is read or indexed (issue #2410).
 CLI_ERR_OUTPUT_IS_DIR = "Error: --output is a directory, not a file: {path}"
 CLI_ERR_OUTPUT_PARENT_NOT_DIR = (

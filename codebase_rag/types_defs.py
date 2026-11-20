@@ -2098,3 +2098,130 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         _PARAMETER_TYPE_LABELS,
     ),
 )
+
+
+# The public surface snapshot (scripts/public_surface.py, issue #3629).
+
+
+class SurfaceBounds(TypedDict):
+    min: JsonValue
+    max: JsonValue
+    min_open: bool
+    max_open: bool
+    clamp: bool
+
+
+class SurfacePathRule(TypedDict):
+    exists: bool
+    file_okay: bool
+    dir_okay: bool
+    readable: bool
+    writable: bool
+    resolve_path: bool
+    allow_dash: bool
+
+
+class SurfaceParam(TypedDict):
+    name: str
+    kind: str
+    flags: list[str]
+    type: str
+    nargs: int
+    choices: list[str] | None
+    bounds: SurfaceBounds | None
+    path: SurfacePathRule | None
+    required: bool
+    multiple: bool
+    is_flag: bool
+    hidden: bool
+    default: JsonValue
+    envvar: list[str]
+
+
+class SurfaceCommand(TypedDict):
+    command: str
+    hidden: bool
+    params: list[SurfaceParam]
+
+
+class SurfaceMcpTool(TypedDict):
+    name: str
+    input_schema: JsonValue
+    annotations: dict[str, bool]
+    served_read_only: bool
+    needs_extra: str | None
+
+
+class SurfaceSetting(TypedDict):
+    name: str
+    env: list[str]
+    env_only: bool
+    type: str
+    constraints: dict[str, JsonValue]
+    default: JsonValue
+
+
+class SurfaceNodeSchema(TypedDict):
+    label: str
+    properties: str
+
+
+class SurfaceRelationshipSchema(TypedDict):
+    type: str
+    sources: list[str]
+    targets: list[str]
+
+
+class SurfaceRecordField(TypedDict):
+    name: str
+    type: str
+    required: bool
+
+
+class SurfaceRecord(TypedDict):
+    name: str
+    fields: list[SurfaceRecordField]
+
+
+class SurfaceProtoField(TypedDict):
+    name: str
+    number: int
+    type: str
+    repeated: bool
+
+
+class SurfaceProtoMessage(TypedDict):
+    name: str
+    fields: list[SurfaceProtoField]
+
+
+class SurfaceProtoEnum(TypedDict):
+    name: str
+    values: dict[str, int]
+
+
+class SurfaceSdkMember(TypedDict):
+    name: str
+    signature: str | None
+    is_async: bool
+
+
+class SurfaceSdkName(TypedDict):
+    name: str
+    signature: str | None
+    is_async: bool
+    members: list[SurfaceSdkMember]
+
+
+class PublicSurface(TypedDict):
+    version: int
+    cli: list[SurfaceCommand]
+    exit_codes: dict[str, int]
+    mcp_tools: list[SurfaceMcpTool]
+    settings: list[SurfaceSetting]
+    graph_nodes: list[SurfaceNodeSchema]
+    graph_relationships: list[SurfaceRelationshipSchema]
+    export_json: list[SurfaceRecord]
+    protobuf_index: list[SurfaceProtoMessage]
+    protobuf_enums: list[SurfaceProtoEnum]
+    python_sdk: list[SurfaceSdkName]

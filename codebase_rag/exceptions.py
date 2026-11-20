@@ -354,3 +354,11 @@ class SyncInterrupted(KeyboardInterrupt):  # NOSONAR
     from a plain interrupt so the command can say so: that would be false of
     one that landed before the sync wrote anything.
     """
+
+
+# Public surface snapshot (scripts/public_surface.py, issue #3629)
+SURFACE_UNMAPPED_DELEGATE = (
+    "`{command}` hands its arguments to a click group the public surface "
+    "snapshot does not know; add it to _DELEGATED_GROUPS in "
+    "scripts/public_surface.py"
+)
