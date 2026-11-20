@@ -1088,12 +1088,25 @@ def _python_assignment_binding(stmt: Node, name: str) -> str | None:
     return bound
 
 
-def _same_module(full_name: str | None, other: str) -> bool:
-    # `app.db.save` and `app.db.User` are names of one module.
-    if full_name is None:
-        return False
-    module, sep, _name = full_name.rpartition(cs.SEPARATOR_DOT)
-    return bool(sep) and module == other.rpartition(cs.SEPARATOR_DOT)[0]
+def _same_module(
+    full_name: str | None, site: PropertyDict, other: str, other_site: PropertyDict
+) -> bool:
+    # `from app.db import save` and `from app.db import User` (or `import
+    # app.db`) load one module; `import app.other` and `import app.db` share
+    # only a parent (bot review on PR #2728).
+    return full_name is not None and _imported_module(full_name, site) == (
+        _imported_module(other, other_site)
+    )
+
+
+def _imported_module(full_name: str, site: PropertyDict) -> str:
+    # The module a Python import loads: the binding's own target for a
+    # whole-module import, the module it takes the name from otherwise.
+    member = site.get(cs.KEY_IMPORTED_NAME)
+    suffix = f"{cs.SEPARATOR_DOT}{member}"
+    if isinstance(member, str) and full_name.endswith(suffix):
+        return full_name[: -len(suffix)]
+    return full_name
 
 
 def _rust_member_pattern(pattern: str) -> str:
@@ -4371,7 +4384,7 @@ class ImportProcessor:
                 self._python_displaced_eager_imports.setdefault(module_qn, []).append(
                     (before[name], previous)
                 )
-            elif _same_module(mapping.get(name), before[name]):
+            elif _same_module(mapping.get(name), site, before[name], previous):
                 # Another symbol of the same module: its edge is the module's
                 # only one to that module, and the import-time statement still
                 # loads that module, so the edge counts toward a cycle (bot

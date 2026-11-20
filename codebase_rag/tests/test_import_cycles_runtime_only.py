@@ -103,6 +103,14 @@ EAGER_THEN_LAZY_OTHER = TOP_LEVEL + (
     "\n    def persist(self):\n        from app.db import User as save\n"
     "        return save(self)\n"
 )
+# Negative: a lazy import of a sibling module under an eager module's name
+# loads the sibling only when called.
+SIBLING_THEN_LAZY = (
+    "import app.other as dep\n\n"
+    + MODELS
+    + "\n    def persist(self):\n        import app.db as dep\n"
+    "        return dep.save(self)\n"
+)
 UNPACKED_TYPE_CHECKING = (
     "from typing import TYPE_CHECKING\n\nTYPE_CHECKING, DEBUG = True, False\n\n"
     "if TYPE_CHECKING:\n    from app.db import save\n\n" + MODELS
@@ -198,6 +206,11 @@ def repo(tmp_path: Path) -> _Repo:
             TRY_EITHER,
             cs.ImportScope.TYPE_CHECKING_BLOCK,
             id="typing-or-typing-extensions",
+        ),
+        pytest.param(
+            SIBLING_THEN_LAZY,
+            cs.ImportScope.FUNCTION,
+            id="a-lazy-import-of-a-sibling-under-an-eager-name",
         ),
     ],
 )
