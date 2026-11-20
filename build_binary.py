@@ -102,7 +102,7 @@ def build_binary() -> bool:
 
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
-        logger.success(logs.BUILD_SUCCESS)
+        logger.success(logs.BUILD_BINARY_SUCCESS.format(name=binary_name))
 
         binary_file = binary_name
         if system == cs.WINDOWS_SYSTEM:
@@ -131,7 +131,9 @@ def build_binary() -> bool:
 
     except subprocess.CalledProcessError as e:
         logger.error(
-            logs.BUILD_FAILED.format(lang=binary_name, stdout=e.stdout, stderr=e.stderr)
+            logs.BUILD_BINARY_FAILED.format(
+                name=binary_name, stdout=e.stdout, stderr=e.stderr
+            )
         )
         logger.error(logs.BUILD_STDOUT.format(stdout=e.stdout))
         logger.error(logs.BUILD_STDERR.format(stderr=e.stderr))
