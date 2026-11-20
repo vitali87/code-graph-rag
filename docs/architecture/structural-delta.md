@@ -151,14 +151,18 @@ call written for the old kind (issue #2860). Each call site is read back
 from its source. A call to a now-async function whose result is thrown
 away (`fetch()` as a statement) gets a coroutine whose body never runs, one
 a `for` iterates (`for x in fetch():`) raises `TypeError`, and an `await`
-of a now-sync function awaits a plain value it cannot await.
+of a now-sync function awaits a plain value it cannot await. A boolean
+operator that gives the coroutine as its own value (`fetch() or x`) is
+judged where that value goes, so `await (fetch() or x)` is fine.
 Those sites read `async_changed`, which trips `--fail-on-found`, unless
 their arity verdict already does. A caller already migrated (`await
 fetch()` once the function is async, a plain `fetch()` once it no longer
 is) is fine, and any other use of the result (returned, assigned, handed
 to `asyncio.run` or `gather`, or the iterable of an `async for`, which an
 async generator serves) is not judged: the change carries
-`async_change`, a hint. So is every call to a def under a decorator other
+`async_change`, a hint. So is an `await` of a now-sync def that returns
+anything but nothing or a literal (`return inner()` may hand back
+`inner`'s coroutine), and every call to a def under a decorator other
 than the signature-preserving ones (`@staticmethod`, `@classmethod`,
 `@abstractmethod`, `@override`): a sync/async adapter there decides how
 the call runs. Nor does the flip alone make an endpoint's remote

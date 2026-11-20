@@ -2589,8 +2589,7 @@ def _signature_changes(
     for qn in changed:
         old, new = before.definitions[qn], after.definitions[qn]
         async_change = _async_change(old, new)
-        # Under a wrapper the flip is listed (`async_change`), not judged.
-        judged = None if _wrapped(old) or _wrapped(new) else async_change
+        judged = _judged_flip(old, new, async_change, repo_root)
         sites = [
             _flipped_site(
                 _site_finding(site, new, repo_root),
@@ -2649,6 +2648,70 @@ def _wrapped(definition: Definition) -> bool:
     )
 
 
+def _judged_flip(
+    old: Definition,
+    new: Definition,
+    async_change: str | None,
+    repo_root: Path | None,
+) -> str | None:
+    """The flip a def's calls are judged by, or None where it is listed
+    (`async_change`) but not judged: under a wrapper, or where a def that
+    stopped being `async` may still return an awaitable. `def fetch():
+    return inner()` keeps `await fetch()` working when `inner` is async
+    (Greptile, PR #2951)."""
+    if async_change is None or _wrapped(old) or _wrapped(new):
+        return None
+    if async_change == cs.DELTA_ASYNC_REMOVED and not _returns_plain_values(
+        new, repo_root
+    ):
+        return None
+    return async_change
+
+
+# Values no `await` can take: a now-sync def returning only these makes
+# `await fetch()` fail.
+_PY_PLAIN_VALUES = frozenset(
+    {
+        cs.TS_PY_NONE,
+        cs.TS_PY_TRUE,
+        cs.TS_PY_FALSE,
+        cs.TS_PY_INTEGER,
+        cs.TS_PY_FLOAT,
+        cs.TS_PY_STRING,
+        cs.TS_PY_CONCATENATED_STRING,
+        cs.TS_PY_LIST,
+        cs.TS_PY_TUPLE,
+        cs.TS_PY_DICTIONARY,
+        cs.TS_PY_SET,
+    }
+)
+# Scopes whose `return` is not the def's own.
+_PY_NESTED_SCOPES = frozenset(
+    {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA, cs.TS_PY_CLASS_DEFINITION}
+)
+
+
+def _returns_plain_values(definition: Definition, repo_root: Path | None) -> bool:
+    """Whether every `return` of a def gives nothing or a literal, read back
+    from its source; False where it cannot be read."""
+    function = (
+        _definition_node(definition, repo_root) if repo_root is not None else None
+    )
+    body = function.child_by_field_name(cs.FIELD_BODY) if function else None
+    if body is None:
+        return False
+    stack = list(body.named_children)
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_RETURN_STATEMENT:
+            value = node.named_children[0] if node.named_children else None
+            if value is not None and value.type not in _PY_PLAIN_VALUES:
+                return False
+        elif node.type not in _PY_NESTED_SCOPES:
+            stack.extend(node.named_children)
+    return True
+
+
 def _async_change(old: Definition, new: Definition) -> str | None:
     # A side that recorded no modifiers is not compared, as for
     # `_attributes_moved`.
@@ -2679,12 +2742,11 @@ def _flipped_site(
         or finding["resolution"] in cs.DELTA_GUESSED_RESOLUTIONS
     ):
         return finding
-    parent, child = _value_parent(call)
-    awaited = parent is not None and parent.type == cs.TS_PY_AWAIT
     if async_change == cs.DELTA_ASYNC_ADDED:
-        breaks = not awaited and _read_synchronously(parent, child)
+        parent, child = _value_receiver(call)
+        breaks = not _awaits(parent) and _read_synchronously(parent, child)
     else:
-        breaks = awaited
+        breaks = _awaits(_value_parent(call)[0])
     if not breaks:
         return finding
     flipped = finding.copy()
@@ -2715,6 +2777,30 @@ def _value_parent(call: Node) -> tuple[Node | None, Node]:
     while parent is not None and parent.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
         child, parent = parent, parent.parent
     return parent, child
+
+
+def _value_receiver(call: Node) -> tuple[Node | None, Node]:
+    """Where a call's value is used: past parentheses, and past a boolean
+    operator that gives it as its own value. A coroutine is always true, so
+    `fetch() or x`, `x or fetch()` and `x and fetch()` hand it on, while
+    `fetch() and x` tests it and gives `x` (Greptile, PR #2951)."""
+    parent, child = _value_parent(call)
+    while parent is not None and parent.type == cs.TS_PY_BOOLEAN_OPERATOR:
+        operator = parent.child_by_field_name(cs.FIELD_OPERATOR)
+        left = parent.child_by_field_name(cs.TS_FIELD_LEFT)
+        if (
+            operator is not None
+            and _node_text(operator) == cs.PY_OP_AND
+            and left is not None
+            and left.id == child.id
+        ):
+            break
+        parent, child = _value_parent(parent)
+    return parent, child
+
+
+def _awaits(parent: Node | None) -> bool:
+    return parent is not None and parent.type == cs.TS_PY_AWAIT
 
 
 def _read_synchronously(parent: Node | None, child: Node) -> bool:

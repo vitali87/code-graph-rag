@@ -210,6 +210,56 @@ def test_a_now_async_call_iterated_is_a_definite_finding(
     assert has_findings(delta)
 
 
+@pytest.mark.parametrize(
+    ("body", "breaks"),
+    [
+        ("async def use():\n    return await (fetch() or load(1))", False),
+        ("async def use():\n    return await (None or fetch())", False),
+        ("def use():\n    return (fetch() or 0) + 1", True),
+        ("def use():\n    return fetch() and 1", True),
+    ],
+    ids=["or-left-awaited", "or-right-awaited", "or-then-added", "and-left-dropped"],
+)
+def test_a_boolean_operand_is_judged_where_its_value_goes(
+    indexed: Indexed, body: str, breaks: bool
+) -> None:
+    # `fetch() or x` gives the coroutine (it is always true) to whatever
+    # reads the operator, while `fetch() and x` tests it and gives `x`
+    # (Greptile, PR #2951).
+    delta = _edit_both(
+        indexed,
+        ("def fetch():", "async def fetch():"),
+        ("def use():\n    return fetch() + 1", body),
+    )
+
+    (change,) = [
+        c for c in delta["signature_changes"] if c["qualified_name"] == _qn("fetch")
+    ]
+    verdicts = {site["caller"]: site["verdict"] for site in change["sites"]}
+    flagged = verdicts[f"{PROJECT}.app.use"] == cs.DELTA_ARITY_ASYNC_CHANGED
+    assert flagged is breaks, verdicts
+    assert has_findings(delta) is breaks
+
+
+def test_a_now_sync_def_returning_a_call_is_a_hint(indexed: Indexed) -> None:
+    # `def afetch(): return load(1)` hands back `load`'s coroutine, so
+    # `await afetch()` still works; a call's value is unknown here, so the
+    # flip is left to the hint (Greptile, PR #2951).
+    delta = _edit(
+        indexed,
+        "async def afetch():\n    return 1",
+        "def afetch():\n    return load(1)",
+    )
+
+    (change,) = [
+        c for c in delta["signature_changes"] if c["qualified_name"] == _qn("afetch")
+    ]
+    assert change["async_change"] == cs.DELTA_ASYNC_REMOVED
+    assert change["sites"]
+    assert cs.DELTA_ARITY_ASYNC_CHANGED not in {s["verdict"] for s in change["sites"]}
+    assert not has_findings(delta)
+
+
 # Negative: what must not change.
 
 
