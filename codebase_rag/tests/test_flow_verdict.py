@@ -13,6 +13,7 @@ from codebase_rag.flow_verdict import (
     CYPHER_FLOW_COVERAGE_GAPS,
     CYPHER_FLOW_EDGES,
     CYPHER_FLOW_REMOTE_EDGES,
+    CYPHER_FLOW_WRITE_EDGES,
     FLOW_VERDICT_FOUND,
     FLOW_VERDICT_NO_FLOW,
     FLOW_VERDICT_UNKNOWN,
@@ -23,27 +24,42 @@ from codebase_rag.parser_loader import load_parsers
 
 
 def _query_fn(
-    edges: list[tuple[str, str]],
+    edges: list[tuple[str, ...]],
     gaps: list[str] | dict[str, list[str]],
     remote: list[tuple[str, str]] | None = None,
-    other_edges: dict[str, list[tuple[str, str]]] | None = None,
+    other_edges: dict[str, list[tuple[str, ...]]] | None = None,
     calls: list[tuple[str, dict | None]] | None = None,
     projects: list[str] | None = None,
+    writes: dict[str, list[tuple[str, str]]] | None = None,
 ):
-    """`remote` rows are (source, target) with the handler's project read
-    off its name, as the graph has it; `other_edges` holds the flow edges of
+    """Flow edges are (source, target), or (source, target, scope) for a
+    resource-to-resource flow; `remote` rows are (source, target) with the
+    handler's project read off its name, as the graph has it; `other_edges`
+    holds the flow edges of
     every project other than the asked one, keyed by project name; `gaps`
     is the asked project's list, or one per project; `calls` records every
-    (query, params) issued."""
+    (query, params) issued; `writes` holds each project's (function,
+    resource) WRITES_TO rows, as its prefix query returns them."""
 
     def fetch_all(query: str, params=None):
         if calls is not None:
             calls.append((query, params))
         project = params["project_name"] if params else None
         if query == CYPHER_FLOW_EDGES:
-            if other_edges and project in other_edges:
-                return [{"source": s, "target": t} for s, t in other_edges[project]]
-            return [{"source": s, "target": t} for s, t in edges]
+            rows = (
+                other_edges[project]
+                if other_edges and project in other_edges
+                else edges
+            )
+            return [
+                {"source": e[0], "target": e[1], "scope": e[2] if len(e) > 2 else None}
+                for e in rows
+            ]
+        if query == CYPHER_FLOW_WRITE_EDGES:
+            return [
+                {"source": f, "target": r}
+                for f, r in (writes or {}).get(project or "", [])
+            ]
         if query == CYPHER_FLOW_COVERAGE_GAPS:
             if isinstance(gaps, dict):
                 return [{"path": p} for p in gaps.get(project or "", [])]
@@ -78,10 +94,10 @@ def test_a_network_resource_continues_into_the_handler_of_another_project() -> N
     project's own flow edges, and names the hop that crossed the boundary
     (issue #1603). Before, the path ended at the resource: NO_FLOW with
     full coverage, a verified absence that was not one."""
-    remote = [("p.client.net", "q.api.handler")]
+    remote = [("resource::NETWORK::http://q:8000/items", "q.api.handler")]
     result = flow_reachability_verdict(
         _query_fn(
-            [("p.a.src", "p.client.net")],
+            [("p.a.src", "resource::NETWORK::http://q:8000/items")],
             [],
             remote=remote,
             other_edges={"q": [("q.api.handler", "q.db.sink")]},
@@ -91,8 +107,15 @@ def test_a_network_resource_continues_into_the_handler_of_another_project() -> N
         "q.db.sink",
     )
     assert result.verdict == FLOW_VERDICT_FOUND
-    assert result.path == ("p.a.src", "p.client.net", "q.api.handler", "q.db.sink")
-    assert result.remote_hops == (("p.client.net", "q.api.handler"),)
+    assert result.path == (
+        "p.a.src",
+        "resource::NETWORK::http://q:8000/items",
+        "q.api.handler",
+        "q.db.sink",
+    )
+    assert result.remote_hops == (
+        ("resource::NETWORK::http://q:8000/items", "q.api.handler"),
+    )
 
 
 def test_an_rpc_resource_continues_into_its_handler_directly() -> None:
@@ -150,16 +173,24 @@ def test_a_service_calling_itself_is_not_a_boundary() -> None:
     resource and the handler's are one (bot review on PR #1978)."""
     result = flow_reachability_verdict(
         _query_fn(
-            [("p.a.src", "p.client.net"), ("p.api.handler", "p.db.sink")],
+            [
+                ("p.a.src", "resource::NETWORK::http://q:8000/items"),
+                ("p.api.handler", "p.db.sink"),
+            ],
             [],
-            remote=[("p.client.net", "p.api.handler")],
+            remote=[("resource::NETWORK::http://q:8000/items", "p.api.handler")],
         ),
         "p",
         "p.a.src",
         "p.db.sink",
     )
     assert result.verdict == FLOW_VERDICT_FOUND
-    assert result.path == ("p.a.src", "p.client.net", "p.api.handler", "p.db.sink")
+    assert result.path == (
+        "p.a.src",
+        "resource::NETWORK::http://q:8000/items",
+        "p.api.handler",
+        "p.db.sink",
+    )
     assert result.remote_hops == ()
 
 
@@ -173,9 +204,12 @@ def test_coverage_of_every_project_the_walk_entered_counts() -> None:
     calls: list[tuple[str, dict | None]] = []
     result = flow_reachability_verdict(
         _query_fn(
-            [("p.a.src", "p.client.net")],
+            [("p.a.src", "resource::NETWORK::http://q:8000/items")],
             {"q": ["q/uncovered.php"]},
-            remote=[("p.client.net", "q.api.handler"), ("p.never", "r.api.handler")],
+            remote=[
+                ("resource::NETWORK::http://q:8000/items", "q.api.handler"),
+                ("p.never", "r.api.handler"),
+            ],
             other_edges={"q": [("q.api.handler", "q.other")], "r": []},
             calls=calls,
         ),
@@ -194,9 +228,9 @@ def test_coverage_of_every_project_the_walk_entered_counts() -> None:
 
     covered = flow_reachability_verdict(
         _query_fn(
-            [("p.a.src", "p.client.net")],
+            [("p.a.src", "resource::NETWORK::http://q:8000/items")],
             {"q": [], "p": ["p/uncovered.php"]},
-            remote=[("p.client.net", "q.api.handler")],
+            remote=[("resource::NETWORK::http://q:8000/items", "q.api.handler")],
             other_edges={"q": [("q.api.handler", "q.other")]},
         ),
         "p",
@@ -401,3 +435,266 @@ def test_a_handler_in_a_dotted_project_loads_that_projects_edges() -> None:
     )
     assert result.verdict == FLOW_VERDICT_FOUND
     assert result.remote_hops == (("svc.client.net", "svc.v2.api.handler"),)
+
+
+TOKEN = "resource::ENV::TOKEN"
+STDOUT = "resource::STDOUT::<dynamic>"
+NET = "resource::NETWORK::http://q:8000/items"
+
+
+@pytest.mark.parametrize(
+    ("scope", "verdict"),
+    [("p.v2.fn", FLOW_VERDICT_NO_FLOW), ("p.fn", FLOW_VERDICT_FOUND)],
+    ids=["a-dotted-sibling-project-owns-it", "the-project-owns-it"],
+)
+def test_a_resource_flow_belongs_to_the_project_its_scope_names(
+    scope: str, verdict: str
+) -> None:
+    """`r.scope STARTS WITH 'p.'` also loads `p.v2`'s resource flows; only
+    the project the scope's function belongs to owns one (bot review on PR
+    #2762)."""
+    result = flow_reachability_verdict(
+        _query_fn([(TOKEN, STDOUT, scope)], [], projects=["p", "p.v2"]),
+        "p",
+        TOKEN,
+        STDOUT,
+    )
+    assert result.verdict == verdict
+
+
+def test_another_projects_resource_flow_is_not_taken_for_this_ones() -> None:
+    """Resource names carry no project: after a hop into `q`, `q`'s own
+    `ENV::TOKEN -> STDOUT` is not a flow of `p`'s token (bot review on PR
+    #2762). The token did reach `q`'s handler, which may print it, so the
+    answer names the handler rather than a verified absence."""
+    result = flow_reachability_verdict(
+        _query_fn(
+            [(TOKEN, NET, "p.client.send")],
+            [],
+            remote=[(NET, "q.api.handler")],
+            other_edges={"q": [(TOKEN, STDOUT, "q.api.other")]},
+            projects=["p", "q"],
+        ),
+        "p",
+        TOKEN,
+        STDOUT,
+    )
+    assert result.verdict == FLOW_VERDICT_UNKNOWN
+    assert result.path == ()
+    assert result.gaps == ("q.api.handler",)
+
+
+# `notify` reads TOKEN and hands it to `send(v)`, which prints it; `hello`
+# prints a literal. As the indexer writes them: the arg flow, the resource
+# flow and its link from `notify` (its scope), and each function's writes.
+NOTIFY_EDGES = [
+    ("p.app.notify", "p.app.send"),
+    (TOKEN, STDOUT, "p.app.notify"),
+    ("p.app.notify", STDOUT),
+]
+NOTIFY_WRITES = {"p": [("p.app.send", STDOUT), ("p.app.hello", STDOUT)]}
+
+
+@pytest.mark.parametrize(
+    "function",
+    ["p.app.send", "p.app.hello"],
+    ids=["a-parameter-it-prints", "a-literal-it-prints"],
+)
+def test_a_function_reaches_the_sink_its_own_body_writes(function: str) -> None:
+    """The resource flow belongs to the function that read the value
+    (`notify`), and a literal write makes none, so neither `send` nor
+    `hello` owned a link to STDOUT: NO_FLOW with no gaps, a verified
+    absence of a write that is in the graph (bot review on PR #2762)."""
+    result = flow_reachability_verdict(
+        _query_fn(NOTIFY_EDGES, [], writes=NOTIFY_WRITES), "p", function, STDOUT
+    )
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.path == (function, STDOUT)
+
+
+@pytest.mark.parametrize("source", [TOKEN, "p.client.send"])
+@pytest.mark.parametrize(
+    ("handler_flows", "handler_writes"),
+    [([("q.api.handler", STDOUT)], []), ([], [("q.api.handler", STDOUT)])],
+    ids=["a-flow-it-produced", "a-write"],
+)
+def test_the_sink_a_handler_writes_is_not_a_flow_of_what_it_was_sent(
+    source: str,
+    handler_flows: list[tuple[str, ...]],
+    handler_writes: list[tuple[str, str]],
+) -> None:
+    """Neither a handler's write nor its own resource flow records which
+    value it wrote: a handler that prints "ok" writes STDOUT too. The value
+    sent to it reached the handler and no further, so the answer names the
+    handler, never FOUND (CodeRabbit review on PR #2762)."""
+    result = flow_reachability_verdict(
+        _query_fn(
+            [(TOKEN, NET, "p.client.send"), ("p.client.send", NET)],
+            [],
+            remote=[(NET, "q.api.handler")],
+            other_edges={"q": handler_flows},
+            projects=["p", "q"],
+            writes={"q": handler_writes},
+        ),
+        "p",
+        source,
+        STDOUT,
+    )
+    assert result.verdict == FLOW_VERDICT_UNKNOWN
+    assert result.path == ()
+    assert result.gaps == ("q.api.handler",)
+
+
+def test_the_writes_of_a_function_the_walk_reached_are_not_followed() -> None:
+    """`f` passes a value to `g`, and `g` prints: whether `g` prints that
+    value is not recorded (a composed flow from `f` would be), so `f` names
+    `g`. `g` itself still reaches what it writes."""
+    query = _query_fn([("p.app.f", "p.app.g")], [], writes={"p": [("p.app.g", STDOUT)]})
+
+    reached = flow_reachability_verdict(query, "p", "p.app.f", STDOUT)
+    own = flow_reachability_verdict(query, "p", "p.app.g", STDOUT)
+
+    assert reached.verdict == FLOW_VERDICT_UNKNOWN
+    assert reached.gaps == ("p.app.g",)
+    assert own.verdict == FLOW_VERDICT_FOUND
+    assert own.path == ("p.app.g", STDOUT)
+
+
+FILE = "resource::FILE::/tmp/out"
+
+
+@pytest.mark.parametrize(
+    ("written", "flows", "remote", "verdict", "gaps"),
+    [
+        (FILE, [(FILE, STDOUT, "p.app.relay")], [], FLOW_VERDICT_UNKNOWN, ("p.app.g",)),
+        (NET, [], [(NET, "q.api.handler")], FLOW_VERDICT_UNKNOWN, ("p.app.g",)),
+        (FILE, [], [], FLOW_VERDICT_NO_FLOW, ()),
+    ],
+    ids=[
+        "a-resource-that-flows-on-to-the-sink",
+        "a-resource-a-handler-serves",
+        "a-resource-that-goes-nowhere",
+    ],
+)
+def test_a_reached_function_is_named_when_what_it_writes_goes_on(
+    written: str,
+    flows: list[tuple[str, ...]],
+    remote: list[tuple[str, str]],
+    verdict: str,
+    gaps: tuple[str, ...],
+) -> None:
+    """`f` passes a value to `g`, which writes it, or something else, to a
+    resource. Naming only the functions that write the sink itself answered
+    NO_FLOW when that resource goes on: a flow from it to STDOUT, or the
+    handler behind an endpoint (Greptile review on PR #2762)."""
+    result = flow_reachability_verdict(
+        _query_fn(
+            [("p.app.f", "p.app.g"), *flows],
+            [],
+            remote=remote,
+            projects=["p", "q"],
+            writes={"p": [("p.app.g", written)]},
+        ),
+        "p",
+        "p.app.f",
+        STDOUT,
+    )
+    assert result.verdict == verdict
+    assert result.gaps == gaps
+
+
+def test_between_two_functions_the_walk_goes_on_through_what_each_writes() -> None:
+    """`build` returns a value that `caller` posts to another service. A
+    question between two functions keeps main's walk, which goes on from
+    every function it reaches: through `caller`'s NETWORK resource into the
+    handler and on. Taking writes only from the source stopped at `caller`
+    and answered NO_FLOW with full coverage, where main, on these edges,
+    answers FOUND (Greptile review on PR #2762)."""
+    result = flow_reachability_verdict(
+        _query_fn(
+            [("p.app.build", "p.app.caller"), ("p.app.caller", NET)],
+            [],
+            remote=[(NET, "q.api.handler")],
+            other_edges={"q": [("q.api.handler", "q.db.save")]},
+            projects=["p", "q"],
+        ),
+        "p",
+        "p.app.build",
+        "q.db.save",
+    )
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.path == (
+        "p.app.build",
+        "p.app.caller",
+        NET,
+        "q.api.handler",
+        "q.db.save",
+    )
+    assert result.remote_hops == ((NET, "q.api.handler"),)
+
+
+def test_a_resource_reaches_the_handler_it_was_sent_to_and_stops() -> None:
+    """The handler is a function sink a resource does reach. Past it, the
+    handler's own code flows carry other values, so a function beyond it is
+    unknown, naming the handler and that function."""
+    query = _query_fn(
+        [(TOKEN, NET, "p.client.send")],
+        [],
+        remote=[(NET, "q.api.handler")],
+        other_edges={"q": [("q.api.handler", "q.db.save")]},
+        projects=["p", "q"],
+    )
+
+    handler = flow_reachability_verdict(query, "p", TOKEN, "q.api.handler")
+    beyond = flow_reachability_verdict(query, "p", TOKEN, "q.db.save")
+
+    assert handler.verdict == FLOW_VERDICT_FOUND
+    assert handler.path == (TOKEN, NET, "q.api.handler")
+    assert beyond.verdict == FLOW_VERDICT_UNKNOWN
+    assert beyond.gaps == ("q.api.handler", "q.db.save")
+
+
+def test_a_resource_asked_about_a_function_is_unknown_not_no_flow() -> None:
+    """No edge links a resource to the code that reads it, so the walk from
+    `TOKEN` can never reach `notify`, which reads it: NO_FLOW with full
+    coverage would be a verified absence that is not one (CodeRabbit review
+    on PR #2762)."""
+    result = flow_reachability_verdict(
+        _query_fn(NOTIFY_EDGES, [], writes=NOTIFY_WRITES), "p", TOKEN, "p.app.notify"
+    )
+    assert result.verdict == FLOW_VERDICT_UNKNOWN
+    assert result.path == ()
+    assert result.gaps == ("p.app.notify",)
+
+
+# Negative: what must not change.
+
+
+def test_a_write_joins_no_resource_to_the_function_that_writes() -> None:
+    """A write links its function to the sink, never a resource to the
+    function: `ENV::OTHER` read in a function that prints something else
+    still has no flow to STDOUT."""
+    result = flow_reachability_verdict(
+        _query_fn([], [], writes={"p": [("p.app.quiet", STDOUT)]}),
+        "p",
+        "resource::ENV::OTHER",
+        STDOUT,
+    )
+    assert result.verdict == FLOW_VERDICT_NO_FLOW
+
+
+def test_a_dotted_sibling_projects_write_is_not_this_projects() -> None:
+    """`p.`'s prefix read returns `p.v2`'s writes too; only `p.v2` owns
+    them."""
+    result = flow_reachability_verdict(
+        _query_fn(
+            [],
+            [],
+            projects=["p", "p.v2"],
+            writes={"p": [("p.v2.app.send", STDOUT)]},
+        ),
+        "p",
+        "p.v2.app.send",
+        STDOUT,
+    )
+    assert result.verdict == FLOW_VERDICT_NO_FLOW

@@ -41,8 +41,6 @@ def follow_js_reexports(
     sources exporting it, a cycle, or `<module>.default` for a default export
     known by no name.
     """
-    if qn in function_registry:
-        return qn
     return _ReexportWalk(
         import_mapping, exports, module_paths, function_registry
     ).follow(qn)[0]
@@ -109,11 +107,15 @@ class _ReexportWalk:
     def follow(self, qn: str) -> tuple[str, bool]:
         # `qn` names a module's export, then possibly one of its own bindings
         # (`local`). Also says whether a cycle cut the walk short: a cut walk
-        # depends on the path that reached it, so it is never settled.
+        # depends on the path that reached it, so it is never settled. A
+        # registered export the module publishes for another binding does
+        # not end it.
         step = _Step(qn, local=False)
         entered: list[_Step] = []
         cut = False
-        while step.qn not in self._registry:
+        while step.qn not in self._registry or (
+            not step.local and self._exported_as_another(step.qn)
+        ):
             if step in self._settled:
                 step = _Step(self._settled[step], local=False)
                 break
@@ -131,6 +133,21 @@ class _ReexportWalk:
         if not cut:
             self._settled.update(dict.fromkeys(entered, step.qn))
         return step.qn, cut
+
+    def _exported_as_another(self, qn: str) -> bool:
+        """Whether the module publishes `qn`'s name for another binding.
+
+        `export { beta as renamed }` or `module.exports = { renamed: beta }`
+        beside a local `renamed`: an importer of `renamed` gets `beta`, so
+        the registered local of that name must not end the walk (bot review
+        on PR #2994).
+        """
+        module_qn, separator, name = qn.rpartition(cs.SEPARATOR_DOT)
+        barrel = js_ts_module_qn(module_qn, self._modules) if separator else None
+        if barrel is None:
+            return False
+        export = self._exports.get(barrel, {}).get(name)
+        return export is not None and export.target != qn
 
     def _next(self, step: _Step) -> tuple[_Step | None, bool]:
         if step.local:

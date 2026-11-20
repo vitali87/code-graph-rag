@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from tree_sitter import QueryCursor
 
 from ... import constants as cs
-from ...constants import SEPARATOR_DOT
+from ...constants import (
+    CHAR_COMMA,
+    SEPARATOR_DOT,
+    TS_FIELD_FUNCTION,
+    TS_FIELD_OBJECT,
+    TS_PY_ATTRIBUTE,
+    TS_PY_CALL,
+    TS_PY_IDENTIFIER,
+)
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..utils import follow_reexports, get_cached_query, safe_decode_text
 
@@ -14,6 +23,41 @@ if TYPE_CHECKING:
     from tree_sitter import Language, Node
 
     from ..import_processor import ImportProcessor
+
+
+def call_head(node: Node) -> Node | None:
+    """The identifier a call's callee starts with: `Thing` for `Thing()`,
+    `pkg` for `pkg.make()`, None for anything else. A scope that binds
+    that name itself calls its own binding, not the module's."""
+    if node.type != TS_PY_CALL:
+        return None
+    head = node.child_by_field_name(TS_FIELD_FUNCTION)
+    while head is not None and head.type == TS_PY_ATTRIBUTE:
+        head = head.child_by_field_name(TS_FIELD_OBJECT)
+    return head if head is not None and head.type == TS_PY_IDENTIFIER else None
+
+
+def split_top_level(inner: str, separator: str = CHAR_COMMA) -> list[str]:
+    """Split `A, dict[str, B], C` on the separators outside any brackets --
+    the commas between positions, or the `|` between union members, which a
+    plain `str.split` would also find INSIDE `tuple[Widget | None, Banner]`."""
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for char in inner:
+        if char in "[(":
+            depth += 1
+        elif char in "])":
+            depth = max(0, depth - 1)
+        if char == separator and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts
 
 
 def resolve_dotted_class(
@@ -41,18 +85,21 @@ def resolve_dotted_class(
     bases = (
         [own_class]
         if own_class_rebinds
-        else _dotted_head_bases(head, module_qn, import_mapping.get(module_qn, {}))
+        else dotted_head_bases(head, module_qn, import_mapping.get(module_qn, {}))
     )
     for base in bases:
         qn = follow_reexports(
-            f"{base}{SEPARATOR_DOT}{rest}", import_mapping, function_registry
+            f"{base}{SEPARATOR_DOT}{rest}",
+            import_mapping,
+            function_registry,
+            import_processor.python_star_rules,
         )
         if function_registry.get(qn) == NodeType.CLASS:
             return qn
     return None
 
 
-def _dotted_head_bases(
+def dotted_head_bases(
     head: str, module_qn: str, import_map: dict[str, str]
 ) -> Iterator[str]:
     """What the first name of a dotted path can refer to, most specific first.
@@ -220,6 +267,32 @@ def external_stdlib_base_method_names(parent_qns: list[str]) -> frozenset[str]:
         if isinstance(base, type):
             names.update(dir(base))
     return frozenset(names)
+
+
+def reduce_optional_annotation(text: str) -> str:
+    """`T` for an annotation that says "a T or None": `Optional[T]`,
+    `typing.Optional[T]`, `Union[T, None]`, `T | None`, any of them quoted as
+    a forward reference. Anything else (a container, a union of two classes)
+    keeps its text, so the type readers downstream see what they did before.
+    """
+    current = text.strip()
+    while (reduced := _reduce_optional_once(current)) != current:
+        current = reduced
+    return current
+
+
+def _reduce_optional_once(text: str) -> str:
+    text = text.strip().strip(cs.PY_ANNOTATION_QUOTES).strip()
+    members = split_top_level(text, cs.PY_UNION_SEPARATOR)
+    if len(members) == 1:
+        if optional := re.match(cs.PY_OPTIONAL_PATTERN, text):
+            return optional.group("inner")
+        union = re.match(cs.PY_UNION_PATTERN, text)
+        if union is None:
+            return text
+        members = split_top_level(union.group("inner"))
+    non_none = [member for member in members if member and member != cs.PY_NONE]
+    return non_none[0] if len(non_none) == 1 else text
 
 
 def annotation_text(type_node: Node) -> str | None:
