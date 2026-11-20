@@ -198,6 +198,13 @@ function loopShadowsModuleAlias() {
   }
 }
 
+// Bot review on PR #2767: a default value binds no parameter, so `process`
+// in it is still the global.
+function defaultUsesProcess(x = process.cwd()) {
+  const env = process.env;
+  console.log(env.JE_DEFAULT_PROCESS);
+}
+
 // Bot review on PR #2767: an alias bound in an inline callback the caller
 // walks is read there too.
 function callbackAlias(items) {
@@ -302,6 +309,7 @@ CASES = [
     ("readBeforeRebind", "JE_BEFORE_REBIND"),
     ("paramNamedProcess", "JE_PAST_PARAM"),
     ("callbackAlias", "JE_CALLBACK"),
+    ("defaultUsesProcess", "JE_DEFAULT_PROCESS"),
     ("tsReadsExported", "JE_EXPORTED"),
 ]
 

@@ -456,9 +456,10 @@ def _bindings(
 
 
 def _parameter_names(caller_node: Node, descriptor: LanguageDescriptor) -> set[str]:
-    # Every identifier in the parameter list: a parameter (destructured or
-    # not) shadows a module-level name of the same spelling. A default value's
-    # identifiers are included too, which can only drop an alias, never add one.
+    # Every name the parameter list binds: a parameter (destructured or not)
+    # shadows a module-level name of the same spelling. A default value or a
+    # type annotation binds nothing, so `x = process.cwd()` makes no
+    # parameter named `process` (bot review on PR #2767).
     names: set[str] = set()
     stack = [
         params
@@ -467,10 +468,29 @@ def _parameter_names(caller_node: Node, descriptor: LanguageDescriptor) -> set[s
     ]
     while stack:
         node = stack.pop()
-        if node.type == descriptor.identifier_type and (name := _text(node)):
-            names.add(name)
-        stack.extend(node.named_children)
+        if node.type in (
+            descriptor.identifier_type,
+            cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+        ):
+            if name := _text(node):
+                names.add(name)
+        elif (bound := _bound_part(node)) is not None:
+            stack.append(bound)
+        elif node.type != cs.TS_TYPE_ANNOTATION:
+            stack.extend(node.named_children)
     return names
+
+
+def _bound_part(node: Node) -> Node | None:
+    # The part of a parameter form that binds names: a TS parameter's
+    # pattern, a default's left side, a renaming pair's local.
+    if node.type in cs.JS_TS_TYPED_PARAMETER_TYPES:
+        return node.child_by_field_name(cs.TS_FIELD_PATTERN)
+    if node.type in (cs.TS_ASSIGNMENT_PATTERN, cs.TS_OBJECT_ASSIGNMENT_PATTERN):
+        return node.child_by_field_name(cs.FIELD_LEFT)
+    if node.type == cs.TS_PAIR_PATTERN:
+        return node.child_by_field_name(cs.FIELD_VALUE)
+    return None
 
 
 def _scope_nodes(caller_node: Node, descriptor: LanguageDescriptor) -> list[Node]:
