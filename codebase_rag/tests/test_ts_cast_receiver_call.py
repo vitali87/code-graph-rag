@@ -133,6 +133,11 @@ export function localReadonly(s: unknown) {
 export function typeParameter<Service extends Other>(s: unknown) {
   return (s as Service).handle();
 }
+
+export function localClass(s: unknown) {
+  class Service { handle(): number { return 4; } }
+  return (s as Service).handle();
+}
 """
 
 
@@ -171,7 +176,9 @@ def test_a_readonly_the_module_declares_is_that_class(
     }
 
 
-@pytest.mark.parametrize("caller", ["scoped.localReadonly", "scoped.typeParameter"])
+@pytest.mark.parametrize(
+    "caller", ["scoped.localReadonly", "scoped.typeParameter", "scoped.localClass"]
+)
 def test_a_cast_to_a_name_declared_in_scope_is_not_the_module_class(
     utility_graph: RecordedGraph, caller: str
 ) -> None:

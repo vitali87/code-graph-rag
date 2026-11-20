@@ -2334,10 +2334,12 @@ def _ts_named_type_text(target: Node) -> str | None:
     return decode_node_text(named.text)
 
 
-def _ts_names_type_parameter(anchor: Node, name: str) -> bool:
+def _ts_names_scoped_type(anchor: Node, name: str) -> bool:
     # Whether the nearest scope around `anchor` that declares the type `name`
-    # binds it as a type parameter (`function f<Service>()`): such a cast
-    # names the constraint's members, never a module class of that name.
+    # is not the module: a type parameter (`function f<Service>()`) names the
+    # constraint's members, and a class a function declares is that local
+    # class, so neither is the module class the bare name would bind
+    # (CodeRabbit and Greptile, PR #2959).
     current = anchor.parent
     while current is not None:
         params = current.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
@@ -2346,12 +2348,19 @@ def _ts_names_type_parameter(anchor: Node, name: str) -> bool:
             for param in params.named_children
         ):
             return True
-        if any(
-            child.type in cs.TS_TYPE_DECLARATION_NODES
-            and safe_decode_text(child.child_by_field_name(cs.FIELD_NAME)) == name
-            for child in current.named_children
-        ):
-            return False
+        for child in current.named_children:
+            declaration = (
+                child.child_by_field_name(cs.TS_DECLARATION)
+                if child.type == cs.TS_EXPORT_STATEMENT
+                else child
+            )
+            if (
+                declaration is not None
+                and declaration.type in cs.TS_TYPE_DECLARATION_NODES
+                and safe_decode_text(declaration.child_by_field_name(cs.FIELD_NAME))
+                == name
+            ):
+                return current.parent is not None
         current = current.parent
     return False
 
@@ -2361,13 +2370,13 @@ def _ts_cast_receiver_call_name(member: Node) -> str | None:
     # receiver's type at the call site, so the call is `Service.handle`, which
     # the resolver binds as it binds a typed receiver; the cast's own text was
     # a call name it could not read (issue #2890). A cast to a type parameter
-    # names no class (CodeRabbit, PR #2959).
+    # or to a function's own class names no module class (PR #2959 review).
     if (cast := _ts_cast_target(member)) is None:
         return None
     target, method = cast
     if (type_name := _ts_named_type_text(target)) is None:
         return None
-    if _ts_names_type_parameter(target, type_name.partition(cs.SEPARATOR_DOT)[0]):
+    if _ts_names_scoped_type(target, type_name.partition(cs.SEPARATOR_DOT)[0]):
         return None
     return f"{type_name}{cs.SEPARATOR_DOT}{method}"
 
@@ -6956,7 +6965,7 @@ class CallProcessor:
                 return call_name
             target = first
         type_name = _ts_named_type_text(target)
-        if type_name is None or _ts_names_type_parameter(
+        if type_name is None or _ts_names_scoped_type(
             target, type_name.partition(cs.SEPARATOR_DOT)[0]
         ):
             return call_name
