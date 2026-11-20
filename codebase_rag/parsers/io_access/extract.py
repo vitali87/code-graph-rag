@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from enum import Enum, auto
 
 from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import cpp_declarator_name, python_import_bound_names
-from .constants import DYNAMIC_TARGET, PY_SCOPE_BOUNDARIES
+from .constants import DYNAMIC_TARGET, PY_SCOPE_BOUNDARIES, IODirection
 from .descriptor import LanguageDescriptor
-from .models import RenderedText
+from .models import IOSink, RenderedText
 
 # Definition nodes whose BODY is a separate scope but whose HEADER (default arg
 # values, annotations, base classes, decorators) executes in the enclosing scope at
@@ -574,6 +574,40 @@ def rust_unwrap_result(node: Node) -> Node:
         return node
 
 
+# Wrappers between a callable and the declaration that binds it: `let g = (||
+# ...)`, and Go's expression_list (`g := func() {...}`).
+_BOUND_CALLABLE_WRAPPERS = frozenset(
+    {cs.TS_PARENTHESIZED_EXPRESSION, cs.TS_GO_EXPRESSION_LIST}
+)
+
+
+def is_inline_callback(
+    node: Node,
+    descriptor: LanguageDescriptor,
+    has_own_pass: Callable[[Node], bool],
+) -> bool:
+    # An inline callable (an arrow or lambda passed as an argument, an invoked
+    # Go func literal) that gets no caller pass of its own runs as part of the
+    # enclosing caller, so the lean walks credit its I/O there (issue #2772).
+    # One bound to a local (`let g = || ...`, `g := func() {...}`, `Runnable r
+    # = () -> ...`) is a named callback, like JS `const handler = ...`: it runs
+    # only where that name is called, so the enclosing caller is not credited.
+    if node.type not in descriptor.inline_callable_types or has_own_pass(node):
+        return False
+    return not _bound_to_local(node, descriptor)
+
+
+def _bound_to_local(node: Node, descriptor: LanguageDescriptor) -> bool:
+    parent = node.parent
+    while parent is not None and parent.type in _BOUND_CALLABLE_WRAPPERS:
+        parent = parent.parent
+    if parent is None:
+        return False
+    # A loop clause binds the loop variable, not the callable it iterates.
+    binders = descriptor.extra_declarator_types - descriptor.loop_declarator_types
+    return parent.type == descriptor.declarator_type or parent.type in binders
+
+
 def lean_definition_header_nodes(
     node: Node, descriptor: LanguageDescriptor
 ) -> list[Node]:
@@ -688,6 +722,10 @@ def head_is_genuine_module(base: str | None, head: str) -> bool:
     # (Go) imports are handled separately by package-name matching.
     if base is None:
         return True
+    # A Dart package's main library under its own prefix (`import
+    # 'package:http/http.dart' as http`) is that package (issue #2761).
+    if base.startswith(cs.DART_SCHEME_PACKAGE):
+        return base == f"{cs.DART_SCHEME_PACKAGE}{head}/{head}{cs.DART_EXT}"
     return base.split(cs.SEPARATOR_DOT)[0].removeprefix(cs.NODE_BUILTIN_PREFIX) == head
 
 
@@ -1324,3 +1362,29 @@ def literal_target(
         template_type=template_type,
         substitution_type=substitution_type,
     )
+
+
+def mode_direction(
+    call_node: Node, sink: IOSink, descriptor: LanguageDescriptor
+) -> IODirection:
+    """The direction a sink with an open-mode argument has at one call.
+
+    No mode argument is the sink's default (`fs.promises.open(p)` reads); a
+    literal mode decides as `effective_direction` reads it; a mode that is
+    not a literal may be any, so the call may both read and write (#2775
+    review).
+    """
+    mode_node = target_arg_node(
+        call_node,
+        sink.mode_arg,
+        keyword_arg_type=descriptor.keyword_arg_type,
+        wrapper_type=descriptor.argument_wrapper_type,
+    )
+    if mode_node is None:
+        return sink.direction
+    mode = string_literal(
+        mode_node, descriptor.string_type, descriptor.string_content_type
+    )
+    if mode == DYNAMIC_TARGET:
+        return IODirection.READ_WRITE
+    return sink.effective_direction(mode)

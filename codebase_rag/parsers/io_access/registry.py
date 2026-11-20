@@ -25,7 +25,50 @@ _PYTHON_SINKS: tuple[IOSink, ...] = (
         target_arg=0,
         target_kw="key",
     ),
-    IOSink("print", ResourceKind.STDOUT, IODirection.WRITE),
+    # `file=` redirects the write: to stderr, or into an open handle (#2776).
+    IOSink("print", ResourceKind.STDOUT, IODirection.WRITE, stream_kw="file"),
+    # The standard streams' own file objects (issue #2778).
+    IOSink("sys.stdout.write", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("sys.stdout.writelines", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("sys.stderr.write", ResourceKind.STDERR, IODirection.WRITE),
+    IOSink("sys.stderr.writelines", ResourceKind.STDERR, IODirection.WRITE),
+    # setdefault reads the variable, and writes it when it is unset.
+    IOSink(
+        "os.environ.setdefault",
+        ResourceKind.ENV,
+        IODirection.READ_WRITE,
+        target_arg=0,
+        target_kw="key",
+    ),
+    # Running a command (issue #2778): the command is the resource, so a
+    # tainted argument reaching it models command injection. All but the
+    # exit-code ones return the command's output, which can echo it back.
+    *(
+        IOSink(
+            f"subprocess.{fn}",
+            ResourceKind.PROCESS,
+            IODirection.WRITE,
+            target_arg=0,
+            target_kw="args",
+            returns_output=fn not in ("call", "check_call"),
+        )
+        for fn in ("run", "call", "check_call", "check_output", "Popen")
+    ),
+    IOSink(
+        "os.system",
+        ResourceKind.PROCESS,
+        IODirection.WRITE,
+        target_arg=0,
+        target_kw="command",
+    ),
+    IOSink(
+        "os.popen",
+        ResourceKind.PROCESS,
+        IODirection.WRITE,
+        target_arg=0,
+        target_kw="cmd",
+        returns_output=True,
+    ),
     IOSink("json.load", ResourceKind.FILE, IODirection.READ),
     IOSink("json.dump", ResourceKind.FILE, IODirection.WRITE),
     IOSink(
@@ -164,6 +207,28 @@ _JS_TS_SINKS: tuple[IOSink, ...] = (
     IOSink("fs.writeFileSync", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
     IOSink("fs.appendFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
     IOSink("fs.appendFileSync", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    # The promise API (issue #2775). One key set covers a named import from
+    # `(node:)fs/promises` (which maps to `fs.promises.<fn>`), a namespace
+    # import of it, and the `fs.promises.<fn>(...)` member call.
+    IOSink("fs.promises.readFile", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("fs.promises.writeFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink(
+        "fs.promises.appendFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0
+    ),
+    IOSink("fs.promises.rm", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("fs.promises.unlink", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    # Node's open flags ('r', 'w', 'a', 'r+', ...) read like Python modes;
+    # no flags is 'r'.
+    IOSink(
+        "fs.promises.open",
+        ResourceKind.FILE,
+        IODirection.READ,
+        target_arg=0,
+        mode_arg=1,
+    ),
+    # What CLIs and loggers use to write without console.log's newline.
+    IOSink("process.stdout.write", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("process.stderr.write", ResourceKind.STDERR, IODirection.WRITE),
 )
 
 # Go direct-call I/O sinks (issue #714). Keyed by the FULL import path plus the
@@ -440,6 +505,13 @@ LIBC_STD_STREAMS: dict[str, ResourceKind] = {
     "stdin": ResourceKind.STDIN,
     "stdout": ResourceKind.STDOUT,
     "stderr": ResourceKind.STDERR,
+}
+
+# The standard streams a Python `print(file=...)` can name, keyed like a sink
+# registry so an import alias (`from sys import stderr`) normalises onto them.
+PY_STD_STREAMS: dict[str, ResourceKind] = {
+    "sys.stdout": ResourceKind.STDOUT,
+    "sys.stderr": ResourceKind.STDERR,
 }
 
 # Keyed under both the bare (C linkage or `using namespace std`) and `std::`-

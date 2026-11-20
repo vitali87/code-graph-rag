@@ -7,6 +7,7 @@ import pytest
 
 from codebase_rag.constants import SupportedLanguage
 from codebase_rag.models import LanguageSpec
+from codebase_rag.parsers import structure_processor
 from codebase_rag.parsers.structure_processor import StructureProcessor
 
 
@@ -343,6 +344,44 @@ class TestIdentifyStructure:
 
         assert processor.structural_elements[Path("pkg")] == "test_project.pkg"
         assert processor.structural_elements[Path("folder")] is None
+
+    def test_a_skipped_directory_is_not_entered(
+        self,
+        temp_repo: Path,
+        processor: StructureProcessor,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # CodeRabbit review of #3644: `rglob` listed all of `.git/objects`
+        # only to reject each entry; the walk now prunes before descending.
+        for folder in ("objects/12", "objects/34", "refs/heads"):
+            (temp_repo / ".git" / folder).mkdir(parents=True)
+        (temp_repo / "valid" / "inner").mkdir(parents=True)
+        asked: list[str] = []
+        real = structure_processor.should_skip_path
+
+        def spy(
+            path: Path, repo_path: Path, **kwargs: frozenset[str] | bool | None
+        ) -> bool:
+            asked.append(path.relative_to(temp_repo).as_posix())
+            return real(path, repo_path, **kwargs)
+
+        monkeypatch.setattr(structure_processor, "should_skip_path", spy)
+        processor.identify_structure(emit=False)
+
+        assert ".git" in asked
+        assert not [path for path in asked if path.startswith(".git/")], asked
+        assert Path("valid/inner") in processor.structural_elements
+
+    def test_a_scoped_walk_reaches_a_directory_under_an_unnamed_one(
+        self, temp_repo: Path, processor: StructureProcessor
+    ) -> None:
+        (temp_repo / "a" / "b" / "c").mkdir(parents=True)
+
+        processor.identify_structure(only={"a/b"}, emit=False)
+
+        assert Path("a/b") in processor.structural_elements
+        assert Path("a") not in processor.structural_elements
+        assert Path("a/b/c") not in processor.structural_elements
 
 
 class TestProcessGenericFile:
