@@ -179,6 +179,18 @@ class Closer:
         self.f = None
 
 
+def chained():
+    f = open("/tmp/chained.txt", "w")
+    other = f = io.StringIO()
+    f.write(os.getenv("CHAIN_TOKEN"))
+
+
+def annotated():
+    f = open("/tmp/annotated.txt", "w")
+    f: io.TextIOWrapper
+    f.write(os.getenv("ANNOTATED_TOKEN"))
+
+
 def unpacked():
     f = open("/tmp/unpacked.txt", "w")
     f, other = io.StringIO(), None
@@ -270,12 +282,14 @@ def test_a_handle_the_path_may_hold_is_a_flow_end(
         ("resource::ENV::LOG_TOKEN", "resource::FILE::/tmp/log.txt"),
         ("resource::ENV::INNER_TOKEN", "resource::FILE::/tmp/out.txt"),
         ("resource::ENV::UNPACK_TOKEN", "resource::FILE::/tmp/unpacked.txt"),
+        ("resource::ENV::CHAIN_TOKEN", "resource::FILE::/tmp/chained.txt"),
     ],
     ids=[
         "with-alias",
         "later-module-rebinding",
         "nearer-scope-rebinding",
         "unpacking-rebinding",
+        "chained-rebinding",
     ],
 )
 def test_a_handle_the_name_no_longer_holds_is_no_flow_end(
@@ -335,11 +349,13 @@ def test_a_read_on_a_value_that_is_not_a_handle_is_no_source(
         ("resource::ENV::CFG_TOKEN", "resource::FILE::/tmp/cfg.txt"),
         ("resource::ENV::CLOSER_TOKEN", "resource::FILE::/tmp/closer.txt"),
         ("resource::ENV::SWAP_TOKEN", "resource::FILE::/tmp/second.txt"),
+        ("resource::ENV::ANNOTATED_TOKEN", "resource::FILE::/tmp/annotated.txt"),
     ],
     ids=[
         "a-conditional-rebinding-keeps-the-handle",
         "a-reset-in-another-method-keeps-the-handle",
         "the-later-self-binding-wins",
+        "a-bare-annotation-keeps-the-handle",
     ],
 )
 def test_a_handle_the_name_may_still_hold_stays_a_flow_end(

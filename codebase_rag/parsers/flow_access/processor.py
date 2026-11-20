@@ -532,6 +532,16 @@ def _py_assignment_chain(node: Node) -> _PyAssignmentChain:
     return _PyAssignmentChain(targets, annotations, value)
 
 
+def _py_chain_assignments(node: Node) -> list[Node]:
+    # `a = b = value`: the outer assignment and each one nested as a value.
+    assignments: list[Node] = []
+    current: Node | None = node
+    while current is not None and current.type == cs.TS_PY_ASSIGNMENT:
+        assignments.append(current)
+        current = current.child_by_field_name(cs.TS_FIELD_RIGHT)
+    return assignments
+
+
 def _py_bind_names(state: _TaintMap, bindings: list[tuple[str, Taint | None]]) -> None:
     for name, taint in bindings:
         if taint is not None:
@@ -4225,10 +4235,14 @@ class FlowProcessor:
                 # value.
                 state = self._walk_stmt(target, state, ctx)
                 _py_bind_names(state, _py_target_bindings(target, value, taints))
-        # The handle a name holds changes only once the right side ran:
-        # `rows = rows.execute(..)` reads through the handle `rows` held (bot
-        # review on PR #2770).
-        self._bind_py_handle(node, state, ctx)
+            # The handle a name holds changes only once the right side ran:
+            # `rows = rows.execute(..)` reads through the handle `rows` held,
+            # and every target of a chain takes what its final value is (bot
+            # review on PR #2770). A bare annotation (`f: TextIO`) binds
+            # nothing, so the handle stays.
+            assignments = _py_chain_assignments(node)
+            for assignment in assignments:
+                self._bind_py_handle(assignment, state, ctx, assignments[-1])
         # The annotation comes last, after the target is bound (bot review on
         # PR #2764): `x: print(x) = secret()` prints the secret where the
         # annotation runs at all, which the walk of a `type` node decides.
@@ -4780,10 +4794,17 @@ class FlowProcessor:
         for taint, via in arg_taints:
             self._flow_arg_into_callee(taint, via, callee, node, ctx)
 
-    def _bind_py_handle(self, node: Node, tainted: _TaintMap, ctx: _FlowCtx) -> None:
+    def _bind_py_handle(
+        self,
+        node: Node,
+        tainted: _TaintMap,
+        ctx: _FlowCtx,
+        value_node: Node | None = None,
+    ) -> None:
         # Track the handles a name may hold, in source order. A name assigned
         # anything else (an `as` alias included) no longer holds the handle it
-        # held before.
+        # held before. `value_node` is the assignment whose right side gives
+        # the value, for each target of a chain `a = b = open(p)`.
         target = python_bound_target(node)
         if target is None or target.text is None:
             return
@@ -4800,7 +4821,7 @@ class FlowProcessor:
             for handles in self._py_handle_views(tainted)
             if (
                 found := python_binding_from_node(
-                    node, ctx.import_map, self._py_handle_ctors, handles
+                    value_node or node, ctx.import_map, self._py_handle_ctors, handles
                 )
             )
             is not None
