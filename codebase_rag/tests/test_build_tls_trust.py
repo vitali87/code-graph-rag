@@ -123,9 +123,21 @@ def pip_pin_problems(requirements: str) -> list[str]:
     pin = _HASHED_PIP.fullmatch(entries[0])
     if pin is None:
         return [f"pip is not pinned by hash: {entries[0]}"]
-    if fails_floor(pin["version"], PIP_FLOOR):
+    if fails_pip_floor(pin["version"]):
         return [f"bootstrap pip {pin['version']} is below {PIP_FLOOR}"]
     return []
+
+
+def fails_pip_floor(pinned: str) -> bool:
+    """True below the floor, and for anything but a plain release number.
+
+    Unlike a uv or action version, a hashed `pip==` pin is exact whatever its
+    length: pip calls its x.y.0 releases x.y (26.3), and the hashes name one
+    file. So two parts are as exact as three, and only a wildcard or a
+    pre-release spelling is refused."""
+    if not re.fullmatch(r"\d+(?:\.\d+){1,2}", pinned):
+        return True
+    return Version(pinned) < PIP_FLOOR
 
 
 def pip_bootstrap_problems(commands: list[str], requirements: str) -> list[str]:
@@ -313,6 +325,20 @@ def test_a_hashed_pip_bootstrap_at_the_floor_is_accepted() -> None:
         "python -m pip install pkg",
     ]
     assert pip_bootstrap_problems(commands, GOOD_PIP_REQUIREMENTS) == []
+
+
+@pytest.mark.parametrize("version", ["26.2.2", "26.3", "26.3.1", "27.0"])
+def test_a_hashed_pip_pin_at_or_above_the_floor_is_accepted(version: str) -> None:
+    requirements = GOOD_PIP_REQUIREMENTS.replace("26.2.2", version)
+    assert pip_pin_problems(requirements) == []
+
+
+@pytest.mark.parametrize("version", ["26.2", "26.2.1", "26.3.*", "26.3rc1", "26"])
+def test_a_hashed_pip_pin_below_the_floor_or_inexact_is_rejected(
+    version: str,
+) -> None:
+    requirements = GOOD_PIP_REQUIREMENTS.replace("26.2.2", version)
+    assert pip_pin_problems(requirements)
 
 
 def test_every_build_image_bootstraps_pip_before_using_it() -> None:

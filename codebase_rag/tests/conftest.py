@@ -22,6 +22,7 @@ from codebase_rag import constants as rag_cs
 from codebase_rag import graph_audit
 from codebase_rag.capture import CaptureSelection
 from codebase_rag.checkout_state import state_file
+from codebase_rag.config import ModelConfig, settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import LANGUAGE_SPECS, get_language_for_extension
 from codebase_rag.parser_loader import load_parsers
@@ -99,6 +100,18 @@ class MockNode:
 
     def child_by_field_name(self, name: str) -> MockNode | None:
         return self.node_fields.get(name)
+
+
+def patch_active_model(
+    monkeypatch: pytest.MonkeyPatch, name: str, config: ModelConfig | None
+) -> None:
+    # pydantic keeps private attributes out of the instance __dict__, and
+    # pytest 9.2's monkeypatch.setattr restores from that __dict__, so its undo
+    # deletes the attribute and every later test reading it fails. Patching
+    # the dict pydantic keeps them in restores the value it found.
+    private = settings.__pydantic_private__
+    assert private is not None
+    monkeypatch.setitem(private, name, config)
 
 
 def create_mock_node(
@@ -199,6 +212,36 @@ def both_interface_walks(
     both. A build without the walk skips the Rust run."""
     if request.param and native_trees.interface_bridge() is None:
         pytest.skip("cgr_graph_rs without the interface fingerprint is installed")
+    monkeypatch.setattr(native_trees, "ENABLED", request.param)
+    clear_scope_facts()
+    yield
+    clear_scope_facts()
+
+
+@pytest.fixture(params=[True, False], ids=["rust_aliases", "python_aliases"])
+def both_alias_walks(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Generator[None, None, None]:
+    """Runs a test once on the Rust alias walk and once on its Python twin,
+    so each alias form type inference reads holds on both. A build without
+    the walk skips the Rust run."""
+    if request.param and native_trees.alias_bridge() is None:
+        pytest.skip("cgr_graph_rs without the alias walk is installed")
+    monkeypatch.setattr(native_trees, "ENABLED", request.param)
+    clear_scope_facts()
+    yield
+    clear_scope_facts()
+
+
+@pytest.fixture(params=[True, False], ids=["rust_callables", "python_callables"])
+def both_callable_scans(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Generator[None, None, None]:
+    """Runs a test once on the Rust callable-parameter scan and once on its
+    Python twin, so each way a parameter is called holds on both. A build
+    without the scan skips the Rust run."""
+    if request.param and native_trees.callable_bridge() is None:
+        pytest.skip("cgr_graph_rs without the callable-parameter scan is installed")
     monkeypatch.setattr(native_trees, "ENABLED", request.param)
     clear_scope_facts()
     yield
@@ -388,6 +431,27 @@ def _isolate_cgr_home(
     home = tmp_path_factory.mktemp("cgr-home-iso")
     monkeypatch.setattr(settings, "CGR_HOME", home)
     return home
+
+
+@pytest.fixture
+def cgr_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A code-graph-rag checkout the grammar loader runs from, under tmp_path.
+
+    The loader reads submodule grammars from cgr's own checkout only, so a
+    test that plants one does it here, not in the working directory.
+    """
+    root = tmp_path / "cgr-checkout"
+    package = root / "codebase_rag"
+    package.mkdir(parents=True)
+    (package / "language_spec.py").write_text("LANGUAGE_SPECS = {}\n", encoding="utf-8")
+    (root / ".git").mkdir()
+    (root / "pyproject.toml").write_text(
+        f'[project]\nname = "{rag_cs.PACKAGE_NAME}"\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "codebase_rag.parser_loader._package_dir", lambda: package, raising=False
+    )
+    return root
 
 
 def shared_session_dir(tmp_path_factory: pytest.TempPathFactory, name: str) -> Path:

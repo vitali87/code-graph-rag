@@ -1340,3 +1340,39 @@ SENSITIVE_PARENT_FILES = frozenset(
 )
 # Everything under these directories is key material.
 SENSITIVE_DIR_NAMES = frozenset({".ssh", ".gnupg"})
+# Windows drops trailing dots and spaces from a name, so `.git.` opens `.git`.
+WINDOWS_IGNORED_NAME_TAIL = ". "
+# A worktree's git directory names the shared one, which holds the config.
+GIT_COMMONDIR_FILENAME = "commondir"
+# What git looks for to take a folder for a git directory: a HEAD file beside
+# these folders, or beside a `commondir` file.
+GIT_HEAD_FILENAME = "HEAD"
+GIT_DIR_SUBDIRS = ("objects", "refs")
+# Asks git which git directory, and which shared one, it uses for a folder.
+# `rev-parse` runs nothing a config names, and fsmonitor is switched off on
+# top. The answer must not hang on settings the project can reach (its
+# `.env` reaches the environment): bare-repository discovery and the
+# ownership check are fixed here, on the command line, which outranks every
+# config file. Needs git 2.31 for `--path-format`; an older git falls back
+# to the rules that need no git.
+GIT_LOCATE_DIR_ARGS = (
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "safe.bareRepository=all",
+    "-c",
+    "safe.directory=*",
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-dir",
+    "--git-common-dir",
+)
+GIT_LOCATE_DIR_TIMEOUT_S = 5
+GIT_CEILING_DIRECTORIES_ENV = "GIT_CEILING_DIRECTORIES"
+# Every variable git reads starts with this; none is passed on, so a
+# `GIT_DIR` or `GIT_CONFIG_PARAMETERS` the project set cannot steer or break
+# the answer. Only the repository's own config is read.
+GIT_ENV_PREFIX = "GIT_"
+GIT_CONFIG_NOSYSTEM_ENV = "GIT_CONFIG_NOSYSTEM"
+GIT_CONFIG_GLOBAL_ENV = "GIT_CONFIG_GLOBAL"
+GIT_ENV_ON = "1"

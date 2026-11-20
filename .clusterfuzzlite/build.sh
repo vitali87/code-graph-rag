@@ -87,6 +87,13 @@ if [ -z "$HIDDEN_IMPORTS" ]; then
   exit 1
 fi
 
+# The Rust extension is imported the same way, by a name held in a constant
+# (`import_module(EG_RUST_MODULE)`), so PyInstaller misses it too, and
+# `import codebase_rag` refuses to go on without it: every target would die
+# on startup. Collect it whole, as the release binary does
+# (`PYINSTALLER_PACKAGES` in codebase_rag/constants/build.py).
+HIDDEN_IMPORTS="$HIDDEN_IMPORTS --collect-all=cgr_graph_rs"
+
 # `shell_command` imports pydantic_ai, and that chain reads its own package
 # metadata at import time (`importlib.metadata.version`), which PyInstaller
 # does not bundle by default -- the target then dies with

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import time
 import tomllib
-import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -348,7 +348,10 @@ def fetch_pypi_summary(package_name: str, cache: dict[str, tuple[str, float]]) -
             charset = response.headers.get_content_charset() or ENCODING_UTF8
             data = json.loads(response.read().decode(charset))
             summary = data.get("info", {}).get("summary", "") or ""
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+    # Any broken answer falls back to the committed summary: besides an
+    # unreachable host, PyPI can reset the connection or cut the body short
+    # (IncompleteRead), which is neither a URLError nor a decode error.
+    except (OSError, http.client.HTTPException, ValueError) as e:
         logger.warning(f"Could not fetch PyPI summary for {package_name}: {e}")
         return ""
 

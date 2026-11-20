@@ -1,0 +1,210 @@
+"""Issue #2984: a CommonJS renamed property export binds its function.
+
+`module.exports = { alpha, renamed: beta }` exports `beta` under the name
+`renamed`, but the export was recorded under the key alone and never tied to
+`beta`, so `const { renamed } = require("./lib"); renamed()` bound nothing.
+The shorthand `{ alpha }` and the ESM `export { beta as renamed }` bound.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import pytest
+
+from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
+
+FILES = {
+    "lib.js": (
+        "function alpha() { return 1; }\n"
+        "function beta() { return 2; }\n"
+        "function gamma() { return 3; }\n"
+        "module.exports = { alpha, renamed: beta, again: alpha, inline: () => 4 };\n"
+    ),
+    "app.js": (
+        'const { alpha, renamed, again, inline } = require("./lib");\n'
+        "function run() {\n"
+        "  return alpha() + renamed() + again() + inline();\n"
+        "}\n"
+    ),
+    # Bot review on PR #2994: a same-named local does not hide the published
+    # binding, and a later whole-object assignment replaces the earlier one.
+    "shadow.js": (
+        "function renamed() { return 1; }\n"
+        "function beta() { return 2; }\n"
+        "module.exports = { renamed: beta };\n"
+    ),
+    "esm_shadow.mjs": (
+        "function renamed() { return 1; }\n"
+        "function beta() { return 2; }\n"
+        "export { beta as renamed };\n"
+    ),
+    "replaced.js": (
+        "function beta() { return 2; }\n"
+        "module.exports = { renamed: beta };\n"
+        "module.exports = {};\n"
+    ),
+    "user.js": (
+        'const { renamed } = require("./shadow");\n'
+        "function viaShadow() {\n  return renamed();\n}\n"
+    ),
+    "replaced_user.js": (
+        'const { renamed } = require("./replaced");\n'
+        "function viaReplaced() {\n  return renamed();\n}\n"
+    ),
+    "esm_user.mjs": (
+        'import { renamed } from "./esm_shadow.mjs";\n'
+        "export function viaEsmShadow() {\n  return renamed();\n}\n"
+    ),
+    # A published binding the graph cannot resolve (an external package's)
+    # still is not the module's own same-named local.
+    "ext_shadow.js": (
+        'const { beta } = require("left-pad");\n'
+        "function renamed() { return 1; }\n"
+        "module.exports = { renamed: beta };\n"
+    ),
+    "ext_esm_shadow.mjs": (
+        'import { beta } from "left-pad";\n'
+        "function renamed() { return 1; }\n"
+        "export { beta as renamed };\n"
+    ),
+    "ext_user.js": (
+        'const { renamed } = require("./ext_shadow");\n'
+        "function viaExtShadow() {\n  return renamed();\n}\n"
+    ),
+    "ext_esm_user.mjs": (
+        'import { renamed } from "./ext_esm_shadow.mjs";\n'
+        "export function viaExtEsmShadow() {\n  return renamed();\n}\n"
+    ),
+    "ext_barrel.mjs": 'export { beta as renamed } from "left-pad";\n',
+    "ext_barrel_user.mjs": (
+        'import { renamed } from "./ext_barrel.mjs";\n'
+        "export function viaExtBarrel() {\n  return renamed();\n}\n"
+    ),
+    # Negative: a name no export walk follows keeps the name-only fallback,
+    # and so does one whose walk ends behind a non-standard scheme, which
+    # aliases first-party code the walk cannot read.
+    "helpers.mjs": (
+        "export function unplaced() { return 1; }\n"
+        "export function aliased() { return 2; }\n"
+    ),
+    "unplaced_user.mjs": (
+        'import { unplaced } from "./missing.mjs";\n'
+        "export function viaMissing() {\n  return unplaced();\n}\n"
+    ),
+    "alias_barrel.mjs": 'export { aliased } from "ext:alias/helpers.mjs";\n',
+    "alias_user.mjs": (
+        'import { aliased } from "./alias_barrel.mjs";\n'
+        "export function viaAliasBarrel() {\n  return aliased();\n}\n"
+    ),
+    # Bot review on PR #2994: `require("./target")` binds the whole module,
+    # whose qn `pkg.target` also spells the name `target` in `pkg/index.js`,
+    # which publishes another function under it. The whole-module import is
+    # not that export; a destructured require of the folder is.
+    "pkg/target.js": "module.exports = function target() { return 1; };\n",
+    "pkg/index.js": (
+        "function other() { return 2; }\nmodule.exports = { target: other };\n"
+    ),
+    "pkg/app.js": (
+        'const fn = require("./target");\nfunction runWhole() {\n  return fn();\n}\n'
+    ),
+    "pkg_user.js": (
+        'const { target } = require("./pkg");\n'
+        "function viaFolder() {\n  return target();\n}\n"
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
+    root = tmp_path_factory.mktemp("cjsren") / "cjsren"
+    for rel, text in FILES.items():
+        _write(root, rel, text)
+    return _index(root, MagicMock())
+
+
+def _callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
+    prefix = f"{graph.project}."
+    return {
+        dst.removeprefix(prefix): str(props.get("resolution"))
+        for src, rel, dst, props in graph.edges
+        if rel == "CALLS" and src == f"{prefix}{caller}"
+    }
+
+
+def test_a_renamed_property_export_binds_its_function(graph: RecordedGraph) -> None:
+    assert _callees(graph, "app.run").get("lib.beta") == "exact"
+
+
+@pytest.mark.parametrize(
+    ("caller", "module"),
+    [("user.viaShadow", "shadow"), ("esm_user.viaEsmShadow", "esm_shadow")],
+    ids=["commonjs", "esm"],
+)
+def test_a_same_named_local_does_not_hide_the_published_binding(
+    graph: RecordedGraph, caller: str, module: str
+) -> None:
+    callees = _callees(graph, caller)
+    assert callees == {f"{module}.beta": "exact"}, callees
+
+
+@pytest.mark.parametrize(
+    "caller",
+    [
+        "ext_user.viaExtShadow",
+        "ext_esm_user.viaExtEsmShadow",
+        "ext_barrel_user.viaExtBarrel",
+    ],
+    ids=["commonjs", "esm", "barrel"],
+)
+def test_an_unresolvable_published_binding_is_not_the_same_named_local(
+    graph: RecordedGraph, caller: str
+) -> None:
+    # Bot review on PR #2994: nor is any other same-named function, which
+    # the name-only fallback picked as a heuristic edge.
+    callees = _callees(graph, caller)
+    assert callees == {}, callees
+
+
+def test_a_whole_module_require_is_not_the_folders_export_of_its_name(
+    graph: RecordedGraph,
+) -> None:
+    callees = _callees(graph, "pkg.app.runWhole")
+    assert callees == {"pkg.target.target": "exact"}, callees
+
+
+# Negative: what must not change.
+
+
+def test_a_named_require_of_the_folder_still_gets_its_export(
+    graph: RecordedGraph,
+) -> None:
+    callees = _callees(graph, "pkg_user.viaFolder")
+    assert callees.get("pkg.index.other") == "exact", callees
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("unplaced_user.viaMissing", "helpers.unplaced"),
+        ("alias_user.viaAliasBarrel", "helpers.aliased"),
+    ],
+    ids=["no-walk", "aliased-scheme"],
+)
+def test_a_name_no_walk_places_keeps_the_name_only_fallback(
+    graph: RecordedGraph, caller: str, callee: str
+) -> None:
+    callees = _callees(graph, caller)
+    assert callees == {callee: "heuristic"}, callees
+
+
+def test_a_shorthand_and_an_inline_export_still_bind(graph: RecordedGraph) -> None:
+    callees = _callees(graph, "app.run")
+    assert callees.get("lib.alpha") == "exact"
+    assert "lib.gamma" not in callees
+
+
+def test_a_replaced_export_object_publishes_nothing_it_dropped(
+    graph: RecordedGraph,
+) -> None:
+    assert "replaced.beta" not in _callees(graph, "replaced_user.viaReplaced")
