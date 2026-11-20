@@ -75,7 +75,13 @@ APP = (
     "def neg_int():\n    return (-1).bit_length()\n\n\n"
     "def local_neg():\n    n = -1\n    return n.bit_length()\n\n\n"
     "def local_paren():\n    n = (2)\n    return n.bit_length()\n\n\n"
-    "def local_neg_name(x):\n    n = -x\n    return n.bit_length()\n"
+    "def local_neg_name(x):\n    n = -x\n    return n.bit_length()\n\n\n"
+    # A walrus binds as an assignment does (#3340): a literal types its
+    # target, and a non-literal one elsewhere keeps the literal from deciding.
+    'def walrus_get():\n    if (d := {}) is not None:\n        return d.get("k")\n\n\n'
+    "def walrus_then_literal():\n"
+    "    if (x := make_bag()) is not None:\n        first = x.get(1)\n"
+    "    x = {}\n    return first\n"
 )
 # A first-party class imported under a builtin's name is that class.
 ALIASED = (
@@ -131,6 +137,7 @@ def _callees(graph: RecordedGraph, caller: str, module: str = "app") -> dict[str
         "neg_int",
         "local_neg",
         "local_paren",
+        "walrus_get",
     ],
 )
 def test_a_call_on_a_builtin_value_binds_no_first_party_method(
@@ -139,7 +146,9 @@ def test_a_call_on_a_builtin_value_binds_no_first_party_method(
     assert not [c for c in _callees(graph, caller) if c.startswith("lib.")]
 
 
-@pytest.mark.parametrize("caller", ["factory_reassigned", "bag_then_literal"])
+@pytest.mark.parametrize(
+    "caller", ["factory_reassigned", "bag_then_literal", "walrus_then_literal"]
+)
 def test_a_literal_does_not_retype_a_name_also_bound_to_an_instance(
     graph: RecordedGraph, caller: str
 ) -> None:
