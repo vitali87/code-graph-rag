@@ -1058,34 +1058,38 @@ def _python_import_from_binding(stmt: Node, name: str) -> str | None:
 
 
 def _python_assignment_binding(stmt: Node, name: str) -> str | None:
-    # `name = <value>` binds `=<value>`. An unpacking (`TYPE_CHECKING, DEBUG =
-    # True, False`) binds the value at the name's position, or the whole
-    # value when nothing pairs them (bot review on PR #2728).
+    # `name = <value>` binds `=<value>`; the last assignment to `name` wins.
     bound: str | None = _UNBOUND
     for child in stmt.named_children:
-        if child.type != cs.TS_PY_ASSIGNMENT:
-            continue
-        left = child.child_by_field_name(cs.TS_FIELD_LEFT)
-        right = child.child_by_field_name(cs.TS_FIELD_RIGHT)
-        if safe_decode_text(left) == name:
-            bound = f"={safe_decode_text(right)}"
-        elif left is not None and left.type in cs.PY_UNPACKING_TARGET_TYPES:
-            targets = left.named_children
-            at = [
-                i
-                for i, target in enumerate(targets)
-                if safe_decode_text(target) == name
-            ]
-            if not at:
-                continue
-            values = (
-                right.named_children
-                if right is not None and right.type in cs.PY_UNPACKING_VALUE_TYPES
-                else []
-            )
-            value = values[at[-1]] if len(values) == len(targets) else right
-            bound = f"={safe_decode_text(value)}"
+        if child.type == cs.TS_PY_ASSIGNMENT and (
+            (written := _python_assigned_value(child, name)) != _UNBOUND
+        ):
+            bound = written
     return bound
+
+
+def _python_assigned_value(assignment: Node, name: str) -> str:
+    # `=<value>` for what one assignment writes to `name`, `_UNBOUND` when it
+    # writes none. An unpacking (`TYPE_CHECKING, DEBUG = True, False`) writes
+    # the value at the name's position, or the whole value when nothing
+    # pairs them (bot review on PR #2728).
+    left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+    right = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
+    if safe_decode_text(left) == name:
+        return f"={safe_decode_text(right)}"
+    if left is None or left.type not in cs.PY_UNPACKING_TARGET_TYPES:
+        return _UNBOUND
+    targets = left.named_children
+    at = [i for i, target in enumerate(targets) if safe_decode_text(target) == name]
+    if not at:
+        return _UNBOUND
+    values = (
+        right.named_children
+        if right is not None and right.type in cs.PY_UNPACKING_VALUE_TYPES
+        else []
+    )
+    value = values[at[-1]] if len(values) == len(targets) else right
+    return f"={safe_decode_text(value)}"
 
 
 def _same_module(
