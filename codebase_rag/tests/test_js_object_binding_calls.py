@@ -134,6 +134,22 @@ _FILES = {
         "}\n"
         "export function stillModule() { return api.run(); }\n"
     ),
+    # Bot review on PR #3118: a later spread may replace a member, and a
+    # callback's own `const api` shadows the module's `api` inside it.
+    "spread.mjs": (
+        "const base = { run() { return 2; } };\n"
+        "const api = { run() { return 1; }, ...base };\n"
+        "export function use() { return api.run(); }\n"
+    ),
+    "cbdecl.mjs": (
+        "const api = { run() { return 1; } };\n"
+        "export function use(items, text) {\n"
+        "  items.forEach(() => {\n"
+        "    const api = JSON.parse(text);\n"
+        "    api.run();\n"
+        "  });\n"
+        "}\n"
+    ),
     "exported.mjs": (
         "const api = { run() { return 1; } };\n"
         "const publicApi = { run() { return 2; } };\n"
@@ -336,3 +352,25 @@ def test_a_member_marked_under_a_new_binding_leaves_the_old_one() -> None:
 
     assert registry.object_binding_member("m.api", "run") is None
     assert registry.object_binding_member("m.service", "run") == "m.run"
+
+
+def test_a_member_a_later_spread_may_replace_gets_no_exact_caller(
+    calls: dict[tuple[str, str], str],
+) -> None:
+    # `...base` after `run` replaces it, so `api.run()` is not `api`'s own
+    # `run` (`spread.run@2`; `spread.run` is `base`'s).
+    targets = _targets(calls, "spread.use")
+    assert targets.get("spread.run@2") != cs.EdgeResolution.EXACT, targets
+
+
+def test_a_callback_declaration_shadows_the_module_object(
+    calls: dict[tuple[str, str], str],
+) -> None:
+    exact = {
+        src
+        for (src, callee), res in calls.items()
+        if src.startswith("cbdecl.use")
+        and callee == "cbdecl.run"
+        and res == cs.EdgeResolution.EXACT
+    }
+    assert not exact, calls

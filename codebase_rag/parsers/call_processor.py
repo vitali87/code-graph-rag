@@ -2430,6 +2430,15 @@ def _js_nested_callable_introductions(
                         node.start_byte, node.end_byte, False, node.start_byte
                     )
                 )
+            # The callback's own `const api = ...` shadows an outer `api`
+            # inside it; its literal's members register under no binding
+            # this caller's lookup reads, so it is no object literal here
+            # (bot review on PR #3118).
+            for local, intros in _js_scope_introductions(node).items():
+                found[local].extend(
+                    js_ts_utils.JsLocalIntro(start, end, False, node.start_byte)
+                    for start, end, _kind, _value in intros
+                )
             stack.extend(node.children)
 
 

@@ -668,15 +668,41 @@ def object_literal_binding(func_node: Node) -> str | None:
     `default` (issue #2763). A nested object, or one that is passed,
     returned or assigned to a property, has no name of its own: None.
     """
+    member = func_node
     obj = func_node.parent
     if obj is not None and obj.type == cs.TS_PAIR:
         value = obj.child_by_field_name(cs.FIELD_VALUE)
         if value is None or value.id != func_node.id:
             return None
+        member = obj
         obj = obj.parent
     if obj is None or obj.type != cs.TS_OBJECT:
         return None
+    if _overridden_later(obj, member):
+        return None
     return _object_holder_name(obj)
+
+
+def _member_key(member: Node) -> str | None:
+    # The key a `pair` or a method of an object literal names.
+    field = cs.FIELD_KEY if member.type == cs.TS_PAIR else cs.FIELD_NAME
+    return safe_decode_text(member.child_by_field_name(field))
+
+
+def _overridden_later(obj: Node, member: Node) -> bool:
+    # Whether a later spread (`...base`) or a later member with the same key
+    # may replace this member's value: the binding's key then holds what is
+    # not known here (bot review on PR #3118).
+    key = _member_key(member)
+    later = False
+    for child in obj.named_children:
+        if child.id == member.id:
+            later = True
+        elif later and (
+            child.type == cs.TS_SPREAD_ELEMENT or _member_key(child) == key
+        ):
+            return True
+    return False
 
 
 def _object_holder_name(obj: Node) -> str | None:
