@@ -127,6 +127,13 @@ FILES = {
         "            case _ as self:\n                return self.mm()\n"
     ),
     # Third review round (Greptile, CodeRabbit, PR #2908).
+    # A qualified annotation naming the class itself still dispatches.
+    "qualpkg/__init__.py": "",
+    "qualpkg/qbase.py": (
+        "class QBase:\n    def qh(self):\n        return 1\n\n"
+        '    def run(self: "qualpkg.qbase.QBase"):\n        return self.qh()\n\n\n'
+        "class QSub(QBase):\n    def qh(self):\n        return 2\n"
+    ),
     # A static method's `self` is whatever its caller passed.
     "static_untyped.py": (
         "class SHost:\n    def sm(self):\n        return 1\n\n"
@@ -336,3 +343,12 @@ def test_a_receiver_annotation_names_the_class_it_holds(
     )
     assert call is not None
     assert receiver_annotation(call, "cls") == named
+
+
+def test_a_qualified_annotation_naming_the_class_still_dispatches(
+    graph: RecordedGraph,
+) -> None:
+    # `self: "qualpkg.qbase.QBase"` ends the class's qn: overrides still get
+    # their edges (Greptile, PR #2908).
+    calls = _calls(graph, "qualpkg.qbase.QBase.run")
+    assert "qualpkg.qbase.QSub.qh" in calls, calls

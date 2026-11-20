@@ -9323,13 +9323,18 @@ class CallProcessor:
         # Whether a receiver annotation names a type other than the class
         # or one of its bases. A qualified one (`self: pkg.Host`) may name
         # another class of the same short name, so it counts as the class
-        # only through the full name the type map resolved it to (Greptile,
-        # PR #2908).
+        # only when its whole dotted name ends a class's qn (`proj.pkg.Host`),
+        # or when the type map resolved it to one (Greptile, PR #2908).
         if annotation is None or annotation == cs.PY_ANNOTATION_SELF:
             return False
         mro = self._resolver.python_class_mro(class_qn)
         if cs.SEPARATOR_DOT in annotation:
-            return typed is None or typed not in mro
+            return not any(
+                qn == spelled or qn.endswith(f"{cs.SEPARATOR_DOT}{spelled}")
+                for qn in mro
+                for spelled in (annotation, typed)
+                if spelled
+            )
         return annotation not in {qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] for qn in mro}
 
     def _emit_python_self_dispatch(
