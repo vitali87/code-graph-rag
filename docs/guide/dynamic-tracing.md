@@ -80,19 +80,44 @@ tracer.write(Path("cgr-trace.jsonl"))
 ## Recording a JVM trace (Java, Scala)
 
 Build the agent once (requires a JDK with the `java.lang.classfile` API,
-i.e. JDK 24+; the agent itself has no dependencies):
+i.e. JDK 24+; the agent itself has no dependencies). Its source ships with
+cgr, and `cgr trace agent jvm` prints where:
 
 ```bash
-make jvm-agent   # produces build/cgr-jvm-agent.jar
+AGENT="$(cgr trace agent jvm)"
+javac --release 24 -d cgr-jvm-agent "$AGENT"/src/cgr/trace/*.java
+jar cfm cgr-jvm-agent.jar "$AGENT/MANIFEST.MF" -C cgr-jvm-agent .
 ```
 
-Attach it to any JVM workload, most usefully a test run:
+Attach it to any JVM workload, most usefully a test run. The commands below
+use the `cgr-jvm-agent.jar` that built; give its absolute path when the
+workload runs elsewhere:
 
 ```bash
-java -javaagent:build/cgr-jvm-agent.jar="include=com.example;repo=/path/to/your-repo" ...
-# Maven:  MAVEN_OPTS='-javaagent:...' mvn test
+java -javaagent:./cgr-jvm-agent.jar="include=com.example;repo=/path/to/your-repo" ...
+# Maven: Surefire runs the tests in a forked JVM, so pass the agent through argLine
+mvn test -DargLine='-javaagent:./cgr-jvm-agent.jar=include=com.example;repo=/path/to/your-repo'
 # Gradle: add the same -javaagent flag to test { jvmArgs ... }
 ```
+
+The agent is built for JDK 24, so the JVM it attaches to must be
+JDK 24 or newer too; an older one refuses to load it and the run fails before
+any test. For a test run that is the forked test JVM, which uses the JDK
+running Maven or Gradle unless a toolchain picks another.
+
+`MAVEN_OPTS` sets only the JVM that runs Maven itself, not the one Surefire
+forks for the tests (`forkCount=1` by default), so an agent passed there
+traces no test method; it reaches the tests only with `-DargLine` (or with
+`-DforkCount=0`, which runs them inside Maven's JVM). Keep the quotes around
+the `argLine` value: the `;` between the agent options would otherwise end
+the shell command. To set it once, put it in the Surefire configuration of
+`pom.xml`, as `<argLine>-javaagent:...</argLine>`. An `<argLine>` already
+there overrides `-DargLine`, so add the agent to it after the flags it holds,
+as in `<argLine>-Xmx512m -javaagent:...</argLine>`. When a plugin sets the
+`argLine` property instead (JaCoCo does, for its own agent), keep its value
+with `<argLine>@{argLine} -javaagent:...</argLine>`. `@{argLine}` reads only
+that property, not the flags the element held before, and without the
+property the test JVM does not start.
 
 
 ![make jvm-agent, then jlox run under the agent and cgr trace ingest, revealing the visitor dispatch from Expr.Call.accept to Interpreter.visitCallExpr](../assets/demos/dynamic-tracing-jvm.gif)
@@ -262,14 +287,15 @@ and convert one process at a time.
 
 ## Recording a Lua trace
 
-The agent is a single dependency-free Lua module
-(`codebase_rag/trace/lua_agent/cgr_trace.lua`) built on `debug.sethook`;
+The agent is a single dependency-free Lua module (`cgr_trace.lua`, which
+ships with cgr; `cgr trace agent lua` prints where) built on `debug.sethook`;
 it records every call exactly and writes the interchange format directly,
 so no `cgr trace convert` step is needed:
 
 ```bash
 export CGR_TRACE_REPO=/path/to/your-repo CGR_TRACE_WORKLOAD=busted
-lua -l cgr_trace main.lua      # with the module on LUA_PATH
+export LUA_PATH="$(dirname "$(cgr trace agent lua)")/?.lua;;"
+lua -l cgr_trace main.lua
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
@@ -285,14 +311,17 @@ exit (plain tables have no `__gc` there).
 
 ## Recording a Dart trace
 
-A small in-repo Dart tool (`codebase_rag/trace/dart_collector/`, one
-`vm_service` dependency fetched with `dart pub get`) runs the target under
+A small Dart tool that ships with cgr (`cgr trace agent dart` prints its
+directory; one `vm_service` dependency fetched with `dart pub get`) runs the
+target under
 the VM's own sampling profiler, pulls the CPU samples over the VM Service
 protocol when the program pauses at exit, and writes the interchange
 format directly:
 
 ```bash
-cd codebase_rag/trace/dart_collector && dart pub get   # once
+# once: `dart pub get` writes beside the tool, so work on a copy
+cp -r "$(cgr trace agent dart)" ~/cgr-dart-collector
+cd ~/cgr-dart-collector && dart pub get
 dart bin/cgr_trace_collect.dart --repo /path/to/your-repo \
     --workload smoke -- /path/to/your-repo/main.dart
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
@@ -409,15 +438,15 @@ project frame.
 
 ## Recording a C or C++ trace
 
-A single-file shim (`codebase_rag/trace/c_agent/cgr_trace_shim.c`, no
-dependencies beyond pthreads) rides the compiler's own instrumentation and
+A single-file shim (`cgr_trace_shim.c`, which ships with cgr; `cgr trace
+agent c` prints where; no dependencies beyond pthreads) rides the compiler's own instrumentation and
 records **every call exactly**:
 
 For a **C** project, compile the sources and the shim together:
 
 ```bash
 cc -pthread -finstrument-functions -g -O0 your_sources... \
-   codebase_rag/trace/c_agent/cgr_trace_shim.c -o app
+   "$(cgr trace agent c)" -o app
 ./app        # writes cgr-trace.addrs (override with CGR_TRACE_ADDRS)
 cgr trace convert cgr-trace.addrs --repo-path /path/to/your-repo --workload smoke
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
@@ -434,12 +463,13 @@ instrumented C++ objects with the C++ driver; only the C++ translation units
 carry `-finstrument-functions`:
 
 ```bash
-cc  -pthread -c codebase_rag/trace/c_agent/cgr_trace_shim.c -o cgr_shim.o
+cc  -pthread -c "$(cgr trace agent c)" -o cgr_shim.o
 c++ -pthread -finstrument-functions -g -O0 -c your_sources... # -> *.o
 c++ -pthread your_objects... cgr_shim.o -o app
 ```
 
-In CMake, add `cgr_trace_shim.c` to the target's sources (CMake compiles a
+In CMake, add the `cgr_trace_shim.c` that `cgr trace agent c` prints to the
+target's sources (CMake compiles a
 `.c` file with the C compiler on its own), set `-finstrument-functions -g -O0`
 on the traced build type, and link pthreads (the shim uses
 `pthread_mutex_*`/`pthread_once`):
@@ -675,7 +705,16 @@ does not know are counted per reason instead of being silently dropped.
   keep `include=` scoped to your own packages and avoid tracing
   compute-heavy inner loops.
 - **JVM resolution.** A lambda body has no static node of its own, so its
-  frame resolves to the enclosing method by line span. An anonymous-class
+  frame resolves to the enclosing method by line span. The call that runs
+  the lambda (`main → lambda$main$0`) then lands on one node at both ends.
+  It is counted as unresolved (`intra_node`) rather than written as
+  `main → main`; the lambda's own calls (`main → greet`) are kept. The same
+  holds for Scala `$anonfun$`, C# lambda bodies, JS anonymous functions and
+  PHP closures the static graph did not index. Real recursion, where both
+  frames name the method, is still a self-edge, and so is recursion in a
+  frame that resolves to a node of its own (an anonymous-class method, an
+  indexed PHP closure, a C# local function, a JS function V8 reports by an
+  inferred name such as `exports.walk`). An anonymous-class
   method resolves to its own node — the innermost source span containing the
   frame line, threaded under the enclosing method — rather than to the
   enclosing method itself. Frames the static graph cannot account for

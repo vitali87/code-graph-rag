@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -21,10 +21,14 @@ from ..types_defs import (
     NodeType,
     OverloadSignature,
     PropertyDict,
+    PropertyValue,
+    ResultValue,
     SimpleNameLookup,
+    SpanBinding,
     TreeSitterNodeProtocol,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
+from . import native_trees
 from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
 from .endpoints import emit_endpoints, queue_endpoints
@@ -45,18 +49,54 @@ def _member_name_start_point(node: Node) -> tuple[int, int]:
     return anchor.start_point[0] + 1, anchor.start_point[1]
 
 
+class PythonStarRules(NamedTuple):
+    """What a Python `from mod import *` binds, by Python's rules: each
+    module's literal `__all__` (`exports`), and, where it differs from the
+    import map's own order, the order each module's import-map keys were
+    last bound in (`binding_order`)."""
+
+    exports: Mapping[str, frozenset[str]]
+    binding_order: Mapping[str, Sequence[str]]
+
+
 def follow_reexports(
     qn: str,
     import_mapping: dict[str, dict[str, str]],
     function_registry: FunctionRegistryTrieProtocol,
+    python_stars: PythonStarRules | None = None,
 ) -> str:
     # `from .pkg import sym` records the importer's name against the re-export
     # module (pkg.sym), not the real definition (pkg.mod.sym), so an unregistered
     # qn may be a re-export. Follow the module's import map one hop at a time
     # until a registered symbol is reached, guarding against cycles.
+    # `python_stars` gives `from mod import *` Python's own binding rules,
+    # which Python callers ask for by passing it.
     if qn in function_registry:
         return qn
-    return _ImportMapWalk(import_mapping, function_registry).follow(qn)[0]
+    return _ImportMapWalk(import_mapping, function_registry, python_stars).follow(qn)[0]
+
+
+def _star_binds(
+    source: str, name: str, python_star_exports: Mapping[str, frozenset[str]]
+) -> bool | None:
+    """Whether `from source import *` binds `name`: True when `source`'s
+    `__all__` lists it, False when it leaves it out, and None when `source`
+    has no `__all__`, where a public name MAY be bound (if the module defines
+    or imports it) and a private one is not."""
+    if (exported := python_star_exports.get(source)) is not None:
+        return name in exported
+    return None if not name.startswith(cs.PY_PRIVATE_PREFIX) else False
+
+
+def _latest_first(
+    imports: Mapping[str, str], order: Sequence[str] | None
+) -> Iterator[tuple[str, str]]:
+    """`imports`' entries, the last bound first. The map keeps a re-bound key
+    where it was first bound, so `order` gives the binding order when that
+    differs."""
+    for key in reversed(order or tuple(imports)):
+        if (target := imports.get(key)) is not None:
+            yield key, target
 
 
 class _ImportMapWalk:
@@ -70,15 +110,17 @@ class _ImportMapWalk:
     still walked once.
     """
 
-    __slots__ = ("_imports", "_registry", "_path", "_settled")
+    __slots__ = ("_imports", "_registry", "_python_stars", "_path", "_settled")
 
     def __init__(
         self,
         import_mapping: Mapping[str, Mapping[str, str]],
         function_registry: FunctionRegistryTrieProtocol,
+        python_stars: PythonStarRules | None = None,
     ) -> None:
         self._imports = import_mapping
         self._registry = function_registry
+        self._python_stars = python_stars
         self._path: set[str] = set()
         self._settled: dict[str, str] = {}
 
@@ -109,6 +151,8 @@ class _ImportMapWalk:
 
     def _step(self, current: str) -> tuple[str | None, bool]:
         module_qn, _, name = current.rpartition(cs.SEPARATOR_DOT)
+        if self._python_stars is not None:
+            return self._python_latest_binding(module_qn, name, self._python_stars)
         if following := self._imports.get(module_qn, {}).get(name):
             return following, False
         return self._star_target(module_qn, name)
@@ -135,6 +179,40 @@ class _ImportMapWalk:
                 reached.add(target)
         return (reached.pop() if len(reached) == 1 else None), cut
 
+    def _python_latest_binding(
+        self, module_qn: str, name: str, python_stars: PythonStarRules
+    ) -> tuple[str | None, bool]:
+        # `from ._client import *` is one wildcard entry, not a name per
+        # export, so `pkg.Client` matched nothing and httpx's
+        # `client = httpx.Client()` stayed untyped (issue #2928). Python keeps
+        # a name's LAST binding, named or star, so the module's bindings are
+        # read latest first (bot review on PR #2989): a named import is
+        # followed on, a star that binds the name is where it leads.
+        cut = False
+        for key, target in _latest_first(
+            self._imports.get(module_qn, {}), python_stars.binding_order.get(module_qn)
+        ):
+            if key == name:
+                return target, cut
+            if not key.startswith(cs.GLOB_ALL):
+                continue
+            binds = _star_binds(target, name, python_stars.exports)
+            if binds is False:
+                continue
+            source_name = f"{target}{cs.SEPARATOR_DOT}{name}"
+            found, branch_cut = self.follow(source_name)
+            cut = cut or branch_cut
+            # A name the source's `__all__` lists, or one the source binds
+            # (the walk left it), is this star's even when it leads outside
+            # the project.
+            if (
+                binds
+                or found in self._registry
+                or (found != source_name and not branch_cut)
+            ):
+                return found, cut
+        return None, cut
+
 
 def mark_js_ts_module_private(
     function_registry: FunctionRegistryTrieProtocol,
@@ -147,6 +225,18 @@ def mark_js_ts_module_private(
     # one; the flag the node already carries is recorded where it can ask.
     if language in cs.JS_TS_LANGUAGES and not is_exported:
         function_registry.mark_module_private(qualified_name)
+
+
+def mark_rust_visibility(
+    function_registry: FunctionRegistryTrieProtocol,
+    qualified_name: str,
+    visibility: PropertyValue | ResultValue,
+) -> None:
+    # A Rust glob imports only what is visible where it is written. The
+    # node's `rust_visibility` is the declared restriction; the resolver
+    # reads it before calling a glob-imported function's binding certain.
+    if isinstance(visibility, str):
+        function_registry.mark_rust_visibility(qualified_name, visibility)
 
 
 def function_span_key(module_qn: str, node: Node) -> FunctionSpanKey:
@@ -175,7 +265,12 @@ def record_cpp_definition_span(
     rel = cached_relative_path(file_path, repo_path).as_posix()
     spans.setdefault(rel, []).append(
         CppDefinitionSpan(
-            node.start_point[0] + 1, node.end_point[0] + 1, label, qualified_name
+            node.start_point[0] + 1,
+            node.end_point[0] + 1,
+            label,
+            qualified_name,
+            node.start_point[1],
+            node.end_point[1],
         )
     )
 
@@ -202,6 +297,49 @@ def get_cached_query(language_obj: Language, query_text: str) -> Query:
 class FunctionCapturesResult(NamedTuple):
     lang_config: LanguageSpec
     captures: dict[str, list[ASTNode]]
+
+
+def conflicting_declaration_spans(
+    name: str,
+    declarations: Sequence[tuple[int, int, str | None]],
+    assignments: Sequence[tuple[int, int, str | None]] = (),
+) -> list[SpanBinding]:
+    """Span bindings for the declarations of one local name, each `(start,
+    end, type)` over the part of the body where the name reads it, when they
+    give the name two types or more (issue #3332).
+
+    The flat per-function map holds one of those types for the whole body,
+    so it is wrong wherever another declaration is in scope; each
+    declaration's span then carries its own type, untyped where it has
+    none. Where they agree, or only one has a type, the flat map's type
+    stands: an untyped inner `x, err := f()` under a typed `var err error`
+    is far likelier the same type than a reason to drop it.
+
+    `assignments` are `(site, function end, type)` for each `name =
+    value`: the variable it assigns (the narrowest declaration holding the
+    site) holds that type from the site to the end of its scope. So `Shape s
+    = new Circle(); s = new Square(); s.area()` calls Square's, as the flat
+    map has it, and of two assignments the later one's span is the
+    narrower, so it wins. An assignment with no type it can read changes
+    nothing, as in the flat map. One written in a nested function holds no
+    further than that function's end: `later(() => { s = new B(); s.m();
+    })` calls B's inside the callback, which may run later or never, and
+    says nothing about the `s` the line after it reads.
+    """
+    spans = list(declarations)
+    for site, function_end, type_name in assignments:
+        owners = [
+            (start, end) for start, end, _type in declarations if start <= site < end
+        ]
+        if owners and type_name:
+            _start, end = min(owners, key=lambda span: span[1] - span[0])
+            spans.append((site, min(end, function_end), type_name))
+    if len({type_name for _start, _end, type_name in spans if type_name}) < 2:
+        return []
+    return [
+        (start, end, name, type_name or cs.UNTYPED_SPAN_BINDING)
+        for start, end, type_name in spans
+    ]
 
 
 def sorted_captures(cursor: QueryCursor, node: ASTNode) -> dict[str, list[ASTNode]]:
@@ -357,6 +495,16 @@ def _cached_decode_bytes(text_bytes: bytes) -> str:
     return decode_node_text(text_bytes)
 
 
+def has_internal_linkage(props: Mapping[str, object]) -> bool:
+    """A C/C++ function declared `static` at file scope (issue #3154).
+
+    Only its own translation unit can call it. Read from the node's
+    `modifiers`, so ingest and an incremental rehydration agree.
+    """
+    modifiers = props.get(cs.KEY_MODIFIERS)
+    return isinstance(modifiers, list) and cs.CPP_KEYWORD_STATIC in modifiers
+
+
 # The member-name fields a call's callee carries: JS/TS `property`, Python
 # `attribute`, Rust/Go/C++/Scala `field`.
 _MEMBER_NAME_FIELDS = (cs.FIELD_PROPERTY, cs.TS_PY_FIELD_ATTRIBUTE, cs.FIELD_FIELD)
@@ -411,7 +559,8 @@ def node_site_properties(node: Node) -> PropertyDict:
 
     1-based lines, 0-based columns, end exclusive, matching the node
     `start_line`/`start_col` convention so a site can be sliced straight
-    out of the file.
+    out of the bytes the grammar parsed. tree-sitter counts a column in
+    UTF-8 bytes, not characters (issue #3162).
     """
     return {
         cs.KEY_LINE: node.start_point[0] + 1,
@@ -537,25 +686,15 @@ def is_stored_abstract_member(
     )
 
 
-_PY_NAMED_PARAMETERS = frozenset(
-    {cs.TS_PY_DEFAULT_PARAMETER, cs.TS_PY_TYPED_DEFAULT_PARAMETER}
-)
 _PY_KEYWORD_ONLY_BOUNDARIES = frozenset(
     {cs.TS_PY_KEYWORD_SEPARATOR, cs.TS_PY_LIST_SPLAT_PATTERN}
-)
-_PY_SCOPE_BOUNDARIES = frozenset(
-    {
-        cs.TS_PY_FUNCTION_DEFINITION,
-        cs.TS_PY_CLASS_DEFINITION,
-        cs.TS_PY_DECORATED_DEFINITION,
-    }
 )
 
 
 def _python_parameter_name(param_node: Node) -> str | None:
     if param_node.type == cs.TS_PY_IDENTIFIER:
         return safe_decode_text(param_node)
-    if param_node.type in _PY_NAMED_PARAMETERS:
+    if param_node.type in cs.PY_NAMED_PARAMETER_TYPES:
         name_node = param_node.child_by_field_name(cs.FIELD_NAME)
         if name_node is not None and name_node.type == cs.TS_PY_IDENTIFIER:
             return safe_decode_text(name_node)
@@ -567,7 +706,6 @@ def _python_parameter_name(param_node: Node) -> str | None:
     return None
 
 
-_PY_CLOSURE_SCOPES = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA})
 _GO_CLOSURE_SCOPES = frozenset({cs.TS_GO_FUNC_LITERAL})
 
 
@@ -585,8 +723,8 @@ class _CallableScanConfig(NamedTuple):
 _PY_SCAN = _CallableScanConfig(
     cs.TS_PY_CALL,
     cs.TS_PY_IDENTIFIER,
-    _PY_CLOSURE_SCOPES,
-    frozenset({cs.TS_PY_CLASS_DEFINITION}),
+    cs.PY_CALLABLE_CLOSURE_TYPES,
+    cs.PY_CALLABLE_OPAQUE_TYPES,
 )
 _GO_SCAN = _CallableScanConfig(
     cs.TS_GO_CALL_EXPRESSION,
@@ -594,21 +732,11 @@ _GO_SCAN = _CallableScanConfig(
     _GO_CLOSURE_SCOPES,
     frozenset(),
 )
-_JS_TS_CLOSURE_SCOPES = frozenset(
-    {
-        cs.TS_ARROW_FUNCTION,
-        cs.TS_FUNCTION_EXPRESSION,
-        cs.TS_FUNCTION_DECLARATION,
-    }
-)
 _JS_SCAN = _CallableScanConfig(
     cs.TS_CALL_EXPRESSION,
     cs.TS_IDENTIFIER,
-    _JS_TS_CLOSURE_SCOPES,
-    frozenset({cs.TS_CLASS_DECLARATION}),
-)
-_JS_TS_TYPED_PARAMETERS = frozenset(
-    {cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER}
+    cs.JS_TS_CALLABLE_CLOSURE_TYPES,
+    cs.JS_TS_CALLABLE_OPAQUE_TYPES,
 )
 _CPP_CLOSURE_SCOPES = frozenset({cs.TS_CPP_LAMBDA_EXPRESSION})
 _CPP_SCAN = _CallableScanConfig(
@@ -751,7 +879,7 @@ def _js_ts_parameter_name(param: Node) -> str | None:
     # A bare identifier, or the identifier `pattern` of a TS typed parameter.
     if param.type == cs.TS_IDENTIFIER:
         return safe_decode_text(param)
-    if param.type in _JS_TS_TYPED_PARAMETERS:
+    if param.type in cs.JS_TS_TYPED_PARAMETER_TYPES:
         pattern = param.child_by_field_name(cs.TS_FIELD_PATTERN)
         if pattern is not None and pattern.type == cs.TS_IDENTIFIER:
             return safe_decode_text(pattern)
@@ -843,7 +971,7 @@ def _python_collect_bound_targets(node: Node, out: set[str]) -> None:
     while stack:
         current = stack.pop()
         for child in current.children:
-            if child.type in _PY_SCOPE_BOUNDARIES:
+            if child.type in cs.PY_SCOPE_BOUNDARY_TYPES:
                 # A nested def/class NAME binds here, but its body has its own
                 # scope; record the name and do not descend.
                 if name := _python_scope_boundary_name(child):
@@ -859,11 +987,7 @@ def _python_scope_boundary_name(child: Node) -> str | None:
     named = child
     if child.type == cs.TS_PY_DECORATED_DEFINITION:
         named = next(
-            (
-                c
-                for c in child.children
-                if c.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
-            ),
+            (c for c in child.children if c.type in cs.PY_DECORATED_DEFINITION_TYPES),
             child,
         )
     name_node = named.child_by_field_name(cs.FIELD_NAME)
@@ -872,7 +996,7 @@ def _python_scope_boundary_name(child: Node) -> str | None:
 
 def _python_collect_direct_bindings(child: Node, out: set[str]) -> None:
     child_type = child.type
-    if child_type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT):
+    if child_type in cs.PY_CAPTURE_SHADOW_BINDERS:
         # Both bind whatever their `left` names.
         left = child.child_by_field_name(cs.TS_FIELD_LEFT)
         if left is not None:
@@ -880,7 +1004,7 @@ def _python_collect_direct_bindings(child: Node, out: set[str]) -> None:
     elif child_type == cs.TS_PY_AS_PATTERN_TARGET:
         # `with ... as x` and `except ... as x` bind x here.
         _python_collect_target_identifiers(child, out)
-    elif child_type in _PY_IMPORT_STATEMENTS:
+    elif child_type in cs.PY_IMPORT_TYPES:
         _python_collect_import_bound_names(child, out)
     elif child_type == cs.TS_PY_GLOBAL_STATEMENT:
         # `global x` rebinds x to module scope: it is not a capture of the
@@ -921,11 +1045,6 @@ def _python_collect_case_pattern_bindings(node: Node, out: set[str]) -> None:
                 out.add(name)
             continue
         stack.extend(current.children)
-
-
-_PY_IMPORT_STATEMENTS = frozenset(
-    {cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT}
-)
 
 
 def python_import_bound_names(node: Node) -> set[str]:
@@ -1064,7 +1183,22 @@ def callable_parameter_indices(
 ) -> dict[str, int]:
     # Maps each parameter invoked as a call inside the function body to its
     # positional index in the call-site argument list (self/cls dropped so the
-    # index lines up with how bound methods are invoked).
+    # index lines up with how bound methods are invoked). The Rust tree bridge
+    # scans Python and JS/TS bodies; the twin below scans every language and
+    # stays the reference.
+    if language is not None and (bridge := native_trees.callable_bridge()):
+        try:
+            found = bridge.callable_parameter_indices(func_node, language)
+        except native_trees.NotBorrowed:
+            found = None
+        if found is not None:
+            return dict(found)
+    return python_callable_parameter_indices(func_node, language)
+
+
+def python_callable_parameter_indices(
+    func_node: Node, language: cs.SupportedLanguage | None
+) -> dict[str, int]:
     if (inputs := _callable_scan_inputs(func_node, language)) is None:
         return {}
     names = inputs.names
@@ -1177,7 +1311,7 @@ def _js_ts_parameter_slot(child: Node) -> tuple[str | None, bool] | None:
         return None
     if node_type == cs.TS_IDENTIFIER:
         return safe_decode_text(child), False
-    if node_type in _JS_TS_TYPED_PARAMETERS:
+    if node_type in cs.JS_TS_TYPED_PARAMETER_TYPES:
         pattern = child.child_by_field_name(cs.TS_FIELD_PATTERN)
         if pattern is None:
             return None, False
@@ -1760,6 +1894,18 @@ def _record_member_aliases(
         )
 
 
+def _go_chain_return_props(method_node: ASTNode) -> PropertyDict:
+    # A Go method's chained-call return type, stored so an incremental run
+    # restores it for a file it does not re-parse (issue #3272); only that
+    # name, the first-result map is free functions'.
+    # Local import, like type_facts': the Go helpers import this module.
+    from .go.utils import extract_return_type_name
+
+    if chain := extract_return_type_name(method_node):
+        return {cs.KEY_CHAIN_RETURN_TYPE: chain}
+    return {}
+
+
 def _method_positional_params_props(
     method_node: ASTNode, language: cs.SupportedLanguage
 ) -> PropertyDict:
@@ -1797,6 +1943,8 @@ def _language_method_props(
 
         if java_utils.is_main_declaration(method_node):
             return {cs.KEY_IS_PROGRAM_MAIN: True}
+    if language == cs.SupportedLanguage.GO:
+        return _go_chain_return_props(method_node)
     return {}
 
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
@@ -13,6 +13,7 @@ from .. import logs as ls
 from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
 from ..types_defs import (
     ASTNode,
+    CppClassLookup,
     CppDefinitionSpan,
     CSharpCallShape,
     DeferredCppInherit,
@@ -33,7 +34,9 @@ from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from . import export_detection
 from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
+from .cpp import out_of_line
 from .cpp import utils as cpp_utils
+from .cpp.function_values import c_definition_has_internal_linkage
 from .cpp.overloads import cpp_overload_signature
 from .dart import (
     dart_definition_end_point,
@@ -61,9 +64,12 @@ from .utils import (
     extract_modifiers_and_decorators,
     function_span_key,
     get_function_captures,
+    has_internal_linkage,
     ingest_method,
     is_method_node,
     mark_js_ts_module_private,
+    mark_rust_visibility,
+    module_qn_for_entity,
     python_positional_parameter_names,
     record_cpp_definition_span,
     safe_decode_text,
@@ -143,6 +149,9 @@ class FunctionResolution(NamedTuple):
     # (object literal, export, assignment, prototype) may own this same source
     # function, so registration defers until those ran.
     is_anonymous: bool = False
+    # A C++20 module `export`, the only thing a Module -[EXPORTS]-> edge
+    # means; `is_exported` also counts ordinary public API (issue #2707).
+    module_exported: bool = False
 
 
 class _DeferredCppArtifact(NamedTuple):
@@ -205,21 +214,22 @@ class _DeferredRegistration(NamedTuple):
 class _DeferredMethod(NamedTuple):
     """Out-of-class C++ method whose class hasn't been parsed yet.
 
-    namespace_path carries the definition site's enclosing namespaces so the
-    class resolves scope-first: two same-leaf classes (ast::Type and
-    ast::analysis::Type) are otherwise indistinguishable by leaf lookup.
+    class_lookup carries the class as written and the namespaces it is looked
+    up from, so the class resolves scope-first: two same-leaf classes
+    (ast::Type and ast::analysis::Type) are otherwise indistinguishable by
+    leaf lookup.
     """
 
     method_name: str
-    class_name: str
+    class_lookup: CppClassLookup
     fallback_class_qn: str
     method_props: PropertyDict
     return_type: str | None
     module_qn: str
-    namespace_path: str
     start_line: int
     start_col: int
     end_line: int
+    end_col: int
     lang_queries: LanguageQueries | None = None
     # Read while the tree is alive: the definition is matched to the overload
     # its class declares only once that class is known (issue #2455).
@@ -241,23 +251,38 @@ class _DeferredCppContainment(NamedTuple):
 
     The parent method's final qn is only known after the deferred method
     resolution binds it to its class (declared in a possibly later-parsed
-    header), so the containment edge must wait for that pass. namespace_path
+    header), so the containment edge must wait for that pass. class_lookup
     carries the definition site's enclosing namespaces: the written qualifier
     inside `namespace beta { void Widget::print() ... }` is just `Widget`, and
     without the namespace two same-leaf classes are indistinguishable.
     """
 
     child_qn: str
-    class_name: str
+    class_lookup: CppClassLookup
     method_name: str
     module_qn: str
-    namespace_path: str
 
 
 # Go node labels a receiver type can resolve to (struct -> Class, defined
 # type/alias -> Type, interface -> Interface); picks the declaring type out of
 # same-named candidates when binding a cross-file method.
 _GO_TYPE_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.TYPE, NodeType.INTERFACE})
+# What a C++ qualifier can name as a class: a class/struct, or a type node.
+_CPP_CLASS_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.TYPE})
+# Registered definitions a C++ class can be declared inside. One of these
+# among a class qn's prefixes makes it a nested or local class, which an
+# out-of-line `X::` names only by writing the enclosing class (issue #3137).
+_CPP_ENCLOSING_DEFINITION_TYPES = frozenset(
+    {
+        NodeType.CLASS,
+        NodeType.TYPE,
+        NodeType.INTERFACE,
+        NodeType.UNION,
+        NodeType.ENUM,
+        NodeType.FUNCTION,
+        NodeType.METHOD,
+    }
+)
 
 
 class FunctionIngestMixin:
@@ -295,6 +320,7 @@ class FunctionIngestMixin:
     class_inheritance: dict[str, list[str]]
     _deferred_cpp_inherits: list[DeferredCppInherit]
     rehydrated_definition_paths: dict[str, str]
+    class_owner_module: dict[str, str]
     csharp_methods: set[str]
     csharp_override_methods: set[str]
     csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
@@ -598,13 +624,19 @@ class FunctionIngestMixin:
         self, module_qn: str, func_node: Node, label: str, qualified_name: str
     ) -> None:
         # First claim wins; a later pass deriving a different qn for the same
-        # source function skips registration rather than mint a twin.
+        # source function skips registration rather than mint a twin. One
+        # that did register (`X.prototype.m = function m()`) is that span's
+        # twin: a call bound to either name also reaches the other.
         key = function_span_key(module_qn, func_node)
-        if key not in self.function_locations:
+        if (loc := self.function_locations.get(key)) is None:
             self.function_locations[key] = FunctionLocation(
                 label=label,
                 qualified_name=qualified_name,
                 container_qn=None,
+            )
+        elif loc.qualified_name != qualified_name:
+            self.function_registry.mark_same_definition(
+                loc.qualified_name, qualified_name
             )
 
     def _flush_deferred_rust_body_local(self) -> None:
@@ -705,7 +737,13 @@ class FunctionIngestMixin:
         )
 
         is_exported = export_detection.is_exported(func_node, simple_name, language)
-        return FunctionResolution(func_qn, simple_name, is_exported)
+        return FunctionResolution(
+            func_qn,
+            simple_name,
+            is_exported,
+            module_exported=language == cs.SupportedLanguage.CPP
+            and cpp_utils.is_exported(func_node),
+        )
 
     def _fallback_function_resolution(
         self,
@@ -732,28 +770,174 @@ class FunctionIngestMixin:
         class_name_normalized = class_name.replace(
             cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
         )
-        leaf_name = class_name_normalized.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-
-        if leaf_name in self.simple_name_lookup:
-            # Sorted: the lookup is a set, so same-leaf classes in different
-            # namespaces would otherwise bind nondeterministically.
-            for candidate_qn in sorted(self.simple_name_lookup[leaf_name]):
-                if candidate_qn == exclude_qn:
-                    continue
-                node_type = self.function_registry.get(candidate_qn)
-                if node_type in {NodeType.CLASS, NodeType.TYPE}:
-                    # An out-of-class nested definition keeps `Outer::Inner` as
-                    # one qn segment; normalise before the suffix check or
-                    # `::Inner` never matches `.Inner`.
-                    normalized_candidate = candidate_qn.replace(
-                        cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
-                    )
-                    if normalized_candidate.endswith(
-                        f".{class_name_normalized}"
-                    ) and self._is_cpp_defined(candidate_qn):
-                        return candidate_qn, True
-
+        if candidate_qn := next(
+            self._cpp_classes_ending_with(class_name_normalized, exclude_qn), None
+        ):
+            return candidate_qn, True
         return f"{module_qn}.{class_name_normalized}", False
+
+    def _cpp_classes_ending_with(
+        self, class_name_normalized: str, exclude_qn: str | None = None
+    ) -> Iterator[str]:
+        leaf_name = class_name_normalized.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        if leaf_name not in self.simple_name_lookup:
+            return
+        # Sorted: the lookup is a set, so same-leaf classes in different
+        # namespaces would otherwise bind nondeterministically.
+        for candidate_qn in sorted(self.simple_name_lookup[leaf_name]):
+            if candidate_qn == exclude_qn:
+                continue
+            if self.function_registry.get(candidate_qn) in _CPP_CLASS_NODE_TYPES:
+                # An out-of-class nested definition keeps `Outer::Inner` as
+                # one qn segment; normalise before the suffix check or
+                # `::Inner` never matches `.Inner`.
+                normalized_candidate = candidate_qn.replace(
+                    cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
+                )
+                if normalized_candidate.endswith(
+                    f".{class_name_normalized}"
+                ) and self._is_cpp_defined(candidate_qn):
+                    yield candidate_qn
+
+    def _resolve_cpp_definition_class(
+        self, class_lookup: CppClassLookup, module_qn: str
+    ) -> str | None:
+        """The class an out-of-line definition in *module_qn* binds to, or None.
+
+        Run once every class is registered. A class at a path C++ looks up
+        wins; after that, the leaf match below.
+        """
+        candidates = out_of_line.scope_candidates(class_lookup)
+        if class_qn := self._find_namespace_scoped_cpp_class(candidates, module_qn):
+            return class_qn
+        # Nothing at a looked-up path. A using-directive, an alias in a header,
+        # or a namespace the parse lost can still put the class elsewhere, so
+        # the leaf match stands in, on the innermost and the bare spelling as
+        # before, but only for a class nested no deeper than the qualifier
+        # written says: `Writer` is not `Impl::Writer` or `Outer::log::Writer`.
+        # No class at all leaves the definition unattached rather than
+        # misattached (#3137).
+        nested: list[str] = []
+        for candidate in dict.fromkeys((candidates[0], candidates[-1])):
+            for class_qn in self._cpp_classes_ending_with(candidate):
+                if not self._is_cpp_class_visible_from(class_qn, module_qn):
+                    continue
+                if not self._nests_beyond(class_qn, class_lookup.name):
+                    return class_qn
+                nested.append(class_qn)
+        # A nested class is reached only through an alias its own header
+        # declares (`using Inner = Outer::Inner;`), the usual way a header
+        # publishes one, and only when that alias names exactly this class.
+        # An alias in some other header needs the includes followed.
+        return next(
+            (
+                class_qn
+                for class_qn in dict.fromkeys(nested)
+                if self._header_alias_names(class_qn, class_lookup)
+            ),
+            None,
+        )
+
+    def _header_alias_names(self, class_qn: str, class_lookup: CppClassLookup) -> bool:
+        if (path := self._cpp_class_file(class_qn)) is None or (
+            through := out_of_line.header_alias_lookup(path, class_lookup)
+        ) is None:
+            return False
+        return self._cpp_class_scoped_path(class_qn) in out_of_line.scope_candidates(
+            through
+        )
+
+    def _cpp_class_file(self, class_qn: str) -> Path | None:
+        # The file on disk that declares the class: its module's on a full or
+        # incremental run alike, else the path its rehydrated node records.
+        owner = self._cpp_class_module_qn(class_qn)
+        if owner is not None and (path := self.module_qn_to_file_path.get(owner)):
+            return path
+        if rehydrated := self.rehydrated_definition_paths.get(class_qn):
+            return self.repo_path / rehydrated
+        return None
+
+    def _find_namespace_scoped_cpp_class(
+        self, paths: list[str], module_qn: str
+    ) -> str | None:
+        """The class declared at the first of *paths* that holds one, or None.
+
+        A path is dotted and counted from the class's module: `ns.log.Writer`
+        is `proj.db.log_writer.h.ns.log.Writer` and never
+        `proj.db.impl.h.ns.Impl.Writer`. Sorted, so the same registry answers
+        the same way whatever order its classes were registered in.
+        """
+        leaf = paths[0].rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        if leaf not in self.simple_name_lookup:
+            return None
+        wanted = set(paths)
+        found: dict[str, str] = {}
+        for candidate_qn in sorted(self.simple_name_lookup[leaf]):
+            if self.function_registry.get(candidate_qn) not in _CPP_CLASS_NODE_TYPES:
+                continue
+            path = self._cpp_class_scoped_path(candidate_qn)
+            if (
+                path in wanted
+                and path not in found
+                and self._is_cpp_defined(candidate_qn)
+                and self._is_cpp_class_visible_from(candidate_qn, module_qn)
+            ):
+                found[path] = candidate_qn
+        return next((found[path] for path in paths if path in found), None)
+
+    def _cpp_class_module_qn(self, class_qn: str) -> str | None:
+        # The module recorded at class ingest. A class rehydrated on an
+        # incremental run has no record; its module is the longest indexed
+        # prefix, which the run seeds for every unchanged file.
+        return self.class_owner_module.get(class_qn) or module_qn_for_entity(
+            class_qn, self.module_qn_to_file_path
+        )
+
+    def _cpp_class_scoped_path(self, class_qn: str) -> str | None:
+        # The class qn after its module's, `::` read as `.`.
+        module_qn = self._cpp_class_module_qn(class_qn)
+        if module_qn is None or not class_qn.startswith(
+            f"{module_qn}{cs.SEPARATOR_DOT}"
+        ):
+            return None
+        return class_qn[len(module_qn) + 1 :].replace(
+            cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
+        )
+
+    def _is_cpp_class_visible_from(self, class_qn: str, module_qn: str) -> bool:
+        # A class defined in another translation unit's source file (a .cc,
+        # not a header) is local to that unit: no other file can define its
+        # members. `struct Impl::Writer {}` in db/impl.cc is no candidate for
+        # db/log_writer.cc's `Writer::AddRecord` (#3137).
+        owner = self._cpp_class_module_qn(class_qn)
+        if owner is None or owner == module_qn:
+            return True
+        if (path := self.module_qn_to_file_path.get(owner)) is not None:
+            return not path.name.endswith(cs.C_CPP_SOURCE_EXTENSIONS)
+        rehydrated = self.rehydrated_definition_paths.get(class_qn)
+        return rehydrated is None or not rehydrated.endswith(cs.C_CPP_SOURCE_EXTENSIONS)
+
+    def _nests_beyond(self, class_qn: str, written: str) -> bool:
+        """Whether *class_qn* sits in a class or function *written* does not name.
+
+        *written* is the dotted qualifier the definition wrote: `Iterator`
+        reaches no `SkipList.Iterator`, while `SkipList.Iterator` does.
+        """
+        segments = class_qn.split(cs.SEPARATOR_DOT)
+        wanted = written.count(cs.SEPARATOR_DOT) + 1
+        named = 0
+        while segments and named < wanted:
+            named += segments.pop().count(cs.SEPARATOR_DOUBLE_COLON) + 1
+        # `struct Outer::Inner {}` keeps its qualifier in its own segment;
+        # one the definition did not write may name a class, so it counts.
+        if named > wanted:
+            return True
+        scope = cs.SEPARATOR_DOT.join(segments)
+        while scope:
+            if self.function_registry.get(scope) in _CPP_ENCLOSING_DEFINITION_TYPES:
+                return True
+            scope = scope.rpartition(cs.SEPARATOR_DOT)[0]
+        return False
 
     def _is_cpp_defined(self, qn: str) -> bool:
         # A C++ out-of-class method may only bind to a class defined in a C/C++
@@ -790,11 +974,9 @@ class FunctionIngestMixin:
 
         # Scope-first (see resolve_deferred_cpp_methods): the enclosing
         # namespaces distinguish same-leaf classes.
-        namespace_path = cs.SEPARATOR_DOT.join(
-            cpp_utils.extract_namespace_path(func_node)
-        )
+        class_lookup = out_of_line.class_lookup(func_node, class_name)
         class_qn, resolved = self._resolve_cpp_scoped_class(
-            class_name, namespace_path, module_qn
+            class_lookup, class_name, module_qn
         )
         file_path = self.module_qn_to_file_path.get(module_qn)
         # The out-of-class DEFINITION carries the return type; record it here (keyed
@@ -812,7 +994,7 @@ class FunctionIngestMixin:
             self._defer_cpp_out_of_class(
                 func_node,
                 module_qn,
-                class_name,
+                class_lookup,
                 class_qn,
                 file_path,
                 return_type,
@@ -821,18 +1003,19 @@ class FunctionIngestMixin:
         return True
 
     def _resolve_cpp_scoped_class(
-        self, class_name: str, namespace_path: str, module_qn: str
+        self, class_lookup: CppClassLookup, class_name: str, module_qn: str
     ) -> tuple[str, bool]:
-        candidates = [class_name]
-        if namespace_path:
-            candidates.insert(0, f"{namespace_path}{cs.SEPARATOR_DOT}{class_name}")
-        resolved = False
-        class_qn = ""
-        for candidate in candidates:
-            class_qn, resolved = self._resolve_cpp_class_qn(candidate, module_qn)
-            if resolved:
-                break
-        return class_qn, resolved
+        # Only a class at the innermost path C++ looks up binds here.
+        # Anything else waits for resolve_deferred_cpp_methods: a closer class
+        # than the one registered by now may sit in a header parsed later, so
+        # binding to an outer namespace's class, or a same-leaf class, would
+        # depend on file names (#3137).
+        if class_qn := self._find_namespace_scoped_cpp_class(
+            out_of_line.scope_candidates(class_lookup)[:1], module_qn
+        ):
+            return class_qn, True
+        normalized = class_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+        return f"{module_qn}{cs.SEPARATOR_DOT}{normalized}", False
 
     def _ingest_resolved_cpp_out_of_class(
         self,
@@ -891,7 +1074,7 @@ class FunctionIngestMixin:
         self,
         func_node: Node,
         module_qn: str,
-        class_name: str,
+        class_lookup: CppClassLookup,
         class_qn: str,
         file_path: Path | None,
         return_type: str | None,
@@ -916,6 +1099,12 @@ class FunctionIngestMixin:
             cs.KEY_NAME_START_COL: _name_start_point(func_node)[1],
             cs.KEY_END_LINE: func_node.end_point[0] + 1,
             cs.KEY_DOCSTRING: self._get_docstring(func_node, cs.SupportedLanguage.CPP),
+            # `void V::f() {}` with `V` a namespace is a namespace function,
+            # not a member of an unseen class: its linkage decides (bot review
+            # on PR #2952). A real out-of-line member stays unexported.
+            cs.KEY_IS_EXPORTED: export_detection.is_exported(
+                func_node, method_name, cs.SupportedLanguage.CPP
+            ),
         }
         if file_path is not None and self.repo_path is not None:
             props[cs.KEY_PATH] = cached_relative_path(
@@ -931,17 +1120,15 @@ class FunctionIngestMixin:
         self._deferred_cpp_methods.append(
             _DeferredMethod(
                 method_name=method_name,
-                class_name=class_name,
+                class_lookup=class_lookup,
                 fallback_class_qn=class_qn,
                 method_props=props,
                 return_type=return_type,
                 module_qn=module_qn,
-                namespace_path=cs.SEPARATOR_DOT.join(
-                    cpp_utils.extract_namespace_path(func_node)
-                ),
                 start_line=func_node.start_point[0] + 1,
                 start_col=func_node.start_point[1],
                 end_line=func_node.end_point[0] + 1,
+                end_col=func_node.end_point[1],
                 lang_queries=lang_queries,
                 signature=cpp_overload_signature(func_node),
             )
@@ -991,6 +1178,8 @@ class FunctionIngestMixin:
                         entry.end_line,
                         cs.NodeLabel.METHOD.value,
                         method_qn,
+                        entry.start_col,
+                        entry.end_col,
                     )
                 )
 
@@ -1030,17 +1219,11 @@ class FunctionIngestMixin:
 
     def _resolve_deferred_cpp_class(self, entry: _DeferredMethod) -> tuple[str, bool]:
         # Scope-first: the namespace-qualified name distinguishes same-leaf
-        # classes (ast::Type vs ast::analysis::Type); the raw written qualifier
-        # is the fallback for other scopes.
-        candidates = [entry.class_name]
-        if entry.namespace_path:
-            candidates.insert(
-                0, f"{entry.namespace_path}{cs.SEPARATOR_DOT}{entry.class_name}"
-            )
-        for candidate in candidates:
-            real_class_qn, resolved = self._resolve_cpp_class_qn(candidate, "")
-            if resolved:
-                return real_class_qn, True
+        # classes (ast::Type vs ast::analysis::Type).
+        if class_qn := self._resolve_cpp_definition_class(
+            entry.class_lookup, entry.module_qn
+        ):
+            return class_qn, True
         return entry.fallback_class_qn, False
 
     def _defer_go_receiver_method(self, func_node: Node, module_qn: str) -> bool:
@@ -1387,8 +1570,13 @@ class FunctionIngestMixin:
                 return None
 
         func_qn = cpp_utils.build_qualified_name(func_node, module_qn, func_name)
-        is_exported = cpp_utils.is_exported(func_node)
-        return FunctionResolution(func_qn, func_name, is_exported)
+        module_exported = cpp_utils.is_exported(func_node)
+        is_exported = module_exported or export_detection.is_exported(
+            func_node, func_name, cs.SupportedLanguage.CPP
+        )
+        return FunctionResolution(
+            func_qn, func_name, is_exported, module_exported=module_exported
+        )
 
     def _resolve_generic_function(
         self,
@@ -1487,6 +1675,9 @@ class FunctionIngestMixin:
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
+        self._mark_c_internal_linkage(
+            resolution.qualified_name, module_qn, language, func_props
+        )
         func_path = func_props.get(cs.KEY_PATH)
         queue_type_facts(
             self.pending_type_facts,
@@ -1523,6 +1714,11 @@ class FunctionIngestMixin:
             resolution.qualified_name,
             resolution.is_exported,
             language,
+        )
+        mark_rust_visibility(
+            self.function_registry,
+            resolution.qualified_name,
+            func_props.get(cs.KEY_RUST_VISIBILITY),
         )
         # Keyed by the UNIQUE qn, since a collision rename above (issue #1017)
         # is the key Pass-3 will look this up by.
@@ -1594,6 +1790,18 @@ class FunctionIngestMixin:
             func_node, resolution, module_qn, language, lang_config
         )
 
+    def _mark_c_internal_linkage(
+        self,
+        qualified_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        func_props: PropertyDict,
+    ) -> None:
+        # Only its own translation unit can call a `static` function, so call
+        # resolution needs the module that defines it (#3154).
+        if language in cs.C_FAMILY_LANGUAGES and has_internal_linkage(func_props):
+            self.function_registry.mark_internal_linkage(qualified_name, module_qn)
+
     def _mark_js_ts_name_scope(
         self, func_node: Node, qualified_name: str, func_props: PropertyDict
     ) -> None:
@@ -1664,6 +1872,17 @@ class FunctionIngestMixin:
         modifiers, decorators = extract_modifiers_and_decorators(
             func_node, lang_queries
         )
+        # The C++ highlights query captures no storage class, and neither
+        # query sees a `static` the definition inherits from an earlier
+        # declaration, a wrapped template or an anonymous namespace, so the
+        # internal linkage went unrecorded (#3154). Recorded as `static`, the
+        # specifier that gives it, so an incremental run restores it too.
+        if (
+            language in cs.C_FAMILY_LANGUAGES
+            and cs.CPP_KEYWORD_STATIC not in modifiers
+            and c_definition_has_internal_linkage(func_node, language)
+        ):
+            modifiers.append(cs.CPP_KEYWORD_STATIC)
         props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: resolution.qualified_name,
             cs.KEY_NAME: resolution.name,
@@ -1698,6 +1917,10 @@ class FunctionIngestMixin:
         props.update(type_facts_props(extract_type_facts(func_node, language)))
         if language == cs.SupportedLanguage.DART and dart_is_top_level_main(func_node):
             props[cs.KEY_IS_PROGRAM_MAIN] = True
+        if language == cs.SupportedLanguage.GO:
+            props.update(go_utils.return_type_props(func_node))
+        if language == cs.SupportedLanguage.RUST:
+            props.update(rs_utils.function_visibility_props(func_node))
         props.update(fingerprint_props(func_node))
         props.update(anchor_hash_props(func_node, decorators))
         props.update(decorated_start_props(func_node))
@@ -1752,7 +1975,7 @@ class FunctionIngestMixin:
                 ),
             )
 
-        if resolution.is_exported and language == cs.SupportedLanguage.CPP:
+        if resolution.module_exported and language == cs.SupportedLanguage.CPP:
             self.ingestor.ensure_relationship_batch(
                 (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                 cs.RelationshipType.EXPORTS,
@@ -2118,18 +2341,14 @@ class FunctionIngestMixin:
         method_name = cpp_utils.extract_function_name(enclosing)
         if not class_name or not method_name:
             return False
-        # Keep the FULL written qualifier (ns::Widget): _resolve_cpp_class_qn splits
-        # the leaf itself and its endswith guard needs the qualifier to tell
-        # same-leaf classes in different namespaces apart.
+        # Looked up exactly as the enclosing method's own class is, so the
+        # child hangs off the node that method was bound to.
         self._deferred_cpp_containment.append(
             _DeferredCppContainment(
                 child_qn=child_qn,
-                class_name=class_name,
+                class_lookup=out_of_line.class_lookup(enclosing, class_name),
                 method_name=method_name,
                 module_qn=module_qn,
-                namespace_path=cs.SEPARATOR_DOT.join(
-                    cpp_utils.extract_namespace_path(enclosing)
-                ),
             )
         )
         return True
@@ -2289,29 +2508,25 @@ class FunctionIngestMixin:
             return 0
         emitted = 0
         for entry in deferred:
-            # Try the namespace-scoped name first (alpha.Widget beats a same-leaf
-            # beta.Widget via the endswith guard), then the raw written qualifier
-            # for classes matched through other scopes.
-            candidates = [entry.class_name]
-            if entry.namespace_path:
-                candidates.insert(
-                    0, f"{entry.namespace_path}{cs.SEPARATOR_DOT}{entry.class_name}"
-                )
+            # The class resolves as the enclosing method's did (alpha.Widget
+            # beats a same-leaf beta.Widget), so the edge reaches its node.
             parent_spec = (
                 cs.NodeLabel.MODULE,
                 cs.KEY_QUALIFIED_NAME,
                 entry.module_qn,
             )
-            for candidate in candidates:
-                class_qn, resolved = self._resolve_cpp_class_qn(candidate, "")
-                parent_qn = f"{class_qn}{cs.SEPARATOR_DOT}{entry.method_name}"
-                if resolved and parent_qn in self.function_registry:
-                    parent_spec = (
-                        cs.NodeLabel.METHOD,
-                        cs.KEY_QUALIFIED_NAME,
-                        parent_qn,
-                    )
-                    break
+            if (
+                class_qn := self._resolve_cpp_definition_class(
+                    entry.class_lookup, entry.module_qn
+                )
+            ) and (
+                parent_qn := f"{class_qn}{cs.SEPARATOR_DOT}{entry.method_name}"
+            ) in self.function_registry:
+                parent_spec = (
+                    cs.NodeLabel.METHOD,
+                    cs.KEY_QUALIFIED_NAME,
+                    parent_qn,
+                )
             self.ingestor.ensure_relationship_batch(
                 parent_spec,
                 cs.RelationshipType.DEFINES,
