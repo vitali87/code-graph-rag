@@ -472,7 +472,13 @@ class JsTypeInferenceEngine:
         )
         while stack:
             current, declared = stack.pop()
-            if current.type in cs.JS_TS_FUNCTION_NODES:
+            # A class `static { ... }` block is a scope of its own, as a
+            # function is: its `var r` is not the function's `r` (Greptile
+            # on #3331).
+            if (
+                current.type in cs.JS_TS_FUNCTION_NODES
+                or current.type == cs.TS_CLASS_STATIC_BLOCK
+            ):
                 own = ut.js_ts_own_scope_names(current, assigned=False)
                 declared = own if declared is None else declared | own
             elif declared is None and current.type == cs.TS_VARIABLE_DECLARATOR:

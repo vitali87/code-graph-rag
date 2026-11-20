@@ -194,6 +194,16 @@ _CAPTURED = {
         "a.Outer.method.Inner.run",
         "a.Range.reset",
     ),
+    "js-var-in-a-class-static-block": (
+        # A class static block's `var r` is its own (Greptile on #3331).
+        "c.js",
+        _JS_CLASSES + "function outer() {\n  var r = new Range();\n"
+        "  class C { static { var r = new Other(); } }\n"
+        "  function inner() { return r.reset(); }\n  return [C, inner];\n}\n"
+        "module.exports = { outer };\n",
+        "c.outer.inner",
+        "c.Range.reset",
+    ),
     "js-let-in-a-sibling-block-of-the-middle-function": (
         # `mid`'s block `r` is another variable, which `inner` never reads
         # (Greptile on #3331).
