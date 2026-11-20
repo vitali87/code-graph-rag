@@ -91,6 +91,29 @@ _FILES = {
         "export function useA() { return a.go(); }\n"
         "export function useB() { return b.go(); }\n"
     ),
+    # Bot review on PR #3118: sibling blocks binding one name, and a module
+    # exporting another binding under a private local's name.
+    "blocks.mjs": (
+        "export function both(flag) {\n"
+        "  if (flag) {\n"
+        "    const api = { run() { return 1; } };\n"
+        "    return api.run();\n"
+        "  }\n"
+        "  {\n"
+        "    const api = { run() { return 2; } };\n"
+        "    return api.run();\n"
+        "  }\n"
+        "}\n"
+    ),
+    "exported.mjs": (
+        "const api = { run() { return 1; } };\n"
+        "const publicApi = { run() { return 2; } };\n"
+        "export { publicApi as api };\n"
+    ),
+    "exporteduse.mjs": (
+        'import { api } from "./exported.mjs";\n'
+        "export function viaExport() { return api.run(); }\n"
+    ),
 }
 
 
@@ -225,3 +248,24 @@ def test_an_incremental_sync_of_the_caller_keeps_the_edge(temp_repo: Path) -> No
     assert any(t.endswith(".api.fetchUser") for t in sync(force=True))
     (temp_repo / "view.ts").write_text(_VIEW + "// touched\n", encoding="utf-8")
     assert any(t.endswith(".api.fetchUser") for t in sync(force=False))
+
+
+def test_sibling_blocks_binding_one_name_pick_no_member(
+    calls: dict[tuple[str, str], str],
+) -> None:
+    # Both literals bind `both.api`; which one a call means is not known, so
+    # neither block's `run` is an exact target.
+    targets = _targets(calls, "blocks.both")
+    assert cs.EdgeResolution.EXACT not in targets.values(), targets
+
+
+def test_an_import_reaches_the_binding_the_module_exports(
+    calls: dict[tuple[str, str], str],
+) -> None:
+    # `export { publicApi as api }`: the importer's `api` is `publicApi`,
+    # never the private `const api` (the first `run`, `exported.run`).
+    targets = _targets(calls, "exporteduse.viaExport")
+    exact = [
+        callee for callee, res in targets.items() if res == cs.EdgeResolution.EXACT
+    ]
+    assert len(exact) == 1 and exact[0].startswith("exported.run@"), targets

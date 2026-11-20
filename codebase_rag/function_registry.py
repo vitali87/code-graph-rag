@@ -105,9 +105,9 @@ class FunctionRegistryTrie:
         # pays for an exact MRO walk when some class hides the name.
         self._non_method_holders: dict[str, set[QualifiedName]] = {}
         self._object_members: set[QualifiedName] = set()
-        # binding qn -> {member key -> member qn}, and its inverse, for the
+        # binding qn -> {member key -> member qns}, and its inverse, for the
         # object literals bound to a name (issue #2763).
-        self._object_bindings: dict[QualifiedName, dict[str, QualifiedName]] = {}
+        self._object_bindings: dict[QualifiedName, dict[str, set[QualifiedName]]] = {}
         self._object_binding_of: dict[QualifiedName, tuple[QualifiedName, str]] = {}
         self._abstracts: set[QualifiedName] = set()
         # JS/TS declarations their module does not export. `export * from`
@@ -177,17 +177,27 @@ class FunctionRegistryTrie:
         `const api = { fetchUser() {} }` registers `fetchUser` under its scope,
         without the object's name; this is how `api.fetchUser()` finds it.
         """
-        self._object_bindings.setdefault(binding_qn, {})[key] = qualified_name
+        self._object_bindings.setdefault(binding_qn, {}).setdefault(key, set()).add(
+            qualified_name
+        )
         self._object_binding_of[qualified_name] = (binding_qn, key)
 
     def object_binding_member(
         self, binding_qn: QualifiedName, key: str
     ) -> QualifiedName | None:
-        members = self._object_bindings.get(binding_qn)
-        return members.get(key) if members else None
+        # Two literals bound to one name in sibling blocks of a function
+        # share its qn, and which one a call means is not known here, so
+        # neither is chosen (bot review on PR #3118).
+        members = self._object_bindings.get(binding_qn, {}).get(key)
+        if not members or len(members) != 1:
+            return None
+        return next(iter(members))
 
     def has_object_bindings(self) -> bool:
         return bool(self._object_bindings)
+
+    def has_object_binding(self, binding_qn: QualifiedName) -> bool:
+        return binding_qn in self._object_bindings
 
     def mark_abstract(self, qualified_name: QualifiedName) -> None:
         self._abstracts.add(qualified_name)
@@ -584,8 +594,10 @@ class FunctionRegistryTrie:
             return
         binding_qn, key = bound
         members = self._object_bindings.get(binding_qn, {})
-        if members.get(key) == qualified_name:
-            del members[key]
+        if (named := members.get(key)) is not None:
+            named.discard(qualified_name)
+            if not named:
+                del members[key]
         if not members:
             self._object_bindings.pop(binding_qn, None)
 

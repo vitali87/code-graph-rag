@@ -2524,10 +2524,12 @@ class CallResolver:
         # in the calling function or one enclosing it.
         scope = call.caller_qn
         while scope and scope != call.module_qn:
-            if result := self._object_member_result(
-                f"{scope}{cs.SEPARATOR_DOT}{head}", key
-            ):
-                return result
+            binding_qn = f"{scope}{cs.SEPARATOR_DOT}{head}"
+            if self.function_registry.has_object_binding(binding_qn):
+                # The nearest function binding the name decides, also when
+                # two of its blocks bind it and no member is chosen (bot
+                # review on PR #3118).
+                return self._object_member_result(binding_qn, key)
             scope = scope.rpartition(cs.SEPARATOR_DOT)[0]
         return None
 
@@ -2542,6 +2544,18 @@ class CallResolver:
         import_map = self.import_processor.import_mapping.get(call.module_qn, {})
         base = import_map.get(head) or f"{call.module_qn}{cs.SEPARATOR_DOT}{head}"
         binding_qn = f"{base}{cs.SEPARATOR_DOT}{rest}" if rest else base
+        if head in import_map:
+            # What the source module exports under the name, through its
+            # export table: `export { publicApi as api }` beside a private
+            # `const api` gives the importer `publicApi` (bot review on PR
+            # #3118).
+            followed = self.import_processor.follow_js_reexports(
+                binding_qn,
+                self.type_inference.module_qn_to_file_path,
+                self.function_registry,
+            )
+            if followed != binding_qn:
+                return self._object_member_result(followed, key)
         return self._object_member_result(binding_qn, key)
 
     def _resolution_cache_key(self, call: _CallSite) -> tuple[str, str, bool] | None:
