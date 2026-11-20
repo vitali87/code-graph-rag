@@ -105,6 +105,11 @@ required: `--clean` on its own deletes the graph and returns without
 rebuilding. Note that it clears **every** project in a shared graph, so
 re-index the others afterwards.
 
+Haskell operator definitions keep their operator text as the stored name (for
+example, `<+>` or `|*|`); backtick definitions use the bare name (`plus`).
+Dots in operator names are stored as U+2024 (`․`) so the name remains one
+leaf in `<module>.<name>`. Type signatures do not emit functions.
+
 Without the `ast-grep` extra these files are still indexed, but only as
 `File` nodes. A sync that meets any of them ends with one warning giving the
 number of files per language and the install command; a repository with none
@@ -118,7 +123,7 @@ without `--clean`.
 | Kotlin | .kt, .kts | functions incl. suspend/private/override, companion members, extension functions | classes, interfaces, data classes, objects, enums | import |
 | Swift | .swift | functions, initializers, protocol requirements, extension members | classes, structs, enums, protocols | import |
 | Elixir | .ex, .exs | def, defp, defmacro incl. zero-arg and guarded | defmodule, defprotocol, defimpl | import, alias, require, use |
-| Haskell | .hs | equations and nullary binds | data, newtype, type, class | import |
+| Haskell | .hs | equations and nullary binds, including operators and backtick names | data, newtype, type, class | import |
 | Solidity | .sol | functions, constructors, modifiers, `receive`/`fallback` | contracts, interfaces, libraries | import |
 | Bash | .sh, .bash | all three `function`/`()` spellings | - | source, . |
 | Nix | .nix | lambda bindings | - | import |

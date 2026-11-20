@@ -985,3 +985,49 @@ export namespace processor {
         assert any(pattern in module for module in imported_modules), (
             f"Missing stdlib import: {pattern}\nFound: {imported_modules}"
         )
+
+
+def _include_lines(root: Path, includer: str) -> dict[str, list[int]]:
+    from codebase_rag import constants as cs
+    from codebase_rag.graph_updater import GraphUpdater
+    from codebase_rag.parser_loader import load_parsers
+    from evals.cgr_graph import _StatefulIngestor
+
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    GraphUpdater(ingestor=store, repo_path=root, parsers=parsers, queries=queries).run(
+        force=True
+    )
+    lines: dict[str, list[int]] = {}
+    for _fl, src, rel, _tl, dst, site in store.keyed_edges:
+        if rel == cs.RelationshipType.IMPORTS.value and src == includer:
+            lines.setdefault(str(dst), []).append(int(dict(site)[cs.KEY_LINE]))
+    return {target: sorted(found) for target, found in lines.items()}
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        # `a/util.h` loses the `util` name twice, once per directive.
+        (
+            '#include "a/util.h"\n#include "b/util.h"\n'
+            '#include "a/util.h"\n#include "b/util.h"\n',
+            {"a.util": [1, 3], "b.util": [2, 4]},
+        ),
+        # A header included again keeps the earlier directive's edge too.
+        ('#include "a/util.h"\n#include "a/util.h"\n', {"a.util": [1, 2]}),
+    ],
+    ids=["displaced-twice", "included-again"],
+)
+def test_each_include_directive_keeps_its_own_edge(
+    temp_repo: Path, source: str, expected: dict[str, list[int]]
+) -> None:
+    root = temp_repo / "incsites"
+    for name in ("a", "b"):
+        (root / name).mkdir(parents=True)
+        (root / name / "util.h").write_text("int util_fn(void);\n", encoding="utf-8")
+    (root / "main.cpp").write_text(source + "int main() { return 0; }\n")
+    lines = _include_lines(root, "incsites.main")
+    assert {
+        target.removeprefix("incsites."): found for target, found in lines.items()
+    } == expected, lines

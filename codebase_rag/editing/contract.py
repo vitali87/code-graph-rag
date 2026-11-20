@@ -114,6 +114,12 @@ def _site_key(site: Mapping[str, object]) -> str:
     return f"{site.get(cs.KEY_PATH)}:{site.get(cs.KEY_LINE)}"
 
 
+def _dangling_key(site: Mapping[str, object]) -> str:
+    """`path:line`, saying so when the line is the base ref's (issue #3171)."""
+    line_from = site.get(cs.KEY_LINE_FROM)
+    return f"{_site_key(site)} ({line_from})" if line_from else _site_key(site)
+
+
 def _call_key(site: Mapping[str, object]) -> str:
     """A call's identity for the signature checks.
 
@@ -232,7 +238,7 @@ def _check_callers(expectation: Expectation, delta: StructuralDelta) -> list[str
     if expectation.no_dangling and delta["dangling_callers"]:
         failures.append(
             cs.CONTRACT_DANGLING.format(
-                sites=", ".join(_site_key(d) for d in delta["dangling_callers"])
+                sites=", ".join(_dangling_key(d) for d in delta["dangling_callers"])
             )
         )
     return failures
@@ -382,6 +388,7 @@ def measure(
     files: Iterable[str],
     reingest: Reingest,
     declared_renames: Iterable[tuple[str, str]] = (),
+    reshaped_renames: Iterable[tuple[str, str]] = (),
 ) -> StructuralDelta:
     """The delta of files an operation just wrote, through the re-ingest.
 
@@ -389,6 +396,8 @@ def measure(
     renames from the snapshots, which cannot be done for an empty container
     (no fingerprint, no members, and the name is what changed), so an
     operation that knows says so rather than leaving it to a guess.
+    `reshaped_renames` are those whose body the operation also rewrote, so
+    the snapshots cannot pair them by shape either.
     """
     paths = sorted(set(files))
     return observe(
@@ -398,4 +407,5 @@ def measure(
         lambda: reingest(paths),
         repo_root=repo_root,
         declared_renames=frozenset(declared_renames),
+        reshaped_renames=frozenset(reshaped_renames),
     )
