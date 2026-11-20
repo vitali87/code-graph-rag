@@ -10,6 +10,7 @@ REFERENCES edge already does.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,6 +18,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
+from codebase_rag.editing.rename import QueryFn, rename
 from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
 from codebase_rag.types_defs import PropertyParams, ResultRow
 
@@ -242,3 +244,62 @@ def test_dead_code_still_keeps_a_returned_closure_alive(graph: RecordedGraph) ->
     assert not reported & alive
     # A factory nothing reaches does not revive its closure.
     assert {"deco._unused_factory", "deco._unused_factory.orphan"} <= reported
+
+
+# Issue #3531: the maker's CALLS row carried no site, so `cgr rename` refused
+# every returned closure ("graph-known site(s) carry no rewrite location").
+# With no such row, the rename finds the definition, the calls and the
+# returning reference.
+RENAMED = """\
+def make():
+    def inner():
+        return 1
+    return inner
+
+
+def make_called():
+    def inner2():
+        return 1
+    inner2()
+    return inner2
+"""
+
+
+@pytest.fixture(scope="module")
+def rename_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
+    root = tmp_path_factory.mktemp("renamed") / "tiny"
+    _write(root, "app.py", RENAMED)
+    return _index(root, MagicMock())
+
+
+@pytest.mark.parametrize(
+    ("closure", "sites"),
+    [
+        ("app.make.inner", {("definition", 2), ("reference", 4)}),
+        (
+            "app.make_called.inner2",
+            {("definition", 8), ("call", 10), ("reference", 11)},
+        ),
+    ],
+)
+def test_a_returned_closure_renames(
+    rename_graph: RecordedGraph, closure: str, sites: set[tuple[str, int]]
+) -> None:
+    assert rename_graph.root_path is not None
+
+    def fetch(query: str, params: PropertyParams | None) -> list[ResultRow]:
+        return rename_graph.fetch_all(
+            query, dict(params) if params is not None else None
+        )
+
+    query: QueryFn = fetch
+    report = rename(
+        Path(rename_graph.root_path),
+        query,
+        rename_graph.project,
+        f"{rename_graph.project}.{closure}",
+        "assist",
+        dry_run=True,
+    )
+
+    assert {(site.kind, site.line) for site in report.sites} == sites
