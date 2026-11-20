@@ -351,6 +351,27 @@ def test_rename_fails_on_dangling_callers_and_caller_count() -> None:
     )
 
 
+def test_a_dangling_caller_at_its_base_line_says_so() -> None:
+    # CodeRabbit, PR #3245: a line the delta could not move to the working
+    # tree is the base ref's, and the failure must not pass it off as current.
+    expectation = rename_expectation(
+        [("p.pkg.util.helper", "p.pkg.util.assist")], False
+    )
+    verdict = verify(
+        expectation,
+        _delta(
+            symbols={"added": [], "removed": [], "renamed": RENAMED, "changed": []},
+            dangling_callers=[
+                {**_dangling(), cs.KEY_LINE_FROM: cs.DANGLING_LINE_FROM_BASE},
+                _dangling("main.py", 4),
+            ],
+        ),
+    )
+    assert verdict.failures == (
+        cs.CONTRACT_DANGLING.format(sites="pkg/app.py:5 (base), main.py:4"),
+    )
+
+
 def test_rename_fails_when_the_symbol_set_moved() -> None:
     expectation = rename_expectation(
         [("p.pkg.util.helper", "p.pkg.util.assist")], False
@@ -1411,6 +1432,28 @@ def test_an_importer_of_a_vacated_module_is_reported() -> None:
     stale = _stale_importers(after, _renamed("p.pkg.util.helper", "p.pkg.core.helper"))
 
     assert [entry["importer"] for entry in stale] == ["p.pkg.app"]
+
+
+def test_a_from_import_of_the_vacated_module_itself_is_reported() -> None:
+    """`from pkg import util` is recorded against `pkg.util` under the name
+    `util`, which is not a moved name, so it was cleared like an import of a
+    constant left behind -- while `util.helper()` raised AttributeError
+    after the move (bot review)."""
+    from codebase_rag.structural_delta import _stale_importers
+
+    base = _snapshot(
+        definitions={"p.pkg.core.helper": "pkg/core.py"},
+        imports={"p.pkg.app": {"p.pkg.util"}},
+    )
+    module = base._replace(imported=frozenset({("p.pkg.app", "p.pkg.util", "util")}))
+    constant = base._replace(imported=frozenset({("p.pkg.app", "p.pkg.util", "SEP")}))
+    moved = _renamed("p.pkg.util.helper", "p.pkg.core.helper")
+
+    assert [entry["importer"] for entry in _stale_importers(module, moved)] == [
+        "p.pkg.app"
+    ]
+    # The control: a named import of a constant the module kept is not stale.
+    assert _stale_importers(constant, moved) == []
 
 
 def test_a_module_that_still_defines_something_is_not_vacated() -> None:

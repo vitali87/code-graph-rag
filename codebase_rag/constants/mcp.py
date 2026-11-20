@@ -1,5 +1,6 @@
 # MCP server tool names, schema fields, and messages.
 
+import re
 from enum import StrEnum
 
 
@@ -25,8 +26,10 @@ class MCPToolName(StrEnum):
     ENDPOINTS = "endpoints"
     ENDPOINT_CALLERS = "endpoint_callers"
     REMOTE_DEPENDENCIES = "remote_dependencies"
-    # Graph-driven edit operations (issue #1532).
+    # Graph-driven edit operations (issues #1532, #1533).
     RENAME = "rename"
+    CHANGE_SIGNATURE = "change_signature"
+    MOVE = "move"
     CONTEXT = "context"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
@@ -47,6 +50,78 @@ class MCPToolName(StrEnum):
     # never into source files, and read back per symbol.
     ANNOTATE = "annotate"
     GLOSSES = "glosses"
+
+
+# The tools that only read: the graph, the project's files, or an agent
+# answer whose writes `ask_agent` always denies. Named this way round so a new
+# tool counts as writing, and `--read-only` withholds it, until someone adds
+# it here; `test_every_tool_is_classified` keeps these sets in step (#3458).
+MCP_READ_ONLY_TOOLS = frozenset(
+    {
+        MCPToolName.LIST_PROJECTS,
+        MCPToolName.RESOLVE,
+        MCPToolName.DEFINITION,
+        MCPToolName.CALLERS,
+        MCPToolName.CALLEES,
+        MCPToolName.IMPLEMENTORS,
+        MCPToolName.OVERRIDES,
+        MCPToolName.IMPORTERS,
+        MCPToolName.TESTS_REACHING,
+        MCPToolName.ENDPOINTS,
+        MCPToolName.ENDPOINT_CALLERS,
+        MCPToolName.REMOTE_DEPENDENCIES,
+        MCPToolName.CONTEXT,
+        MCPToolName.QUERY_CODE_GRAPH,
+        MCPToolName.GET_CODE_SNIPPET,
+        MCPToolName.READ_FILE,
+        MCPToolName.LIST_DIRECTORY,
+        MCPToolName.SEMANTIC_SEARCH,
+        MCPToolName.STRUCTURAL_SEARCH,
+        MCPToolName.FIND_DUPLICATE_CODE,
+        MCPToolName.GET_FUNCTION_SOURCE,
+        MCPToolName.ASK_AGENT,
+        MCPToolName.FLOW_VERDICT,
+        MCPToolName.EXPLAIN_TRACEBACK,
+        MCPToolName.RANK_ROOT_CAUSES,
+        MCPToolName.GLOSSES,
+    }
+)
+# Writers that overwrite or remove what was there: source files, a project's
+# graph, the whole database. The other writers add a note or sync the graph
+# with the files.
+MCP_DESTRUCTIVE_TOOLS = frozenset(
+    {
+        MCPToolName.DELETE_PROJECT,
+        MCPToolName.WIPE_DATABASE,
+        MCPToolName.INDEX_REPOSITORY,
+        MCPToolName.RENAME,
+        MCPToolName.CHANGE_SIGNATURE,
+        MCPToolName.MOVE,
+        MCPToolName.SURGICAL_REPLACE_CODE,
+        MCPToolName.WRITE_FILE,
+        MCPToolName.STRUCTURAL_REPLACE,
+    }
+)
+# Writers that change nothing more when called again with the same arguments.
+MCP_IDEMPOTENT_TOOLS = frozenset(
+    {
+        MCPToolName.DELETE_PROJECT,
+        MCPToolName.WIPE_DATABASE,
+        MCPToolName.INDEX_REPOSITORY,
+        MCPToolName.UPDATE_REPOSITORY,
+        MCPToolName.REINGEST,
+        MCPToolName.WRITE_FILE,
+    }
+)
+MCP_READ_ONLY_REFUSED = (
+    "{name} writes, and this server runs read-only (--read-only or "
+    "MCP_READ_ONLY=true), so it was not run."
+)
+
+
+# The HTTP transport serves plain HTTP; a Host header leaves port 80 out.
+HTTP_SCHEME = "http"
+HTTP_DEFAULT_PORT = 80
 
 
 class MCPTransport(StrEnum):
@@ -123,6 +198,11 @@ class MCPParamName(StrEnum):
     THROUGH_REEXPORTS = "through_reexports"
     NEW_NAME = "new_name"
     ALLOW_HEURISTIC = "allow_heuristic"
+    ALLOW_EXTERNAL_OVERRIDE = "allow_external_override"
+    NEW_PARAMS = "new_params"
+    MAPPING = "mapping"
+    TARGET_MODULE = "target_module"
+    KEEP_ALIAS = "keep_alias"
     BUDGET_TOKENS = "budget_tokens"
 
 
@@ -142,6 +222,16 @@ MCP_READ_LIMIT_MINIMUM = 1
 MCP_READ_OFFSET_NEGATIVE = "offset {offset} is negative"
 MCP_READ_LIMIT_NOT_POSITIVE = "limit {limit} is not positive"
 MCP_READ_PAST_END = "offset {offset} is past the end of {path} ({total} lines)"
+# A likely credential store is not served: the client's model would read
+# it, and repository text can ask for it as easily as for source (#3457).
+MCP_READ_SENSITIVE_REFUSED = (
+    "{path} looks like a credential file, so it is not served over MCP. "
+    "Export CGR_ALLOW_SENSITIVE_READS=true in the server's environment to serve it."
+)
+MCP_WRITE_SENSITIVE_REFUSED = (
+    "{path} looks like a credential file, so it is not changed over MCP. "
+    "Export CGR_ALLOW_SENSITIVE_WRITES=true in the server's environment to allow it."
+)
 # A `path:line` target whose line no source file can reach; sent on, it
 # overflows the 64-bit Bolt integer in the driver.
 MCP_RESOLVE_LINE_OUT_OF_RANGE = "Line {line} of {path} is out of range."
@@ -153,6 +243,7 @@ MCP_INDEX_ERROR = "Error indexing repository: {error}"
 MCP_WRITE_SUCCESS = "Successfully wrote file: {path}"
 MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
 MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"
+MCP_INPUT_VALIDATION_ERROR = "Input validation error: {error}"
 MCP_UPDATE_SUCCESS = "Successfully updated repository at {path} (no database wipe)."
 MCP_UPDATE_ERROR = "Error updating repository: {error}"
 MCP_REINGEST_ERROR = "Error re-ingesting files: {error}"
@@ -251,6 +342,12 @@ MCP_ROOT_NOT_INDEXED = (
     "No project is indexed for this server's root {path}; run "
     "index_repository or update_repository first, or pass `project`."
 )
+# flow_verdict, explain_traceback and rank_root_causes take no `project`, so
+# their refusal cannot advise passing one (issue #3193).
+MCP_FIXED_ROOT_NOT_INDEXED = (
+    "No project is indexed for this server's root {path}; run "
+    "index_repository or update_repository first."
+)
 # An empty answer for a name the graph does not hold read as "nothing calls
 # it" / "no test reaches it" (issue #2461).
 MCP_UNKNOWN_TARGET = "{qualified_name!r} is not in the graph."
@@ -287,6 +384,37 @@ MCP_WORKSPACE_SOURCE_UNPROVEN = (
     "{name!r} belongs to project {project!r} of workspace {workspace!r}, but the "
     "graph does not show that project indexed from the workspace's checkout; "
     "re-index it from there to read its source"
+)
+# `list_projects` on a workspace server whose repos are not all indexed under
+# their own project names (issue #2867).
+# `cgr start --update-graph` indexes one directory and does not read
+# `--workspace`, so each repo gets its own command (Greptile, PR #2964).
+MCP_WORKSPACE_NOT_INDEXED = (
+    "Workspace {workspace!r} projects not in the graph: {names}. Index each "
+    "repo under its project name:"
+)
+MCP_WORKSPACE_INDEX_COMMAND = (
+    " 'cgr start --repo-path {path} --project-name {project} --update-graph'."
+)
+# On Windows the command is quoted with double quotes, which cmd.exe,
+# PowerShell and Git Bash all read literally except for these characters; a
+# path or name holding one gets no pasteable command (Greptile, PR #2964).
+# PowerShell also ends a double-quoted string at a typographic double quote
+# (CodeRabbit, PR #2964).
+MCP_WINDOWS_SHELL_UNQUOTABLE = frozenset('"%!$`\\\u201c\u201d\u201e')
+# Characters none of those shells treats specially outside quotes either.
+MCP_WINDOWS_SHELL_PLAIN = re.compile(r"[\w./:-]+")
+MCP_WORKSPACE_INDEX_UNQUOTABLE = (
+    " Index {path!r} as project {project!r}: its path or project name holds a "
+    "character a Windows shell expands even inside quotes, so quote both "
+    "yourself."
+)
+MCP_WORKSPACE_REPO_INDEXED_AS = (
+    " {path} is indexed as project {project!r}, not {expected!r}."
+)
+MCP_WORKSPACE_REPO_INDEXED_INSIDE = (
+    " {path} is indexed inside project {project!r} (rooted at {root}), not as a "
+    "project of its own."
 )
 MCP_WORKSPACE_DEFAULT_AMBIGUOUS = (
     "Workspace {workspace!r} holds {count} projects and none is rooted at this "

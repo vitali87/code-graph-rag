@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from functools import cache, lru_cache, partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -10,8 +12,19 @@ from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
 from ... import logs as ls
-from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
-from ..utils import get_cached_query, safe_decode_text, unparenthesized
+from ...types_defs import (
+    ASTNode,
+    FunctionRegistryTrieProtocol,
+    NodeType,
+    SpanBinding,
+)
+from ..utils import (
+    conflicting_declaration_spans,
+    get_cached_query,
+    safe_decode_text,
+    sorted_captures,
+    unparenthesized,
+)
 from . import utils as ut
 
 # Callable node types whose bodies own their locals and returns; the shared
@@ -68,6 +81,21 @@ _OVERLOAD_SIGNATURE_TYPES = {
 _CtorDecls = dict[str, list[tuple[int, int, "ASTNode | None"]]]
 _CtorAssigns = dict[str, list[tuple[int, "ASTNode"]]]
 _CtorBindingIndex = tuple[_CtorDecls, _CtorAssigns]
+
+
+@dataclass(slots=True)
+class _ScopedNames:
+    # One caller's declarations and assignments of each name, and the span
+    # bindings worked out so far; `busy` holds the names being worked out, so
+    # `for (const items of items)` reads the flat map rather than itself.
+    found: dict[str, list[tuple[int, int, ASTNode]]]
+    assigned: dict[str, list[tuple[ASTNode, ASTNode]]]
+    module_qn: str
+    language: cs.SupportedLanguage | None
+    local_var_types: Mapping[str, str]
+    spans: dict[str, list[SpanBinding]] = dataclass_field(default_factory=dict)
+    busy: set[str] = dataclass_field(default_factory=set)
+
 
 if TYPE_CHECKING:
     from ...types_defs import LanguageQueries
@@ -219,6 +247,25 @@ def _member_name(member: ASTNode) -> str | None:
     return safe_decode_text(key) if key is not None else None
 
 
+def _member_key(member: ASTNode) -> str | None:
+    """The property a class member declares: `size`, `'size'` and
+    `['size']` all declare `size`, while `#size` is a name of its own and a
+    computed `[key]` names no property this can read."""
+    key = member.child_by_field_name(cs.FIELD_NAME) or member.child_by_field_name(
+        cs.FIELD_PROPERTY
+    )
+    if key is not None and key.type == cs.TS_JS_COMPUTED_PROPERTY_NAME:
+        key = next(iter(key.named_children), None)
+        if key is None or key.type != cs.TS_STRING:
+            return None
+    if key is not None and key.type == cs.TS_STRING:
+        parts = key.named_children
+        if any(part.type != cs.TS_STRING_FRAGMENT for part in parts):
+            return None
+        return "".join(safe_decode_text(part) or "" for part in parts)
+    return safe_decode_text(key) if key is not None else None
+
+
 def _single_non_nullish_member(union: ASTNode) -> ASTNode | None:
     members = [
         child
@@ -314,7 +361,7 @@ class JsTypeInferenceEngine:
                 try:
                     q = get_cached_query(lang_queries["language"], _JS_DECLARATOR_QUERY)
                     cursor = QueryCursor(q)
-                    captures = cursor.captures(caller_node)
+                    captures = sorted_captures(cursor, caller_node)
                     return captures.get("declarator", [])
                 except Exception:  # noqa: S112 - a failed query falls through to the next language
                     continue
@@ -367,9 +414,218 @@ class JsTypeInferenceEngine:
         # implementations. Only a first-party INTERFACE is seeded: any other
         # annotation keeps the untyped fallback it had, since a typed receiver
         # the resolver cannot place is treated as external and dropped.
-        for name, type_name in ut.annotated_parameter_types(caller_node):
-            if interface_qn := self._first_party_interface_qn(type_name, module_qn):
-                local_var_types[name] = interface_qn
+        local_var_types.update(self._interface_parameter_types(caller_node, module_qn))
+
+    def _interface_parameter_types(
+        self, callable_node: ASTNode, module_qn: str
+    ) -> dict[str, str]:
+        return {
+            name: interface_qn
+            for name, type_name in ut.annotated_parameter_types(callable_node)
+            if (interface_qn := self._first_party_interface_qn(type_name, module_qn))
+        }
+
+    def collect_scoped_declarations(
+        self,
+        caller_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+        local_var_types: Mapping[str, str],
+    ) -> list[SpanBinding]:
+        """Each declaration of a name the caller declares more than once, as
+        a binding over the part of the body where the name reads it (issue
+        #3332).
+
+        The flat map keeps one type per name, so a `const op` in each
+        `switch` case typed every `op.applyTo()` as one case's class. A
+        declaration holds from its own end to the end of its scope: a
+        `let`/`const` its block, a `var` its callable, a loop or catch
+        binding its statement; a parameter holds over its whole callable.
+        Where several hold, the call processor takes the narrowest, which is
+        the innermost scope's, and of two `var`s of one callable the later.
+        Nested callables are walked too, since their calls are this caller's
+        (an anonymous callback is not a caller of its own). An assignment of
+        a `new` (`s = new Square()`) retypes its variable from there to the
+        end of its scope, or of the nested function it is written in,
+        whichever comes first; one of any other value leaves the type as it
+        was. A name declared once, or always with one type, keeps the flat
+        map's type everywhere.
+        """
+        found: dict[str, list[tuple[int, int, ASTNode]]] = {}
+        assigned: dict[str, list[tuple[ASTNode, ASTNode]]] = {}
+        self._scoped_parameters(caller_node, found)
+        stack: list[tuple[ASTNode, ASTNode]] = [
+            (child, caller_node) for child in reversed(caller_node.children)
+        ]
+        while stack:
+            node, owner = stack.pop()
+            if node.type in _JS_NESTED_CALLABLE_TYPES:
+                owner = node
+                self._scoped_parameters(node, found)
+            elif node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION and (
+                (target := node.child_by_field_name(cs.FIELD_LEFT)) is not None
+                and target.type == cs.TS_IDENTIFIER
+                and (name := safe_decode_text(target))
+            ):
+                assigned.setdefault(name, []).append((node, owner))
+            else:
+                self._scoped_binding(node, owner, found)
+            stack.extend((child, owner) for child in reversed(node.children))
+        names = _ScopedNames(found, assigned, module_qn, language, local_var_types)
+        return [
+            binding
+            for name, declarations in found.items()
+            if len(declarations) > 1
+            for binding in self._scoped_spans(name, names)
+        ]
+
+    def _scoped_spans(self, name: str, names: _ScopedNames) -> list[SpanBinding]:
+        if (spans := names.spans.get(name)) is not None:
+            return spans
+        names.busy.add(name)
+        spans = conflicting_declaration_spans(
+            name,
+            [
+                (
+                    start,
+                    end,
+                    self._scoped_declaration_type(
+                        node,
+                        name,
+                        names.module_qn,
+                        names.language,
+                        self._scoped_view(node, names),
+                    ),
+                )
+                for start, end, node in names.found[name]
+            ],
+            [
+                (
+                    assignment.end_byte,
+                    owner.end_byte,
+                    self._assigned_value_type(assignment, names),
+                )
+                for assignment, owner in names.assigned.get(name, ())
+            ],
+        )
+        names.busy.discard(name)
+        names.spans[name] = spans
+        return spans
+
+    def _scoped_view(self, node: ASTNode, names: _ScopedNames) -> Mapping[str, str]:
+        # `for (const x of items)` walks the `items` declared where the loop
+        # is, not whichever one the flat map kept.
+        right = (
+            node.child_by_field_name(cs.FIELD_RIGHT)
+            if node.type == cs.TS_JS_FOR_IN_STATEMENT
+            else None
+        )
+        iterable = (
+            safe_decode_text(right)
+            if right is not None and right.type == cs.TS_IDENTIFIER
+            else None
+        )
+        if (
+            right is None
+            or not iterable
+            or iterable in names.busy
+            or len(names.found.get(iterable, ())) < 2
+        ):
+            return names.local_var_types
+        held = [
+            (end - start, type_name)
+            for start, end, _name, type_name in self._scoped_spans(iterable, names)
+            if start <= right.start_byte < end
+        ]
+        if not held:
+            return names.local_var_types
+        type_name = min(held)[1]
+        view = {k: v for k, v in names.local_var_types.items() if k != iterable}
+        if type_name:
+            view[iterable] = type_name
+        return view
+
+    def _scoped_parameters(
+        self,
+        callable_node: ASTNode,
+        found: dict[str, list[tuple[int, int, ASTNode]]],
+    ) -> None:
+        for name in self._js_parameter_names(callable_node):
+            found.setdefault(name, []).append(
+                (callable_node.start_byte, callable_node.end_byte, callable_node)
+            )
+
+    def _scoped_binding(
+        self,
+        node: ASTNode,
+        owner: ASTNode,
+        found: dict[str, list[tuple[int, int, ASTNode]]],
+    ) -> None:
+        # The scope rules are the binding index's; a declaration starts where
+        # it ends, so its initialiser still reads the binding outside it.
+        names: list[str] = []
+        span: tuple[int, int] | None = None
+        if node.type == cs.TS_VARIABLE_DECLARATOR and (
+            (target := node.child_by_field_name(cs.FIELD_NAME)) is not None
+        ):
+            names = self._js_binding_names(target)
+            span = (node.end_byte, self._js_declarator_span(node, owner)[1])
+        elif node.type == cs.TS_JS_FOR_IN_STATEMENT and (
+            (left := node.child_by_field_name(cs.FIELD_LEFT)) is not None
+            and (loop := self._js_loop_span(node, owner)) is not None
+        ):
+            names = self._js_binding_names(left)
+            span = (left.end_byte, loop[1])
+        elif node.type == cs.TS_JS_CATCH_CLAUSE and (
+            (param := node.child_by_field_name(cs.FIELD_PARAMETER)) is not None
+        ):
+            names = self._js_binding_names(param)
+            span = (param.end_byte, node.end_byte)
+        if span is None:
+            return
+        for name in names:
+            found.setdefault(name, []).append((span[0], span[1], node))
+
+    def _scoped_declaration_type(
+        self,
+        node: ASTNode,
+        name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+        local_var_types: Mapping[str, str],
+    ) -> str | None:
+        # Typed as the flat map types the same declaration; a destructured
+        # name or a catch binding has no type it can read.
+        match node.type:
+            case cs.TS_VARIABLE_DECLARATOR:
+                target = node.child_by_field_name(cs.FIELD_NAME)
+                if target is None or target.type != cs.TS_IDENTIFIER:
+                    return None
+                return self._declarator_type(node, module_qn, language)
+            case cs.TS_JS_FOR_IN_STATEMENT:
+                binding = self._for_of_binding(node)
+                if binding is None:
+                    return None
+                return self._for_of_element_type(binding[1], local_var_types, module_qn)
+            case cs.TS_JS_CATCH_CLAUSE:
+                return None
+            case _:
+                return self._interface_parameter_types(node, module_qn).get(name)
+
+    def _assigned_value_type(
+        self, assignment: ASTNode, names: _ScopedNames
+    ) -> str | None:
+        # What `x = value` surely makes `x`: the class a `new` constructs. A
+        # call's value is left untyped, so `x` keeps the type it had, as on
+        # main: what a factory, method or callable value returns is read by
+        # guesses that a different declaration in scope, a replaced binding
+        # or an interface can each defeat (#3647).
+        value = assignment.child_by_field_name(cs.FIELD_RIGHT)
+        if value is None or value.type != cs.TS_NEW_EXPRESSION:
+            return None
+        return self._infer_js_variable_type_from_value(
+            value, names.module_qn, names.language
+        )
 
     def _first_party_interface_qn(self, type_name: str, module_qn: str) -> str | None:
         # An import names the symbol or its module, so both spellings are tried
@@ -410,6 +666,18 @@ class JsTypeInferenceEngine:
         if var_name is None:
             return
         logger.debug(ls.JS_VAR_DECLARATOR_FOUND, var_name=var_name, module_qn=module_qn)
+        if var_type := self._declarator_type(declarator, module_qn, language):
+            local_var_types[var_name] = var_type
+            logger.debug(ls.JS_VAR_INFERRED, var_name=var_name, var_type=var_type)
+        else:
+            logger.debug(ls.JS_VAR_INFER_FAILED, var_name=var_name)
+
+    def _declarator_type(
+        self,
+        declarator: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+    ) -> str | None:
         # Precedence: a `new` expression is exact runtime truth and beats the
         # declared annotation (`const s: IService = new UserService()` types as
         # the concrete class); the annotation beats the remaining value
@@ -426,11 +694,7 @@ class JsTypeInferenceEngine:
             var_type = self._infer_js_variable_type_from_value(
                 value_node, module_qn, language
             )
-        if var_type:
-            local_var_types[var_name] = var_type
-            logger.debug(ls.JS_VAR_INFERRED, var_name=var_name, var_type=var_type)
-        else:
-            logger.debug(ls.JS_VAR_INFER_FAILED, var_name=var_name)
+        return var_type
 
     def _annotation_type(self, annotation_node: ASTNode, module_qn: str) -> str | None:
         """The type of a ``type_annotation`` node (`: User`, `: User[]`, ...)."""
@@ -504,9 +768,9 @@ class JsTypeInferenceEngine:
                 self._seed_one_for_of(node, local_var_types, module_qn)
             stack.extend(reversed(node.children))
 
-    def _seed_one_for_of(
-        self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
+    @staticmethod
+    def _for_of_binding(node: ASTNode) -> tuple[str, ASTNode] | None:
+        # `for (x of xs)`: the loop variable and the container it walks.
         operator = node.child_by_field_name("operator")
         left = node.child_by_field_name("left")
         right = node.child_by_field_name("right")
@@ -517,10 +781,16 @@ class JsTypeInferenceEngine:
             or safe_decode_text(operator) != cs.TS_JS_OPERATOR_OF
             or left.type != cs.TS_IDENTIFIER
         ):
-            return
+            return None
         loop_var = safe_decode_text(left)
-        if not loop_var:
+        return (loop_var, right) if loop_var else None
+
+    def _seed_one_for_of(
+        self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        if (binding := self._for_of_binding(node)) is None:
             return
+        loop_var, right = binding
         element = self._for_of_element_type(right, local_var_types, module_qn)
         # The map is function-wide while the loop binding is block-scoped: the
         # header REBINDS the name, so an entry that disagrees with the loop's
@@ -535,7 +805,7 @@ class JsTypeInferenceEngine:
             logger.debug(ls.JS_VAR_INFERRED, var_name=loop_var, var_type=element)
 
     def _for_of_element_type(
-        self, right: ASTNode, local_var_types: dict[str, str], module_qn: str
+        self, right: ASTNode, local_var_types: Mapping[str, str], module_qn: str
     ) -> str | None:
         if right.type == cs.TS_IDENTIFIER:
             name = safe_decode_text(right)
@@ -619,6 +889,26 @@ class JsTypeInferenceEngine:
                 return True, member.start_point[0] + 1
             return True, None
         return declared, None
+
+    @staticmethod
+    def member_sides(class_body: ASTNode, member_name: str) -> tuple[bool, bool]:
+        """Whether the class body declares `member_name` for its instances,
+        and whether it declares a static one: two namespaces, which may
+        share the name.
+
+        Any kind of member counts: a method or accessor, a field (`declare`
+        and optional ones too), an overload or an abstract signature. Each is
+        what TypeScript reads as the class's own member of that name.
+        """
+        instance = static = False
+        for member in class_body.named_children:
+            if _member_key(member) != member_name:
+                continue
+            if ut.is_static_member(member):
+                static = True
+            else:
+                instance = True
+        return instance, static
 
     def visible_class(
         self,

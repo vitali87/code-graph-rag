@@ -15,6 +15,7 @@ from fnmatch import fnmatch
 
 from . import constants as cs
 from . import cypher_queries as cq
+from . import exceptions as ex
 from .path_filters import matches_test_path
 from .types_defs import (
     DeadCodeConfig,
@@ -120,6 +121,16 @@ def _is_root_decorator(decorator: str, root_decorators: frozenset[str]) -> bool:
         and (head == root or head.endswith(cs.SEPARATOR_DOT + root))
         for root in root_decorators
     )
+
+
+def _names_entry_point(qn: str, entry: str) -> bool:
+    """Whether `entry` is the qualified name or its trailing whole segments.
+
+    A plain suffix test let `-e main` root `_remain` and `domain`, and
+    `-e cli.run` root `mycli.run`, with everything they call, so the report
+    silently lost real dead code (issue #2641).
+    """
+    return qn == entry or qn.endswith(cs.SEPARATOR_DOT + entry)
 
 
 def _is_dunder(name: str) -> bool:
@@ -403,6 +414,16 @@ def _is_java_serialization_root(name: str, is_method: bool, path: str) -> bool:
     )
 
 
+def _is_java_annotation_root(props: PropertyDict, path: str) -> bool:
+    # A Java method carrying a container/runtime annotation (@PostConstruct,
+    # @Scheduled, @EventListener, @Bean, @GetMapping) is invoked reflectively,
+    # never by a call the graph sees, so it is a reachability root. Gated to
+    # .java so a Python `@bean` keeps its own meaning.
+    return path.endswith(cs.EXT_JAVA) and _has_root_decorator(
+        props, cs.JAVA_ROOT_ANNOTATIONS
+    )
+
+
 def _is_csharp_attribute_root(props: PropertyDict, path: str) -> bool:
     # A C# method carrying a framework/runtime attribute ([Fact], [HttpGet],
     # [OnDeserialized]) is invoked reflectively, never by a call the graph sees,
@@ -513,6 +534,68 @@ _WELL_KNOWN_SYMBOL_KEY_RE = re.compile(r"\[Symbol\.(?P<name>[A-Za-z_$][\w$]*)\]$
 def is_well_known_symbol_member(name: str) -> bool:
     m = _WELL_KNOWN_SYMBOL_KEY_RE.search(name)
     return m is not None and m.group("name") in cs.JS_WELL_KNOWN_SYMBOLS
+
+
+def _dispatch_registration(qn: str, decorator: str) -> str | None:
+    """The qualified name `@<generic>.register` names, beside `qn`, or None."""
+    head = decorator.replace(cs.DECORATOR_AT, "").strip().split(cs.CHAR_PAREN_OPEN)[0]
+    generic, dot, last = head.strip().rpartition(cs.SEPARATOR_DOT)
+    if not dot or last != cs.DISPATCH_REGISTER_DECORATOR or not generic:
+        return None
+    owner = qn_markers.natural_qn(qn).rpartition(cs.SEPARATOR_DOT)[0]
+    return f"{owner}{cs.SEPARATOR_DOT}{generic}"
+
+
+def _is_singledispatch(props: PropertyDict | None) -> bool:
+    return props is not None and any(
+        _norm_decorator(d) in cs.SINGLEDISPATCH_DECORATORS
+        for d in _str_items(props.get(cs.KEY_DECORATORS))
+    )
+
+
+def _dispatch_generics(
+    props_by_qn: dict[str, PropertyDict],
+) -> dict[str, frozenset[str]]:
+    """Each singledispatch implementation mapped to its generics.
+
+    `@render.register` on an implementation names a `@singledispatch`
+    function (or `@singledispatchmethod` method) in the same scope; the
+    generic calls the implementation at runtime by argument type, so the
+    implementation is live exactly when the generic is (issue #2736). An
+    implementation stacked on several generics is live when any of them is.
+    """
+    generics: dict[str, frozenset[str]] = {}
+    for qn, props in props_by_qn.items():
+        confirmed = frozenset(
+            generic
+            for decorator in _str_items(props.get(cs.KEY_DECORATORS))
+            if (generic := _dispatch_registration(qn, decorator)) is not None
+            and _is_singledispatch(props_by_qn.get(generic))
+        )
+        if confirmed:
+            generics[qn] = confirmed
+    return generics
+
+
+def _without_dispatch_registration(
+    qn: str,
+    props: PropertyDict,
+    generics: frozenset[str],
+    explicit_roots: frozenset[str],
+) -> PropertyDict:
+    """`props` minus the `@generic.register` decorators naming one of
+    `generics`, which must not root a singledispatch implementation by a
+    default rule: that would keep the implementations of a dead generic
+    alive. Any other `.register` decorator (`@atexit.register`) still roots,
+    and so does one matching a root the user added (`--decorator-root
+    register`), which asks for exactly that."""
+    decorators = [
+        d
+        for d in _str_items(props.get(cs.KEY_DECORATORS))
+        if _dispatch_registration(qn, d) not in generics
+        or _is_root_decorator(d, explicit_roots)
+    ]
+    return {**props, cs.KEY_DECORATORS: decorators}
 
 
 def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) -> bool:
@@ -759,6 +842,13 @@ def _is_root(
             and leaf in cs.PY_ENUM_HOOK_METHOD_NAMES
             and path.endswith(cs.EXT_PY)
         ),
+        # IPython's display machinery calls these by name on the object it
+        # shows, as the runtime calls a dunder (issue #2858).
+        lambda: (
+            is_method
+            and leaf in cs.PY_IPYTHON_DISPLAY_METHOD_NAMES
+            and path.endswith(cs.EXT_PY)
+        ),
         lambda: (
             not is_method
             and leaf in cs.GO_ROOT_FUNCTION_NAMES
@@ -776,6 +866,7 @@ def _is_root(
             or _is_c_cpp_entry_root(leaf, is_method, path, qn, project_prefix)
         ),
         lambda: _is_java_serialization_root(bare_leaf, is_method, path),
+        lambda: _is_java_annotation_root(props, path),
         lambda: _is_csharp_attribute_root(props, path),
         lambda: _is_csharp_dispose_root(bare_leaf, is_method, path),
         lambda: _is_csharp_operator_or_finalizer_root(leaf, path),
@@ -817,7 +908,7 @@ def _is_root(
 
 
 def _is_named_entry_point(qn: str, config: DeadCodeConfig) -> bool:
-    return any(qn.endswith(entry) for entry in config.entry_points)
+    return any(_names_entry_point(qn, entry) for entry in config.entry_points)
 
 
 def _is_rooted_test_symbol(
@@ -1329,12 +1420,22 @@ def dead_code_from_graph(
     # Every rule in _is_root makes `qn` a root; they are alternatives, not a
     # priority order, so one membership test replaces a chain of identical
     # branches (Sonar S1871, #1669).
+    dispatch_generics = _dispatch_generics(scan.props_by_qn)
+    # The roots the user added: a confirmed dispatch registration is left to
+    # its generic by the default rules only (issue #2736).
+    explicit_roots = config.root_decorators - frozenset(
+        d.lower() for d in cs.DEFAULT_ROOT_DECORATORS
+    )
     roots |= {
         qn
         for qn in scan.candidates - roots
         if _is_root(
             qn,
-            scan.props_by_qn[qn],
+            _without_dispatch_registration(
+                qn, scan.props_by_qn[qn], dispatch_generics[qn], explicit_roots
+            )
+            if qn in dispatch_generics
+            else scan.props_by_qn[qn],
             config,
             scan.method_qns,
             declaration_roots,
@@ -1349,6 +1450,9 @@ def dead_code_from_graph(
     }
 
     adjacency, override_rev = _traversal_maps(rels, traversal)
+    for implementation, generics in dispatch_generics.items():
+        for generic in generics:
+            adjacency[generic].add(implementation)
     live = set(roots)
     _walk(roots, adjacency, live)
 
@@ -1465,6 +1569,25 @@ def _endpoint_links(
     return links
 
 
+def _route_handler_count(nodes: dict[_NodeId, PropertyDict]) -> int:
+    """Definitions carrying a route decorator: the handlers the io group
+    would link to an endpoint."""
+    from .parsers.endpoints import parse_route_decorator
+
+    count = 0
+    for props in nodes.values():
+        # The io group writes no endpoint for a route in a test file (#910),
+        # so one there is no sign the group was left out.
+        if matches_test_path(str(props.get(cs.KEY_PATH) or "")):
+            continue
+        decorators = props.get(cs.KEY_DECORATORS)
+        if isinstance(decorators, list) and any(
+            parse_route_decorator(str(d)) for d in decorators
+        ):
+            count += 1
+    return count
+
+
 def collect_dead_code(
     ingestor: GraphQueryClient, project_name: str, config: DeadCodeConfig
 ) -> list[ResultRow]:
@@ -1503,6 +1626,11 @@ def collect_dead_code_with_coverage(
     endpoint_links = (
         None if config.endpoint_roots else _endpoint_links(ingestor, params)
     )
+    # No endpoint at all is what a project indexed without the io group
+    # holds; the route decorator would then root every handler as if the
+    # switch were on (issue #2896).
+    if endpoint_links == {} and (handlers := _route_handler_count(nodes)):
+        raise ex.EndpointDataMissingError(project_name, handlers)
     dead = dead_code_from_graph(nodes, rels, prefix, config, endpoint_links)
     rows = [row for row in node_rows if _row_qn(row) in dead]
     rows.sort(key=_row_qn)
