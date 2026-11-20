@@ -20,6 +20,7 @@ import json
 import re
 import subprocess  # nosec B404 - runs cargo, a fixed argument list
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -86,6 +87,12 @@ class Crate:
     licence: str
 
 
+@dataclass(frozen=True)
+class Source:
+    directory: Path
+    repository: str | None
+
+
 def _cargo(args: tuple[str, ...]) -> str:
     return subprocess.run(  # nosec B603 - fixed cargo argument list
         args, cwd=CRATE_DIR, check=True, capture_output=True, text=True
@@ -106,16 +113,22 @@ def linked_crates() -> list[Crate]:
     return sorted(crates.values(), key=lambda c: (c.name, c.version))
 
 
-def source_dirs() -> dict[tuple[str, str], Path]:
+def sources() -> dict[tuple[str, str], Source]:
     metadata = json.loads(_cargo(METADATA_ARGS))
     return {
-        (p["name"], p["version"]): Path(p["manifest_path"]).parent
+        (p["name"], p["version"]): Source(
+            Path(p["manifest_path"]).parent, p.get("repository")
+        )
         for p in metadata["packages"]
     }
 
 
+def offered_licences(crate: Crate) -> set[str]:
+    return {part.strip() for part in LICENSE_SPLIT.split(crate.licence)}
+
+
 def chosen_licence(crate: Crate) -> str:
-    offered = {part.strip() for part in LICENSE_SPLIT.split(crate.licence)}
+    offered = offered_licences(crate)
     for licence in PREFERRED:
         if licence in offered:
             return licence
@@ -129,24 +142,54 @@ def chosen_licence(crate: Crate) -> str:
     )
 
 
-def licence_text(crate: Crate, licence: str, source: Path) -> str:
-    for name in LICENSE_FILES[licence]:
-        path = source / name
-        if path.is_file():
-            return path.read_text(encoding=ENCODING).strip()
+def text_directories(
+    crate: Crate,
+    licence: str,
+    crates: Sequence[Crate],
+    found: dict[tuple[str, str], Source],
+) -> list[Path]:
+    """Where to look for the crate's licence text, its own package first."""
+    own = found[(crate.name, crate.version)]
+    if own.repository is None:
+        return [own.directory]
+    # A crate can be published from a workspace without the licence file the
+    # repository keeps at its root (rsqlite-vfs, from sqlite-wasm-rs). A crate
+    # of the same repository offering the same licence ships that text.
+    siblings = [
+        found[(other.name, other.version)].directory
+        for other in crates
+        if other != crate
+        and found[(other.name, other.version)].repository == own.repository
+        and licence in offered_licences(other)
+    ]
+    return [own.directory, *siblings]
+
+
+def licence_text(crate: Crate, licence: str, directories: Sequence[Path]) -> str:
+    for directory in directories:
+        for name in LICENSE_FILES[licence]:
+            path = directory / name
+            if path.is_file():
+                return path.read_text(encoding=ENCODING).strip()
     raise SystemExit(
         ERR_NO_TEXT.format(
-            name=crate.name, version=crate.version, licence=licence, path=source
+            name=crate.name,
+            version=crate.version,
+            licence=licence,
+            path=directories[0],
         )
     )
 
 
 def render() -> str:
-    sources = source_dirs()
+    found = sources()
+    crates = linked_crates()
     parts = [HEADER]
-    for crate in linked_crates():
+    for crate in crates:
         licence = chosen_licence(crate)
-        text = licence_text(crate, licence, sources[(crate.name, crate.version)])
+        text = licence_text(
+            crate, licence, text_directories(crate, licence, crates, found)
+        )
         parts.append(
             SECTION.format(
                 name=crate.name,

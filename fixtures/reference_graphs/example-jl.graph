@@ -1,0 +1,77 @@
+E	CALLS	Module	"example-jl.test.runtests"	Function	"example-jl.src.Example.Example.domath"	{"arg_count":1,"col":6,"end_col":17,"end_line":4,"kwarg_names":[],"line":4,"resolution":"heuristic"}
+E	CALLS	Module	"example-jl.test.runtests"	Function	"example-jl.src.Example.Example.hello"	{"arg_count":1,"col":6,"end_col":20,"end_line":3,"kwarg_names":[],"line":3,"resolution":"heuristic"}
+E	CONTAINS_FILE	Folder	"<root>/.github"	File	"<root>/.github/dependabot.yml"	{}
+E	CONTAINS_FILE	Folder	"<root>/.github/ISSUE_TEMPLATE"	File	"<root>/.github/ISSUE_TEMPLATE/bug_report.md"	{}
+E	CONTAINS_FILE	Folder	"<root>/.github/ISSUE_TEMPLATE"	File	"<root>/.github/ISSUE_TEMPLATE/custom.md"	{}
+E	CONTAINS_FILE	Folder	"<root>/.github/ISSUE_TEMPLATE"	File	"<root>/.github/ISSUE_TEMPLATE/feature_request.md"	{}
+E	CONTAINS_FILE	Folder	"<root>/.github/workflows"	File	"<root>/.github/workflows/CompatHelper.yml"	{}
+E	CONTAINS_FILE	Folder	"<root>/.github/workflows"	File	"<root>/.github/workflows/TagBot.yml"	{}
+E	CONTAINS_FILE	Folder	"<root>/.github/workflows"	File	"<root>/.github/workflows/ci.yml"	{}
+E	CONTAINS_FILE	Folder	"<root>/docs"	File	"<root>/docs/Project.toml"	{}
+E	CONTAINS_FILE	Folder	"<root>/docs"	File	"<root>/docs/make.jl"	{}
+E	CONTAINS_FILE	Folder	"<root>/docs/src"	File	"<root>/docs/src/index.md"	{}
+E	CONTAINS_FILE	Folder	"<root>/src"	File	"<root>/src/Example.jl"	{}
+E	CONTAINS_FILE	Folder	"<root>/test"	File	"<root>/test/runtests.jl"	{}
+E	CONTAINS_FILE	Project	"example-jl"	File	"<root>/.gitignore"	{}
+E	CONTAINS_FILE	Project	"example-jl"	File	"<root>/LICENSE"	{}
+E	CONTAINS_FILE	Project	"example-jl"	File	"<root>/Project.toml"	{}
+E	CONTAINS_FILE	Project	"example-jl"	File	"<root>/README.md"	{}
+E	CONTAINS_FOLDER	Folder	"<root>/.github"	Folder	"<root>/.github/ISSUE_TEMPLATE"	{}
+E	CONTAINS_FOLDER	Folder	"<root>/.github"	Folder	"<root>/.github/workflows"	{}
+E	CONTAINS_FOLDER	Folder	"<root>/docs"	Folder	"<root>/docs/src"	{}
+E	CONTAINS_FOLDER	Project	"example-jl"	Folder	"<root>/.github"	{}
+E	CONTAINS_FOLDER	Project	"example-jl"	Folder	"<root>/docs"	{}
+E	CONTAINS_FOLDER	Project	"example-jl"	Folder	"<root>/src"	{}
+E	CONTAINS_FOLDER	Project	"example-jl"	Folder	"<root>/test"	{}
+E	CONTAINS_MODULE	Folder	"<root>/.github/ISSUE_TEMPLATE"	Module	"example-jl..github.ISSUE_TEMPLATE.bug_report_md"	{}
+E	CONTAINS_MODULE	Folder	"<root>/.github/ISSUE_TEMPLATE"	Module	"example-jl..github.ISSUE_TEMPLATE.custom_md"	{}
+E	CONTAINS_MODULE	Folder	"<root>/.github/ISSUE_TEMPLATE"	Module	"example-jl..github.ISSUE_TEMPLATE.feature_request_md"	{}
+E	CONTAINS_MODULE	Folder	"<root>/docs"	Module	"example-jl.docs.make"	{}
+E	CONTAINS_MODULE	Folder	"<root>/docs/src"	Module	"example-jl.docs.src.index_md"	{}
+E	CONTAINS_MODULE	Folder	"<root>/src"	Module	"example-jl.src.Example"	{}
+E	CONTAINS_MODULE	Folder	"<root>/test"	Module	"example-jl.test.runtests"	{}
+E	CONTAINS_MODULE	Project	"example-jl"	Module	"example-jl.README_md"	{}
+E	CONTAINS_SECTION	Module	"example-jl.docs.src.index_md"	Section	"example-jl.docs.src.index_md.Example"	{}
+E	DEFINES	Module	"example-jl.src.Example"	Function	"example-jl.src.Example.Example.domath"	{}
+E	DEFINES	Module	"example-jl.src.Example"	Function	"example-jl.src.Example.Example.hello"	{}
+E	IMPORTS	Module	"example-jl.docs.make"	ExternalModule	"Documenter"	{"alias":"Documenter","col":0,"end_col":25,"end_line":1,"imported_name":"Documenter","line":1}
+E	IMPORTS	Module	"example-jl.docs.make"	Module	"example-jl.src.Example"	{"alias":"Example","col":0,"end_col":25,"end_line":1,"imported_name":"Example","line":1}
+E	IMPORTS	Module	"example-jl.test.runtests"	ExternalModule	"Test"	{"alias":"Test","col":0,"end_col":19,"end_line":1,"imported_name":"Test","line":1}
+E	IMPORTS	Module	"example-jl.test.runtests"	Module	"example-jl.src.Example"	{"alias":"Example","col":0,"end_col":19,"end_line":1,"imported_name":"Example","line":1}
+N	ExternalModule	"Documenter"	{"name":"Documenter","path":"Documenter"}
+N	ExternalModule	"Test"	{"name":"Test","path":"Test"}
+N	File	"<root>/.github/ISSUE_TEMPLATE/bug_report.md"	{"extension":".md","name":"bug_report.md","path":".github/ISSUE_TEMPLATE/bug_report.md"}
+N	File	"<root>/.github/ISSUE_TEMPLATE/custom.md"	{"extension":".md","name":"custom.md","path":".github/ISSUE_TEMPLATE/custom.md"}
+N	File	"<root>/.github/ISSUE_TEMPLATE/feature_request.md"	{"extension":".md","name":"feature_request.md","path":".github/ISSUE_TEMPLATE/feature_request.md"}
+N	File	"<root>/.github/dependabot.yml"	{"extension":".yml","name":"dependabot.yml","path":".github/dependabot.yml"}
+N	File	"<root>/.github/workflows/CompatHelper.yml"	{"extension":".yml","name":"CompatHelper.yml","path":".github/workflows/CompatHelper.yml"}
+N	File	"<root>/.github/workflows/TagBot.yml"	{"extension":".yml","name":"TagBot.yml","path":".github/workflows/TagBot.yml"}
+N	File	"<root>/.github/workflows/ci.yml"	{"extension":".yml","name":"ci.yml","path":".github/workflows/ci.yml"}
+N	File	"<root>/.gitignore"	{"extension":"","name":".gitignore","path":".gitignore"}
+N	File	"<root>/LICENSE"	{"extension":"","name":"LICENSE","path":"LICENSE"}
+N	File	"<root>/Project.toml"	{"extension":".toml","name":"Project.toml","path":"Project.toml"}
+N	File	"<root>/README.md"	{"extension":".md","name":"README.md","path":"README.md"}
+N	File	"<root>/docs/Project.toml"	{"extension":".toml","name":"Project.toml","path":"docs/Project.toml"}
+N	File	"<root>/docs/make.jl"	{"extension":".jl","name":"make.jl","path":"docs/make.jl"}
+N	File	"<root>/docs/src/index.md"	{"extension":".md","name":"index.md","path":"docs/src/index.md"}
+N	File	"<root>/src/Example.jl"	{"extension":".jl","name":"Example.jl","path":"src/Example.jl"}
+N	File	"<root>/test/runtests.jl"	{"extension":".jl","name":"runtests.jl","path":"test/runtests.jl"}
+N	Folder	"<root>/.github"	{"name":".github","path":".github"}
+N	Folder	"<root>/.github/ISSUE_TEMPLATE"	{"name":"ISSUE_TEMPLATE","path":".github/ISSUE_TEMPLATE"}
+N	Folder	"<root>/.github/workflows"	{"name":"workflows","path":".github/workflows"}
+N	Folder	"<root>/docs"	{"name":"docs","path":"docs"}
+N	Folder	"<root>/docs/src"	{"name":"src","path":"docs/src"}
+N	Folder	"<root>/src"	{"name":"src","path":"src"}
+N	Folder	"<root>/test"	{"name":"test","path":"test"}
+N	Function	"example-jl.src.Example.Example.domath"	{"absolute_path":"<root>/src/Example.jl","anchor_hash":"ah1:60520b6e0fd02544e78d640f752f5adc48dfeeb1fc4c5ac41e6edeca6177940f","decorators":[],"end_line":16,"is_exported":false,"modifiers":[],"name":"domath","name_start_col":0,"name_start_line":16,"path":"src/Example.jl","start_col":0,"start_line":16}
+N	Function	"example-jl.src.Example.Example.hello"	{"absolute_path":"<root>/src/Example.jl","anchor_hash":"ah1:7b4c952ace33b051f96c495656c656d8ab4655f5dc3039b5bec3eba3d4edf970","decorators":[],"end_line":9,"is_exported":false,"modifiers":[],"name":"hello","name_start_col":0,"name_start_line":9,"path":"src/Example.jl","start_col":0,"start_line":9}
+N	Module	"example-jl..github.ISSUE_TEMPLATE.bug_report_md"	{"absolute_path":"<root>/.github/ISSUE_TEMPLATE/bug_report.md","broken_links":[],"front_matter":["about=Create a report to help us improve","labels=bug"],"name":"bug_report.md","path":".github/ISSUE_TEMPLATE/bug_report.md"}
+N	Module	"example-jl..github.ISSUE_TEMPLATE.custom_md"	{"absolute_path":"<root>/.github/ISSUE_TEMPLATE/custom.md","broken_links":[],"front_matter":["about=Describe this issue template's purpose here."],"name":"custom.md","path":".github/ISSUE_TEMPLATE/custom.md"}
+N	Module	"example-jl..github.ISSUE_TEMPLATE.feature_request_md"	{"absolute_path":"<root>/.github/ISSUE_TEMPLATE/feature_request.md","broken_links":[],"front_matter":["about=Suggest an idea for this project","labels=enhancement"],"name":"feature_request.md","path":".github/ISSUE_TEMPLATE/feature_request.md"}
+N	Module	"example-jl.README_md"	{"absolute_path":"<root>/README.md","broken_links":[],"front_matter":[],"name":"README.md","path":"README.md"}
+N	Module	"example-jl.docs.make"	{"absolute_path":"<root>/docs/make.jl","flow_covered":false,"name":"make.jl","path":"docs/make.jl","unresolved_references":["HTML","deploydocs","makedocs"]}
+N	Module	"example-jl.docs.src.index_md"	{"absolute_path":"<root>/docs/src/index.md","broken_links":[],"front_matter":[],"name":"index.md","path":"docs/src/index.md"}
+N	Module	"example-jl.src.Example"	{"absolute_path":"<root>/src/Example.jl","flow_covered":false,"name":"Example.jl","path":"src/Example.jl","unresolved_references":[]}
+N	Module	"example-jl.test.runtests"	{"absolute_path":"<root>/test/runtests.jl","flow_covered":false,"name":"runtests.jl","path":"test/runtests.jl","unresolved_references":["test"]}
+N	Project	"example-jl"	{"captured_relationships":["ACCEPTS","CALLS","CONTAINS_FILE","CONTAINS_FOLDER","CONTAINS_MODULE","CONTAINS_PACKAGE","CONTAINS_SECTION","DEFINES","DEFINES_METHOD","DEPENDS_ON_EXTERNAL","EXPORTS","EXPORTS_MODULE","IMPLEMENTS","IMPLEMENTS_MODULE","IMPORTS","INHERITS","INSTANTIATES","LINKS_TO","OVERRIDES","REFERENCES","RETURNS"],"root_path":"<root>"}
+N	Section	"example-jl.docs.src.index_md.Example"	{"absolute_path":"<root>/docs/src/index.md","end_line":7,"heading_level":1,"name":"Example","path":"docs/src/index.md","start_line":1}

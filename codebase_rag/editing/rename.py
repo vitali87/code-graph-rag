@@ -28,8 +28,10 @@ rewritten: prose is not a graph edge.
 
 from __future__ import annotations
 
+import json
 import re
-from collections.abc import Callable, Iterable
+import unicodedata
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
@@ -39,6 +41,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import cypher_queries as cq
 from .. import graph_query
+from ..config import load_ignore_patterns
 from ..function_registry import TYPE_SPACE_KINDS
 from ..graph_updater import ReingestAborted
 from ..language_spec import csharp_partial_key_from_graph, get_language_for_extension
@@ -54,9 +57,20 @@ from ..utils.path_utils import (
     base_module_qn,
     declaration_implementations,
     python_stub_implementations,
+    walk_eligible_files,
 )
+from ..utils.source_encoding import python_source_view
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
-from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
+from .imports import (
+    _JS_DECLARATIONS,
+    ANY_MODULE,
+    ImportRewriter,
+    ImportSite,
+    SymbolMove,
+    _imported,
+    _js_destructured_keys,
+    _node_text,
+)
 from .occurrences import (
     Occurrence,
     Target,
@@ -78,6 +92,298 @@ from .transaction import (
 QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
 
 _IDENTIFIER_RE = r"(?<![\w])%s(?![\w])"
+_ANY_IDENTIFIER_RE = r"[^\W\d]\w*"
+
+# Reserved words a new name may not take, by the definition's language
+# (issue #3225); a language not listed is held to the identifier rule only.
+_RESERVED_WORDS: dict[cs.SupportedLanguage, frozenset[str]] = {
+    cs.SupportedLanguage.PYTHON: cs.PY_RESERVED_WORDS,
+    cs.SupportedLanguage.JS: cs.JS_RESERVED_WORDS,
+    cs.SupportedLanguage.TS: cs.JS_RESERVED_WORDS,
+    cs.SupportedLanguage.TSX: cs.JS_RESERVED_WORDS,
+    cs.SupportedLanguage.JAVA: cs.JAVA_RESERVED_WORDS,
+    cs.SupportedLanguage.GO: cs.GO_RESERVED_WORDS,
+    cs.SupportedLanguage.RUST: cs.RUST_RESERVED_WORDS,
+    cs.SupportedLanguage.C: cs.C_RESERVED_WORDS,
+    cs.SupportedLanguage.CPP: cs.CPP_RESERVED_WORDS,
+    cs.SupportedLanguage.CSHARP: cs.CSHARP_RESERVED_KEYWORDS,
+    cs.SupportedLanguage.LUA: cs.LUA_RESERVED_WORDS,
+}
+# Languages where a method's name is an IdentifierName, which a reserved
+# word may be: `class Store { delete() {} }` and `this.delete()` are valid.
+_RESERVED_METHOD_NAME_LANGUAGES = frozenset(
+    {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX}
+)
+# An ES module by its extension alone; any other JS/TS file is one when it
+# has a top-level `import` or `export`.
+_JS_MODULE_SUFFIXES = frozenset({cs.EXT_MJS, cs.EXT_MTS})
+_JS_MODULE_STATEMENTS = frozenset({cs.TS_IMPORT_STATEMENT, cs.TS_EXPORT_STATEMENT})
+_JS_GENERATOR_TYPES = frozenset(
+    {cs.TS_GENERATOR_FUNCTION_DECLARATION, cs.TS_GENERATOR_FUNCTION}
+)
+# A token that reads the symbol's value: a plain name, or a shorthand
+# property (`{ fetch }`), whose value the rename rewrites.
+_JS_VALUE_REFERENCE_TYPES = frozenset(
+    {cs.TS_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER}
+)
+# A script by its extension, whatever its package.json says.
+_JS_SCRIPT_SUFFIXES = frozenset({cs.EXT_CJS, cs.EXT_CTS})
+# The statements an import site is: `import`, `export ... from` and a
+# `require` destructure (`const { fetch } = require("./api")`).
+_JS_IMPORTING_STATEMENTS = _JS_MODULE_STATEMENTS | _JS_DECLARATIONS
+# The patterns between a destructured binding and its declarator.
+_JS_BINDING_PATTERNS = frozenset(
+    {
+        cs.TS_OBJECT_PATTERN,
+        cs.TS_ARRAY_PATTERN,
+        cs.TS_PAIR_PATTERN,
+        cs.TS_ASSIGNMENT_PATTERN,
+        cs.TS_OBJECT_ASSIGNMENT_PATTERN,
+    }
+)
+# The words reserved only in some code, which a use site is checked for.
+_JS_CONTEXT_RESERVED_WORDS = cs.JS_STRICT_RESERVED_WORDS | {cs.JS_AWAIT}
+# Languages whose identifiers may contain `$` (`$emit`, jQuery's `$`).
+_DOLLAR_IDENTIFIER_LANGUAGES = frozenset(
+    {
+        cs.SupportedLanguage.JS,
+        cs.SupportedLanguage.TS,
+        cs.SupportedLanguage.TSX,
+        cs.SupportedLanguage.JAVA,
+        cs.SupportedLanguage.SCALA,
+        cs.SupportedLanguage.DART,
+    }
+)
+# Languages whose identifiers are ASCII alone: Lua's lexer reads letters and
+# digits as the C locale does, so `数据`, `Größe` and `x٣` do not load.
+_ASCII_IDENTIFIER_LANGUAGES = frozenset({cs.SupportedLanguage.LUA})
+
+
+class _JsFile(NamedTuple):
+    root: Node
+    source: bytes
+    module: bool
+    strict: bool
+
+    def token_at(self, line: int, col: int) -> Node | None:
+        point = (line - 1, col)
+        return self.root.descendant_for_point_range(point, point)
+
+    def statement_at(self, site: ImportSite) -> Node | None:
+        """The import, re-export or declaration an import site spans."""
+        node = self.root.descendant_for_point_range(
+            (site.line - 1, site.col), (site.end_line - 1, site.end_col)
+        )
+        while node is not None and node.type not in _JS_IMPORTING_STATEMENTS:
+            node = node.parent
+        return node
+
+
+def _js_is_member_name(node: Node) -> bool:
+    """Whether an identifier is an IdentifierName a reserved word may be:
+    a property after `.`, or a key."""
+    parent = node.parent
+    if parent is None:
+        return False
+    field = parent.child_by_field_name(cs.FIELD_PROPERTY)
+    return field is not None and field == node
+
+
+def _js_words_at(
+    file: _JsFile, token: Node | None, *, binding: bool, is_class: bool
+) -> frozenset[str]:
+    """The context-dependent words reserved where `token` sits.
+
+    Strict code reserves `let`, `static`, `yield` and the rest wherever the
+    file, a class or an enclosing "use strict" body makes it so; a module
+    reserves `await`; the nearest enclosing function reserves `await` when
+    async and `yield` when a generator. A binding's own function is not its
+    enclosing one: `async function await() {}` binds outside its body.
+    """
+    holder = token.parent if token is not None else None
+    words = _js_function_words(holder, binding=binding)
+    if _js_binds_lexically(holder, binding=binding):
+        words.add(cs.JS_LET)
+    if _js_is_strict_at(file, holder, is_class=is_class):
+        words |= cs.JS_STRICT_RESERVED_WORDS
+        if binding:
+            # Strict code may read `eval` and `arguments` but bind neither.
+            words |= cs.JS_STRICT_RESTRICTED_BINDINGS
+    if file.module:
+        words.add(cs.JS_AWAIT)
+    return frozenset(words)
+
+
+def _js_is_strict_at(file: _JsFile, holder: Node | None, *, is_class: bool) -> bool:
+    """Whether the file, a class or an enclosing "use strict" body makes
+    the code at `holder` strict."""
+    strict = file.strict or is_class
+    current = holder
+    while current is not None:
+        if current.type == cs.TS_CLASS_BODY:
+            strict = True
+        elif current.type in cs.JS_TS_FUNCTION_NODES:
+            body = current.child_by_field_name(cs.FIELD_BODY)
+            if body is not None and _js_opens_with_use_strict(body, file.source):
+                strict = True
+        current = current.parent
+    return strict
+
+
+def _js_function_words(holder: Node | None, *, binding: bool) -> set[str]:
+    """The words the nearest enclosing function reserves at `holder`:
+    `await` when async, `yield` when a generator."""
+    words: set[str] = set()
+    # A binding's own function is not its enclosing one: `async function
+    # await() {}` binds outside its body, so the search starts above it.
+    enclosing = holder.parent if binding and holder is not None else holder
+    while enclosing is not None and enclosing.type not in cs.JS_TS_FUNCTION_NODES:
+        enclosing = enclosing.parent
+    if enclosing is not None:
+        keywords = {child.type for child in enclosing.children}
+        if cs.TS_JS_ASYNC_KEYWORD in keywords:
+            words.add(cs.JS_AWAIT)
+        if enclosing.type in _JS_GENERATOR_TYPES or cs.JS_GENERATOR_STAR in keywords:
+            words.add(cs.JS_YIELD)
+    return words
+
+
+def _js_binds_lexically(holder: Node | None, *, binding: bool) -> bool:
+    """Whether a binding at `holder` is declared by `let` or `const`, which
+    may not bind `let`."""
+    declarator = holder if binding else None
+    # `const { fetch } = ...` binds in a pattern inside the declarator.
+    while declarator is not None and declarator.type in _JS_BINDING_PATTERNS:
+        declarator = declarator.parent
+    return (
+        declarator is not None
+        and declarator.parent is not None
+        and declarator.parent.type == cs.TS_LEXICAL_DECLARATION
+    )
+
+
+def _js_has_module_syntax(root: Node) -> bool:
+    """Whether the file holds syntax only a module parses, by which Node
+    loads an untyped `.js` file as one: an `await` outside any function, or
+    `import.meta` anywhere, a function body included."""
+    stack = [(child, False) for child in root.children]
+    while stack:
+        node, nested = stack.pop()
+        if (
+            node.type == cs.TS_META_PROPERTY
+            and node.child_count
+            and node.children[0].type == cs.TS_JS_IMPORT_META_KEYWORD
+        ):
+            return True
+        if node.type == cs.TS_JS_AWAIT_EXPRESSION and not nested:
+            return True
+        nested = (
+            nested
+            or node.type in cs.JS_TS_FUNCTION_NODES
+            or node.type == cs.TS_CLASS_BODY
+        )
+        stack.extend((child, nested) for child in node.children)
+    return False
+
+
+def _js_destructured_local(statement: Node, name: str) -> Node | None:
+    """The local a destructure (`const { fetch } = require("./api")`) binds
+    the export `name` to under that same name, or None."""
+    if statement.type not in _JS_DECLARATIONS:
+        return None
+    for declarator in statement.named_children:
+        pattern = declarator.child_by_field_name(cs.FIELD_NAME)
+        if pattern is None or pattern.type != cs.TS_OBJECT_PATTERN:
+            continue
+        for key, local, _shorthand in _js_destructured_keys(pattern):
+            if _node_text(key) == name == _node_text(local):
+                return local
+    return None
+
+
+def _js_import_reserves(
+    file: _JsFile, site: ImportSite, old_name: str, new_name: str
+) -> bool:
+    """Whether `new_name` is reserved where an unaliased import site binds
+    the symbol under `old_name`."""
+    statement = file.statement_at(site)
+    if (
+        statement is not None
+        and statement.type == cs.TS_EXPORT_STATEMENT
+        and statement.child_by_field_name(cs.FIELD_SOURCE) is not None
+    ):
+        # `export { await } from "./api"` is valid: an export name
+        # may be any IdentifierName when it forwards one.
+        return False
+    # A destructure's words depend on its declaration (`let` in a
+    # `const` one) and the function it sits in.
+    token = (
+        _js_destructured_local(statement, old_name) if statement is not None else None
+    )
+    return new_name in _js_words_at(file, token, binding=True, is_class=False)
+
+
+def _js_opens_with_use_strict(scope: Node, source: bytes) -> bool:
+    """Whether a program or function body's directive prologue, the string
+    statements that open it, holds `'use strict'`."""
+    for statement in scope.named_children:
+        # A `#!` line opens a script before its prologue, like a comment.
+        if statement.type in (cs.TS_COMMENT, cs.TS_JS_HASH_BANG_LINE):
+            continue
+        values = [c for c in statement.named_children if c.type != cs.TS_COMMENT]
+        if (
+            statement.type != cs.TS_EXPRESSION_STATEMENT
+            or len(values) != 1
+            or values[0].type != cs.TS_STRING
+        ):
+            return False
+        text = source[values[0].start_byte : values[0].end_byte]
+        if text.decode(cs.ENCODING_UTF8, errors="replace") in (
+            cs.JS_USE_STRICT_DIRECTIVES
+        ):
+            return True
+    return False
+
+
+def _is_go_identifier(name: str) -> bool:
+    # Go's letters are `_` and Unicode category L, its digits category Nd
+    # alone; `isidentifier` also admits `a·b`, a letter number (`Ⅻ`) and a
+    # combining mark.
+    return bool(name) and all(
+        char == cs.CHAR_UNDERSCORE
+        or unicodedata.category(char).startswith(cs.UNICODE_LETTER_CATEGORY_PREFIX)
+        or (index and unicodedata.category(char) == cs.UNICODE_DECIMAL_DIGIT_CATEGORY)
+        for index, char in enumerate(name)
+    )
+
+
+def _is_spelled_for(language: cs.SupportedLanguage | None, name: str) -> bool:
+    """Whether `name` is an identifier of the definition's language.
+
+    Python's rule (`isidentifier`) is the base: JS/TS also take `$`, a
+    ZWNJ/ZWJ after the first character and the few ID_Start characters
+    XID leaves out (`aͺ`), Scala, Dart and Java `$`. Go is
+    held to its letters and digits as well, Lua to ASCII. A name another
+    language's own rule takes beyond these (`aͺ` in Go, `€total` in Java)
+    is one its tree-sitter grammar refuses too, so the rewrite could not be
+    checked.
+    """
+    spelled = (
+        name.replace("$", "_") if language in _DOLLAR_IDENTIFIER_LANGUAGES else name
+    )
+    if language in _RESERVED_METHOD_NAME_LANGUAGES and spelled:
+        # Each ID-only character is an ID_Start, so `_` stands in for it.
+        spelled = "".join(
+            cs.CHAR_UNDERSCORE if c in cs.JS_ID_ONLY_CHARACTERS else c for c in spelled
+        )
+        spelled = spelled[0] + "".join(
+            c for c in spelled[1:] if c not in cs.JS_IDENTIFIER_JOINERS
+        )
+    return (
+        spelled.isidentifier()
+        and (language not in _ASCII_IDENTIFIER_LANGUAGES or name.isascii())
+        and (language != cs.SupportedLanguage.GO or _is_go_identifier(name))
+    )
 
 
 _STRUCTURAL = "structural"
@@ -97,6 +403,15 @@ _Span = tuple[str, tuple[int, int], tuple[int, int]]
 _MEMBER_NAME_TYPES = frozenset(
     {cs.TS_IDENTIFIER, cs.TS_PROPERTY_IDENTIFIER, "field_identifier"}
 )
+# A Python `__name__` method is called by the interpreter (`str()`, `with`,
+# `len()`), never by a site the graph records.
+_PY_PROTOCOL_NAME = re.compile(r"__\w+__")
+# The module-level functions the interpreter calls by name (PEP 562); any
+# other module-level `__name__` function or class is an ordinary name.
+_PY_MODULE_HOOKS = frozenset({"__getattr__", "__dir__"})
+# `@Override` / `@java.lang.Override` (Java, Kotlin, Scala, Dart `@override`)
+# and the `override` modifier (Kotlin, C#, TypeScript, Swift).
+_OVERRIDE_MARKER = "override"
 
 
 # The same shapes `ImportRewriter.rename_in_all` rewrites. Kept identical so
@@ -178,6 +493,39 @@ class RenameReport(NamedTuple):
 
 
 # --- site collection -----------------------------------------------------------
+
+
+def renamed_qualified_name(member: str, new_name: str) -> str:
+    # Java and C# method names end in their parameter types, `greet(String)`,
+    # and a type may be dotted itself (`put(Map.Entry)`). Only the name before
+    # the signature changes; dropping the signature made the contract expect a
+    # name the graph never has, so every such rename was undone.
+    start = _signature_start(member)
+    head, signature = (member[:start], member[start:]) if start >= 0 else (member, "")
+    owner = head.rsplit(cs.SEPARATOR_DOT, 1)[0]
+    return f"{owner}{cs.SEPARATOR_DOT}{new_name}{signature}"
+
+
+def _signature_start(member: str) -> int:
+    """Where `member`'s trailing parameter signature opens, or -1 if it has none.
+
+    The signature is the group closing the name, and it is glued to that
+    name. A Next.js route-group directory, `p.app.(auth).page.helper`, also
+    puts parentheses in the path, but as a dotted segment of its own, so the
+    first `(` is not where a signature starts."""
+    if not member.endswith(cs.CHAR_PAREN_CLOSE):
+        return -1
+    depth = 0
+    for index in range(len(member) - 1, -1, -1):
+        char = member[index]
+        if char == cs.CHAR_PAREN_CLOSE:
+            depth += 1
+        elif char == cs.CHAR_PAREN_OPEN:
+            depth -= 1
+            if depth == 0:
+                glued = index > 0 and member[index - 1] != cs.SEPARATOR_DOT
+                return index if glued else -1
+    return -1
 
 
 def _hierarchy(
@@ -489,6 +837,27 @@ def _chain_links(
     return sorted(found)
 
 
+def _replace_in_string(
+    patcher: Patcher, site: RenameSite, old_name: str, new_name: str
+) -> None:
+    # Inside a string the name is no identifier node, so the identifier
+    # check cannot vouch for it; the bytes must still spell the old name.
+    source = patcher.source(site.path)
+    start = line_col_to_byte(source, site.line, site.col)
+    end = start + len(old_name.encode(cs.ENCODING_UTF8))
+    if source[start:end] != old_name.encode(cs.ENCODING_UTF8):
+        raise PatcherError(
+            cs.PATCH_IDENTIFIER_MISMATCH.format(
+                path=site.path,
+                line=site.line,
+                col=site.col,
+                expected=old_name,
+                found=source[start:end].decode(cs.ENCODING_UTF8, errors="replace"),
+            )
+        )
+    patcher.replace_span(site.path, (start, end), new_name)
+
+
 def _called_member(call: Node, name: str) -> Node | None:
     # The member name a call invokes (`name` in `obj.name(...)`), if it is
     # `name`; None for a bare call or another member.
@@ -594,6 +963,84 @@ def _chain_link_sites(
     ]
 
 
+def _names_something(
+    source: bytes,
+    line: int,
+    col: int,
+    end_line: int | None,
+    end_col: int | None,
+) -> bool:
+    """Whether a site's callee text holds any identifier at all."""
+    if end_line is None or end_col is None:
+        return True
+    start = line_col_to_byte(source, line, col)
+    end = line_col_to_byte(source, end_line, end_col)
+    text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
+    paren = text.find("(")
+    callee = text[:paren] if paren >= 0 else text
+    return re.search(_ANY_IDENTIFIER_RE, callee) is not None
+
+
+def _int_or_none(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
+def _outer_call_paren(text: str) -> int:
+    """Index of the `(` opening the argument list `text` ends with, else of
+    its last `(`; -1 when it has none."""
+    body = text.rstrip()
+    if body.endswith(cs.CHAR_PAREN_CLOSE):
+        depth = 0
+        for index in range(len(body) - 1, -1, -1):
+            if body[index] == cs.CHAR_PAREN_CLOSE:
+                depth += 1
+            elif body[index] == cs.CHAR_PAREN_OPEN:
+                depth -= 1
+                if depth == 0:
+                    return index
+    return text.rfind(cs.CHAR_PAREN_OPEN)
+
+
+def _syntactic_open_paren(
+    source: bytes, language: cs.SupportedLanguage | None, close_end: int
+) -> int | None:
+    """Byte offset of the `(` that the `)` ending at `close_end` closes, read
+    from the syntax tree; None without a grammar or such a `)`."""
+    if language is None or close_end <= 0:
+        return None
+    parsers, _queries = load_parsers()
+    parser = parsers.get(language)
+    if parser is None:
+        return None
+    root = parser.parse(source).root_node
+    close = root.descendant_for_byte_range(close_end - 1, close_end)
+    if close is None or close.type != cs.CHAR_PAREN_CLOSE or close.parent is None:
+        return None
+    openers = [
+        child.start_byte
+        for child in close.parent.children
+        if child.type == cs.CHAR_PAREN_OPEN and child.start_byte < close.start_byte
+    ]
+    return openers[-1] if openers else None
+
+
+def _call_paren(
+    source: bytes, language: cs.SupportedLanguage | None, start: int, end: int
+) -> int:
+    """Index in the span's text of the `(` opening the argument list the span
+    ends with, else of its last `(`; -1 when it has none.
+
+    A grammar finds it from the syntax, so a parenthesis inside a string
+    argument (`f(other.f("("))`, bot review on PR #2782) is not counted; a
+    language without one balances the span's parentheses.
+    """
+    span = source[start:end]
+    opener = _syntactic_open_paren(source, language, start + len(span.rstrip()))
+    if opener is not None and opener >= start:
+        return len(source[start:opener].decode(cs.ENCODING_UTF8, errors="replace"))
+    return _outer_call_paren(span.decode(cs.ENCODING_UTF8, errors="replace"))
+
+
 def _last_identifier(
     source: bytes,
     line: int,
@@ -634,9 +1081,11 @@ def _last_identifier(
         end = callee[1]
     text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
     if callee is None:
-        # No grammar: cut at the last opening parenthesis so the arguments
-        # of a plain call are excluded (`helper(helper=2)`).
-        paren = text.rfind("(")
+        # No call node to read (no grammar, or Dart's, whose call is only a
+        # selector): cut where the argument list the span ends with opens,
+        # so the arguments are excluded (`helper(helper=2)`), even a nested
+        # call of the same name (`f(other.f(1))`, bot review on PR #2782).
+        paren = _call_paren(source, language, start, end)
         if paren >= 0:
             text = text[:paren]
     matches = list(re.finditer(_IDENTIFIER_RE % re.escape(name), text))
@@ -697,6 +1146,8 @@ class Renamer:
         after_apply: Callable[[list[str]], None] | None = None,
         reingest: Reingest | None = None,
         heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
+        allow_external_override: bool = False,
+        external_override_opt_in: str = cs.MCPParamName.ALLOW_EXTERNAL_OVERRIDE,
     ) -> None:
         self.repo_root = repo_root.resolve()
         self.fetch_all = fetch_all
@@ -713,6 +1164,8 @@ class Renamer:
         # How the caller spells the opt-in the heuristic refusal tells the
         # user to pass: a CLI flag is not an MCP parameter (issue #2886).
         self.heuristic_opt_in = heuristic_opt_in
+        self.allow_external_override = allow_external_override
+        self.external_override_opt_in = external_override_opt_in
         # The members of the hierarchy being planned that only a guessed
         # OVERRIDES edge reaches: their declarations are guessed sites.
         self._guessed_members: frozenset[str] = frozenset()
@@ -1012,6 +1465,41 @@ class Renamer:
         )
         sites.append(RenameSite("unlocatable", path, line, col, owner, site_resolution))
 
+    def _add_unspelled_site(
+        self,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+        source: bytes,
+        *,
+        owner: str,
+        path: str,
+        line: int,
+        col: int,
+        end_line: int | None,
+        end_col: int | None,
+        resolution_text: str | None,
+    ) -> None:
+        """A site whose span does not spell the old name: an alias, or a
+        mislocated span."""
+        if _names_something(source, line, col, end_line, end_col):
+            # The site spells the symbol under an alias (`h(1, 2)` for
+            # `import helper as h`); the alias keeps binding, so nothing
+            # to rewrite here.
+            return
+        # A span with no name in it at all is a mislocated site, not an
+        # alias: dropping it would leave the caller under the old name
+        # and the plan silent about it (issue #2769).
+        self._record_unlocatable(
+            sites,
+            unlocatable,
+            owner=owner,
+            path=path,
+            line=line,
+            col=col,
+            resolution=resolution_text or "unknown",
+            site_resolution=resolution_text or _SITELESS,
+        )
+
     def _via_param(self, row: ResultRow | graph_query.CallSiteRow) -> str | None:
         """The parameter the row's owner runs the renamed symbol through.
 
@@ -1156,6 +1644,8 @@ class Renamer:
         owner = str(row.get("qualified_name") or "")
         path = row.get("path")
         line, col = row.get("line"), row.get("col")
+        end_line = _int_or_none(row.get("end_line"))
+        end_col = _int_or_none(row.get("end_col"))
         resolution = row.get("resolution")
         resolution_text = str(resolution) if isinstance(resolution, str) else None
         if (
@@ -1183,13 +1673,12 @@ class Renamer:
         )
         if source is None:
             return
-        end_line, end_col = row.get("end_line"), row.get("end_col")
         token = _last_identifier(
             source,
             line,
             col,
-            end_line if isinstance(end_line, int) else None,
-            end_col if isinstance(end_col, int) else None,
+            end_line,
+            end_col,
             old_name,
             get_language_for_extension(Path(path).suffix),
             is_call=kind == "call",
@@ -1207,9 +1696,18 @@ class Renamer:
             )
             return
         if token is None:
-            # The site spells the symbol under an alias (`h(1, 2)` for
-            # `import helper as h`); the alias keeps binding, so nothing to
-            # rewrite here.
+            self._add_unspelled_site(
+                sites,
+                unlocatable,
+                source,
+                owner=owner,
+                path=path,
+                line=line,
+                col=col,
+                end_line=end_line,
+                end_col=end_col,
+                resolution_text=resolution_text,
+            )
             return
         sites.append(RenameSite(kind, path, token[0], token[1], owner, resolution_text))
         _add_jsx_closing_site(sites, kind, path, source, token, owner, resolution_text)
@@ -1356,38 +1854,15 @@ class Renamer:
         self, qn: str, new_name: str, allow_heuristic: bool = False
     ) -> RenameReport:
         """Collect everything a rename touches; refuse on ambiguity."""
-        if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
-            raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
+        if (refusal := self._identifier_refusal(qn, new_name)) is not None:
+            raise RenameRefused(refusal, [], [])
         found = _hierarchy(self.fetch_all, self.project, qn, self.repo_root)
         members = found.members
         self._guessed_members = found.guessed
-        unknown = _go_implementers_unknown(self.fetch_all, self.project, members)
-        if unknown is not None:
-            interface, why, name = unknown
-            raise RenameRefused(
-                cs.RENAME_GO_IMPLEMENTERS_UNKNOWN.format(
-                    qn=qn,
-                    interface=interface,
-                    name=name,
-                    why=cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY.get(
-                        why, cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY_OTHER
-                    ),
-                ),
-                [],
-                [],
-            )
-        sites: list[RenameSite] = []
-        unlocatable: list[str] = []
-        old_name: str | None = None
-        label: str | None = None
-        for member in members:
-            member_sites, member_unlocatable, member_name, member_label = self._collect(
-                member
-            )
-            old_name = old_name or member_name
-            label = label or member_label
-            sites.extend(member_sites)
-            unlocatable.extend(member_unlocatable)
+        self._refuse_go_implementers_unknown(qn, members)
+        if not self.allow_external_override:
+            self._refuse_external_overrides(qn, members)
+        sites, unlocatable, old_name, label = self._collect_members(members)
         assert old_name is not None
         covered = {(s.path, s.line, s.col) for s in sites if s.resolution != _CHAIN}
         sites = [
@@ -1395,23 +1870,7 @@ class Renamer:
             for s in sites
             if s.resolution != _CHAIN or (s.path, s.line, s.col) not in covered
         ]
-        structural = [s for s in sites if s.resolution == _STRUCTURAL]
-        if structural:
-            raise RenameRefused(
-                cs.RENAME_STRUCTURAL_UNLOCATABLE.format(qn=qn, count=len(structural)),
-                structural,
-                unlocatable,
-            )
-        # Every graph-known occurrence without a rewrite location blocks,
-        # whatever bound it: `allow_heuristic` accepts rewriting through a
-        # guessed site, not leaving a known one under the old name.
-        siteless = [s for s in sites if s.kind == "unlocatable"]
-        if siteless:
-            raise RenameRefused(
-                cs.RENAME_SITELESS.format(qn=qn, count=len(siteless)),
-                siteless,
-                unlocatable,
-            )
+        self._refuse_unrewritable_sites(qn, members, old_name, sites, unlocatable)
         ambiguous = [
             s for s in sites if s.resolution in AMBIGUOUS or s.resolution == _CHAIN
         ]
@@ -1452,6 +1911,28 @@ class Renamer:
                 unplanned,
             )
         sites.extend(unplanned)
+        if reserving := self._js_sites_reserving(
+            sites, new_name
+        ) + self._js_imports_reserving(imports, old_name, new_name):
+            raise RenameRefused(
+                cs.RENAME_RESERVED_AT_SITES.format(
+                    name=new_name,
+                    language=get_language_for_extension(Path(reserving[0].path).suffix),
+                    count=len(reserving),
+                    locations=_locations(reserving),
+                ),
+                reserving,
+                unlocatable,
+            )
+        sites.extend(self._dotted_path_sites(members, old_name))
+        if crossing := self._go_sites_losing_visibility(qn, sites, old_name, new_name):
+            raise RenameRefused(
+                cs.RENAME_GO_UNEXPORTS.format(
+                    qn=qn, name=new_name, count=len(crossing)
+                ),
+                crossing,
+                unlocatable,
+            )
         sites.extend(
             RenameSite(
                 "import",
@@ -1483,6 +1964,559 @@ class Renamer:
             message=cs.RENAME_PLANNED.format(count=len(sites)),
             unplanned=tuple(unplanned),
             companions=companions,
+        )
+
+    def _refuse_go_implementers_unknown(self, qn: str, members: list[str]) -> None:
+        """Refuse when a Go interface whose implementers cgr cannot tell
+        declares the members' name: the hierarchy cannot show what the
+        rename must take along, so any part it leaves behind stops
+        compiling."""
+        unknown = _go_implementers_unknown(self.fetch_all, self.project, members)
+        if unknown is None:
+            return
+        interface, why, name = unknown
+        raise RenameRefused(
+            cs.RENAME_GO_IMPLEMENTERS_UNKNOWN.format(
+                qn=qn,
+                interface=interface,
+                name=name,
+                why=cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY.get(
+                    why, cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY_OTHER
+                ),
+            ),
+            [],
+            [],
+        )
+
+    def _collect_members(
+        self, members: list[str]
+    ) -> tuple[list[RenameSite], list[str], str | None, str | None]:
+        """Every member's sites and unlocatable uses, with the first name and
+        label a member reports."""
+        sites: list[RenameSite] = []
+        unlocatable: list[str] = []
+        old_name: str | None = None
+        label: str | None = None
+        for member in members:
+            member_sites, member_unlocatable, member_name, member_label = self._collect(
+                member
+            )
+            old_name = old_name or member_name
+            label = label or member_label
+            sites.extend(member_sites)
+            unlocatable.extend(member_unlocatable)
+        return sites, unlocatable, old_name, label
+
+    def _identifier_refusal(self, qn: str, new_name: str) -> str | None:
+        """Why `new_name` cannot name the definition, or None.
+
+        Held to the definition's language: Unicode identifiers (`Größe`,
+        `数据`) are valid nearly everywhere and `$` is valid in JS/TS, Java,
+        Scala and Dart, yet an ASCII-only first character refused both while
+        `aünï` passed; and a reserved word passed this check only to fail
+        the post-rewrite parse, if that parse failed at all (issue #3225).
+        """
+        found = graph_query.definition(self.fetch_all, self.project, qn, None)
+        path = found["path"]
+        language = get_language_for_extension(Path(path).suffix) if path else None
+        if not _is_spelled_for(language, new_name):
+            return cs.RENAME_BAD_NAME.format(name=new_name)
+        if (
+            language == cs.SupportedLanguage.PYTHON
+            and (
+                normal := unicodedata.normalize(cs.PY_IDENTIFIER_NORMAL_FORM, new_name)
+            )
+            != new_name
+        ):
+            # Python binds the normalised name, but `__all__`, a patch target
+            # or a keyword argument keep the spelling: `K` (Kelvin) binds
+            # `K`, and `__all__ = ["K"]` names nothing.
+            return cs.RENAME_PY_NORMALISED_NAME.format(name=new_name, normal=normal)
+        if language is None or (
+            language in _RESERVED_METHOD_NAME_LANGUAGES
+            and found["label"] == cs.NodeLabel.METHOD.value
+        ):
+            return None
+        reserved = _RESERVED_WORDS.get(language, frozenset())
+        if language in _RESERVED_METHOD_NAME_LANGUAGES and path is not None:
+            reserved = reserved | self._js_reserved_here(found, language, path)
+        if new_name in reserved:
+            return cs.RENAME_RESERVED_WORD.format(name=new_name, language=language)
+        return None
+
+    def _js_reserved_here(
+        self,
+        found: graph_query.DefinitionRow,
+        language: cs.SupportedLanguage,
+        path: str,
+    ) -> frozenset[str]:
+        """The JS/TS words reserved only in some code that the definition's
+        name sits in.
+
+        Strict code (a module, a class, a "use strict" prologue, TypeScript)
+        reserves `let`, `static`, `yield` and the rest; a module or an async
+        body reserves `await`; a generator body `yield`; a `let`/`const`
+        declaration `let`. A CommonJS script may name a function `await` or
+        `let`, so those were refused there before they could fail.
+        """
+        file = self._js_file(path, language)
+        if file is None:
+            return frozenset()
+        token = (
+            _name_token(
+                file.source,
+                language,
+                found["start_line"],
+                found["end_line"] or found["start_line"],
+                found["name"],
+            )
+            if found["name"] and found["start_line"]
+            else None
+        )
+        node = file.token_at(token[0], token[1]) if token is not None else None
+        return _js_words_at(
+            file,
+            node,
+            binding=True,
+            is_class=found["label"] == cs.NodeLabel.CLASS.value,
+        )
+
+    def _js_file(self, path: str, language: cs.SupportedLanguage) -> _JsFile | None:
+        parser = load_parsers()[0].get(language)
+        if parser is None:
+            return None
+        try:
+            source = (self.repo_root / path).read_bytes()
+        except OSError:
+            source = b""
+        root = parser.parse(source).root_node
+        suffix = Path(path).suffix
+        package_type = (
+            self._package_type(path) if suffix not in _JS_SCRIPT_SUFFIXES else None
+        )
+        module = (
+            suffix in _JS_MODULE_SUFFIXES
+            or any(child.type in _JS_MODULE_STATEMENTS for child in root.named_children)
+            or package_type == cs.JS_PACKAGE_TYPE_MODULE
+            # Node detects a module from module-only syntax in a file no
+            # extension or package type calls CommonJS.
+            or (
+                suffix not in _JS_SCRIPT_SUFFIXES
+                and package_type != cs.JS_PACKAGE_TYPE_COMMONJS
+                and _js_has_module_syntax(root)
+            )
+        )
+        strict = (
+            module
+            or language != cs.SupportedLanguage.JS
+            or _js_opens_with_use_strict(root, source)
+        )
+        return _JsFile(root, source, module, strict)
+
+    def _package_type(self, path: str) -> str | None:
+        """The `type` of the package.json nearest the file, as Node reads it
+        to tell a `.js` module (`"type": "module"`) from a script."""
+        root = self.repo_root.resolve()
+        directory = (self.repo_root / path).resolve().parent
+        while directory.is_relative_to(root):
+            manifest = directory / cs.DEP_FILE_PACKAGE_JSON
+            if manifest.is_file():
+                try:
+                    data = json.loads(manifest.read_text(encoding=cs.ENCODING_UTF8))
+                except (OSError, ValueError):
+                    return None
+                kind = data.get(cs.KEY_TYPE) if isinstance(data, dict) else None
+                return kind if isinstance(kind, str) else None
+            if directory == root:
+                break
+            directory = directory.parent
+        return None
+
+    def _js_imports_reserving(
+        self,
+        imports: list[tuple[ImportSite, str]],
+        old_name: str,
+        new_name: str,
+    ) -> list[RenameSite]:
+        """JS/TS imports that bind the symbol under its own name, where the
+        new name may not be bound: `import { fetch }` would become
+        `import { await }`, which no module accepts, and `const { fetch } =
+        require(...)` `const { let }`, which no code does. One with an alias
+        (`import { fetch as run }`, `{ fetch: run }`) keeps its local name
+        and is not one, nor is a re-export, which binds none."""
+        if (
+            new_name
+            not in _JS_CONTEXT_RESERVED_WORDS | cs.JS_STRICT_RESTRICTED_BINDINGS
+        ):
+            return []
+        files: dict[str, _JsFile | None] = {}
+        found: list[RenameSite] = []
+        for site, module in imports:
+            language = get_language_for_extension(Path(site.path).suffix)
+            if language not in _RESERVED_METHOD_NAME_LANGUAGES or site.alias not in (
+                None,
+                old_name,
+            ):
+                continue
+            if site.path not in files:
+                files[site.path] = self._js_file(site.path, language)
+            file = files[site.path]
+            if file is None:
+                continue
+            if _js_import_reserves(file, site, old_name, new_name):
+                found.append(
+                    RenameSite("import", site.path, site.line, site.col, module, None)
+                )
+        return found
+
+    def _js_sites_reserving(
+        self, sites: list[RenameSite], new_name: str
+    ) -> list[RenameSite]:
+        """JS/TS uses of the symbol where `new_name` is reserved.
+
+        A CommonJS script may define `function await() {}`, but its
+        `fetch(1)` inside an async function becomes `await(1)`: still valid,
+        and no longer a call. The same holds for `yield` in a generator and
+        every strict-only word in a module that imports the function.
+        """
+        if new_name not in _JS_CONTEXT_RESERVED_WORDS:
+            return []
+        files: dict[str, _JsFile | None] = {}
+        found: list[RenameSite] = []
+        for site in sites:
+            language = get_language_for_extension(Path(site.path).suffix)
+            if (
+                site.kind == "definition"
+                or language not in _RESERVED_METHOD_NAME_LANGUAGES
+            ):
+                continue
+            if site.path not in files:
+                files[site.path] = self._js_file(site.path, language)
+            file = files[site.path]
+            node = file.token_at(site.line, site.col) if file is not None else None
+            # `{ fetch }` reads `fetch` too: its key stays, its value is the
+            # rewritten use (`{ fetch: yield }`).
+            if (
+                file is None
+                or node is None
+                or node.type not in _JS_VALUE_REFERENCE_TYPES
+                or _js_is_member_name(node)
+            ):
+                continue
+            if new_name in _js_words_at(file, node, binding=False, is_class=False):
+                found.append(site)
+        return found
+
+    def _refuse_external_overrides(self, qn: str, members: list[str]) -> None:
+        """Refuse a rename that would silently stop an override (issue #3226).
+
+        The graph's override hierarchy holds project methods only, so
+        renaming it whole keeps those consistent. A member that overrides a
+        library base (`Thread.run`, `TestCase.setUp`), declares an override
+        the project does not define (`@Override toString()`), or is a Python
+        protocol method is called by code outside the project under its old
+        name: after the rename nothing calls it, and no site shows why.
+        """
+        prefix = f"{self.project}{cs.SEPARATOR_DOT}"
+        facts = {
+            member: row
+            for member in members
+            for row in self.fetch_all(
+                cq.CYPHER_RENAME_OVERRIDE_FACTS,
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: member},
+            )[:1]
+        }
+        # A class that defines a member of the hierarchy answers for the
+        # supertypes above it through that member's own facts.
+        owners = {
+            owner
+            for row in facts.values()
+            if isinstance(owner := row.get(cs.RENAME_FACT_OWNER), str)
+        }
+        reasons = [
+            reason
+            for member, row in facts.items()
+            if (reason := self._member_override_reason(member, row, owners, prefix))
+            is not None
+        ]
+        if reasons:
+            raise RenameRefused(
+                cs.RENAME_EXTERNAL_OVERRIDE.format(
+                    qn=qn,
+                    reasons="; ".join(reasons),
+                    option=self.external_override_opt_in,
+                ),
+                [],
+                [],
+            )
+
+    def _member_override_reason(
+        self, member: str, row: ResultRow, owners: set[str], prefix: str
+    ) -> str | None:
+        """Why renaming `member` would stop it answering something outside
+        the project, or None."""
+        owner = row.get(cs.RENAME_FACT_OWNER)
+        if not isinstance(owner, str):
+            return _external_override_reason(member, row)
+        row = dict(row)
+        # A display, not the bare `sorted` list: the row's lists hold
+        # `ResultScalar`, and a `list[str]` is not one (lists are invariant).
+        row[cs.RENAME_FACT_OUTSIDE_SUPERTYPES] = [
+            *sorted(self._outside_supertypes(owner, owners, prefix))
+        ]
+        if (reason := _external_override_reason(member, row)) is not None:
+            return reason
+        name = str(row.get(cs.KEY_NAME) or member.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        return self._inherited_contract_reason(member, name, owner, owners, prefix)
+
+    def _inherited_contract_reason(
+        self, qn: str, name: str, owner: str, owners: set[str], prefix: str
+    ) -> str | None:
+        """Why a project class that inherits `qn` needs its name, or None.
+
+        `Task extends Base implements Runnable` declares no `run()`: the one
+        it inherits from `Base` implements `Runnable`, so renaming `Base.run()`
+        leaves `Task` owing it, though `Base` itself implements nothing. A
+        class that declares a member of the hierarchy answers for itself and
+        the classes below it. Only a JDK contract method's name can be owed
+        this way, so other names skip the walk.
+        """
+        if not any(name in names for names in cs.JAVA_STDLIB_CONTRACT_METHODS.values()):
+            return None
+        seen = {owner}
+        frontier = [owner]
+        while frontier:
+            step: list[str] = []
+            for row in self.fetch_all(
+                cq.CYPHER_RENAME_SUBTYPES,
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: frontier},
+            ):
+                subclass = row.get(cs.KEY_QUALIFIED_NAME)
+                if not isinstance(subclass, str) or subclass in seen | owners:
+                    continue
+                seen.add(subclass)
+                declaring = _contract_declarers(
+                    name, sorted(self._outside_supertypes(subclass, owners, prefix))
+                )
+                if declaring:
+                    return cs.RENAME_INHERITED_IMPLEMENTS_OUTSIDE.format(
+                        qn=qn,
+                        subclass=subclass,
+                        name=name,
+                        supertypes=cs.SEPARATOR_COMMA_SPACE.join(declaring),
+                    )
+                step.append(subclass)
+            frontier = step
+        return None
+
+    def _outside_supertypes(self, owner: str, stops: set[str], prefix: str) -> set[str]:
+        """The supertypes outside the project that `owner` extends or
+        implements, directly or through project classes up its chain.
+
+        `Task extends Bridge` and `Bridge implements Runnable`: renaming
+        `Task.run` with its project base `Base.run` leaves `Task` owing
+        `Runnable.run`. The walk does not climb past a class in `stops`,
+        which defines a member of the hierarchy itself.
+        """
+        outside: set[str] = set()
+        seen = {owner}
+        frontier = [owner]
+        while frontier:
+            step: list[str] = []
+            for row in self.fetch_all(
+                cq.CYPHER_RENAME_SUPERTYPES,
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: frontier},
+            ):
+                supertype = row.get(cs.RENAME_FACT_SUPERTYPE)
+                if not isinstance(supertype, str) or supertype in seen:
+                    continue
+                seen.add(supertype)
+                labels = row.get(cs.KEY_LABELS)
+                if not supertype.startswith(prefix) or (
+                    isinstance(labels, list)
+                    and cs.NodeLabel.EXTERNAL_MODULE.value in labels
+                ):
+                    outside.add(supertype)
+                elif supertype not in stops:
+                    step.append(supertype)
+            frontier = step
+        return outside
+
+    def _dotted_path_sites(self, members: list[str], old_name: str) -> list[RenameSite]:
+        """Strings spelling a member's whole import path, at its name.
+
+        `mock.patch("pkg.core.helper")`, `monkeypatch.setattr("pkg.mod.fn")`
+        and a `[project.scripts]` entry point `"pkg.core:main"` name the
+        definition by path, not by a code reference, so the rename rewrote
+        every code site and left them: the patching test raised
+        `AttributeError` and the console script pointed nowhere (issue
+        #2810). Only a string that IS the path, a whole string literal or
+        config value, is a site; a longer path, another module's, a bare name
+        or prose around the path stays as written. So does a path another
+        module of the repository spells too (`apps/b/pkg/core.py` beside
+        `apps/a/pkg/core.py`), unless the file sits under this module's
+        import root and not under the other's.
+        """
+        spelled = self._spelled_import_paths(members, old_name)
+        if not spelled:
+            return []
+        longest_first = sorted(spelled, key=len, reverse=True)
+        alternatives = "|".join(re.escape(path) for path in longest_first)
+        entry_points = "|".join(
+            re.escape(path)
+            for path in longest_first
+            if cs.RENAME_ENTRY_POINT_SEPARATOR in path
+        )
+        quoted = re.compile(rf"""(["'])(?P<path>{alternatives})\1""")
+        bare = re.compile(rf"(?<![\w.:])(?P<path>{entry_points})(?![\w.:])")
+        files = self._string_site_files()
+        rivals = self._rival_roots(files, spelled)
+        name_length = len(old_name.encode(cs.ENCODING_UTF8))
+        found: dict[tuple[str, int, int], RenameSite] = {}
+        for file in files:
+            rel = PurePosixPath(file.relative_to(self.repo_root).as_posix())
+            try:
+                raw = file.read_bytes()
+            except OSError:
+                continue
+            # The view the patcher edits: a Python file declaring Latin-1 is
+            # its UTF-8 text, where `é` is two bytes, so a column counted in
+            # the file's own bytes misses the name there.
+            source, _codec = python_source_view(
+                raw, get_language_for_extension(file.suffix), file
+            )
+            patterns = [(quoted, False)]
+            if file.suffix in cs.RENAME_BARE_ENTRY_POINT_SUFFIXES:
+                patterns.append((bare, True))
+            for path, end in _whole_value_paths(source, file.suffix, patterns):
+                spelling = spelled[path]
+                if not _owns_spelling(rel, spelling, rivals.get(spelling.module, [])):
+                    continue
+                line, col = byte_to_line_col(source, end - name_length)
+                found.setdefault(
+                    (rel.as_posix(), line, col),
+                    RenameSite(
+                        cs.RENAME_SITE_KIND_STRING,
+                        rel.as_posix(),
+                        line,
+                        col,
+                        spelling.member,
+                        cs.EdgeResolution.EXACT,
+                    ),
+                )
+        return list(found.values())
+
+    def _spelled_import_paths(
+        self, members: list[str], old_name: str
+    ) -> dict[str, _Spelling]:
+        """Each dotted (`pkg.core.helper`) and entry point (`pkg.core:helper`)
+        path spelling a Python member, mapped to that member."""
+        spelled: dict[str, _Spelling] = {}
+        for member in members:
+            module_qn, module_path = self._module_of(member)
+            inner = member.removeprefix(f"{module_qn}{cs.SEPARATOR_DOT}")
+            if (
+                module_path is None
+                or inner == member
+                or inner.rsplit(cs.SEPARATOR_DOT, 1)[-1] != old_name
+                or get_language_for_extension(Path(module_path).suffix)
+                != cs.SupportedLanguage.PYTHON
+            ):
+                continue
+            for import_path, root in self._python_import_paths(module_path):
+                spelling = _Spelling(member, module_path, import_path, root)
+                spelled[f"{import_path}{cs.SEPARATOR_DOT}{inner}"] = spelling
+                spelled[f"{import_path}{cs.RENAME_ENTRY_POINT_SEPARATOR}{inner}"] = (
+                    spelling
+                )
+        return spelled
+
+    def _rival_roots(
+        self, files: list[Path], spelled: dict[str, _Spelling]
+    ) -> dict[str, list[PurePosixPath]]:
+        """The import roots from which another Python file of the repository
+        is a spelled module path too, by that path."""
+        modules = {spelling.module for spelling in spelled.values()}
+        own = {spelling.path for spelling in spelled.values()}
+        tails = {module.rsplit(cs.SEPARATOR_DOT, 1)[-1] for module in modules}
+        rivals: dict[str, list[PurePosixPath]] = {}
+        for file in files:
+            rel = file.relative_to(self.repo_root).as_posix()
+            stem = file.parent.name if file.stem == cs.PY_PACKAGE_INIT else file.stem
+            if file.suffix != cs.EXT_PY or rel in own or stem not in tails:
+                continue
+            for import_path, root in self._python_import_paths(rel):
+                if import_path in modules:
+                    rivals.setdefault(import_path, []).append(root)
+        return rivals
+
+    def _string_site_files(self) -> list[Path]:
+        # The indexer's own walk, under the repository's `.cgrignore` and
+        # `.gitignore`: a file the project leaves out (a saved fixture) is not
+        # the rename's to edit. It prunes `node_modules` and virtualenvs as it
+        # goes, and skips a symlink, whose in-repository target is walked as
+        # itself and patched once.
+        ignore = load_ignore_patterns(self.repo_root)
+        return [
+            Path(directory) / name
+            for directory, name, _rel in walk_eligible_files(
+                self.repo_root, ignore.exclude or None, ignore.unignore or None
+            )
+            if Path(name).suffix in cs.RENAME_STRING_SUFFIXES
+        ]
+
+    def _python_import_paths(self, module_path: str) -> list[tuple[str, PurePosixPath]]:
+        """The dotted names a Python file imports as, one per import root,
+        with that root.
+
+        A root is the repository or a directory that is not itself a package,
+        so `src/pkg/core.py` imports as `pkg.core` (and `src.pkg.core`), and
+        `pkg/core.py` as `pkg.core`.
+        """
+        parts = list(Path(module_path).with_suffix("").parts)
+        if parts and parts[-1] == cs.PY_PACKAGE_INIT:
+            parts.pop()
+        paths: list[tuple[str, PurePosixPath]] = []
+        for start in range(len(parts)):
+            root = self.repo_root.joinpath(*parts[:start])
+            if start and (root / f"{cs.PY_PACKAGE_INIT}.py").is_file():
+                continue
+            paths.append(
+                (cs.SEPARATOR_DOT.join(parts[start:]), PurePosixPath(*parts[:start]))
+            )
+        return paths
+
+    def _go_sites_losing_visibility(
+        self, qn: str, sites: list[RenameSite], old_name: str, new_name: str
+    ) -> list[RenameSite]:
+        """Go sites outside the definition's package when the rename unexports.
+
+        Go reads an identifier's first letter as its visibility: `Slug` is
+        exported, `slug` is private to its package. Renaming one to the other
+        rewrote `strs.Slug(...)` in package `main` to `strs.slug(...)`, which
+        no build accepts, and every postcondition passed (issue #2813). A
+        package is a directory, except that an external test package
+        (`package strs_test`) beside it sees only exported names.
+        """
+        if not old_name[:1].isupper() or new_name[:1].isupper():
+            return []
+        home = next(
+            (
+                self._go_package(s.path)
+                for s in sites
+                if s.kind == "definition" and s.owner == qn and _is_go_path(s.path)
+            ),
+            None,
+        )
+        if home is None:
+            return []
+        return [
+            s for s in sites if _is_go_path(s.path) and self._go_package(s.path) != home
+        ]
+
+    def _go_package(self, rel_path: str) -> str:
+        return go_utils.package_key(
+            rel_path, read_package_clause(self.repo_root / rel_path)
         )
 
     def _unplanned(
@@ -1625,6 +2659,95 @@ class Renamer:
                 )
         return paths
 
+    def _refuse_unrewritable_sites(
+        self,
+        qn: str,
+        members: list[str],
+        old_name: str,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+    ) -> None:
+        """Refuse a rename whose planned sites cannot all be rewritten.
+
+        `allow_heuristic` opts into guessed sites, and none of these is a
+        guess: each is a known site the rename would leave behind or break.
+        """
+        structural = [s for s in sites if s.resolution == _STRUCTURAL]
+        if structural:
+            raise RenameRefused(
+                cs.RENAME_STRUCTURAL_UNLOCATABLE.format(qn=qn, count=len(structural)),
+                structural,
+                unlocatable,
+            )
+        # Every graph-known occurrence without a rewrite location blocks,
+        # whatever bound it: `allow_heuristic` accepts rewriting through a
+        # guessed site, not leaving a known one under the old name.
+        siteless = [s for s in sites if s.kind == "unlocatable"]
+        if siteless:
+            raise RenameRefused(
+                cs.RENAME_SITELESS.format(qn=qn, count=len(siteless)),
+                siteless,
+                unlocatable,
+            )
+        if shared := self._sites_another_namesake_binds(members, old_name, sites):
+            raise RenameRefused(
+                cs.RENAME_SHARED_SITE.format(
+                    qn=qn,
+                    count=len(shared),
+                    name=old_name,
+                    locations=_locations(shared),
+                ),
+                shared,
+                unlocatable,
+            )
+
+    def _sites_another_namesake_binds(
+        self, hierarchy: list[str], old_name: str, sites: list[RenameSite]
+    ) -> list[RenameSite]:
+        """C/C++ use sites the graph also binds to another definition of
+        `old_name`.
+
+        A header expanded in two translation units binds one `LIMIT` token
+        to `a.h`'s `#define LIMIT` in one and to `b.h`'s in the other, and
+        the hybrid frontend records both, at that one site. Rewriting the
+        token for one leaves the other's units without the name.
+        """
+        definitions = [s.path for s in sites if s.kind == "definition"]
+        if not definitions or not all(
+            get_language_for_extension(Path(path).suffix) in cs.C_FAMILY_LANGUAGES
+            for path in definitions
+        ):
+            return []
+        # An overload fan-out's guessed sibling is the ambiguity
+        # `allow_heuristic` decides, not a second definition. A function-like
+        # macro's use keeps tree-sitter's `heuristic` label over libclang's
+        # `exact` one, so only the fan-out label is left out.
+        uses = {
+            (s.path, s.line, s.col): s
+            for s in sites
+            if s.kind != "definition" and s.resolution != cs.EdgeResolution.OVERLOAD
+        }
+        if not uses:
+            return []
+        shared: dict[tuple[str, int, int], RenameSite] = {}
+        for symbol in graph_query.resolve(self.fetch_all, self.project, old_name):
+            other = symbol["qualified_name"]
+            if other in hierarchy:
+                continue
+            try:
+                other_sites, _unlocatable, _name, _label = self._collect(other)
+            except (RenameRefused, PatcherError):
+                continue
+            for site in other_sites:
+                position = (site.path, site.line, site.col)
+                if (
+                    site.kind != "definition"
+                    and site.resolution != cs.EdgeResolution.OVERLOAD
+                    and position in uses
+                ):
+                    shared.setdefault(position, uses[position])
+        return [shared[position] for position in sorted(shared)]
+
     def _namesakes(
         self, old_name: str, hierarchy: list[str], target: Target
     ) -> _Namesakes:
@@ -1705,6 +2828,9 @@ class Renamer:
             if key in done or site.kind in ("unlocatable", "import"):
                 continue
             done.add(key)
+            if site.kind == cs.RENAME_SITE_KIND_STRING:
+                _replace_in_string(patcher, site, old_name, new_name)
+                continue
             patcher.replace_identifier_at(
                 site.path, site.line, site.col, old_name, new_name
             )
@@ -2055,10 +3181,7 @@ class Renamer:
         self, report: RenameReport, new_name: str
     ) -> list[tuple[str, str]]:
         parents = [
-            (
-                member,
-                member.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT + new_name,
-            )
+            (member, renamed_qualified_name(member, new_name))
             for member in (*report.hierarchy, *report.companions)
         ]
         pairs = list(parents)
@@ -2194,6 +3317,178 @@ class Renamer:
         )
 
 
+def _external_override_reason(qn: str, row: ResultRow) -> str | None:
+    if row.get(cs.KEY_OVERRIDES_EXTERNAL) is True:
+        return cs.RENAME_OVERRIDES_EXTERNAL.format(qn=qn)
+    name = str(row.get(cs.KEY_NAME) or qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+    path = row.get(cs.KEY_PATH)
+    if (
+        isinstance(path, str)
+        and get_language_for_extension(Path(path).suffix) == cs.SupportedLanguage.PYTHON
+        and _PY_PROTOCOL_NAME.fullmatch(name)
+        and (
+            row.get(cs.KEY_LABEL) == cs.NodeLabel.METHOD
+            or (
+                row.get(cs.KEY_LABEL) == cs.NodeLabel.FUNCTION
+                and name in _PY_MODULE_HOOKS
+            )
+        )
+    ):
+        return cs.RENAME_PROTOCOL_METHOD.format(qn=qn, name=name)
+    outside = row.get(cs.RENAME_FACT_OUTSIDE_SUPERTYPES)
+    supertypes = sorted(str(s) for s in outside) if isinstance(outside, list) else []
+    # A project base explains an override marker only when the class has no
+    # supertype outside the project that may declare the method as well
+    # (`Task extends Base implements Runnable`).
+    if row.get(cs.RENAME_FACT_BASES) and not supertypes:
+        return None
+    marker = _override_marker(row)
+    if marker is None:
+        return _implemented_outside(qn, name, supertypes)
+    if row.get(cs.RENAME_FACT_BASES):
+        return cs.RENAME_OVERRIDE_ALSO_OUTSIDE.format(
+            qn=qn, marker=marker, supertypes=cs.SEPARATOR_COMMA_SPACE.join(supertypes)
+        )
+    return cs.RENAME_UNMATCHED_OVERRIDE.format(qn=qn, marker=marker)
+
+
+def _implemented_outside(qn: str, name: str, supertypes: list[str]) -> str | None:
+    """Why an unmarked member is the implementation of a JDK contract.
+
+    `Base implements Runnable` with an unmarked `run()`, and `Leaf extends
+    Base` with `@Override run()`: `Base.run()` explains the marker, so no
+    marker points at `Runnable`. Carrying `Base`'s supertypes down to the
+    marked `Leaf.run()` would also refuse `Sub.plain()` over `Task
+    implements Runnable`, the same shape; only the name tells them apart.
+    """
+    declaring = _contract_declarers(name, supertypes)
+    if not declaring:
+        return None
+    return cs.RENAME_IMPLEMENTS_OUTSIDE.format(
+        qn=qn, name=name, supertypes=cs.SEPARATOR_COMMA_SPACE.join(declaring)
+    )
+
+
+def _contract_declarers(name: str, supertypes: list[str]) -> list[str]:
+    """The JDK types among `supertypes` whose contract requires `name`."""
+    return [
+        supertype
+        for supertype in supertypes
+        if name in cs.JAVA_STDLIB_CONTRACT_METHODS.get(supertype, frozenset())
+    ]
+
+
+def _override_marker(row: ResultRow) -> str | None:
+    decorators = row.get(cs.KEY_DECORATORS)
+    for decorator in decorators if isinstance(decorators, list) else ():
+        text = str(decorator).lstrip("@").split("(", 1)[0].strip()
+        if text.rsplit(cs.SEPARATOR_DOT, 1)[-1].lower() == _OVERRIDE_MARKER:
+            return str(decorator)
+    modifiers = row.get(cs.KEY_MODIFIERS)
+    if isinstance(modifiers, list) and _OVERRIDE_MARKER in modifiers:
+        return _OVERRIDE_MARKER
+    return None
+
+
+class _Spelling(NamedTuple):
+    """A string spelling of a member's import path: the member, its module's
+    file, the dotted module path it goes through and the import root that
+    path is read from (`src` for `src/pkg/core.py` as `pkg.core`)."""
+
+    member: str
+    path: str
+    module: str
+    root: PurePosixPath
+
+
+# A quoted config value is the whole value: after `key =`, an array's `[` or
+# `,`, or alone on its line, and followed by nothing but a separator or a
+# comment. An unquoted entry point (`setup.cfg`) is everything after `=`, an
+# extras list and a comment aside. The space after the extras list belongs to
+# the list, so a run of spaces with no list has one way to match, not one per
+# split between two `\s*`, and a long one is read in linear time.
+_VALUE_BEFORE = re.compile(r"(?:^|[=\[,{])\s*$")
+_VALUE_AFTER = re.compile(r"\s*(?:$|[,\]}#;])")
+_BARE_VALUE_AFTER = re.compile(r"\s*(?:\[[^\]]*\]\s*)?(?:[#;].*)?$")
+# Keeps every byte a lone undecodable byte occupied, so an offset in the
+# decoded text maps back to the same offset in the file.
+_EXACT_BYTES = "surrogateescape"
+
+
+def _whole_value_paths(
+    source: bytes, suffix: str, patterns: list[tuple[re.Pattern[str], bool]]
+) -> Iterator[tuple[str, int]]:
+    """The spelled paths `patterns` find in a file that are a whole string
+    literal (Python) or a whole config value, each with the byte offset
+    where it ends. Each pattern says whether it finds unquoted values."""
+    text = source.decode(cs.ENCODING_UTF8, errors=_EXACT_BYTES)
+    tree: Node | None = None
+    for pattern, bare in patterns:
+        for match in pattern.finditer(text):
+            path = match.group("path")
+            start = len(
+                text[: match.start("path")].encode(
+                    cs.ENCODING_UTF8, errors=_EXACT_BYTES
+                )
+            )
+            end = start + len(path.encode(cs.ENCODING_UTF8, errors=_EXACT_BYTES))
+            if suffix == cs.EXT_PY:
+                tree = tree or _python_tree(source)
+                whole = tree is not None and _whole_python_string(tree, start, end)
+            else:
+                whole = _whole_config_value(text, match, bare)
+            if whole:
+                yield path, end
+
+
+def _python_tree(source: bytes) -> Node | None:
+    parser = load_parsers()[0].get(cs.SupportedLanguage.PYTHON)
+    return None if parser is None else parser.parse(source).root_node
+
+
+def _whole_python_string(tree: Node, start: int, end: int) -> bool:
+    # The bytes between the string's own quotes: `"Do not call
+    # 'pkg.core.helper' directly"` holds the path, but is not it.
+    # A fragment of `"pkg.core.helper" "_v2"` is a whole string node, but
+    # the value is the concatenation, a longer path.
+    node = tree.descendant_for_byte_range(start, end)
+    while node is not None and node.type != cs.TS_PY_STRING:
+        node = node.parent
+    if (
+        node is None
+        or node.child_count < 2
+        or (
+            node.parent is not None and node.parent.type == cs.TS_PY_CONCATENATED_STRING
+        )
+    ):
+        return False
+    return node.children[0].end_byte == start and node.children[-1].start_byte == end
+
+
+def _whole_config_value(text: str, match: re.Match[str], bare: bool) -> bool:
+    line_start = text.rfind("\n", 0, match.start()) + 1
+    line_end = text.find("\n", match.end())
+    before = text[line_start : match.start()]
+    after = text[match.end() : len(text) if line_end < 0 else line_end]
+    if bare:
+        return before.rstrip().endswith("=") and bool(_BARE_VALUE_AFTER.match(after))
+    return bool(_VALUE_BEFORE.search(before)) and bool(_VALUE_AFTER.match(after))
+
+
+def _owns_spelling(
+    rel: PurePosixPath, spelling: _Spelling, rivals: list[PurePosixPath]
+) -> bool:
+    """Whether a string in `rel` spelling a path another module spells too
+    means this member: the nearest import root holding `rel` is its own."""
+    if not rivals:
+        return True
+    holding = [root for root in (spelling.root, *rivals) if rel.is_relative_to(root)]
+    if not holding:
+        return False
+    depth = max(len(root.parts) for root in holding)
+    return [root for root in holding if len(root.parts) == depth] == [spelling.root]
+
+
 class _Namesakes(NamedTuple):
     positions: set[tuple[str, int, int]]
     statements: list[_Span]
@@ -2317,6 +3612,8 @@ def rename(
     after_apply: Callable[[list[str]], None] | None = None,
     reingest: Reingest | None = None,
     heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
+    allow_external_override: bool = False,
+    external_override_opt_in: str = cs.MCPParamName.ALLOW_EXTERNAL_OVERRIDE,
 ) -> RenameReport:
     """The op: plan (and refuse on ambiguity) or plan and apply.
 
@@ -2331,6 +3628,8 @@ def rename(
         after_apply=after_apply,
         reingest=reingest,
         heuristic_opt_in=heuristic_opt_in,
+        allow_external_override=allow_external_override,
+        external_override_opt_in=external_override_opt_in,
     )
     if dry_run:
         return renamer.preview(qualified_name, new_name, allow_heuristic)
