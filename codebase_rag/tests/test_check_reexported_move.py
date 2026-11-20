@@ -620,6 +620,12 @@ _DANGLES = [("page", "util")]
         pytest.param(
             "export default (Math);\n", _DANGLES, id="global-namespace-parens"
         ),
+        # Negative: a declaration of the module shadows the global.
+        pytest.param(
+            "const String = 5;\nexport default String;\n",
+            _DANGLES,
+            id="a-declaration-shadows-the-global",
+        ),
         # A name under a wrapper is the module's binding of it.
         pytest.param(
             f"{_TS_PLAIN_SLUG}\nexport default (slug as typeof slug);\n",

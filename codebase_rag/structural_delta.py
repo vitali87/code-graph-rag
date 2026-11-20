@@ -1664,11 +1664,16 @@ class _AfterBindings:
             for binding in bindings
         ):
             return True
-        # A global no import of the module shadows (`export default String;`)
-        # is there to export whatever the edit did, though a namespace object
-        # (`JSON`, `Math`) serves no caller (Greptile reviews on PR #3312).
-        if local not in cs.JS_GLOBAL_VALUE_NAMES or any(
-            binding.bound == local for binding in bindings
+        # A global no import or declaration of the module shadows (`export
+        # default String;`) is there to export whatever the edit did, though
+        # a namespace object (`JSON`, `Math`) serves no caller (Greptile
+        # reviews on PR #3312). A shadowing `const JSON = String` is a value
+        # of the module's own, which, like any `const` the graph holds no
+        # definition for, is not followed.
+        if (
+            local not in cs.JS_GLOBAL_VALUE_NAMES
+            or local in exports.declared
+            or any(binding.bound == local for binding in bindings)
         ):
             return False
         return not (for_callers and local in cs.JS_GLOBAL_NAMESPACE_NAMES)
@@ -1729,6 +1734,9 @@ class _JsExports(NamedTuple):
     inert: frozenset[str] = frozenset()
     # Whether the module publishes through `module.exports` alone.
     commonjs: bool = False
+    # The names the module's own top-level declarations bind, exported or
+    # not: one of them is no global (`const JSON = String`).
+    declared: frozenset[str] = frozenset()
 
     def erased(self, binding: ImportBinding) -> bool:
         if binding.line is None or binding.col is None:
@@ -1753,7 +1761,9 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
     type_only: set[tuple[int, int, str | None]] = set()
     local: dict[str, str] = {}
     inert: set[str] = set()
+    declared: set[str] = set()
     for statement in root.children:
+        declared.update(_js_declared_names(statement))
         if statement.type not in (cs.TS_EXPORT_STATEMENT, cs.TS_IMPORT_STATEMENT):
             continue
         at = (statement.start_point[0] + 1, statement.start_point[1])
@@ -1778,7 +1788,30 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
         local=local,
         inert=frozenset(inert),
         commonjs=is_commonjs_module(root),
+        declared=frozenset(declared),
     )
+
+
+_JS_VALUE_DECLARATIONS = frozenset(
+    {
+        cs.TS_LEXICAL_DECLARATION,
+        cs.TS_VARIABLE_DECLARATION,
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+        cs.TS_CLASS_DECLARATION,
+    }
+)
+
+
+def _js_declared_names(statement: Node) -> Iterator[str]:
+    """The names a top-level statement declares, through `export`."""
+    if statement.type == cs.TS_EXPORT_STATEMENT:
+        declaration = statement.child_by_field_name(cs.FIELD_DECLARATION)
+        if declaration is None:
+            return
+        statement = declaration
+    if statement.type in _JS_VALUE_DECLARATIONS:
+        yield from _js_value_names(statement)
 
 
 def _js_specifiers(statement: Node) -> Iterator[tuple[str, str, bool]]:
