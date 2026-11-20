@@ -391,6 +391,13 @@ graph cannot answer, and a refusal prints nothing on stdout:
 `{"found": false, ...}` for a qualified name it does not find; neither exits
 with `4`.
 
+The `col` and `end_col` that `callers`, `callees` and `importers` print are
+0-based UTF-8 byte offsets into the line, as the graph stores them. Each row
+also carries `col_char` and `end_col_char`, the same positions in characters,
+when `--repo-path` is the checkout the project was indexed from and the file
+can be read there; a Java source of a Lombok build gets none (see
+[Edge-site properties](../architecture/graph-schema.md#edge-site-properties)).
+
 ### `cgr port`
 
 Judge a port between languages from the graph, as JSON, with no LLM in the

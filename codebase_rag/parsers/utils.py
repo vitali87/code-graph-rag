@@ -265,7 +265,12 @@ def record_cpp_definition_span(
     rel = cached_relative_path(file_path, repo_path).as_posix()
     spans.setdefault(rel, []).append(
         CppDefinitionSpan(
-            node.start_point[0] + 1, node.end_point[0] + 1, label, qualified_name
+            node.start_point[0] + 1,
+            node.end_point[0] + 1,
+            label,
+            qualified_name,
+            node.start_point[1],
+            node.end_point[1],
         )
     )
 
@@ -490,6 +495,16 @@ def _cached_decode_bytes(text_bytes: bytes) -> str:
     return decode_node_text(text_bytes)
 
 
+def has_internal_linkage(props: Mapping[str, object]) -> bool:
+    """A C/C++ function declared `static` at file scope (issue #3154).
+
+    Only its own translation unit can call it. Read from the node's
+    `modifiers`, so ingest and an incremental rehydration agree.
+    """
+    modifiers = props.get(cs.KEY_MODIFIERS)
+    return isinstance(modifiers, list) and cs.CPP_KEYWORD_STATIC in modifiers
+
+
 # The member-name fields a call's callee carries: JS/TS `property`, Python
 # `attribute`, Rust/Go/C++/Scala `field`.
 _MEMBER_NAME_FIELDS = (cs.FIELD_PROPERTY, cs.TS_PY_FIELD_ATTRIBUTE, cs.FIELD_FIELD)
@@ -544,7 +559,8 @@ def node_site_properties(node: Node) -> PropertyDict:
 
     1-based lines, 0-based columns, end exclusive, matching the node
     `start_line`/`start_col` convention so a site can be sliced straight
-    out of the file.
+    out of the bytes the grammar parsed. tree-sitter counts a column in
+    UTF-8 bytes, not characters (issue #3162).
     """
     return {
         cs.KEY_LINE: node.start_point[0] + 1,

@@ -825,7 +825,11 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     # target to importers too (issue #2482).
     processor.dart_exposed_libraries = {"m": ["m.lib"]}
     processor._cpp_shadowed_include_targets = set()
+    processor._cpp_shadowed_include_sites = {}
     processor._cpp_declaration_mappings = set()
+    # A C/C++ file's `#include` targets are per file too: `m`'s go, another
+    # file's stay (issue #3154).
+    processor._cpp_include_targets = {("m", "m.foo"), ("other", "other.foo")}
     processor.csharp_static_imports = {}
     processor.csharp_global_static_imports = {}
     processor._scala_imports = {}
@@ -847,6 +851,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     assert processor.dart_part_of == {"m": "other"}
     assert processor.dart_exposed_libraries.get("m") is None
     assert processor._julia_scope_map_keys.get("m") is None
+    assert processor._cpp_include_targets == {("other", "other.foo")}
     # The control: the mapping it sits beside is emptied, not dropped, so
     # this is the documented reset rather than a wholesale delete.
     assert processor.import_mapping["m"] == {}

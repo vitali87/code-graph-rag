@@ -152,6 +152,15 @@ EPILOG_GRAPH = (
     "graph and nothing matches it; 3 when the project is not indexed; 4 when "
     "a name is not in the graph; 5 when it names several definitions."
 )
+EPILOG_GRAPH_COLUMNS = (
+    "Columns: col and end_col are 0-based UTF-8 byte offsets into the line, as "
+    "the graph stores them. col_char and end_col_char are the same positions "
+    "counted in characters (Unicode code points), read from the file under "
+    "--repo-path when the project was indexed from it; they are left out when "
+    "the file cannot be read there, when it is a Java source of a Lombok build "
+    "(which may have been parsed from its delombok expansion), or when the "
+    "offset does not fall on a character of that line."
+)
 HELP_GRAPH_PROJECT = "Project name in the graph (default: derived from --repo-path)."
 HELP_GRAPH_REPO_PATH = (
     "Repository root the project name derives from and source is read from."
@@ -202,6 +211,10 @@ HELP_RENAME_NEW_NAME = "The new identifier."
 HELP_RENAME_ALLOW_HEURISTIC = (
     "Rewrite through heuristic, overload and trace-only sites, and through "
     "occurrences of the old name the graph has no site for, as well."
+)
+HELP_RENAME_ALLOW_EXTERNAL_OVERRIDE = (
+    "Rename a method that overrides a base outside the project, carries an "
+    "unmatched @Override/override, or is a Python protocol method."
 )
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
 CMD_CHANGE_SIGNATURE = (

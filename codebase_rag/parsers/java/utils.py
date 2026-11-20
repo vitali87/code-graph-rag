@@ -435,6 +435,10 @@ def _formal_params(node: ASTNode) -> list[ASTNode]:
     ]
 
 
+def is_private_java_declaration(node: ASTNode) -> bool:
+    return cs.JAVA_MODIFIER_PRIVATE in _modifier_types(node)
+
+
 def _modifier_types(node: ASTNode) -> frozenset[str]:
     # The keywords and annotations written before a declaration.
     modifiers = next(

@@ -838,18 +838,24 @@ def _read_ignore_lines(ignore_file: Path) -> tuple[str, ...]:
         return ()
 
 
+def _ignore_patterns(lines: tuple[str, ...]) -> CgrignorePatterns:
+    return CgrignorePatterns(
+        exclude=frozenset(line for line in lines if not line.startswith("!")),
+        unignore=frozenset(line[1:].strip() for line in lines if line.startswith("!")),
+    )
+
+
 def _split_ignore_lines(lines: tuple[str, ...], ignore_file: Path) -> CgrignorePatterns:
-    exclude = {line for line in lines if not line.startswith("!")}
-    unignore = {line[1:].strip() for line in lines if line.startswith("!")}
-    if exclude or unignore:
+    patterns = _ignore_patterns(lines)
+    if patterns.exclude or patterns.unignore:
         logger.info(
             logs.CGRIGNORE_LOADED.format(
-                exclude_count=len(exclude),
-                unignore_count=len(unignore),
+                exclude_count=len(patterns.exclude),
+                unignore_count=len(patterns.unignore),
                 path=ignore_file,
             )
         )
-    return CgrignorePatterns(exclude=frozenset(exclude), unignore=frozenset(unignore))
+    return patterns
 
 
 def _load_ignore_file(ignore_file: Path) -> CgrignorePatterns:
@@ -902,6 +908,22 @@ def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:
     return CgrignorePatterns(
         exclude=cgr.exclude | _gitignore_excludes(git_lines, cgr.unignore),
         unignore=cgr.unignore | git.unignore | _tracked_source_dirs(repo_path),
+    )
+
+
+def excludes_once_kept(repo_path: Path, keeps: frozenset[str]) -> frozenset[str]:
+    """The excludes `load_ignore_patterns` returns once `keeps` are saved.
+
+    Interactive setup saves each keep as a `.cgrignore` `!` line and drops a
+    `.cgrignore` exclude of the same string (#2448). Reading both files the
+    way a later sync will, `.gitignore` `!` lines and the lines a `!` line
+    cancels included, tells it which keeps another line still excludes
+    before it reports them saved.
+    """
+    cgr = _ignore_patterns(_read_ignore_lines(repo_path / CGRIGNORE_FILENAME))
+    git_lines = _read_ignore_lines(repo_path / GITIGNORE_FILENAME)
+    return frozenset(
+        (cgr.exclude - keeps) | _gitignore_excludes(git_lines, cgr.unignore | keeps)
     )
 
 

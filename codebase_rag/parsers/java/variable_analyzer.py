@@ -92,6 +92,25 @@ def _java_type_field_text(expr_node: ASTNode) -> str | None:
     return None
 
 
+# The initializers whose inferred type is the one they write out.
+_JAVA_TYPE_NAMING_INITIALIZERS = frozenset(
+    {
+        cs.TS_OBJECT_CREATION_EXPRESSION,
+        cs.TS_JAVA_CAST_EXPRESSION,
+        cs.TS_ARRAY_CREATION_EXPRESSION,
+    }
+)
+
+
+def _initializer_names_its_type(value_node: ASTNode) -> bool:
+    node: ASTNode | None = value_node
+    while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        node = next(
+            (c for c in node.children if c.type not in cs.DELIMITER_TOKENS), None
+        )
+    return node is not None and node.type in _JAVA_TYPE_NAMING_INITIALIZERS
+
+
 def _java_array_creation_type(expr_node: ASTNode) -> str | None:
     if base_type := _java_type_field_text(expr_node):
         return f"{base_type}{cs.JAVA_ARRAY_SUFFIX}"
@@ -162,7 +181,9 @@ class JavaVariableAnalyzerMixin:
     _resolve_java_method_return_type: Callable[..., str | None]
 
     @abstractmethod
-    def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
+    def _resolve_java_type_name(
+        self, type_name: str, module_qn: str, scope: ASTNode | None = None
+    ) -> str: ...
 
     @abstractmethod
     def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None: ...
@@ -404,7 +425,9 @@ class JavaVariableAnalyzerMixin:
         param_type = safe_decode_text(param_type_node)
 
         if param_name and param_type:
-            resolved_type = self._resolve_java_type_name(param_type, module_qn)
+            resolved_type = self._resolve_java_type_name(
+                param_type, module_qn, param_node
+            )
             local_var_types[param_name] = resolved_type
             logger.debug(ls.JAVA_PARAM, name=param_name, type=resolved_type)
 
@@ -426,7 +449,9 @@ class JavaVariableAnalyzerMixin:
                     param_name = safe_decode_text(name_node)
 
         if param_name and param_type:
-            resolved_type = self._resolve_java_type_name(param_type, module_qn)
+            resolved_type = self._resolve_java_type_name(
+                param_type, module_qn, param_node
+            )
             local_var_types[param_name] = resolved_type
             logger.debug(ls.JAVA_VARARGS_PARAM, name=param_name, type=resolved_type)
 
@@ -498,14 +523,26 @@ class JavaVariableAnalyzerMixin:
             if inferred_type := self._infer_java_type_from_expression(
                 value_node, module_qn, local_var_types
             ):
-                resolved_type = self._resolve_java_type_name(inferred_type, module_qn)
+                # Only a type the initializer writes (`new Box()`, a cast) is
+                # read in this scope. One inferred from a call or a field was
+                # named where it is declared, so a type the caller nests must
+                # not take it over (Greptile, PR #2973).
+                resolved_type = self._resolve_java_type_name(
+                    inferred_type,
+                    module_qn,
+                    declarator_node
+                    if _initializer_names_its_type(value_node)
+                    else None,
+                )
                 local_var_types[var_name] = resolved_type
                 logger.debug(
                     ls.JAVA_LOCAL_VAR_INFERRED, name=var_name, type=resolved_type
                 )
                 return
 
-        resolved_type = self._resolve_java_type_name(declared_type, module_qn)
+        resolved_type = self._resolve_java_type_name(
+            declared_type, module_qn, declarator_node
+        )
         local_var_types[var_name] = resolved_type
         logger.debug(ls.JAVA_LOCAL_VAR_DECLARED, name=var_name, type=resolved_type)
 
@@ -1238,5 +1275,10 @@ class JavaVariableAnalyzerMixin:
             if field_info.get(cs.FIELD_NAME) == field_name and (
                 field_type := field_info.get(cs.FIELD_TYPE)
             ):
-                return self._resolve_java_type_name(str(field_type), module_qn)
+                # Named where the field is declared, member types it inherits
+                # included, so a local copying it reads the same type
+                # (Greptile, PR #2973).
+                return self._resolve_java_type_name(
+                    str(field_type), module_qn, field_child
+                )
         return None

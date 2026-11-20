@@ -94,13 +94,14 @@ KEY_END_LINE = "end_line"
 # Edge-site location properties (issue #1522). Every CALLS / REFERENCES /
 # INSTANTIATES edge records the span of the expression that produced it, and
 # every IMPORTS edge the span of its import statement, so a consumer can jump
-# to, verify, or rewrite the exact site. Lines are 1-based and columns 0-based,
-# matching the node `start_line` / `start_col` convention. Sites are stored as
+# to, verify, or rewrite the exact site. Lines are 1-based and columns 0-based
+# UTF-8 byte offsets into the line, as tree-sitter counts them, matching the
+# node `start_line` / `start_col` convention (issue #3162). Sites are stored as
 # ONE EDGE PER SITE: the site props join the MERGE key (see
 # MERGE_KEY_PROPS_BY_REL), so a caller invoking one callee twice carries two
-# parallel edges. Edges emitted without a site (libclang macro uses, Roslyn
-# facts, dynamic-trace write-back, inferred C# namespace imports) carry none of
-# these keys and keep collapsing on their endpoints.
+# parallel edges. Edges emitted without a site (pure-libclang macro uses,
+# Roslyn facts, dynamic-trace write-back, inferred C# namespace imports) carry
+# none of these keys and keep collapsing on their endpoints.
 KEY_LINE = "line"
 # Fixed-Cypher parameter names for the deterministic graph queries (#1523).
 KEY_QN = "qn"
@@ -184,6 +185,12 @@ KEY_SUFFIX = "suffix"
 KEY_VARIANT_PREFIX = "variant_prefix"
 KEY_COL = "col"
 KEY_END_COL = "end_col"
+# What `cgr graph` and its MCP tools answer beside `col` and `end_col`: the same
+# position counted in characters (Unicode code points) of the line, the column
+# an editor or a `str` index uses. Derived from the file when the answer is
+# read and never stored (issue #3162).
+KEY_COL_CHAR = "col_char"
+KEY_END_COL_CHAR = "end_col_char"
 KEY_ARG_COUNT = "arg_count"
 KEY_KWARG_NAMES = "kwarg_names"
 # Call-site flags, present (true) only when the argument list unpacks a
@@ -1030,6 +1037,19 @@ MILVUS_IDS_EXPR = "{field} in {ids}"
 # Milvus answers a delete with the deleted keys or with this count.
 MILVUS_DELETE_COUNT_KEY = "delete_count"
 
+# The tail of the module and project deletes: `owned` lists every node the
+# delete removes. A resource-to-resource FLOWS_TO joins two shared Resource
+# nodes, so detaching the owned nodes never reaches it; the flows whose
+# `scope` names an owned node go first (issue #2746).
+CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS = (
+    "WITH owned, [n IN owned | n.qualified_name] AS owners "
+    f"OPTIONAL MATCH (:{NodeLabel.RESOURCE.value})-[rf:{RelationshipType.FLOWS_TO.value}]->"
+    f"(:{NodeLabel.RESOURCE.value}) "
+    "WHERE rf.scope IN owners "
+    "WITH owned, collect(rf) AS flows "
+    "FOREACH (r IN flows | DELETE r) "
+    "FOREACH (n IN owned | DETACH DELETE n)"
+)
 # The ownership relations a Module's subtree hangs off, walked by the
 # re-parse delete, by the inbound-edge capture that mirrors it (so the two
 # cannot disagree on what goes, issue #2918) and by the lookup of files that
@@ -1060,7 +1080,10 @@ _CYPHER_OWN_MODULE = (
     "OR m.qualified_name STARTS WITH (nested.name + '.')) "
     "WITH m, nested WHERE nested IS NULL "
 )
-CYPHER_DELETE_MODULE = (
+# This project's Module at `$path` and the subtree its re-parse delete
+# removes, bound to `c`: shared by the delete and by the read of the resource
+# flows it takes, so the two cannot disagree on what goes.
+_CYPHER_MODULE_SUBTREE = (
     # Scoped to the project: two projects in the shared graph can hold the
     # same relative path, and a path-only match would take the sibling's
     # module subtree with it. A repository-root __init__.py's module qn IS
@@ -1083,7 +1106,38 @@ CYPHER_DELETE_MODULE = (
     # after a sync that drops the `findings` capture group, or per finding
     # the edited source no longer matches (issue #2536).
     + f"OPTIONAL MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*0..]->(c) "
-    "DETACH DELETE m, c"
+)
+CYPHER_DELETE_MODULE = (
+    _CYPHER_MODULE_SUBTREE
+    # The walk starts at length 0, so `owned` includes the module itself.
+    + "WITH m, collect(DISTINCT c) AS owned "
+    + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
+)
+# The resource flows CYPHER_DELETE_MODULE is about to take, read first: a
+# flow composed through a callee in a file the run does not re-parse cannot
+# be rebuilt from the caller alone, so the flow walk puts it back while the
+# caller still makes that call (review of PR #2759).
+CYPHER_MODULE_RESOURCE_FLOWS = (
+    _CYPHER_MODULE_SUBTREE
+    + "WITH collect(DISTINCT c.qualified_name) AS owners "
+    + f"MATCH (a:{NodeLabel.RESOURCE.value})-[rf:{RelationshipType.FLOWS_TO.value}]->"
+    + f"(b:{NodeLabel.RESOURCE.value}) "
+    + "WHERE rf.scope IN owners "
+    + "RETURN rf.scope AS scope, a.qualified_name AS src, a.name AS src_name, "
+    + "a.kind AS src_kind, b.qualified_name AS dst, b.name AS dst_name, "
+    + "b.kind AS dst_kind, rf.through AS through"
+)
+# The functions a composed flow came through, a list column of the read.
+PRIOR_FLOW_THROUGH = "through"
+# Its text columns, in PriorResourceFlow's field order.
+PRIOR_FLOW_COLUMNS = (
+    "scope",
+    "src",
+    "src_name",
+    "src_kind",
+    "dst",
+    "dst_name",
+    "dst_kind",
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
 # projects, and a path-only delete would take the sibling's node (issue #897).
@@ -1901,9 +1955,10 @@ REL_ENDPOINT_JOINER = " and "
 # same node pair; these props join the MERGE key so parallel edges are not
 # collapsed at write time (issue #722). Props absent from a batch's rows are
 # dropped from the key at flush time, so resource-level FLOWS_TO (no `via`)
-# still dedups on endpoints.
+# dedups on its endpoints and its `scope`: one edge per function that
+# produced the flow, so each goes away with its own owner (issue #2746).
 MERGE_KEY_PROPS_BY_REL: dict[str, tuple[str, ...]] = {
-    RelationshipType.FLOWS_TO.value: ("via", "kind"),
+    RelationshipType.FLOWS_TO.value: ("via", "kind", "scope"),
     # One edge per call/reference/instantiation site (issue #1522); a row
     # without a site still merges on its endpoints alone.
     RelationshipType.CALLS.value: (KEY_LINE, KEY_COL),

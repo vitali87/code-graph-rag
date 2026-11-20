@@ -45,6 +45,24 @@ alongside the hash cache, in the checkout's state directory (see
 has no recorded set, so the first run after upgrading re-runs once to
 establish it and logs why.
 
+## Keeping Directories with Interactive Setup
+
+`--interactive-setup` lists the directories a sync would leave out and asks
+which to keep. After you choose, it offers to save the new keeps to
+`.cgrignore` as `!path` lines under a ``# Kept by `cgr --interactive-setup` ``
+comment, so every later sync, including the watcher, an MCP reingest and CI,
+keeps them too. Without saving, a keep lasts for that run at most.
+
+- A keep that `.cgrignore` excludes by exactly that line has the line
+  removed, since a `.cgrignore` exclude beats its own `!` lines. A
+  `.gitignore` line of exactly that pattern is undone by the saved `!` line.
+- A keep that another line still excludes is not saved, and setup names that
+  line. A `!` line cannot keep a path inside an excluded directory, so
+  `generated/node_modules` stays out while `.gitignore` excludes
+  `generated/`; narrow or remove that line to keep it.
+- If you decline, or `.cgrignore` cannot be written, nothing is saved and
+  setup says what that means for the current run.
+
 ## cgr's own state
 
 A sync keeps what it needs to stay incremental (the hash cache, directory

@@ -18,8 +18,8 @@ cgr rename myproj.pkg.util.helper assist             # apply
 *Real project names carry a path hash, so `myproj` reads `myproj__425345f0`; the JSON report is saved and read with `jq`.*
 
 The MCP tool of the same name takes `qualified_name`, `new_name`, and the
-optional `allow_heuristic`, `dry_run` and `project` fields, and returns the
-same report as JSON.
+optional `allow_heuristic`, `allow_external_override`, `dry_run` and
+`project` fields, and returns the same report as JSON.
 
 ## What gets rewritten
 
@@ -92,6 +92,27 @@ but records no position to rewrite, so renaming would leave that edge
 pointing at the old name. `--allow-heuristic` does NOT bypass this, because
 the problem is a missing location rather than an uncertain one. A class that
 is only instantiated or called renames normally.
+
+A method that overrides or implements something outside the project
+refuses too, naming why: code the project does not contain calls it by its
+old name, so after the rename the override silently stops, and no call site
+shows it. That covers a method the graph marks `overrides_external`
+(`Worker(threading.Thread).run`, `TestCase.setUp`), a Python `__dunder__`
+method (or a module's `__getattr__`/`__dir__` hook), and a method carrying
+`@Override` or the `override` modifier (Java, C#, TypeScript, Dart) that
+overrides no method in the project, or whose class also extends or
+implements a type outside the project that may declare it, directly
+(`Task extends Base implements Runnable`) or through a project class up its
+chain that does not define the method itself
+(`Task extends Bridge`, `Bridge extends Base implements Runnable`). Java
+asks no `@Override` of an implementation, so an unmarked method also refuses
+when its class implements a JDK type that declares its name (`run()` of
+`Runnable` or `Thread`, `compareTo()`, `close()`, `call()`, `iterator()`),
+even when only a subclass's override carries the marker, and when a project
+class below it that does not declare the method implements one through it
+(`Task extends Base implements Runnable`, with `run()` only in `Base`). Pass
+`--allow-external-override` (`allow_external_override: true`) when renaming
+it is the intent (issue #3226).
 
 The rename also refuses when the new name is not a valid identifier, when
 the qualified name has no definition in the graph, or when the definition's

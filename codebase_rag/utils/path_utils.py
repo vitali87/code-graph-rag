@@ -275,6 +275,25 @@ def matches_ignore_patterns(rel_path_str: str, patterns: frozenset[str]) -> bool
     return compiled_ignore_spec(patterns).match_file(rel_path_str)
 
 
+def exclusions_matching(
+    match_path: str, exclude_paths: frozenset[str]
+) -> frozenset[str]:
+    """The exclude lines that match `match_path` (a directory ends in `/`).
+
+    The walk's decision made pattern by pattern, so a caller can name the
+    line that keeps a path out. An ordered `.gitignore` block is named by its
+    exclude lines that match, not as one multi-line entry.
+    """
+    return frozenset(
+        line
+        for pattern in exclude_paths
+        if matches_ignore_patterns(match_path, frozenset({pattern}))
+        for line in ordered_block_lines(pattern)
+        if not line.startswith(cs.GITIGNORE_NEGATION)
+        and matches_ignore_patterns(match_path, frozenset({line}))
+    )
+
+
 _GLOB_MAGIC = re.compile(r"[*?\[]")
 
 
