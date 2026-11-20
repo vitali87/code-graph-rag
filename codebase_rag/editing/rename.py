@@ -797,6 +797,35 @@ def _definition_name_node(
     return None
 
 
+def _anchored_declarator_name(
+    anchored: list[Node], name: str, start_line: int
+) -> Node | None:
+    """The name token in the declarator of a definition starting exactly
+    where the graph says it does, through any pointer or reference wrapper:
+    a `name` field (`Widget::size`) or a function declarator's own name."""
+    for definition in anchored:
+        declarator = definition.child_by_field_name(cs.FIELD_DECLARATOR)
+        if declarator is None:
+            continue
+        header = list(
+            _nodes_in_span(declarator, start_line, declarator.end_point[0] + 1)
+        )
+        tokens = [
+            token
+            for node in header
+            if (
+                token := _spelling(
+                    node.child_by_field_name(cs.FIELD_NAME), name, start_line
+                )
+                or _spelling(_declared_name(node), name, start_line)
+            )
+            is not None
+        ]
+        if tokens:
+            return min(tokens, key=lambda token: token.start_byte)
+    return None
+
+
 def _tree_name_token(
     root: Node,
     start_line: int,
@@ -814,6 +843,12 @@ def _tree_name_token(
     if anchored and (
         token := _definition_name_node(anchored, start_line, end_line, name)
     ):
+        return token
+    # A C/C++ definition names itself in its declarator: read the anchored
+    # one's before the rest of the line, where a prototype or another
+    # namespace's definition can spell the name first (bot reviews on PR
+    # #2895).
+    if (token := _anchored_declarator_name(anchored, name, start_line)) is not None:
         return token
     # A function that is a JS/TS object pair's value is the property its
     # key names: the key comes first, though the value may start on the

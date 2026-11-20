@@ -28,6 +28,23 @@ FILES = {
     # Bot review on PR #2895: a declaration and a same-named pair value on one
     # line share a line span; their columns tell them apart.
     "oneline.js": "function foo() { return 0; } const obj = { foo: () => 1 }; foo();\n",
+    # Bot reviews on PR #2895: a prototype, or another namespace's function,
+    # spells the name earlier on the definition's line.
+    "proto.c": "int pf(void); int pf(void) { return 1; }\n",
+    # The `name` inside `$vhelper` is a variable's, never the function's
+    # (bot review on PR #2895).
+    "vars.php": (
+        "<?php\n"
+        "function vhelper() {\n"
+        "    return 1;\n"
+        "}\n"
+        "\n"
+        "function vcaller() {\n"
+        "    $vhelper = 7;\n"
+        "    return $vhelper + vhelper();\n"
+        "}\n"
+    ),
+    "ns.cpp": "namespace A { int nf() { return 1; } } namespace B { int nf() { return 2; } }\n",
     "util.c": (
         "static int helper(int x) {\n"
         "    return x + 1;\n"
@@ -208,6 +225,9 @@ def _sites(report: RenameReport, kind: str) -> set[tuple[str, int, int]]:
         ("obj2.outer@9", ("obj2.js", 9, 2)),
         ("oneline.foo", ("oneline.js", 1, 9)),
         ("oneline.foo@1", ("oneline.js", 1, 43)),
+        ("proto.pf", ("proto.c", 1, 18)),
+        ("ns.A.nf", ("ns.cpp", 1, 18)),
+        ("ns.B.nf", ("ns.cpp", 1, 57)),
     ],
 )
 def test_the_definition_token_is_located(
@@ -304,6 +324,26 @@ def test_a_python_rename_still_plans_its_call(
     report = _plan(poly_repo, "pymod.pyhelper")
 
     assert _sites(report, "call") == {("pymod.py", 6, 11)}
+
+
+def test_a_php_variable_named_like_the_function_is_left_alone(
+    poly_repo: tuple[Path, RecordedGraph],
+) -> None:
+    root, graph = poly_repo
+
+    report = rename(
+        root,
+        _fetch(graph),
+        graph.project,
+        f"{graph.project}.vars.vhelper",
+        "renamed_fn",
+    )
+
+    assert report.applied, report.message
+    text = (root / "vars.php").read_text()
+    assert "function renamed_fn() {" in text
+    assert "return $vhelper + renamed_fn();" in text
+    assert "$vhelper = 7;" in text
 
 
 def test_a_php_variable_is_still_not_an_identifier(
