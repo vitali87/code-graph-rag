@@ -24,6 +24,7 @@ from ..utils import get_cached_query, safe_decode_text, sorted_captures
 from .ast_analyzer import _homogeneous_element
 from .forward_refs import unquote_forward_refs
 from .utils import (
+    python_literal_type,
     reduce_optional_annotation,
     resolve_class_name,
     resolve_dotted_class,
@@ -372,6 +373,25 @@ def _builtin_annotation(annotation: ASTNode) -> str | None:
     return name if name in cs.PY_BUILTIN_VALUE_TYPES else None
 
 
+def _attributes_bound_to_non_literals(assignments: list[ASTNode]) -> set[str]:
+    """The `self.` attributes the assignments give anything but a literal
+    (`self.cache = Bag()`, `self.cache = load()`)."""
+    names: set[str] = set()
+    for assignment in assignments:
+        left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+        value = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
+        if (
+            left is not None
+            and left.type == cs.TS_PY_ATTRIBUTE
+            and value is not None
+            and python_literal_type(value) is None
+            and (name := safe_decode_text(left))
+            and name.startswith(cs.PY_SELF_PREFIX)
+        ):
+            names.add(name)
+    return names
+
+
 class PythonVariableAnalyzerMixin(_VarBase):
     __slots__ = ()
     import_processor: ImportProcessor
@@ -606,12 +626,21 @@ class PythonVariableAnalyzerMixin(_VarBase):
         local_var_types: dict[str, str],
         module_qn: str,
     ) -> None:
+        rebound = _attributes_bound_to_non_literals(assignments)
         for assignment in assignments:
-            self._process_self_assignment(assignment, local_var_types, module_qn)
+            self._process_self_assignment(
+                assignment, local_var_types, module_qn, rebound
+            )
 
     def _process_self_assignment(
-        self, assignment: ASTNode, local_var_types: dict[str, str], module_qn: str
+        self,
+        assignment: ASTNode,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        rebound: set[str] | None = None,
     ) -> None:
+        """`rebound`: the `self.` attributes some assignment among those read
+        gives a value other than a literal, which a literal does not type."""
         left_node = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
         right_node = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
         if not (
@@ -676,10 +705,14 @@ class PythonVariableAnalyzerMixin(_VarBase):
             # (already-seeded) parameter or local, so flow it onto the attribute.
             ident = safe_decode_text(right_node)
             assigned_type = local_var_types.get(ident) if ident else None
-        if not assigned_type:
+        if not assigned_type and (rebound is None or attr_name not in rebound):
             # `self.cache = {}`: the builtin, so `self.cache.get(k)` is
             # `dict.get` (issue #2859). An annotated assignment never gets
-            # here: its annotation decided the type above.
+            # here: its annotation decided the type above. As for a local, a
+            # literal types the attribute only when every assignment to it
+            # is one: the map is flat, so `self.cache = Bag()`, a call, then
+            # `self.cache = {}` must not let the literal decide that call
+            # (Greptile, PR #2912).
             assigned_type = unshadowed_literal_type(
                 right_node, module_qn, self.import_processor, self.function_registry
             )
@@ -698,19 +731,25 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 q = get_cached_query(py_lang_obj, cs.PY_ASSIGNMENT_QUERY)
                 cursor = QueryCursor(q)
                 captures = sorted_captures(cursor, node)
-                for assign_node in captures.get("assignment", []):
+                assignments = captures.get("assignment", [])
+                rebound = _attributes_bound_to_non_literals(assignments)
+                for assign_node in assignments:
                     self._process_self_assignment(
-                        assign_node, local_var_types, module_qn
+                        assign_node, local_var_types, module_qn, rebound
                     )
                 return
             except Exception:  # noqa: S110 - a failed query falls back to the walk below
                 pass
+        walked: list[ASTNode] = []
         stack: list[ASTNode] = [node]
         while stack:
             current = stack.pop()
             if current.type == cs.TS_PY_ASSIGNMENT:
-                self._process_self_assignment(current, local_var_types, module_qn)
+                walked.append(current)
             stack.extend(reversed(current.children))
+        rebound = _attributes_bound_to_non_literals(walked)
+        for current in walked:
+            self._process_self_assignment(current, local_var_types, module_qn, rebound)
 
     def _self_method_element_type(
         self, call_node: ASTNode, module_qn: str

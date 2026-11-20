@@ -79,6 +79,11 @@ APP = (
     # A walrus binds as an assignment does (#3340): a literal types its
     # target, and a non-literal one elsewhere keeps the literal from deciding.
     'def walrus_get():\n    if (d := {}) is not None:\n        return d.get("k")\n\n\n'
+    # Greptile, PR #2912: a later literal reset of an attribute does not
+    # retype the calls made through its earlier instance.
+    "class Resets:\n"
+    "    def __init__(self):\n"
+    "        self.cache = Bag()\n        self.cache.get(1)\n        self.cache = {}\n\n\n"
     "def walrus_then_literal():\n"
     "    if (x := make_bag()) is not None:\n        first = x.get(1)\n"
     "    x = {}\n    return first\n"
@@ -147,7 +152,13 @@ def test_a_call_on_a_builtin_value_binds_no_first_party_method(
 
 
 @pytest.mark.parametrize(
-    "caller", ["factory_reassigned", "bag_then_literal", "walrus_then_literal"]
+    "caller",
+    [
+        "factory_reassigned",
+        "bag_then_literal",
+        "walrus_then_literal",
+        "Resets.__init__",
+    ],
 )
 def test_a_literal_does_not_retype_a_name_also_bound_to_an_instance(
     graph: RecordedGraph, caller: str
