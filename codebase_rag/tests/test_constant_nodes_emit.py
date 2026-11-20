@@ -141,6 +141,34 @@ def test_an_unchanged_file_keeps_its_type_edge_when_the_type_file_changes(
     assert "proj.models.EXTRA" in _nodes(store)
 
 
+def test_a_requeued_constant_resolves_through_its_files_imports(
+    tmp_path: Path,
+) -> None:
+    """An unchanged file's imports are not parsed on an incremental run, so a
+    requeued `Bar` resolved without them reached another file's `Bar` beside
+    the alias the file imports (review of PR 2135)."""
+    root = tmp_path / "proj"
+    _write(
+        root,
+        {
+            "models.py": "class Match:\n    pass\n",
+            "other.py": "class Bar:\n    pass\n",
+            "api.py": "from models import Match as Bar\n\nMAX: Bar = None\n",
+        },
+    )
+    store = _StatefulIngestor()
+    _updater(root, store, "proj").run(force=True)
+    expected = {("proj.api.MAX", "proj.models.Match")}
+    assert {e for e in _edges(store, _OF_TYPE) if e[0] == "proj.api.MAX"} == expected
+
+    (root / "caller.py").write_text("def caller():\n    return 1\n")
+    updater = _updater(root, store, "proj")
+    updater.run()
+
+    assert "api.py" not in updater._reparsed_file_keys
+    assert {e for e in _edges(store, _OF_TYPE) if e[0] == "proj.api.MAX"} == expected
+
+
 def test_a_changed_annotation_replaces_the_old_type_edge(tmp_path: Path) -> None:
     root = tmp_path / "proj"
     _write(root, {"models.py": _MODELS, "api.py": _API})
@@ -327,7 +355,11 @@ class _Resolver:
         self.calls: list[tuple[str, str]] = []
 
     def resolve_annotation(
-        self, type_name: str, module_qn: str, path: str | None = None
+        self,
+        type_name: str,
+        module_qn: str,
+        path: str | None = None,
+        requeued: bool = False,
     ) -> list[str]:
         self.calls.append((type_name, module_qn))
         return ["proj.t.Limit"] if type_name == "Limit" else []
