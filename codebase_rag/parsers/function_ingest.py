@@ -263,6 +263,9 @@ class _DeferredCppContainment(NamedTuple):
     module_qn: str
     # A lambda also gets the creation-site REFERENCES from the method.
     is_lambda: bool = False
+    # The enclosing method's span: an overload registers under a suffixed qn
+    # (`Widget.run@8`) that the class and method names alone cannot rebuild.
+    parent_span: FunctionSpanKey | None = None
 
 
 # Where a C++ declaration stops being a statement in a function body: the
@@ -2399,6 +2402,7 @@ class FunctionIngestMixin:
                 method_name=method_name,
                 module_qn=module_qn,
                 is_lambda=func_node.type == cs.TS_CPP_LAMBDA_EXPRESSION,
+                parent_span=function_span_key(module_qn, enclosing),
             )
         )
         return True
@@ -2573,7 +2577,24 @@ class FunctionIngestMixin:
                 cs.KEY_QUALIFIED_NAME,
                 entry.module_qn,
             )
+            recorded = (
+                self.function_locations.get(entry.parent_span)
+                if entry.parent_span is not None
+                else None
+            )
             if (
+                recorded is not None
+                and recorded.label == cs.NodeLabel.METHOD.value
+                and recorded.qualified_name in self.function_registry
+            ):
+                # The method pass recorded the enclosing body's own identity,
+                # an overload's suffix included (bot review on PR #2745).
+                parent_spec = (
+                    cs.NodeLabel.METHOD,
+                    cs.KEY_QUALIFIED_NAME,
+                    recorded.qualified_name,
+                )
+            elif (
                 class_qn := self._resolve_cpp_definition_class(
                     entry.class_lookup, entry.module_qn
                 )

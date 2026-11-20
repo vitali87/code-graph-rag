@@ -85,6 +85,24 @@ int Widget::run() {
 }
 """
 
+# Bot review on PR #2745: each out-of-class overload creates its own lambda,
+# and only the overload whose body holds it references it.
+OVERLOADS = """struct Widget {
+    int run(int v);
+    int run(double v);
+};
+
+int Widget::run(int v) {
+    auto a = [](int x) { return x + 1; };
+    return a(v);
+}
+
+int Widget::run(double v) {
+    auto b = [](double x) { return x * 2; };
+    return static_cast<int>(b(v));
+}
+"""
+
 
 def _index(root: Path, files: dict[str, str]) -> _StatefulIngestor:
     for rel, text in files.items():
@@ -168,6 +186,32 @@ def test_a_lambda_in_an_out_of_class_method_is_referenced_by_the_method(
     assert _incoming(extra, cs.RelationshipType.REFERENCES.value, leaf) == {
         f"{PROJECT}.extra.Widget.run"
     }
+
+
+def test_a_lambda_in_an_overload_is_referenced_by_that_overload(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store = _index(root, {"over.cpp": OVERLOADS})
+    # Each `run` body under the qn it registered with, in source order.
+    runs = {
+        int(props[cs.KEY_START_LINE]): str(props[cs.KEY_QUALIFIED_NAME])
+        for props in store.nodes.values()
+        if props.get(cs.KEY_NAME) == "run"
+        and cs.KEY_START_LINE in props
+        and str(props.get(cs.KEY_QUALIFIED_NAME, "")).startswith(f"{PROJECT}.over.")
+    }
+    assert len(runs) == 2, runs
+    first, second = (runs[line] for line in sorted(runs))
+    for leaf, owner in (("lambda_6_13", first), ("lambda_11_13", second)):
+        assert _incoming(store, cs.RelationshipType.REFERENCES.value, leaf) == {
+            owner
+        }, (leaf, runs)
+        assert _incoming(store, cs.RelationshipType.DEFINES.value, leaf) == {owner}, (
+            leaf,
+            runs,
+        )
 
 
 # Negative: what must not change.
