@@ -6220,6 +6220,17 @@ class CallProcessor:
             self._resolver.python_local_names[caller_qn] = local
         else:
             self._resolver.python_local_names.pop(caller_qn, None)
+        # A receiver the body assigns anew keeps `self.m()` off the exact
+        # enclosing-class answer (CodeRabbit, PR #2908).
+        rebound = (
+            python_inference.rebound_receivers(caller_node)
+            if caller_node.type in _PY_LOCAL_SCOPE_CALLERS
+            else frozenset()
+        )
+        if rebound:
+            self._resolver.python_rebound_receivers[caller_qn] = rebound
+        else:
+            self._resolver.python_rebound_receivers.pop(caller_qn, None)
         self._record_python_name_typed_params(caller_node, caller_qn, module_qn)
 
     def _record_python_name_typed_params(

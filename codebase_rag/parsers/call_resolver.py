@@ -28,7 +28,7 @@ from .parameter_nodes import c_family_parameter_list
 from .php import class_names as php_class_names
 from .php.class_names import ClassPath as PhpClassPath
 from .php.class_names import ascii_fold as _php_fold
-from .py import resolve_class_name
+from .py import external_class_members, resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
@@ -311,6 +311,7 @@ class CallResolver:
         "python_shadowed_imports",
         "go_local_scopes",
         "python_local_names",
+        "python_rebound_receivers",
         "js_parameter_names",
         "function_registry",
         "import_processor",
@@ -390,6 +391,11 @@ class CallResolver:
         # caller qn -> every name that Python function binds itself (#2666);
         # filled alongside python_shadowed_imports.
         self.python_local_names: dict[str, frozenset[str]] = {}
+        # Python caller qn -> the receivers (`self`, `cls`) its body, or an
+        # enclosing def's, binds anew; filled alongside python_local_names. A
+        # call through one may run on whatever was assigned (CodeRabbit, PR
+        # #2908).
+        self.python_rebound_receivers: dict[str, frozenset[str]] = {}
         # JS/TS caller qn -> the names its own parameters bind: a bare call to
         # one calls the argument, never the import or module function of the
         # name (`function run(pad) { pad("x") }`), filled the same way.
@@ -813,13 +819,43 @@ class CallResolver:
             # own type; the typed-receiver lookup below honours it, where
             # the enclosing class would bind `A.m` (Greptile, PR #2953).
             or (call.local_var_types and receiver in call.local_var_types)
+            # A body that assigns the receiver (`self = factory()`) may call
+            # through a value whose type nothing inferred, so the enclosing
+            # class is no certain target (CodeRabbit, PR #2908).
+            or receiver
+            in self.python_rebound_receivers.get(call.caller_qn or "", frozenset())
         ):
             return None
         target = self._method_by_mro(call.class_context, method_name)
-        if target is None or self.function_registry.is_abstract(target[1]):
+        if (
+            target is None
+            or self.function_registry.is_abstract(target[1])
+            or self._unknown_base_may_bind_first(call.class_context, method_name)
+        ):
             return None
         self.last_resolution = cs.EdgeResolution.EXACT
         return target
+
+    def _unknown_base_may_bind_first(self, class_qn: str, method_name: str) -> bool:
+        """Whether a base the graph holds no class for may bind `method_name`
+        ahead of the class that does along the C3 order: in
+        `class D(ExternalBase, B)`, `self.m()` runs `ExternalBase.m` if it
+        has one, not `B.m` (CodeRabbit, PR #2908). A builtin or stdlib base
+        is read for the name; any other one may bind anything."""
+        registry = self.function_registry
+        for owner in self._c3_mro(class_qn):
+            if registry.get(owner) is None:
+                members = external_class_members(owner)
+                if members is None or method_name in members:
+                    return True
+                continue
+            if (
+                f"{owner}{cs.SEPARATOR_DOT}{method_name}" in registry
+                or self._member_alias(owner, method_name)
+                or registry.binds_non_method(owner, method_name)
+            ):
+                return False
+        return False
 
     def _method_by_mro(self, class_qn: str, method_name: str) -> tuple[str, str] | None:
         """The `method_name` a lookup on `class_qn` runs: its own, else the

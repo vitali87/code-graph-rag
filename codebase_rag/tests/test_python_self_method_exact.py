@@ -83,6 +83,26 @@ FILES = {
         "class Mine:\n    def m(self):\n        return 1\n\n"
         "    def typed(self: Other2):\n        return self.m()\n"
     ),
+    # `self` assigned a value nothing types: the later call may run on it,
+    # not on the class (CodeRabbit, PR #2908).
+    "rebound.py": (
+        "def factory():\n    return make_thing()\n\n\n"
+        "class Rebound:\n    def rb_m(self):\n        return 1\n\n"
+        "    def run(self):\n        self = factory()\n        return self.rb_m()\n"
+    ),
+    # A base the graph holds no class for, ahead of the one defining the
+    # method, may define it first; a builtin one is read for the name
+    # (CodeRabbit, PR #2908).
+    "extbase.py": (
+        "from somelib import ExternalBase\n\n\n"
+        "class Local:\n    def ext_m(self):\n        return 1\n\n\n"
+        "class ExternalFirst(ExternalBase, Local):\n"
+        "    def run(self):\n        return self.ext_m()\n\n\n"
+        "class ExternalLast(Local, ExternalBase):\n"
+        "    def run(self):\n        return self.ext_m()\n\n\n"
+        "class BuiltinFirst(Exception, Local):\n"
+        "    def run(self):\n        return self.ext_m()\n"
+    ),
 }
 
 
@@ -120,6 +140,8 @@ def _calls(graph: RecordedGraph, caller: str) -> dict[str, str]:
         ("leaf.Leaf.make", "leaf.Leaf.build"),
         ("inherit.Child.run", "inherit.Base.shared"),
         ("overridden.P.run", "overridden.P.hook"),
+        ("extbase.ExternalLast.run", "extbase.Local.ext_m"),
+        ("extbase.BuiltinFirst.run", "extbase.Local.ext_m"),
     ],
 )
 def test_a_self_call_on_the_enclosing_class_is_exact(
@@ -159,6 +181,20 @@ def test_a_self_call_the_class_does_not_define_stays_heuristic(
     graph: RecordedGraph,
 ) -> None:
     assert _calls(graph, "nodef.NoDef.run") == {"other.Other.orphan": "heuristic"}
+
+
+def test_a_self_call_through_a_rebound_receiver_stays_heuristic(
+    graph: RecordedGraph,
+) -> None:
+    assert _calls(graph, "rebound.Rebound.run")["rebound.Rebound.rb_m"] == ("heuristic")
+
+
+def test_a_self_call_an_unknown_earlier_base_may_take_stays_heuristic(
+    graph: RecordedGraph,
+) -> None:
+    assert _calls(graph, "extbase.ExternalFirst.run")["extbase.Local.ext_m"] == (
+        "heuristic"
+    )
 
 
 def test_an_abstract_self_call_still_reaches_the_implementation(
