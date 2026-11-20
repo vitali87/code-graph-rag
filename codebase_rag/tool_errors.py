@@ -53,6 +53,7 @@ NONINTERACTIVE_REDIRECT = "redirection is not available"
 NONINTERACTIVE_FOLLOW_SYMLINKS = "symlink-following traversal is not available"
 NONINTERACTIVE_FIND_MUTATES = "find's mutating actions are not available"
 NONINTERACTIVE_PATH_ESCAPES = "absolute and parent-traversal paths are not available"
+NONINTERACTIVE_SENSITIVE_FILE = "reading files that may hold credentials needs approval"
 NONINTERACTIVE_OPTION_CARRIED_INPUT = (
     "options that read file lists or run programs are not available"
 )
@@ -88,6 +89,11 @@ FILE_WRITER_SECURITY = (
     "Security risk: Attempted to create file outside of project root: {path}"
 )
 FILE_WRITER_CREATE = "Error creating file {path}: {error}"
+# Git runs the commands its config and hooks name (see is_git_internal).
+GIT_INTERNAL_WRITE_REFUSED = (
+    "Refusing to write {path}: it is inside .git, where git keeps the config "
+    "and hooks it runs commands from. Change it with git itself."
+)
 
 # Export errors
 EXPORT_FAILED = "Failed to export graph: {error}"
@@ -97,6 +103,12 @@ MCP_TOOL_RETURNED_NONE = "Tool returned None"
 MCP_INVALID_RESPONSE = "Code snippet tool returned an invalid response"
 MCP_PATH_NOT_EXISTS = "Target repository path does not exist: {path}"
 MCP_PATH_NOT_DIR = "Target repository path is not a directory: {path}"
+MCP_ROOT_TOO_BROAD = (
+    "The MCP server was started in {path}, which holds your home directory "
+    "or is a disk root, and TARGET_REPO_PATH names no project. Serving it "
+    "would let the client read and change every file under it. Set "
+    "TARGET_REPO_PATH to the project's directory."
+)
 MCP_PROJECT_NOT_FOUND = (
     "Project '{project_name}' not found. Available projects: {projects}"
 )

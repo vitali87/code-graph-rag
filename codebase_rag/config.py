@@ -9,7 +9,7 @@ import subprocess
 from collections.abc import Collection, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, TypedDict, Unpack
+from typing import Any, NamedTuple, TypedDict, Unpack
 
 from dotenv.main import DotEnv
 from loguru import logger
@@ -20,9 +20,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
 from . import exceptions as ex
-from . import logs
+from . import instructions_trust, logs
 from .graph_dialects import DIALECT_SQLITE, available_dialects
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
+from .utils.path_utils import ordered_ignore_block
 
 # Taken before `.env` is merged into the environment, so a refused value can be
 # traced to the shell that exported it or to the file (#2474).
@@ -48,8 +49,12 @@ def merge_dotenv(path: Path) -> dict[str, str]:
     # value, and a reference to it in the file reads that value too.
     values = DotEnv(path, encoding=cs.ENCODING_UTF8, override=False).dict()
     refused: dict[str, str] = {}
+    # The file may not set a waiver in any spelling: settings match names
+    # without regard to case, so `cgr_allow_sensitive_reads=true` beside an
+    # exported `CGR_ALLOW_SENSITIVE_READS=false` won (see load_settings).
+    environment_only = {name.upper() for name in cs.ENVIRONMENT_ONLY_SETTINGS}
     for name, value in values.items():
-        if value is None or name in os.environ:
+        if value is None or name in os.environ or name.upper() in environment_only:
             continue
         try:
             os.environ[name] = value
@@ -613,10 +618,35 @@ class AppConfig(BaseSettings):
 
     CGR_CAPTURE: str = Field("", validation_alias="CGR_CAPTURE")
 
+    # MCP read_file refuses a likely credential file (.env, keys,
+    # .git/config): the client's model would read it (issue #3457). The CLI
+    # agent asks instead, so this only matters to the MCP server.
+    ALLOW_SENSITIVE_READS: bool = Field(
+        False, validation_alias="CGR_ALLOW_SENSITIVE_READS"
+    )
+
+    # MCP write_file and surgical_replace_code refuse the same files: an
+    # overwrite destroys the secret, and an edit's refusals ("target not
+    # found", the lines of each match) let the client guess one character
+    # at a time. The CLI agent asks before every write instead.
+    ALLOW_SENSITIVE_WRITES: bool = Field(
+        False, validation_alias="CGR_ALLOW_SENSITIVE_WRITES"
+    )
+
+    # A repository's .cgr.md loads only once the user approved its content
+    # (issue #3456). True trusts every repository's file without asking:
+    # for CI on repositories you control, never for code you did not write.
+    TRUST_PROJECT_INSTRUCTIONS: bool = Field(
+        False, validation_alias="CGR_TRUST_PROJECT_INSTRUCTIONS"
+    )
+
     # Loopback by default: the StreamableHTTP endpoint has no built-in
     # auth, so exposing it beyond the host must be an explicit operator
     # choice via MCP_HTTP_HOST (issue #808).
     MCP_HTTP_HOST: str = "127.0.0.1"
+    # Serve only the tools that read (`cgr mcp-server --read-only`), for a
+    # client that needs queries and nothing else (issue #3458).
+    MCP_READ_ONLY: bool = False
     MCP_HTTP_PORT: int = 8080
     MCP_HTTP_ENDPOINT_PATH: str = "/mcp"
     # Bearer token for the HTTP MCP endpoint; unset means loopback-only
@@ -759,11 +789,29 @@ def load_settings(
     itself, so such a variable is refused here too, with that message alone.
     """
     held_back = unset or {}
+    # A waiver of a safeguard against the repository's own content counts only
+    # when the user exported it: `.env` in the working directory is usually the
+    # analysed repository's file, and could approve its own .cgr.md (Codex
+    # review on PR #3471). Held at its default, silently, like an unset one.
+    # An empty one counts as unset: settings skip an empty variable
+    # (env_ignore_empty) and read `.env` in its place, so it let the
+    # repository's file decide.
+    exported = {name.upper() for name in inherited_env if os.environ.get(name)}
+    waivers = {
+        name for name in cs.ENVIRONMENT_ONLY_SETTINGS if name.upper() not in exported
+    }
     try:
-        return AppConfig(**_defaults_for(held_back)), tuple(held_back.values())
+        return (
+            AppConfig(**_defaults_for({*held_back, *waivers})),
+            tuple(held_back.values()),
+        )
     except ValidationError as error:
         refusals = error.errors(include_url=False)
-    refused = {*held_back, *(str(refusal["loc"][0]) for refusal in refusals)}
+    refused = {
+        *held_back,
+        *waivers,
+        *(str(refusal["loc"][0]) for refusal in refusals),
+    }
     messages = tuple(_describe_refusal(r, inherited_env) for r in refusals)
     return AppConfig(**_defaults_for(refused)), (*held_back.values(), *messages)
 
@@ -777,60 +825,105 @@ GITIGNORE_FILENAME = ".gitignore"
 EMPTY_CGRIGNORE = CgrignorePatterns(exclude=frozenset(), unignore=frozenset())
 
 
-def _load_ignore_file(ignore_file: Path) -> CgrignorePatterns:
+def _read_ignore_lines(ignore_file: Path) -> tuple[str, ...]:
+    """The file's pattern lines in order, comments and blank lines dropped."""
     if not ignore_file.is_file():
-        return EMPTY_CGRIGNORE
-
-    exclude: set[str] = set()
-    unignore: set[str] = set()
+        return ()
     try:
         with ignore_file.open(encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if line.startswith("!"):
-                    unignore.add(line[1:].strip())
-                else:
-                    exclude.add(line)
-        if exclude or unignore:
-            logger.info(
-                logs.CGRIGNORE_LOADED.format(
-                    exclude_count=len(exclude),
-                    unignore_count=len(unignore),
-                    path=ignore_file,
-                )
-            )
-        return CgrignorePatterns(
-            exclude=frozenset(exclude),
-            unignore=frozenset(unignore),
-        )
+            stripped = (line.strip() for line in f)
+            return tuple(line for line in stripped if line and not line.startswith("#"))
     except (OSError, ValueError) as e:
         logger.warning(logs.CGRIGNORE_READ_FAILED.format(path=ignore_file, error=e))
-        return EMPTY_CGRIGNORE
+        return ()
+
+
+def _ignore_patterns(lines: tuple[str, ...]) -> CgrignorePatterns:
+    return CgrignorePatterns(
+        exclude=frozenset(line for line in lines if not line.startswith("!")),
+        unignore=frozenset(line[1:].strip() for line in lines if line.startswith("!")),
+    )
+
+
+def _split_ignore_lines(lines: tuple[str, ...], ignore_file: Path) -> CgrignorePatterns:
+    patterns = _ignore_patterns(lines)
+    if patterns.exclude or patterns.unignore:
+        logger.info(
+            logs.CGRIGNORE_LOADED.format(
+                exclude_count=len(patterns.exclude),
+                unignore_count=len(patterns.unignore),
+                path=ignore_file,
+            )
+        )
+    return patterns
+
+
+def _load_ignore_file(ignore_file: Path) -> CgrignorePatterns:
+    return _split_ignore_lines(_read_ignore_lines(ignore_file), ignore_file)
 
 
 def load_cgrignore_patterns(repo_path: Path) -> CgrignorePatterns:
     return _load_ignore_file(repo_path / CGRIGNORE_FILENAME)
 
 
+def _gitignore_excludes(lines: tuple[str, ...], cancelled: frozenset[str]) -> set[str]:
+    """The root .gitignore's excludes, read the way git reads them.
+
+    Git lets a later `!` line re-include what an earlier line excluded, the
+    last matching line deciding (issue #2835). With no `!` line left, each
+    exclude is its own pattern, as before; otherwise the file's lines form one
+    ordered block, so `src/gen/*.py` then `!src/gen/handwritten.py` keeps the
+    hand-written file. One block, not one per exclude, so a path is checked
+    once however many excludes precede a `!` line. An exclude a later `!` line
+    of the same string undoes, or that .cgrignore re-includes, is dropped, and
+    so is a `!` line no exclude precedes: neither changes what is ignored.
+    """
+    kept: list[str] = []
+    seen_exclude = False
+    for index, line in enumerate(lines):
+        if line.startswith("!"):
+            if seen_exclude:
+                kept.append(line)
+        elif line not in cancelled and f"!{line}" not in lines[index + 1 :]:
+            kept.append(line)
+            seen_exclude = True
+    if all(not line.startswith("!") for line in kept):
+        return set(kept)
+    return {ordered_ignore_block(kept)}
+
+
 def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:
     # Merged exclude/unignore set for indexing: root .gitignore (gitignored
     # paths are build artifacts and generated output that pollute the graph and
     # dead-code report) plus .cgrignore, the authoritative cgr channel. The skip
-    # check gives excludes precedence, so a negation overrides a .gitignore
-    # exclude only by CANCELLING the exact pattern (`!generated/` drops
-    # `generated/`); .cgrignore excludes are never cancelled.
-    # ponytail: root .gitignore only, exact-string cancellation only; a
-    # finer-grained negation (`!dist/keep.py` under excluded `dist/`) still
-    # cannot rescue -- an ordered PathSpec soft layer in should_skip_path is
-    # the upgrade path if real repos need it.
+    # check gives excludes precedence, so .cgrignore keeps its stricter rule: a
+    # `!` there rescues only a built-in exclusion, or cancels a .gitignore
+    # exclude of the same string. .gitignore's own `!` lines follow git
+    # (`_gitignore_excludes`), and also rescue built-in exclusions.
+    # ponytail: root .gitignore only.
     cgr = _load_ignore_file(repo_path / CGRIGNORE_FILENAME)
-    git = _load_ignore_file(repo_path / GITIGNORE_FILENAME)
-    negations = cgr.unignore | git.unignore
+    git_file = repo_path / GITIGNORE_FILENAME
+    git_lines = _read_ignore_lines(git_file)
+    git = _split_ignore_lines(git_lines, git_file)
     return CgrignorePatterns(
-        exclude=cgr.exclude | (git.exclude - negations),
-        unignore=negations | _tracked_source_dirs(repo_path),
+        exclude=cgr.exclude | _gitignore_excludes(git_lines, cgr.unignore),
+        unignore=cgr.unignore | git.unignore | _tracked_source_dirs(repo_path),
+    )
+
+
+def excludes_once_kept(repo_path: Path, keeps: frozenset[str]) -> frozenset[str]:
+    """The excludes `load_ignore_patterns` returns once `keeps` are saved.
+
+    Interactive setup saves each keep as a `.cgrignore` `!` line and drops a
+    `.cgrignore` exclude of the same string (#2448). Reading both files the
+    way a later sync will, `.gitignore` `!` lines and the lines a `!` line
+    cancels included, tells it which keeps another line still excludes
+    before it reports them saved.
+    """
+    cgr = _ignore_patterns(_read_ignore_lines(repo_path / CGRIGNORE_FILENAME))
+    git_lines = _read_ignore_lines(repo_path / GITIGNORE_FILENAME)
+    return frozenset(
+        (cgr.exclude - keeps) | _gitignore_excludes(git_lines, cgr.unignore | keeps)
     )
 
 
@@ -941,19 +1034,85 @@ def _read_cgr_instructions_file(path: Path) -> str | None:
     except OSError as e:
         logger.warning(logs.CGR_INSTRUCTIONS_READ_FAILED.format(path=path, error=e))
         return None
-    if not body:
+    return body or None
+
+
+class RepoInstructions(NamedTuple):
+    path: Path
+    body: str
+    digest: str
+    # What the user approved for this path before, if anything: None is a
+    # file never seen, a different digest is one changed since.
+    approved: str | None
+
+    @property
+    def trusted(self) -> bool:
+        return settings.TRUST_PROJECT_INSTRUCTIONS or self.approved == self.digest
+
+
+def set_by_dotenv(
+    name: str, inherited_env: Collection[str], dotenv_names: Collection[str]
+) -> bool:
+    """Whether `name` comes from the working directory's `.env` rather than
+    from the environment the user started cgr with."""
+    exported = {variable.upper() for variable in inherited_env}
+    in_file = {variable.upper() for variable in dotenv_names}
+    return name.upper() in in_file and name.upper() not in exported
+
+
+# The names the working directory's `.env` sets, merged or not:
+# pydantic-settings reads the file itself.
+_DOTENV_NAMES = frozenset(DotEnv(Path.cwd() / ".env", encoding=cs.ENCODING_UTF8).dict())
+_DEFAULT_CGR_HOME = Path.home() / cs.CGR_HOME_DIRNAME
+_CGR_HOME_FROM_DOTENV = set_by_dotenv(cs.ENV_CGR_HOME, _INHERITED_ENV, _DOTENV_NAMES)
+
+
+def _trust_store() -> Path:
+    # Approvals live where the repository cannot point them: a CGR_HOME set by
+    # the working directory's `.env` could hold a store that approves that
+    # repository's own .cgr.md (Greptile review on PR #3471).
+    home = _DEFAULT_CGR_HOME if _CGR_HOME_FROM_DOTENV else settings.CGR_HOME
+    return home.expanduser() / cs.TRUSTED_INSTRUCTIONS_FILENAME
+
+
+def repo_instructions(repo_path: Path) -> RepoInstructions | None:
+    """The repository's own .cgr.md with its approval state, if it has one."""
+    path = repo_path / CGR_INSTRUCTIONS_FILENAME
+    if (body := _read_cgr_instructions_file(path)) is None:
         return None
-    logger.info(logs.CGR_INSTRUCTIONS_LOADED.format(path=path, chars=len(body)))
-    return body
+    return RepoInstructions(
+        path,
+        body,
+        instructions_trust.instructions_digest(body),
+        instructions_trust.approved_digest(_trust_store(), path),
+    )
+
+
+def approve_repo_instructions(instructions: RepoInstructions) -> None:
+    instructions_trust.approve(_trust_store(), instructions.path, instructions.digest)
 
 
 def load_cgr_instructions(repo_path: Path | None) -> str | None:
-    global_body = _read_cgr_instructions_file(GLOBAL_CGR_INSTRUCTIONS_PATH)
-    repo_body = (
-        _read_cgr_instructions_file(repo_path / CGR_INSTRUCTIONS_FILENAME)
-        if repo_path is not None
-        else None
-    )
-    if global_body and repo_body:
-        return f"{global_body}\n\n---\n\n{repo_body}"
-    return global_body or repo_body
+    """The instructions for the agent's system prompt: the user's own
+    ~/.cgr.md, then the repository's .cgr.md when the user approved its
+    current content. Anyone who can commit to the repository writes that
+    file, so an unapproved or changed one is skipped (issue #3456)."""
+    bodies: list[str] = []
+    if global_body := _read_cgr_instructions_file(GLOBAL_CGR_INSTRUCTIONS_PATH):
+        logger.info(
+            logs.CGR_INSTRUCTIONS_LOADED.format(
+                path=GLOBAL_CGR_INSTRUCTIONS_PATH, chars=len(global_body)
+            )
+        )
+        bodies.append(global_body)
+    if repo_path is not None and (repo := repo_instructions(repo_path)):
+        if repo.trusted:
+            logger.info(
+                logs.CGR_INSTRUCTIONS_LOADED.format(
+                    path=repo.path, chars=len(repo.body)
+                )
+            )
+            bodies.append(repo.body)
+        else:
+            logger.warning(logs.CGR_INSTRUCTIONS_UNAPPROVED.format(path=repo.path))
+    return cs.CGR_INSTRUCTIONS_SEPARATOR.join(bodies) or None

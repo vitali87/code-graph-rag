@@ -72,6 +72,17 @@ JS_TS_IMPORT_NODES = (
 JS_TS_LANGUAGES = frozenset(
     {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
 )
+# Languages whose functions `callable_parameter_indices` can find invoking
+# a parameter, and so whose callable-argument edges an incremental run must
+# re-derive from the passing files (issue #2911).
+CALLABLE_FLOW_LANGUAGES = frozenset(
+    {
+        SupportedLanguage.PYTHON,
+        SupportedLanguage.GO,
+        SupportedLanguage.CPP,
+        *JS_TS_LANGUAGES,
+    }
+)
 # Sets of languages whose sources reach each other directly: the JS family
 # compiles to one runtime, C++ calls C, and Scala calls Java on the JVM. A
 # call may cross between them, and their same-stem files (a C source and its
@@ -111,6 +122,7 @@ FIELD_OBJECT = "object"
 FIELD_PROPERTY = "property"
 FIELD_NAME = "name"
 FIELD_ALIAS = "alias"
+FIELD_SOURCE = "source"
 FIELD_MODULE_NAME = "module_name"
 FIELD_ARGUMENTS = "arguments"
 FIELD_BODY = "body"
@@ -420,6 +432,8 @@ TS_NAMESPACE_IMPORT = "namespace_import"
 # `export * as ns from "./x"`: a barrel re-exporting a module as one name.
 TS_NAMESPACE_EXPORT = "namespace_export"
 TS_IDENTIFIER = "identifier"
+# `import.meta` (and `new.target`): a module's own URL in ESM.
+TS_META_PROPERTY = "meta_property"
 TS_VARIABLE_DECLARATOR = "variable_declarator"
 TS_CALL_EXPRESSION = "call_expression"
 TS_EXPORT_CLAUSE = "export_clause"

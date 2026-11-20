@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from loguru import logger
+
 from ... import constants as cs
+from ... import logs as ls
 from ...config import settings
 from ...services import IngestorProtocol
 from ...types_defs import (
@@ -15,6 +19,7 @@ from ...types_defs import (
     SimpleNameLookup,
 )
 from ...utils.path_utils import cached_resolve_posix
+from ..cpp.utils import cpp_include_local_name
 from ..definition_docstring import libclang_docstring
 from . import constants as fc
 from .qn import CppQnResolver
@@ -25,6 +30,8 @@ if TYPE_CHECKING:
 _NodeKey = tuple[str, str]
 _EdgeKey = tuple[str, str, str, str, str]
 _Scope = tuple[str, str] | None
+# (line, col, end line, end col): 1-based lines, 0-based columns.
+_Span = tuple[int, int, int, int]
 
 _COMPILE_COMMANDS = "compile_commands.json"
 _BUILD_DIR = "build"
@@ -83,6 +90,18 @@ def _has_internal_linkage(cursor: Cursor) -> bool:
         return cursor.linkage.name == "INTERNAL"
     except Exception:
         return False
+
+
+def _included_file_name(cursor: Cursor) -> str | None:
+    # An `#include` libclang could not find (a system header with no
+    # sysroot, a missing file) has a NULL included file, and the libclang 18
+    # bindings assert on it rather than return None. Such a directive has no
+    # FileInclusion to locate, so the caller skips it.
+    try:
+        included = cursor.get_included_file()
+    except AssertionError:
+        return None
+    return included.name or None
 
 
 def _classify(cursor: Cursor) -> str | None:
@@ -175,11 +194,24 @@ class _Collector:
         # repo. rel_path resolves symlinks (filesystem-touching); headers
         # recur across every TU that includes them, so resolve each once.
         self._include_file_info: dict[str, tuple[str, str] | None] = {}
-        # (use-site rel, use-site line, macro Function qn, use-site absolute
+        # (use-site rel, use-site span, macro Function qn, use-site absolute
         # file): macro cursors are TU-level preprocessing entities, so the
         # enclosing caller is only recoverable by span once ALL definitions are
         # collected; resolved at flush.
-        self._pending_macro_calls: set[tuple[str, int, str, str]] = set()
+        self._pending_macro_calls: set[tuple[str, _Span, str, str]] = set()
+        # {(including file, any line of the directive, header it resolved
+        # to): (`#` line, `#` column, written path)} for the TU being walked: FileInclusion
+        # locates the FILENAME token, which a backslash continuation puts on
+        # a later line, and knows no spelling, so the IMPORTS site and alias
+        # come from the INCLUSION_DIRECTIVE cursor, matching tree-sitter's
+        # (issue #2944).
+        # Keyed by the header the directive resolved to as well: an unguarded
+        # header holding `#include CHOSEN` is expanded once per inclusion, and
+        # each expansion's directive sits on the same file and line.
+        self._include_directives: dict[tuple[str, int, str], tuple[int, int, str]] = {}
+        # (including module qn, included module qn, line, col, alias, written
+        # path): one IMPORTS edge per located `#include`.
+        self._include_sites: set[tuple[str, str, int, int, str, str]] = set()
         # {macro qn: identifier tokens in its definition body}: a macro
         # expanded only inside another macro's body is a NESTED expansion the
         # preprocessing record never reports, so the body reference is the only
@@ -222,7 +254,11 @@ class _Collector:
             cs.KEY_DOCSTRING: libclang_docstring(getattr(cursor, "raw_comment", None)),
             cs.KEY_IS_EXPORTED: False,
             cs.KEY_PATH: rel,
-            cs.KEY_ABSOLUTE_PATH: Path(cursor.location.file.name).resolve().as_posix(),
+            cs.KEY_ABSOLUTE_PATH: Path(
+                self.resolver.absolute_name(cursor.location.file.name)
+            )
+            .resolve()
+            .as_posix(),
         }
 
     def _add_node(self, label: str, qn: str, props: PropertyDict, is_def: bool) -> None:
@@ -241,7 +277,9 @@ class _Collector:
             cs.KEY_QUALIFIED_NAME: module_qn,
             cs.KEY_NAME: Path(rel).name,
             cs.KEY_PATH: rel,
-            cs.KEY_ABSOLUTE_PATH: Path(absolute_file).resolve().as_posix(),
+            cs.KEY_ABSOLUTE_PATH: Path(self.resolver.absolute_name(absolute_file))
+            .resolve()
+            .as_posix(),
         }
 
     def _add_edge(
@@ -260,6 +298,9 @@ class _Collector:
             self._queue_macro_call(cursor)
             if self.hybrid:
                 self._record_instantiation_extent(cursor)
+            return None
+        if cursor.kind.name == fc.KIND_INCLUSION_DIRECTIVE:
+            self._record_include_directive(cursor)
             return None
         if self.hybrid:
             self._process_hybrid(cursor)
@@ -464,7 +505,8 @@ class _Collector:
         if cursor.location.file is None:
             return
         extent = cursor.extent
-        self._instantiation_extents.setdefault(cursor.location.file.name, []).append(
+        file_name = self.resolver.absolute_name(cursor.location.file.name)
+        self._instantiation_extents.setdefault(file_name, []).append(
             (
                 extent.start.line,
                 extent.start.column,
@@ -484,7 +526,9 @@ class _Collector:
         pos = (loc.line, loc.column)
         return any(
             (sl, sc) <= pos <= (el, ec)
-            for sl, sc, el, ec in self._instantiation_extents.get(loc.file.name, ())
+            for sl, sc, el, ec in self._instantiation_extents.get(
+                self.resolver.absolute_name(loc.file.name), ()
+            )
         )
 
     def _process_hybrid(self, cursor: Cursor) -> None:
@@ -571,11 +615,36 @@ class _Collector:
         callee_qn = self._macro_function_qn(referenced)
         if callee_qn is None:
             return
-        file_name = cursor.location.file.name
+        # Absolute now: the name is reused at flush, after the working
+        # directory has moved on to later translation units.
+        file_name = self.resolver.absolute_name(cursor.location.file.name)
         rel = self.resolver.rel_path(file_name)
         if rel is None:
             return
-        self._pending_macro_calls.add((rel, cursor.location.line, callee_qn, file_name))
+        # libclang columns are 1-based; edge sites use tree-sitter's 0-based
+        # columns, so a function-like use lands on the same site as the call
+        # tree-sitter parses there.
+        extent = cursor.extent
+        site: _Span = (
+            cursor.location.line,
+            cursor.location.column - 1,
+            extent.end.line,
+            extent.end.column - 1,
+        )
+        self._pending_macro_calls.add((rel, site, callee_qn, file_name))
+
+    def _record_include_directive(self, cursor: Cursor) -> None:
+        if cursor.location.file is None:
+            return
+        start = cursor.location.line
+        target = _included_file_name(cursor)
+        if target is None:
+            return
+        directive = (start, cursor.location.column - 1, cursor.spelling)
+        for line in range(start, max(start, cursor.extent.end.line) + 1):
+            self._include_directives[(cursor.location.file.name, line, target)] = (
+                directive
+            )
 
     def _resolve_macro_calls(self) -> None:
         # Attribute each macro use to the tightest enclosing
@@ -597,7 +666,9 @@ class _Collector:
                 and isinstance(end, int)
             ):
                 spans.setdefault(path, []).append((start, end, label, qn))
-        for rel, line, callee_qn, file_name in sorted(self._pending_macro_calls):
+        for rel, (line, _, _, _), callee_qn, file_name in sorted(
+            self._pending_macro_calls
+        ):
             containing = [
                 s
                 for s in spans.get(rel, ())
@@ -641,17 +712,29 @@ class _Collector:
             inc_rel, inc_qn = inc
             self._add_module(src_qn, src_rel, source.name)
             self._add_module(inc_qn, inc_rel, included.name)
-            self._add_edge(
-                cs.RelationshipType.IMPORTS,
-                fc.LABEL_MODULE,
-                src_qn,
-                fc.LABEL_MODULE,
-                inc_qn,
+            directive = self._include_directives.get(
+                (source.name, inclusion.location.line, included.name)
             )
+            if directive is None:
+                self._add_edge(
+                    cs.RelationshipType.IMPORTS,
+                    fc.LABEL_MODULE,
+                    src_qn,
+                    fc.LABEL_MODULE,
+                    inc_qn,
+                )
+                continue
+            line, col, written = directive
+            self._include_sites.add(
+                (src_qn, inc_qn, line, col, cpp_include_local_name(written), written)
+            )
+        self._include_directives.clear()
 
     def _include_info(self, file_name: str) -> tuple[str, str] | None:
         # Resolve rel + module_qn together, once per file: rel_path is the
         # filesystem-touching step and module_qn is a map lookup keyed by it.
+        # Keyed absolute: two entry directories can both spell `./local.h`.
+        file_name = self.resolver.absolute_name(file_name)
         if file_name in self._include_file_info:
             return self._include_file_info[file_name]
         rel = self.resolver.rel_path(file_name)
@@ -767,11 +850,11 @@ class _Collector:
         # Module fallback pre-resolved. A use site whose file has no
         # module qn (an ignored dir, e.g. build/) can never carry an edge.
         pending: list[PendingMacroCall] = []
-        for rel, line, callee_qn, _file_name in sorted(self._pending_macro_calls):
+        for rel, site, callee_qn, _file_name in sorted(self._pending_macro_calls):
             module_qn = self.resolver.module_qn_for_rel(rel)
             if module_qn is None:
                 continue
-            pending.append(PendingMacroCall(rel, line, callee_qn, module_qn))
+            pending.append(PendingMacroCall(rel, *site, callee_qn, module_qn))
         return pending
 
     def flush(self, ingestor: IngestorProtocol) -> None:
@@ -800,6 +883,21 @@ class _Collector:
                 (from_label, cs.KEY_QUALIFIED_NAME, from_qn),
                 rel_type,
                 (to_label, cs.KEY_QUALIFIED_NAME, to_qn),
+            )
+        # Same site props as tree-sitter's IMPORTS for this `#include`
+        # (line, `#` column, alias): where both passes see the include, the
+        # two MERGE into one edge instead of a located and a site-less one.
+        for src_qn, inc_qn, line, col, alias, written in sorted(self._include_sites):
+            ingestor.ensure_relationship_batch(
+                (fc.LABEL_MODULE, cs.KEY_QUALIFIED_NAME, src_qn),
+                cs.RelationshipType.IMPORTS,
+                (fc.LABEL_MODULE, cs.KEY_QUALIFIED_NAME, inc_qn),
+                {
+                    cs.KEY_LINE: line,
+                    cs.KEY_COL: col,
+                    cs.KEY_ALIAS: alias,
+                    cs.KEY_IMPORTED_NAME: written,
+                },
             )
 
     def _duplicate_prototype_keys(self) -> set[_NodeKey]:
@@ -917,10 +1015,22 @@ def run_cpp_frontend_hybrid(
 def _parse_and_collect(collector: _Collector, compdb_dir: Path) -> None:
     import clang.cindex as ci
 
-    db = ci.CompilationDatabase.fromDirectory(str(Path(compdb_dir).resolve()))
+    compdb_root = Path(compdb_dir).resolve()
+    db = ci.CompilationDatabase.fromDirectory(str(compdb_root))
     index = ci.Index.create()
     for command in db.getAllCompileCommands():
         args = list(command.arguments)[1:]
+        # An entry's relative paths (source, -I, -include) are relative to its
+        # `directory`, per the JSON Compilation Database spec; libclang would
+        # resolve them against cgr's cwd, failing every TU of a `bear -- make`
+        # database indexed via --repo-path from elsewhere (issue #2943).
+        directory = os.path.join(compdb_root, command.directory or "")
+        # Only a directory clang is told to work in names what it reports: an
+        # entry whose directory is gone loads from the process cwd instead.
+        collector.resolver.working_dir = None
+        if os.path.isdir(directory):
+            collector.resolver.working_dir = directory
+            args = [fc.CLANG_WORKING_DIRECTORY_FLAG, directory, *args]
         try:
             # the detailed record exposes MACRO_DEFINITION /
             # MACRO_INSTANTIATION cursors (preprocessing entities are
@@ -931,6 +1041,11 @@ def _parse_and_collect(collector: _Collector, compdb_dir: Path) -> None:
                 options=ci.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
             )
         except ci.TranslationUnitLoadError:
+            logger.warning(
+                ls.CPP_FRONTEND_TU_LOAD_FAILED.format(
+                    file=command.filename, directory=directory
+                )
+            )
             continue
         _walk(tu.cursor, collector)
         collector.process_includes(tu)

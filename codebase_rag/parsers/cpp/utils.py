@@ -13,6 +13,20 @@ def convert_operator_symbol_to_name(symbol: str) -> str:
     )
 
 
+def cpp_include_local_name(include_path: str) -> str:
+    """The name an include binds locally: the header's stem for `.h`/`.hpp`,
+    the bare last path segment otherwise (`<vector>`).
+
+    Shared by the tree-sitter include parser and the libclang frontend, whose
+    IMPORTS edges for one `#include` must carry the same alias to MERGE into
+    one edge (issue #2944).
+    """
+    header_name = include_path.rsplit(cs.SEPARATOR_SLASH, maxsplit=1)[-1]
+    if header_name.endswith(cs.EXT_H) or header_name.endswith(cs.EXT_HPP):
+        return header_name.split(cs.SEPARATOR_DOT)[0]
+    return header_name
+
+
 def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
     module_parts = module_qn.split(cs.SEPARATOR_DOT)
 
@@ -675,6 +689,11 @@ def _find_qualified_identifier_in_declarator(func_node: Node) -> Node | None:
     return None
 
 
+def out_of_class_qualified_name(func_node: Node) -> Node | None:
+    """The `Class::method` qualified identifier an out-of-line definition names."""
+    return _find_qualified_identifier_in_declarator(func_node)
+
+
 def is_out_of_class_method_definition(func_node: Node) -> bool:
     if func_node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
         inner = _get_inner_function_node(func_node)
@@ -943,16 +962,20 @@ def is_cpp_vexing_parse_construction(decl_node: Node) -> bool:
     return any(name in in_scope for name in names)
 
 
-def cpp_declaration_has_internal_linkage(decl_node: Node) -> bool:
-    # `static int helper();` or a declaration inside an anonymous
-    # namespace: internal linkage marks a TU-local function, so no
-    # cross-module definition can ever be its definition.
-    if any(
+def cpp_has_static_storage(decl_node: Node) -> bool:
+    return any(
         child.type == cs.TS_CPP_STORAGE_CLASS_SPECIFIER
         and child.text is not None
         and safe_decode_text(child) == cs.CPP_KEYWORD_STATIC
         for child in decl_node.children
-    ):
+    )
+
+
+def cpp_declaration_has_internal_linkage(decl_node: Node) -> bool:
+    # `static int helper();` or a declaration inside an anonymous
+    # namespace: internal linkage marks a TU-local function, so no
+    # cross-module definition can ever be its definition.
+    if cpp_has_static_storage(decl_node):
         return True
     current = decl_node.parent
     while current is not None:
