@@ -2297,12 +2297,9 @@ def _go_asserted_receiver_call_name(selector: Node) -> str | None:
     return f"{type_name}{cs.SEPARATOR_DOT}{decode_node_text(method.text)}"
 
 
-def _ts_cast_receiver_call_name(member: Node) -> str | None:
-    # `(s as Service).handle()` and `(<Service>s).handle()` name the
-    # receiver's type at the call site, so the call is `Service.handle`, which
-    # the resolver binds as it binds a typed receiver; the cast's own text was
-    # a call name it could not read (issue #2890). A cast to no named type
-    # (`as any`, a union, an object type) names no class.
+def _ts_cast_target(member: Node) -> tuple[Node, str] | None:
+    # The type a cast receiver is cast to and the method called on it:
+    # `(s as Service).handle()` and `(<Service>s).handle()` (issue #2890).
     receiver = member.child_by_field_name(cs.FIELD_OBJECT)
     method = member.child_by_field_name(cs.FIELD_PROPERTY)
     while receiver is not None and receiver.type in cs.TS_TYPE_KEEPING_WRAPPERS:
@@ -2317,23 +2314,43 @@ def _ts_cast_receiver_call_name(member: Node) -> str | None:
         and arguments.type == cs.TS_TYPE_ARGUMENTS
     ):
         target = arguments.named_child(0)
-    if target is not None and target.type == cs.TS_GENERIC_TYPE:
-        target = target.named_child(0)
+    if target is None:
+        return None
+    return target, decode_node_text(method.text)
+
+
+def _ts_named_type_text(target: Node) -> str | None:
+    # `Service`, `ns.Service`, or the generic `Box<number>`'s `Box`; a cast
+    # to no named type (`any`, a union, an object type) names no class.
+    named: Node | None = target
+    if named.type == cs.TS_GENERIC_TYPE:
+        named = named.named_child(0)
     if (
-        target is None
-        or target.type not in (cs.TS_TYPE_IDENTIFIER, cs.TS_NESTED_TYPE_IDENTIFIER)
-        or target.text is None
+        named is None
+        or named.type not in (cs.TS_TYPE_IDENTIFIER, cs.TS_NESTED_TYPE_IDENTIFIER)
+        or named.text is None
     ):
         return None
-    return (
-        f"{decode_node_text(target.text)}{cs.SEPARATOR_DOT}"
-        f"{decode_node_text(method.text)}"
-    )
+    return decode_node_text(named.text)
+
+
+def _ts_cast_receiver_call_name(member: Node) -> str | None:
+    # `(s as Service).handle()` and `(<Service>s).handle()` name the
+    # receiver's type at the call site, so the call is `Service.handle`, which
+    # the resolver binds as it binds a typed receiver; the cast's own text was
+    # a call name it could not read (issue #2890).
+    if (cast := _ts_cast_target(member)) is None:
+        return None
+    target, method = cast
+    if (type_name := _ts_named_type_text(target)) is None:
+        return None
+    return f"{type_name}{cs.SEPARATOR_DOT}{method}"
 
 
 def _without_cast_type_value(
     call_node: Node,
     language: cs.SupportedLanguage | None,
+    call_name: str,
     var_types: dict[str, str] | None,
 ) -> dict[str, str] | None:
     # `(s as Real).run()` is named `Real.run`, where `Real` is a TYPE: a local
@@ -2344,9 +2361,11 @@ def _without_cast_type_value(
     member = call_node.child_by_field_name(cs.FIELD_FUNCTION)
     if member is None or member.type != cs.TS_MEMBER_EXPRESSION:
         return var_types
-    if not (cast_call := _ts_cast_receiver_call_name(member)):
+    if _ts_cast_receiver_call_name(member) is None:
         return var_types
-    type_root = cast_call.split(cs.SEPARATOR_DOT, 1)[0]
+    # The call name's root is the type the cast named, read through a
+    # utility (`as Readonly<Real>` is named `Real.run`).
+    type_root = call_name.split(cs.SEPARATOR_DOT, 1)[0]
     if type_root not in var_types:
         return var_types
     return {name: kind for name, kind in var_types.items() if name != type_root}
@@ -6863,6 +6882,8 @@ class CallProcessor:
             call_name = ctx.call_name_cache[node_id]
         else:
             call_name = self._get_call_target_name(call_node, ctx.language)
+            if call_name is not None and ctx.is_js_ts:
+                call_name = self._ts_utility_cast_call_name(ctx, call_node, call_name)
             if (
                 call_name is None
                 and ctx.is_csharp
@@ -6872,6 +6893,39 @@ class CallProcessor:
             if ctx.call_name_cache is not None:
                 ctx.call_name_cache[node_id] = call_name
         return call_name
+
+    def _ts_utility_cast_call_name(
+        self, ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> str:
+        # `(s as Readonly<Service>).handle()` calls `Service.handle`: the
+        # member-preserving utilities keep their argument's members. A
+        # `Readonly` the module declares, aliases or imports is that type
+        # instead, as `_ts_generic_declaration` reads it (CodeRabbit, PR #2959).
+        head = call_name.partition(cs.SEPARATOR_DOT)[0]
+        if head not in cs.TS_MEMBER_PRESERVING_UTILITY_TYPES:
+            return call_name
+        member = call_node.child_by_field_name(cs.FIELD_FUNCTION)
+        if member is None or member.type != cs.TS_MEMBER_EXPRESSION:
+            return call_name
+        if (cast := _ts_cast_target(member)) is None:
+            return call_name
+        target, method = cast
+        while target.type == cs.TS_GENERIC_TYPE:
+            name = _ts_named_type_text(target)
+            if name is None or name not in cs.TS_MEMBER_PRESERVING_UTILITY_TYPES:
+                break
+            arguments = target.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS)
+            if (
+                self._ts_type_name_declaration(name, target, ctx.module_qn, arguments)
+                is not None
+            ):
+                break
+            first = next(iter(arguments.named_children), None) if arguments else None
+            if first is None:
+                return call_name
+            target = first
+        type_name = _ts_named_type_text(target)
+        return f"{type_name}{cs.SEPARATOR_DOT}{method}" if type_name else call_name
 
     def _csharp_argument_target_name(
         self, ctx: _CallScanContext, creation_node: Node
@@ -7052,7 +7106,7 @@ class CallProcessor:
                 if name != receiver
             }
         call_var_types = _without_cast_type_value(
-            call_node, ctx.language, call_var_types
+            call_node, ctx.language, call_name, call_var_types
         )
 
         if ctx.is_cpp:

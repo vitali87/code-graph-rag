@@ -93,6 +93,65 @@ def test_a_local_value_named_like_the_cast_type_does_not_redirect_it(
     assert callees == {"shadow.Real.run": "exact"}
 
 
+# TypeScript's member-preserving utilities keep their argument's members, so
+# `as Readonly<Service>` calls Service's method even where another class has
+# one of that name too; a `Readonly` the module declares is that class
+# instead (CodeRabbit, PR #2959).
+UTILITY = """\
+class Service { handle(): number { return 1; } }
+class Rival { handle(): number { return 2; } }
+
+function readonlyCast(s: unknown) { return (s as Readonly<Service>).handle(); }
+function nestedUtility(s: unknown) {
+  return (s as Readonly<Partial<Service>>).handle();
+}
+function angleUtility(s: unknown) { return (<Required<Service>>s).handle(); }
+"""
+
+OWN_READONLY = """\
+export class Service { handle(): number { return 1; } }
+export class Readonly<T> { handle(): number { return 3; } }
+
+export function ownReadonly(s: unknown) {
+  return (s as Readonly<Service>).handle();
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def utility_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
+    root = tmp_path_factory.mktemp("tsutility") / "tsutility"
+    _write(root, "util.ts", UTILITY)
+    _write(root, "own.ts", OWN_READONLY)
+    return _index(root, MagicMock())
+
+
+def _module_callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
+    prefix = f"{graph.project}."
+    return {
+        dst.removeprefix(prefix): str(props.get("resolution"))
+        for src, rel, dst, props in graph.edges
+        if rel == "CALLS" and src == f"{prefix}{caller}"
+    }
+
+
+@pytest.mark.parametrize(
+    "caller", ["util.readonlyCast", "util.nestedUtility", "util.angleUtility"]
+)
+def test_a_utility_cast_binds_the_method_of_its_argument_type(
+    utility_graph: RecordedGraph, caller: str
+) -> None:
+    assert _module_callees(utility_graph, caller) == {"util.Service.handle": "exact"}
+
+
+def test_a_readonly_the_module_declares_is_that_class(
+    utility_graph: RecordedGraph,
+) -> None:
+    assert _module_callees(utility_graph, "own.ownReadonly") == {
+        "own.Readonly.handle": "exact"
+    }
+
+
 # Negative: what must not change.
 
 
