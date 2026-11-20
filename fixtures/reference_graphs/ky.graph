@@ -33,7 +33,6 @@ E	CALLS	Function	"ky.source.core.Ky.Ky.create.function_"	Method	"ky.source.core.
 E	CALLS	Function	"ky.source.core.Ky.Ky.create.function_"	Method	"ky.source.errors.HTTPError.HTTPError.constructor"	{"arg_count":3,"col":16,"end_col":85,"end_line":56,"kwarg_names":[],"line":56,"resolution":"exact"}
 E	CALLS	Function	"ky.source.index.createInstance"	Function	"ky.source.index.createInstance"	{"arg_count":1,"col":49,"end_col":94,"end_line":19,"kwarg_names":[],"line":19,"resolution":"exact"}
 E	CALLS	Function	"ky.source.index.createInstance"	Function	"ky.source.index.createInstance"	{"arg_count":1,"col":9,"end_col":64,"end_line":25,"kwarg_names":[],"line":25,"resolution":"exact"}
-E	CALLS	Function	"ky.source.index.createInstance"	Function	"ky.source.index.createInstance.ky"	{"resolution":"exact"}
 E	CALLS	Function	"ky.source.index.createInstance"	Function	"ky.source.utils.merge.validateAndMerge"	{"arg_count":1,"col":64,"end_col":93,"end_line":19,"kwarg_names":[],"line":19,"resolution":"exact"}
 E	CALLS	Function	"ky.source.index.createInstance"	Function	"ky.source.utils.merge.validateAndMerge"	{"arg_count":2,"col":24,"end_col":63,"end_line":25,"kwarg_names":[],"line":25,"resolution":"exact"}
 E	CALLS	Function	"ky.source.index.createInstance"	Function	"ky.source.utils.merge.validateAndMerge"	{"arg_count":2,"col":96,"end_col":131,"end_line":12,"kwarg_names":[],"line":12,"resolution":"exact"}
