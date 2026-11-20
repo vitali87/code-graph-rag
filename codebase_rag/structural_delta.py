@@ -1765,7 +1765,8 @@ class _JsExports(NamedTuple):
     # not: one of them is no global (`const JSON = String`).
     declared: frozenset[str] = frozenset()
     # `{alias: name}` for each top-level `const alias = name` (under its
-    # wrappers): the alias holds what the name holds.
+    # wrappers) taken once the name holds its value: the alias holds what
+    # the name holds.
     aliases: dict[str, str] = {}
 
     def erased(self, binding: ImportBinding) -> bool:
@@ -1793,9 +1794,14 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
     inert: set[str] = set()
     declared: set[str] = set()
     aliases: dict[str, str] = {}
+    # Aliases taken before the module declared their name.
+    early: set[str] = set()
     for statement in root.children:
+        for alias, name, settled in _js_aliases(statement, declared):
+            aliases[alias] = name
+            if not settled:
+                early.add(alias)
         declared.update(_js_declared_names(statement))
-        aliases.update(_js_aliases(statement))
         if statement.type not in (cs.TS_EXPORT_STATEMENT, cs.TS_IMPORT_STATEMENT):
             continue
         at = (statement.start_point[0] + 1, statement.start_point[1])
@@ -1821,7 +1827,14 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
         inert=frozenset(inert),
         commonjs=is_commonjs_module(root),
         declared=frozenset(declared),
-        aliases=aliases,
+        # One taken before a name the module declares later holds
+        # `undefined`, or throws (Greptile review on PR #3312); a name it
+        # never declares is a global or an import, there from the start.
+        aliases={
+            alias: name
+            for alias, name in aliases.items()
+            if alias not in early or name not in declared
+        },
     )
 
 
@@ -1836,24 +1849,37 @@ _JS_VALUE_DECLARATIONS = frozenset(
 )
 
 
-def _js_aliases(statement: Node) -> Iterator[tuple[str, str]]:
-    """(alias, name) for each declarator of a top-level `const alias = name`,
-    through `export` and the value's wrappers."""
+def _js_aliases(statement: Node, declared: set[str]) -> Iterator[tuple[str, str, bool]]:
+    """(alias, name, settled) for each declarator of a top-level `const
+    alias = name`, through `export` and the value's wrappers: settled when
+    `declared` or an earlier declarator of the statement already binds
+    `name`. A `let` or `var` alias may be written again (Greptile review on
+    PR #3312), so only a `const` holds its first value."""
     if statement.type == cs.TS_EXPORT_STATEMENT:
         statement = statement.child_by_field_name(cs.FIELD_DECLARATION) or statement
-    if statement.type not in (cs.TS_LEXICAL_DECLARATION, cs.TS_VARIABLE_DECLARATION):
+    kind = statement.child_by_field_name(cs.FIELD_KIND)
+    if (
+        statement.type != cs.TS_LEXICAL_DECLARATION
+        or kind is None
+        or kind.type != cs.JS_CONST_KEYWORD
+    ):
         return
+    bound = set(declared)
     for declarator in statement.named_children:
         target = declarator.child_by_field_name(cs.FIELD_NAME)
-        value = declarator.child_by_field_name(cs.FIELD_VALUE)
         if (
-            declarator.type == cs.TS_VARIABLE_DECLARATOR
-            and target is not None
-            and target.type == cs.TS_IDENTIFIER
-            and value is not None
-            and (value := _js_unwrapped(value)).type == cs.TS_IDENTIFIER
+            declarator.type != cs.TS_VARIABLE_DECLARATOR
+            or target is None
+            or target.type != cs.TS_IDENTIFIER
         ):
-            yield _node_text(target), _node_text(value)
+            continue
+        value = declarator.child_by_field_name(cs.FIELD_VALUE)
+        if value is not None and (value := _js_unwrapped(value)).type == (
+            cs.TS_IDENTIFIER
+        ):
+            name = _node_text(value)
+            yield _node_text(target), name, name in bound
+        bound.add(_node_text(target))
 
 
 def _js_declared_names(statement: Node) -> Iterator[str]:

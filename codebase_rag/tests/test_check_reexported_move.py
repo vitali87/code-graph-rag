@@ -636,6 +636,38 @@ _DANGLES = [("page", "util")]
             _DANGLES,
             id="an-alias-cycle",
         ),
+        pytest.param(
+            "const impl = String;\nconst alias = impl;\nexport default alias;\n",
+            [],
+            id="an-alias-of-an-earlier-alias",
+        ),
+        pytest.param(
+            "const impl = String, alias = impl;\nexport default alias;\n",
+            [],
+            id="an-alias-of-an-earlier-declarator",
+        ),
+        # Negative (Greptile, PR #3312): only a `const` holds its first value,
+        # and a name the module declares after the alias holds nothing yet.
+        pytest.param(
+            "let alias = String;\nalias = null;\nexport default alias;\n",
+            _DANGLES,
+            id="a-let-alias-rewritten",
+        ),
+        pytest.param(
+            "var alias = String;\nexport default alias;\n",
+            _DANGLES,
+            id="a-var-alias",
+        ),
+        pytest.param(
+            "const alias = impl;\nconst impl = String;\nexport default alias;\n",
+            _DANGLES,
+            id="an-alias-of-a-later-name",
+        ),
+        pytest.param(
+            "const alias = impl, impl = String;\nexport default alias;\n",
+            _DANGLES,
+            id="an-alias-of-a-later-declarator",
+        ),
         # Negative: a declaration of the module shadows the global.
         pytest.param(
             "const String = 5;\nexport default String;\n",
