@@ -7437,7 +7437,13 @@ class CallProcessor:
             # A Java/C#/Scala `new X(...)` names a type, never a method.
             constructing=ctx.language in _NEW_CONSTRUCTS_LANGUAGES
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
-            receiverless=_has_no_receiver(call_node, ctx.language),
+            receiverless=_has_no_receiver(call_node, ctx.language)
+            # A C++ constructor's member initializer (`head_(NewNode(0))`)
+            # is read with its module's calls, though it runs in the
+            # constructor and names the class's own members there; with no
+            # class to look in, that caller keeps the name fallback
+            # (leveldb's `SkipList::NewNode`, `PosixWritableFile::Dirname`).
+            and not (ctx.is_cpp and ctx.caller_spec[0] == cs.NodeLabel.MODULE),
         )
         return self._judge_resolved_callee(ctx, call_node, call_name, callee_info)
 

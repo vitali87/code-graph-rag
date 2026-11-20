@@ -122,6 +122,12 @@ FILES = {
     "c/hide.cpp": (
         '#include "hide.h"\nvoid HD::run(void (*dispatch)()) { dispatch(); }\n'
     ),
+    # A constructor's member initializer is read with the module's calls, so
+    # its bare call of the class's own static keeps the name fallback.
+    "c/init.h": (
+        "class Seq {\n public:\n  Seq() : next_(Start()) {}\n"
+        "  static int Start() { return 0; }\n  int next_;\n};\n"
+    ),
     # Lua: a colon method beside a bare call of its name (CodeRabbit, PR
     # #2948); `flush()` is a global, never `M:flush`.
     "lua_m.lua": "local M = {}\nfunction M:flush() return 1 end\nreturn M\n",
@@ -261,6 +267,15 @@ def test_a_function_local_class_keeps_its_members_bare_calls(
     assert _callees(graph, "c.local.work.Res.acquire") == {
         "c.local.work.LB.helper": "exact"
     }
+
+
+def test_a_cpp_member_initializer_keeps_its_call_of_a_member(
+    graph: RecordedGraph,
+) -> None:
+    # `next_(Start())` runs in the constructor, but its call is read with
+    # the module's, where no class answers the bare name; dropping the
+    # name fallback there lost the edge (leveldb reference graph).
+    assert "c.init.Seq.Start" in _callees(graph, "c.init")
 
 
 def test_a_bare_go_call_still_reaches_a_package_function(graph: RecordedGraph) -> None:
