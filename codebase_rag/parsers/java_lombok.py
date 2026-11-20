@@ -120,6 +120,18 @@ def _overlay_from_root(
     return overlay
 
 
+def _delombok_roots(build_dir: Path) -> list[Path]:
+    """The source roots of `build_dir` delombok expands: none unless its
+    build file names Lombok."""
+    if not _lombok_used(build_dir):
+        return []
+    return [
+        root
+        for parts in cs.JAVA_MAVEN_SOURCE_ROOTS
+        if (root := build_dir.joinpath(*parts)).is_dir()
+    ]
+
+
 def build_delombok_overlay(repo_path: Path) -> dict[str, bytes]:
     """Repo-relative path -> delomboked bytes for every Lombok-affected file;
     empty (raw parsing everywhere) unless Lombok, its jar, and java all line up."""
@@ -132,12 +144,7 @@ def build_delombok_overlay(repo_path: Path) -> dict[str, bytes]:
         return {}
     overlay: dict[str, bytes] = {}
     for build_dir in _build_dirs(repo_path):
-        if not _lombok_used(build_dir):
-            continue
-        for root_parts in cs.JAVA_MAVEN_SOURCE_ROOTS:
-            source_root = build_dir.joinpath(*root_parts)
-            if not source_root.is_dir():
-                continue
+        for source_root in _delombok_roots(build_dir):
             with tempfile.TemporaryDirectory(prefix="cgr-delombok-") as scratch:
                 if _run_delombok(java, jar, source_root, Path(scratch)):
                     overlay.update(
@@ -146,6 +153,27 @@ def build_delombok_overlay(repo_path: Path) -> dict[str, bytes]:
     if overlay:
         logger.info(ls.DELOMBOK_OVERLAY_BUILT, count=len(overlay))
     return overlay
+
+
+def may_parse_delomboked(repo_path: Path, rel_path: str) -> bool:
+    """Whether the indexer may have parsed `rel_path` from its delombok
+    expansion rather than from the file: a Java source under a root
+    `build_delombok_overlay` expands.
+
+    Answered from the repository alone. Whether java and a Lombok jar were
+    at hand when the project was indexed is not known to a later reader, and
+    what delombok makes of the file is not known without running it, so a
+    file it would leave unchanged answers True as well (issue #3162).
+    """
+    file = repo_path / rel_path
+    if file.suffix != cs.EXT_JAVA:
+        return False
+    return any(
+        file.is_relative_to(root)
+        for build_dir in file.parents
+        if build_dir.is_relative_to(repo_path)
+        for root in _delombok_roots(build_dir)
+    )
 
 
 def current_lombok_version() -> str:

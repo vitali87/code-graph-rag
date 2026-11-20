@@ -11,6 +11,22 @@ handlers such as routes/tasks/CLI commands, dunder/lifecycle methods, and
 JavaScript/TypeScript well-known symbol properties) and lists everything the
 walk never reaches.
 
+The decorated handlers include the usual registration idioms, whose handler
+the framework or the interpreter calls with no call site in the code: Celery
+`@shared_task`, Flask `@app.errorhandler` and the request hooks
+(`before_request`, `after_request`, `teardown_request` and their `_app_`
+forms), FastAPI/Starlette `@app.exception_handler` and `@app.middleware`,
+Django `@receiver` and `@admin.register`, SQLAlchemy `@event.listens_for`,
+and `@atexit.register`. Those last two are matched dotted, so a project's own
+`@registry.register` is not a root unless `--decorator-root` names it.
+A `functools.singledispatch` (or `singledispatchmethod`) implementation
+registered with `@generic.register` is reachable exactly when its generic is,
+so the implementations of a dead generic are still reported. An
+implementation registered with several generics is reachable when any of them
+is, and another registration decorator on it (such as `@atexit.register`)
+still makes it a root, as does a `--decorator-root` that matches its
+`@generic.register` (`register` or `generic.register`).
+
 A Python symbol is public unless its name starts with an underscore. A
 module-level name the module lists in `__all__` is public even with one,
 since `__all__` is its declared API.
@@ -187,7 +203,7 @@ Two rules keep a pattern from silently excluding nothing:
 | Option | Description |
 |--------|-------------|
 | `--project-name`, `-n` | Project to scan. Defaults to the sole indexed project. |
-| `--entry-point`, `-e` | Treat symbols whose qualified name ends with this value as reachable roots. Repeatable. |
+| `--entry-point`, `-e` | Treat symbols whose qualified name ends with these whole dotted segments as reachable roots: `-e main` matches `pkg.cli.main` but not `pkg.cli._remain`, and `-e cli.run` does not match `pkg.mycli.run`. Repeatable. |
 | `--decorator-root` | Treat symbols carrying this decorator as roots: a bare name matches the decorator's last segment, a dotted one (`plugins.register`) its trailing whole segments. Extends the built-in set. Repeatable. |
 | `--exclude` | Glob matched against a symbol's whole repo-relative file path to exclude it from the report; quote it. Repeatable. |
 | `--include-tests` / `--no-include-tests` | Treat test code as reachable roots so the production code it exercises is not reported. On by default. |
@@ -221,13 +237,54 @@ so no name or path is cut to fit 80 columns.
 1. **Roots**: exported/public symbols (unless `--no-public-roots`), tests (unless `--no-include-tests`),
    decorated handlers, dunder/lifecycle methods, program entry points (`main`
    in C, C++, Go and Rust; a `static Main` in C#, whatever its accessibility),
-   plus any `--entry-point` and `--decorator-root` you add.
+   plus any `--entry-point` and `--decorator-root` you add. Each language's
+   own visibility rule decides what is public:
+   - **C:** a function without `static`, outside another function's body,
+     and not made `static` by an earlier declaration.
+   - **C++:** besides a C++20 module `export`:
+     - a function with external linkage that is no class member: at
+       namespace scope, or a friend defined inside a class (a hidden friend
+       such as `operator==`, which no access label governs). It is not
+       `static`, no earlier declaration of it is `static`, and its namespace
+       is not inside an anonymous namespace at any depth. A definition
+       written `void N::f() {}` belongs to the namespace `N` names, followed
+       through namespace aliases and `using namespace`;
+     - a member defined inside a class under `public:` or `protected:` (a
+       `struct` starts public, a `class` private), unless the class is local
+       to a function, inside an anonymous namespace, or private in a class
+       around it.
+
+     Access labels inside `#if` / `#ifdef` blocks count. A member counts
+     when one build both compiles it and makes it public in every class
+     around it. An out-of-line member definition (`int Box::f() {}`) or
+     class (`struct Outer::Inner {}`) takes its access from a class
+     declaration in another file, so it is not counted. A class template
+     specialization at namespace scope
+     (`template <> struct std::hash<Foo> {...}`, or a partial one) is
+     counted: the library it specializes calls its members. A specialization
+     of a member template of a class in the same file
+     (`template <> struct Outer::Hidden<int> {...}`) is an out-of-line nested
+     class, so it is not counted.
+   - **Scala:** a member or top-level `def`, extension methods included,
+     that is not `private` or `private[pkg]`, in no `private` object or
+     class.
 2. **Reachability**: a breadth-first walk over `CALLS` and `REFERENCES` edges
    from every root. With `--classes` the walk also follows `INSTANTIATES` and
    `INHERITS`, so a class counts as reachable when a reachable class
    instantiates or subclasses it.
 3. **Report**: functions and methods (and, with `--classes`, classes) the walk
    never reaches, minus anything matching an `--exclude` glob.
+
+Annotated Java methods count as decorated handlers too. A method carrying a
+container or runtime annotation is a root even when it is package-private, as
+a C# method with `[HttpGet]` or `[Fact]` is. That covers:
+
+- `@PostConstruct` and `@PreDestroy`;
+- Spring's `@Bean`, `@Scheduled`, `@EventListener`, `@ExceptionHandler` and the
+  `@...Mapping` request mappings;
+- the Kafka, Rabbit, JMS and SQS `@...Listener` annotations;
+- JAX-RS resource methods;
+- JPA entity callbacks such as `@PrePersist`.
 
 ### What counts as test code
 
