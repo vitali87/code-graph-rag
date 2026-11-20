@@ -120,6 +120,8 @@ TS_PY_NONLOCAL_STATEMENT = "nonlocal_statement"
 # Match statement: arms are exclusive; an UNGUARDED `case _` (empty
 # case_pattern) always matches, removing the implicit no-match path.
 TS_PY_MATCH_STATEMENT = "match_statement"
+# The soft keyword opening one, which a body must hold to have one.
+PY_MATCH_KEYWORD = b"match"
 TS_PY_CASE_CLAUSE = "case_clause"
 # Every clause of a compound statement (elif/else/except/finally/case) ends
 # with this, so a class-body scan can reach the blocks under any of them.
@@ -406,6 +408,8 @@ PY_OPTIONAL_PATTERN = r"^(?:typing\.)?Optional\[(?P<inner>.+)\]$"
 PY_UNION_PATTERN = r"^(?:typing\.)?Union\[(?P<inner>.+)\]$"
 # A forward reference is the annotation as a string literal (`"Repo"`).
 PY_ANNOTATION_QUOTES = "\"'"
+# Opens a subscripted annotation's arguments: `Base[T]` names `Base`.
+PY_ANNOTATION_ARGS_OPEN = "["
 PY_LIST_TYPE_PREFIX = "list["
 PY_LIST_TYPE_FORMAT = "list[{element}]"
 

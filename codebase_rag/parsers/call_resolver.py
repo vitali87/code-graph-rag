@@ -29,6 +29,7 @@ from .php import class_names as php_class_names
 from .php.class_names import ClassPath as PhpClassPath
 from .php.class_names import ascii_fold as _php_fold
 from .py import external_class_members, resolve_class_name
+from .py.receiver_rebinding import instance_attribute_names
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
@@ -312,6 +313,7 @@ class CallResolver:
         "go_local_scopes",
         "python_local_names",
         "python_rebound_receivers",
+        "_py_instance_attrs_memo",
         "js_parameter_names",
         "function_registry",
         "import_processor",
@@ -396,6 +398,9 @@ class CallResolver:
         # call through one may run on whatever was assigned (CodeRabbit, PR
         # #2908).
         self.python_rebound_receivers: dict[str, frozenset[str]] = {}
+        # Python module qn -> {class name: the attributes its methods assign
+        # on their receiver}, read from the module's tree once per pass.
+        self._py_instance_attrs_memo: dict[str, dict[str, frozenset[str]]] = {}
         # JS/TS caller qn -> the names its own parameters bind: a bare call to
         # one calls the argument, never the import or module function of the
         # name (`function run(pad) { pad("x") }`), filled the same way.
@@ -711,6 +716,8 @@ class CallResolver:
         self._c_unit_reach_cache.clear()
         # A re-parsed PHP file may have moved a class between namespaces.
         self._php_class_namespaces.clear()
+        # Or a re-parsed Python one assign other instance attributes.
+        self._py_instance_attrs_memo.clear()
         self._php_cased_index = None
         # A re-parsed TS file may declare a different return.
         self._js_return_class_cache.clear()
@@ -826,15 +833,65 @@ class CallResolver:
             in self.python_rebound_receivers.get(call.caller_qn or "", frozenset())
         ):
             return None
-        target = self._method_by_mro(call.class_context, method_name)
+        if method_name.startswith(cs.PY_NAME_DUNDER) and not method_name.endswith(
+            cs.PY_NAME_DUNDER
+        ):
+            # `self.__m()` in `D` looks up `_D__m`: only D's own `__m` is it,
+            # never a base's, which Python stores as `_B__m` (CodeRabbit, PR
+            # #2908).
+            own_qn = f"{call.class_context}{cs.SEPARATOR_DOT}{method_name}"
+            target = (
+                (self.function_registry[own_qn], own_qn)
+                if own_qn in self.function_registry
+                else None
+            )
+        else:
+            target = self._method_by_mro(call.class_context, method_name)
         if (
             target is None
             or self.function_registry.is_abstract(target[1])
             or self._unknown_base_may_bind_first(call.class_context, method_name)
+            or self._instance_attribute_shadows(call.class_context, method_name)
         ):
             return None
         self.last_resolution = cs.EdgeResolution.EXACT
         return target
+
+    def python_class_mro(self, class_qn: str) -> list[str]:
+        """The class and its bases in Python's method resolution order."""
+        return self._c3_mro(class_qn)
+
+    def _instance_attribute_shadows(self, class_qn: str, name: str) -> bool:
+        # An attribute the class or a base assigns on its instances
+        # (`self.m = callback`) is found before any class's `m`, so
+        # `self.m()` may call the value (CodeRabbit, PR #2908).
+        return any(
+            name in self._python_instance_attributes(owner)
+            for owner in self._c3_mro(class_qn)
+        )
+
+    def _python_instance_attributes(self, class_qn: str) -> frozenset[str]:
+        module_qn = module_qn_for_entity(
+            class_qn, self.type_inference.module_qn_to_file_path
+        )
+        if module_qn is None:
+            return frozenset()
+        if (by_class := self._py_instance_attrs_memo.get(module_qn)) is None:
+            by_class = {}
+            root = self._cached_module_root(module_qn)
+            stack = [root] if root is not None else []
+            while stack:
+                node = stack.pop()
+                if node.type == cs.TS_PY_CLASS_DEFINITION and (
+                    name := safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
+                ):
+                    # Same-named classes in one module: either may be it.
+                    by_class[name] = by_class.get(
+                        name, frozenset()
+                    ) | instance_attribute_names(node)
+                stack.extend(node.children)
+            self._py_instance_attrs_memo[module_qn] = by_class
+        return by_class.get(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1], frozenset())
 
     def _unknown_base_may_bind_first(self, class_qn: str, method_name: str) -> bool:
         """Whether a base the graph holds no class for may bind `method_name`

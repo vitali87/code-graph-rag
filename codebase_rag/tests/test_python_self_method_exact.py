@@ -90,6 +90,39 @@ FILES = {
         "class Rebound:\n    def rb_m(self):\n        return 1\n\n"
         "    def run(self):\n        self = factory()\n        return self.rb_m()\n"
     ),
+    # Second review round (Greptile, CodeRabbit, PR #2908).
+    # An annotation naming the class itself still dispatches to overrides.
+    "annotated_own.py": (
+        "class OwnBase:\n    def hook2(self):\n        return 1\n\n"
+        '    def run(self: "OwnBase"):\n        return self.hook2()\n\n\n'
+        "class OwnSub(OwnBase):\n    def hook2(self):\n        return 2\n"
+    ),
+    # A later rebinding of an annotated receiver does not type the call
+    # before it.
+    "rebind_later.py": (
+        "class RA:\n    def m2(self):\n        return 1\n\n\n"
+        "class RB:\n    def m2(self):\n        return 2\n\n\n"
+        "class RHost:\n    @staticmethod\n    def run(self: RA):\n"
+        "        first = self.m2()\n        self = RB()\n        return first\n"
+    ),
+    # An instance attribute is found before the class's method.
+    "shadowed.py": (
+        "def callback():\n    return 0\n\n\n"
+        "class Holder:\n    def __init__(self):\n        self.m3 = callback\n\n"
+        "    def m3(self):\n        return 1\n\n"
+        "    def run(self):\n        return self.m3()\n"
+    ),
+    # `self.__pm()` in MD looks up `_MD__pm`, never MB's `_MB__pm`.
+    "mangled.py": (
+        "class MB:\n    def __pm(self):\n        return 1\n\n\n"
+        "class MD(MB):\n    def run(self):\n        return self.__pm()\n"
+    ),
+    # A `case` pattern can bind the receiver.
+    "matched.py": (
+        "class Mine3:\n    def mm(self):\n        return 1\n\n"
+        "    def run(self, supplied):\n        match supplied:\n"
+        "            case _ as self:\n                return self.mm()\n"
+    ),
     # A base the graph holds no class for, ahead of the one defining the
     # method, may define it first; a builtin one is read for the name
     # (CodeRabbit, PR #2908).
@@ -231,3 +264,30 @@ def test_a_static_methods_typed_self_binds_its_type(graph: RecordedGraph) -> Non
     calls = _calls(graph, "static_self.Host.run")
     assert calls.get("static_self.Other.m") == "exact"
     assert "static_self.Host.m" not in calls
+
+
+def test_an_annotation_naming_the_class_still_dispatches_to_overrides(
+    graph: RecordedGraph,
+) -> None:
+    assert "annotated_own.OwnSub.hook2" in _calls(graph, "annotated_own.OwnBase.run")
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("rebind_later.RHost.run", "rebind_later.RB.m2"),
+        ("shadowed.Holder.run", "shadowed.Holder.m3"),
+        ("mangled.MD.run", "mangled.MB.__pm"),
+        ("matched.Mine3.run", "matched.Mine3.mm"),
+    ],
+    ids=[
+        "later-rebinding",
+        "instance-attribute",
+        "mangled-private",
+        "pattern-binding",
+    ],
+)
+def test_a_self_call_the_class_may_not_answer_is_not_exact(
+    graph: RecordedGraph, caller: str, callee: str
+) -> None:
+    assert _calls(graph, caller).get(callee) != "exact"

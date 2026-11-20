@@ -54,6 +54,13 @@ def annotates_receiver(call: Node, receiver: str) -> bool:
     type holds for a call no rebinding precedes, unlike the one a body
     `self = Other()` puts in the method-wide map.
     """
+    return receiver_annotation(call, receiver) is not None
+
+
+def receiver_annotation(call: Node, receiver: str) -> str | None:
+    """The class name the annotation of `receiver` in the def enclosing
+    `call` spells, unquoted and without its arguments or module (`Other` for
+    `self: "pkg.Other"`), or None when the parameter has none."""
     function = _enclosing_function(call)
     params = (
         function.child_by_field_name(cs.TS_FIELD_PARAMETERS)
@@ -61,7 +68,7 @@ def annotates_receiver(call: Node, receiver: str) -> bool:
         else None
     )
     if params is None:
-        return False
+        return None
     for param in params.named_children:
         if param.type == cs.TS_PY_TYPED_PARAMETER:
             name = next(
@@ -72,8 +79,45 @@ def annotates_receiver(call: Node, receiver: str) -> bool:
         else:
             continue
         if name is not None and safe_decode_text(name) == receiver:
-            return True
-    return False
+            text = safe_decode_text(param.child_by_field_name(cs.TS_FIELD_TYPE))
+            spelled = (text or "").strip().strip(cs.PY_ANNOTATION_QUOTES)
+            head = spelled.split(cs.PY_ANNOTATION_ARGS_OPEN, 1)[0]
+            return head.rsplit(cs.SEPARATOR_DOT, 1)[-1].strip()
+    return None
+
+
+def instance_attribute_names(class_node: Node) -> frozenset[str]:
+    """The attributes a class's methods assign on their receiver
+    (`self.m = callback`): an instance attribute is found before the class's
+    method of that name, so `self.m()` then calls the value (CodeRabbit, PR
+    #2908). A class nested in this one assigns its own."""
+    names: set[str] = set()
+    body = class_node.child_by_field_name(cs.FIELD_BODY)
+    stack = list(body.children) if body is not None else []
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_CLASS_DEFINITION:
+            continue
+        if node.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT):
+            target = node.child_by_field_name(cs.TS_FIELD_LEFT)
+            receiver = (
+                target.child_by_field_name(cs.FIELD_OBJECT)
+                if target is not None and target.type == cs.TS_PY_ATTRIBUTE
+                else None
+            )
+            attribute = (
+                target.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+                if target is not None and receiver is not None
+                else None
+            )
+            if (
+                receiver is not None
+                and safe_decode_text(receiver) in cs.PY_RECEIVER_NAMES
+                and (name := safe_decode_text(attribute))
+            ):
+                names.add(name)
+        stack.extend(node.children)
+    return frozenset(names)
 
 
 def _enclosing_function(node: Node) -> Node | None:

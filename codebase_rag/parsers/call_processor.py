@@ -75,6 +75,7 @@ from .py.flow_bindings import Binding, BindingKind, FlowBindings, call_base
 from .py.receiver_rebinding import (
     ReceiverRebinding,
     annotates_receiver,
+    receiver_annotation,
     receiver_rebinding,
 )
 from .py.type_inference import PythonTypeInferenceEngine
@@ -7000,8 +7001,16 @@ class CallProcessor:
             and (rebinding := self._receiver_rebinding_at(ctx, call_node, call_name))
             and not rebinding.sometimes
             # An annotated `self: Other` holds from the def's entry, so no
-            # rebinding is needed for the map's type to apply.
-            and not annotates_receiver(call_node, receiver)
+            # rebinding is needed for the map's type to apply. Unless the body
+            # rebinds the receiver too: the map's one entry may then be the
+            # later assignment's type (CodeRabbit, PR #2908).
+            and not (
+                annotates_receiver(call_node, receiver)
+                and receiver
+                not in self._resolver.python_rebound_receivers.get(
+                    ctx.caller_qn, frozenset()
+                )
+            )
         ):
             # No `self = Other()` can run before this call, so the method-wide
             # type of `self` does not apply to it (issue #2620).
@@ -9176,9 +9185,14 @@ class CallProcessor:
             # A typed `self` (a static method's `self: Other`) names its own
             # type, not the enclosing class (Greptile, PR #2908). Only the
             # annotation says so: the method-wide map also holds a later
-            # `self = Other()`, which leaves an earlier call on the class.
-            and not annotates_receiver(
-                call_node, call_name.partition(cs.SEPARATOR_DOT)[0]
+            # `self = Other()`, which leaves an earlier call on the class. An
+            # annotation naming the class itself or a base (`self: "Base"`,
+            # `self: Self`) still dispatches to the overrides (Greptile).
+            and not self._receiver_annotated_elsewhere(
+                ctx.class_context,
+                receiver_annotation(
+                    call_node, call_name.partition(cs.SEPARATOR_DOT)[0]
+                ),
             )
             # A call that runs after `self = Other()` on every path calls
             # through that value's type, which the resolved edge follows.
@@ -9295,6 +9309,19 @@ class CallProcessor:
         ):
             return None
         return receiver_rebinding(call_node, receiver)
+
+    def _receiver_annotated_elsewhere(
+        self, class_qn: str, annotation: str | None
+    ) -> bool:
+        # Whether a receiver annotation names a type other than the class
+        # or one of its bases.
+        if annotation is None or annotation == cs.PY_ANNOTATION_SELF:
+            return False
+        own = {
+            qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            for qn in self._resolver.python_class_mro(class_qn)
+        }
+        return annotation not in own
 
     def _emit_python_self_dispatch(
         self, ctx: _CallScanContext, class_context: str, call_name: str

@@ -812,8 +812,42 @@ def rebound_receivers(caller: Node) -> frozenset[str]:
     while scope is not None and scope.type != cs.TS_PY_CLASS_DEFINITION:
         if scope.id == caller.id or scope.type == cs.TS_PY_FUNCTION_DEFINITION:
             names.update(scope_facts(scope).bound & cs.PY_RECEIVER_NAMES)
+            names.update(_pattern_bound_receivers(scope))
         scope = scope.parent
     return frozenset(names)
+
+
+def _pattern_bound_receivers(scope: Node) -> set[str]:
+    # The receivers a `case` pattern of the scope's own body binds: an
+    # alias (`case _ as self:`), a capture (`case self:`) or a star
+    # (`case [*cls]:`), which the scope facts leave out (CodeRabbit, PR
+    # #2908). Only a body holding a `match` is walked.
+    body = scope.child_by_field_name(cs.FIELD_BODY)
+    if body is None or not body.text or cs.PY_MATCH_KEYWORD not in body.text:
+        return set()
+    clauses: list[Node] = []
+    stack = list(body.children)
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_CASE_CLAUSE:
+            clauses.append(node)
+        if node.type not in cs.PY_NESTED_SCOPE_TYPES:
+            stack.extend(node.children)
+    names: set[str] = set()
+    for _clause, pattern in _case_patterns(clauses):
+        for node in _pattern_nodes(pattern):
+            binders = (
+                node.named_children
+                if node.type == cs.TS_PY_SPLAT_PATTERN
+                else _pattern_binders(node)
+            )
+            names.update(
+                name
+                for identifier in binders
+                if identifier.type == cs.TS_PY_IDENTIFIER
+                and (name := safe_decode_text(identifier)) in cs.PY_RECEIVER_NAMES
+            )
+    return names
 
 
 def _inner_scope_bindings(scope: Node) -> set[str]:
