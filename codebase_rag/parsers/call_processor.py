@@ -6699,6 +6699,32 @@ class CallProcessor:
             arg_ref_rel=arg_ref_rel,
         )
 
+    def _ingest_nameless_call(self, ctx: _CallScanContext, call_node: Node) -> bool:
+        """Bind a call the name lookup must not see; True when it was bound."""
+        if ctx.is_java and call_node.type == cs.TS_JAVA_METHOD_REFERENCE:
+            self._ingest_java_method_reference(ctx, call_node)
+            return True
+        # `new self` has no name field, and `self::m()` is not a bare method.
+        # Handled here so the trie never binds the keyword (issue #3117).
+        if not php_references.ingest_php_call(self, ctx, call_node):
+            return False
+        # Only the name lookup is replaced. A closure handed to
+        # `self::accept(...)` or `new static(...)` still reaches the callee,
+        # so the argument scan of issue #2925 runs as for any call.
+        self._ingest_argument_function_references(
+            call_node,
+            ctx.caller_spec,
+            ctx.module_qn,
+            ctx.local_var_types,
+            ctx.class_context,
+            ctx.resolve_func,
+            ctx.ensure_rel,
+            ctx.caller_qn,
+            ctx.arg_ref_rel,
+            ctx.language,
+        )
+        return True
+
     def _ingest_call_node(self, ctx: _CallScanContext, call_node: Node) -> None:
         if _exceeds_receiver_chain_cap(call_node):
             # Left unresolved: resolving it would re-read the whole chain.
@@ -6711,27 +6737,7 @@ class CallProcessor:
         # verdict; without this reset such an edge would inherit the
         # label the previous call node left behind (issue #1526).
         self._resolver.last_resolution = cs.EdgeResolution.EXACT
-        if ctx.is_java and call_node.type == cs.TS_JAVA_METHOD_REFERENCE:
-            self._ingest_java_method_reference(ctx, call_node)
-            return
-        # `new self` has no name field, and `self::m()` is not a bare method.
-        # Handled here so the trie never binds the keyword (issue #3117).
-        if php_references.ingest_php_call(self, ctx, call_node):
-            # Only the name lookup is replaced. A closure handed to
-            # `self::accept(...)` or `new static(...)` still reaches the
-            # callee, so the argument scan of issue #2925 runs as for any call.
-            self._ingest_argument_function_references(
-                call_node,
-                ctx.caller_spec,
-                ctx.module_qn,
-                ctx.local_var_types,
-                ctx.class_context,
-                ctx.resolve_func,
-                ctx.ensure_rel,
-                ctx.caller_qn,
-                ctx.arg_ref_rel,
-                ctx.language,
-            )
+        if self._ingest_nameless_call(ctx, call_node):
             return
         call_name = self._scan_call_name(ctx, call_node)
         if (

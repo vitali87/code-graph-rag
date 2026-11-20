@@ -24,7 +24,7 @@ _STRING_CLASS = re.compile(rf"^\\?(?P<class>{_IDENT}(?:\\{_IDENT})*)$")
 _METHOD_NAME = re.compile(rf"^{_IDENT}$")
 # PHP casts a string key to int only when the text is already the canonical
 # decimal form. "0" and "1" are indexes 0 and 1; "01" and "object" are not.
-_CANONICAL_INT_KEY = re.compile(r"0|-?[1-9][0-9]*")
+_CANONICAL_INT_KEY = re.compile(r"0|-?[1-9]\d*", re.ASCII)
 _VALUE_CALLS = frozenset(
     {
         cs.TS_PHP_FUNCTION_CALL_EXPRESSION,

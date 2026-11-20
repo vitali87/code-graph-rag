@@ -1040,6 +1040,23 @@ def _php_use_clause_binding(clause: Node, prefix: str = "") -> tuple[str, str] |
     return imported_path, parts[-1] if parts else imported_path
 
 
+def _php_use_clauses(use_node: Node) -> tuple[str, list[Node]]:
+    """(group prefix, clauses) of one `use` declaration.
+
+    A grouped `use` stores its clauses under the group. Reading only the
+    declaration's children drops `use App\\{Resolver as R}`, and the callback
+    then resolves `R` as a class in the enclosing namespace.
+    """
+    grouped = _php_use_group(use_node)
+    if grouped is not None:
+        return grouped
+    return "", [
+        child
+        for child in use_node.named_children
+        if child.type == cs.TS_PHP_NAMESPACE_USE_CLAUSE
+    ]
+
+
 def _php_bare_class_use(clause: Node) -> tuple[str, str] | None:
     """(global class name, local name) for a top-level `use Foo [as Bar]`."""
     alias_node = clause.child_by_field_name(cs.FIELD_ALIAS)
@@ -7993,58 +8010,59 @@ class ImportProcessor:
         # declaration (older grammar) or inside each clause (current grammar).
         decl_is_function = any(c.type == cs.TS_PHP_FUNCTION for c in use_node.children)
         decl_is_const = any(c.type == cs.TS_PHP_CONST for c in use_node.children)
-        # A grouped `use` stores its clauses under the group. Reading only the
-        # declaration's children drops `use App\{Resolver as R}` and the
-        # callback resolves `R` as a class in the enclosing namespace.
-        grouped = _php_use_group(use_node)
-        if grouped is None:
-            prefix = ""
-            clauses = [
-                child
-                for child in use_node.named_children
-                if child.type == cs.TS_PHP_NAMESPACE_USE_CLAUSE
-            ]
-        else:
-            prefix, clauses = grouped
+        prefix, clauses = _php_use_clauses(use_node)
         for child in clauses:
-            clause_is_function = decl_is_function or any(
-                c.type == cs.TS_PHP_FUNCTION for c in child.children
-            )
-            clause_is_const = decl_is_const or any(
-                c.type == cs.TS_PHP_CONST for c in child.children
-            )
-            binding = _php_use_clause_binding(child, prefix)
-            if binding is None:
-                # `use Foo;` in a namespace imports the global class `Foo`.
-                # Only the class map takes it: the shared map has never bound
-                # a bare name, and function and call lookups keep that.
-                if not (prefix or clause_is_function or clause_is_const) and (
-                    bare := _php_bare_class_use(child)
-                ):
-                    imported_path, local_name = bare
-                    self.php_class_imports.setdefault(module_qn, {})[local_name] = (
-                        imported_path
-                    )
-                continue
-            imported_path, local_name = binding
-            self.import_mapping[module_qn][local_name] = imported_path
-            self._record_import_site(
-                module_qn,
-                local_name,
+            self._record_php_use_clause(
                 use_node,
-                imported_path.split(cs.SEPARATOR_DOT)[-1],
+                module_qn,
+                child,
+                prefix,
+                decl_is_function
+                or any(c.type == cs.TS_PHP_FUNCTION for c in child.children),
+                decl_is_const or any(c.type == cs.TS_PHP_CONST for c in child.children),
             )
-            if clause_is_function:
-                self.php_function_imports.setdefault(module_qn, set()).add(local_name)
-            elif clause_is_const:
-                self.php_const_imports.setdefault(module_qn, set()).add(local_name)
-            else:
-                # `use \Vendor\Widget` is the same class as `use Vendor\Widget`.
-                # The FQCN index keys have no leading dot (PR #3652 review).
-                # The shared map still keeps it, which is issue #3656.
+
+    def _record_php_use_clause(
+        self,
+        use_node: Node,
+        module_qn: str,
+        clause: Node,
+        prefix: str,
+        is_function: bool,
+        is_const: bool,
+    ) -> None:
+        binding = _php_use_clause_binding(clause, prefix)
+        if binding is None:
+            # `use Foo;` in a namespace imports the global class `Foo`. Only
+            # the class map takes it: the shared map has never bound a bare
+            # name, and function and call lookups keep that.
+            if not (prefix or is_function or is_const) and (
+                bare := _php_bare_class_use(clause)
+            ):
+                imported_path, local_name = bare
                 self.php_class_imports.setdefault(module_qn, {})[local_name] = (
-                    imported_path.lstrip(cs.SEPARATOR_DOT)
+                    imported_path
                 )
+            return
+        imported_path, local_name = binding
+        self.import_mapping[module_qn][local_name] = imported_path
+        self._record_import_site(
+            module_qn,
+            local_name,
+            use_node,
+            imported_path.split(cs.SEPARATOR_DOT)[-1],
+        )
+        if is_function:
+            self.php_function_imports.setdefault(module_qn, set()).add(local_name)
+        elif is_const:
+            self.php_const_imports.setdefault(module_qn, set()).add(local_name)
+        else:
+            # `use \Vendor\Widget` is the same class as `use Vendor\Widget`.
+            # The FQCN index keys have no leading dot (PR #3652 review). The
+            # shared map still keeps it, which is issue #3656.
+            self.php_class_imports.setdefault(module_qn, {})[local_name] = (
+                imported_path.lstrip(cs.SEPARATOR_DOT)
+            )
 
     def _handle_php_include_require(self, node: Node, module_qn: str) -> None:
         for child in node.children:
