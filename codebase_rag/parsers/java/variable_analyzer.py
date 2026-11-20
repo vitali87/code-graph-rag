@@ -1197,9 +1197,11 @@ class JavaVariableAnalyzerMixin:
         module_qn: str,
         inherited_only: bool = False,
     ) -> str | None:
-        # `inherited_only`: the field a SUBCLASS of `class_type` inherits as
-        # `field_name`. The first declaration up the chain decides, and a
-        # private one is not inherited and hides any farther one (JLS 8.3).
+        # `inherited_only`: the field a SUBCLASS of `class_type` in
+        # `module_qn` inherits as `field_name`. The first declaration up the
+        # chain decides, and a private one, or a package-private one in
+        # another package, is not inherited and hides any farther one (JLS
+        # 8.2, 8.3).
         if not class_type or not field_name:
             return None
 
@@ -1218,8 +1220,11 @@ class JavaVariableAnalyzerMixin:
             seen.add(class_qn)
             if located := self._locate_class(class_qn):
                 root_node, class_path, target_module_qn = located
-                if inherited_only and self._java_field_is_private(
-                    root_node, class_path, field_name
+                if inherited_only and self._java_field_not_inherited(
+                    root_node,
+                    class_path,
+                    field_name,
+                    _java_package(target_module_qn) == _java_package(module_qn),
                 ):
                     return None
                 if field_type := self._find_field_type_in_nested_class(
@@ -1272,18 +1277,29 @@ class JavaVariableAnalyzerMixin:
             children = body.children
         return body
 
-    def _java_field_is_private(
-        self, root_node: ASTNode, class_path: list[str], field_name: str
+    def _java_field_not_inherited(
+        self,
+        root_node: ASTNode,
+        class_path: list[str],
+        field_name: str,
+        same_package: bool,
     ) -> bool:
         if (body := self._nested_class_body(root_node, class_path)) is None:
             return False
-        return any(
-            field_child.type == cs.TS_FIELD_DECLARATION
-            and (info := extract_field_info(field_child)).get(cs.FIELD_NAME)
-            == field_name
-            and cs.JAVA_MODIFIER_PRIVATE in info["modifiers"]
-            for field_child in body.children
-        )
+        for field_child in body.children:
+            if field_child.type != cs.TS_FIELD_DECLARATION:
+                continue
+            info = extract_field_info(field_child)
+            if info.get(cs.FIELD_NAME) != field_name:
+                continue
+            modifiers = info["modifiers"]
+            if cs.JAVA_MODIFIER_PRIVATE in modifiers:
+                return True
+            return not same_package and not (
+                cs.JAVA_MODIFIER_PUBLIC in modifiers
+                or cs.JAVA_MODIFIER_PROTECTED in modifiers
+            )
+        return False
 
     def _find_field_type_in_nested_class(
         self,
@@ -1309,3 +1325,8 @@ class JavaVariableAnalyzerMixin:
                     str(field_type), module_qn, field_child
                 )
         return None
+
+
+def _java_package(module_qn: str) -> str:
+    # A Java file's package is the module path without the file's own name.
+    return module_qn.rpartition(cs.SEPARATOR_DOT)[0]

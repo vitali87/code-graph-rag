@@ -194,9 +194,30 @@ public class PrivateBase {
 }
 """
 
+# Bot review on PR #2991: a package-private field is inherited only within
+# its package, so in another package it hides no captured local either.
+PKG_BASE = """\
+package com.acme.other;
+
+import com.acme.Other;
+
+public class PkgBase {
+  Other codec = new Other();
+}
+"""
+
+PKG_SAME_BASE = """\
+package com.acme;
+
+public class PkgSameBase {
+  Other codec = new Other();
+}
+"""
+
 NEAREST = """\
 package com.acme;
 
+import com.acme.other.PkgBase;
 import java.util.function.Function;
 
 public class Nearest {
@@ -269,6 +290,22 @@ public class Nearest {
     };
   }
 
+  static PkgBase otherPackage(final Codec codec) {
+    return new PkgBase() {
+      String run(String in) {
+        return codec.encode(in); // other-package-field
+      }
+    };
+  }
+
+  static PkgSameBase samePackage(final Codec codec) {
+    return new PkgSameBase() {
+      String run(String in) {
+        return codec.encode(in); // same-package-field
+      }
+    };
+  }
+
   static Base anonymousInherited(final Codec codec) {
     return new Base() {
       String run(String in) {
@@ -305,6 +342,8 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     _write(root, f"{base}/Scoped.java", SCOPED)
     _write(root, f"{base}/Base.java", BASE)
     _write(root, f"{base}/PrivateBase.java", PRIVATE_BASE)
+    _write(root, f"{base}/other/PkgBase.java", PKG_BASE)
+    _write(root, f"{base}/PkgSameBase.java", PKG_SAME_BASE)
     _write(root, f"{base}/Nearest.java", NEAREST)
     return _index(root, MagicMock())
 
@@ -390,6 +429,22 @@ def test_a_private_superclass_field_does_not_hide_the_capture(
     line = _scoped_line("private-field", NEAREST)
     assert _callers_of_encode(graph, source="Nearest").get(line) == "exact"
     assert line not in _callers_of_encode(graph, OTHER_ENCODE, "Nearest")
+
+
+def test_a_package_private_field_of_another_package_does_not_hide_the_capture(
+    graph: RecordedGraph,
+) -> None:
+    line = _scoped_line("other-package-field", NEAREST)
+    assert _callers_of_encode(graph, source="Nearest").get(line) == "exact"
+    assert line not in _callers_of_encode(graph, OTHER_ENCODE, "Nearest")
+
+
+def test_a_package_private_field_of_the_same_package_hides_the_capture(
+    graph: RecordedGraph,
+) -> None:
+    line = _scoped_line("same-package-field", NEAREST)
+    assert _callers_of_encode(graph, OTHER_ENCODE, "Nearest").get(line) == "exact"
+    assert line not in _callers_of_encode(graph, source="Nearest")
 
 
 def test_a_resource_is_not_captured_in_its_finally_block(
