@@ -96,6 +96,28 @@ def _enclosing_function(
     return None
 
 
+# JS/TS classes, whose own name holds inside their body.
+_JS_TS_NAMED_CLASS_TYPES = frozenset(
+    {*cs.JS_TS_CLASS_NODES, cs.TS_ABSTRACT_CLASS_DECLARATION}
+)
+
+
+def _js_ts_class_names_between(node: ASTNode, stop: ASTNode | None) -> set[str]:
+    # The names of the classes around `node` below `stop`: inside
+    # `return class r { static cb() { return r.reset(); } }` the `r` is the
+    # class, not a captured `r` of the function around it (Greptile on
+    # #3331).
+    names: set[str] = set()
+    current = node.parent
+    while current is not None and (stop is None or current.id != stop.id):
+        if current.type in _JS_TS_NAMED_CLASS_TYPES and (
+            name := safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
+        ):
+            names.add(name)
+        current = current.parent
+    return names
+
+
 def _nearest_python_class(node: ASTNode) -> ASTNode | None:
     current = node.parent
     while current is not None and current.type != cs.TS_PY_CLASS_DEFINITION:
@@ -592,6 +614,8 @@ class TypeInferenceEngine:
         captured: dict[str, str] = {}
         pos = caller_node.start_byte
         python = language == cs.SupportedLanguage.PYTHON
+        if not python:
+            hidden |= _js_ts_class_names_between(caller_node, scope)
         while scope is not None:
             # Both builders type only what `scope` itself binds, so every
             # entry is the enclosing scope's own variable (or `self.<attr>`).
@@ -632,7 +656,10 @@ class TypeInferenceEngine:
                 }
                 own -= (elsewhere - held) - js_ts_utils.js_ts_assigned_names(scope)
             hidden |= own
-            scope = _enclosing_function(scope, language)
+            outer = _enclosing_function(scope, language)
+            if not python:
+                hidden |= _js_ts_class_names_between(scope, outer)
+            scope = outer
         return captured
 
     @staticmethod

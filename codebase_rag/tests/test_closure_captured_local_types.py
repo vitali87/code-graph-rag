@@ -325,6 +325,17 @@ _HIDDEN = {
         "c.outer.inner",
         None,
     ),
+    "js-named-class-expression": (
+        # A class expression's name holds inside its body: `r` there is the
+        # class, not `outer`'s `r` (Greptile on #3331).
+        "c.js",
+        _JS_CLASSES + "function outer() {\n  const r = new Range();\n"
+        "  return class r {\n    static reset() { return 3; }\n"
+        "    static cb() { return r.reset(); }\n  };\n}\n"
+        "module.exports = { outer };\n",
+        "c.outer.r.cb",
+        None,
+    ),
     "js-loop-variable-around": (
         "c.js",
         _JS_CLASSES + "function outer(items) {\n  const r = new Range();\n"
