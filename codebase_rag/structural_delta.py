@@ -2589,11 +2589,13 @@ def _signature_changes(
     for qn in changed:
         old, new = before.definitions[qn], after.definitions[qn]
         async_change = _async_change(old, new)
+        # Under a wrapper the flip is listed (`async_change`), not judged.
+        judged = None if _wrapped(old) or _wrapped(new) else async_change
         sites = [
             _flipped_site(
                 _site_finding(site, new, repo_root),
                 new,
-                async_change,
+                judged,
                 _site_call(site, repo_root),
             )
             for site in after.sites
@@ -2632,6 +2634,19 @@ _PY_READ_OBJECT_FIELDS = {
     cs.TS_PY_FOR_STATEMENT: cs.TS_FIELD_RIGHT,
     cs.TS_PY_FOR_IN_CLAUSE: cs.TS_FIELD_RIGHT,
 }
+
+
+def _wrapped(definition: Definition) -> bool:
+    """Whether a decorator other than the signature-preserving ones wraps a
+    def. A sync/async adapter there decides how a call runs, whatever the
+    def's own keyword, so a flip under one is listed, not judged (Greptile
+    review on PR #2951), as `_python_signature` leaves such a header unread.
+    """
+    return any(
+        decorator.lstrip(cs.DECORATOR_AT).strip()
+        not in cs.PY_SIGNATURE_PRESERVING_DECORATORS
+        for decorator in definition.decorators or ()
+    )
 
 
 def _async_change(old: Definition, new: Definition) -> str | None:

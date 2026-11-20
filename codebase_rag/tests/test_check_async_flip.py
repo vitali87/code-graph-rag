@@ -294,3 +294,56 @@ def test_a_js_flip_is_listed_but_not_judged(temp_repo: Path) -> None:
     assert change["async_change"] == cs.DELTA_ASYNC_ADDED
     assert cs.DELTA_ARITY_ASYNC_CHANGED not in {s["verdict"] for s in change["sites"]}
     assert not has_findings(delta)
+
+
+# Greptile review on PR #2951: a sync/async adapter decides how the call
+# runs, so `def` <-> `async def` under one is a hint, not a finding.
+WRAPPED_LIB = (
+    "import asyncio\nimport functools\n\n\n"
+    "def run_sync(fn):\n"
+    "    @functools.wraps(fn)\n"
+    "    def wrapper(*args, **kwargs):\n"
+    "        result = fn(*args, **kwargs)\n"
+    "        if asyncio.iscoroutine(result):\n"
+    "            return asyncio.run(result)\n"
+    "        return result\n\n"
+    "    return wrapper\n\n\n"
+    "@run_sync\ndef fetch():\n    return 1\n"
+)
+WRAPPED_APP = "from lib import fetch\n\n\ndef use():\n    return fetch() + 1\n"
+
+
+def test_a_flip_under_a_wrapping_decorator_is_a_hint(temp_repo: Path) -> None:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    (root / "lib.py").write_text(WRAPPED_LIB)
+    (root / "app.py").write_text(WRAPPED_APP)
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    )
+    updater.run(force=True)
+    (root / "lib.py").write_text(
+        WRAPPED_LIB.replace("@run_sync\ndef fetch():", "@run_sync\nasync def fetch():")
+    )
+
+    delta = observe(
+        _fetch(store),
+        PROJECT,
+        ["lib.py"],
+        lambda: updater.reingest(["lib.py"]),
+        repo_root=root,
+    )
+
+    (change,) = [
+        c for c in delta["signature_changes"] if c["qualified_name"] == _qn("fetch")
+    ]
+    assert change["async_change"] == cs.DELTA_ASYNC_ADDED
+    assert change["sites"]
+    assert cs.DELTA_ARITY_ASYNC_CHANGED not in {s["verdict"] for s in change["sites"]}
+    assert not has_findings(delta)

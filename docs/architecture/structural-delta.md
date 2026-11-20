@@ -158,7 +158,10 @@ fetch()` once the function is async, a plain `fetch()` once it no longer
 is) is fine, and any other use of the result (returned, assigned, handed
 to `asyncio.run` or `gather`, or the iterable of an `async for`, which an
 async generator serves) is not judged: the change carries
-`async_change`, a hint. Nor does the flip alone make an endpoint's remote
+`async_change`, a hint. So is every call to a def under a decorator other
+than the signature-preserving ones (`@staticmethod`, `@classmethod`,
+`@abstractmethod`, `@override`): a sync/async adapter there decides how
+the call runs. Nor does the flip alone make an endpoint's remote
 callers a finding: a handler turning `async` serves the same route. The
 same flip in JavaScript, TypeScript or Rust is listed in `symbols.changed`
 and `signature_changes` but is not judged. A JavaScript caller still runs

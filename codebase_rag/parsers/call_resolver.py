@@ -130,7 +130,7 @@ class _CallSite(NamedTuple):
     language: cs.SupportedLanguage | None
     call_point: int | None
     constructing: bool
-    receiver_rebound: bool = False
+    receiver_uncertain: bool = False
 
 
 def _rust_assoc_path(call: _CallSite) -> tuple[list[str], str] | None:
@@ -741,13 +741,14 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
-        receiver_rebound: bool = False,
+        receiver_uncertain: bool = False,
     ) -> tuple[str, str] | None:
         """`constructing`: the call is a Java/C# `new X(...)`, so `call_name`
         names a TYPE and the simple-name fallback must not offer a method or
-        function that merely shares the name. `receiver_rebound`: a Python
-        `self = pick()` the type map leaves untyped may run before this
-        `self.m()`, so the receiver may not be the enclosing class's."""
+        function that merely shares the name. `receiver_uncertain`: this
+        untyped Python `self.m()` may not run on the enclosing class's
+        instance or class (a `@staticmethod`'s or a nested def's parameter,
+        or a `self = pick()` that may run first)."""
         self.last_resolution = cs.EdgeResolution.EXACT
         result = self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
@@ -760,7 +761,7 @@ class CallResolver:
                     language,
                     call_point,
                     constructing,
-                    receiver_rebound,
+                    receiver_uncertain,
                 )
             ),
             call_name,
@@ -822,10 +823,11 @@ class CallResolver:
             # own type; the typed-receiver lookup below honours it, where
             # the enclosing class would bind `A.m` (Greptile, PR #2953).
             or (call.local_var_types and receiver in call.local_var_types)
-            # After an untyped `self = pick()` the call may run on whatever
-            # `pick()` returned, which the enclosing class does not name
-            # (CodeRabbit, PR #2951); the paths below guess, as before.
-            or call.receiver_rebound
+            # A `@staticmethod`'s or a nested def's own parameter, or an
+            # untyped `self = pick()` that may run first, leaves the receiver
+            # something the enclosing class does not name (CodeRabbit and
+            # Greptile, PR #2951); the paths below guess, as before.
+            or call.receiver_uncertain
         ):
             return None
         own_qn = f"{call.class_context}{cs.SEPARATOR_DOT}{method_name}"
@@ -2119,7 +2121,7 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
-        receiver_rebound: bool = False,
+        receiver_uncertain: bool = False,
     ) -> tuple[str, str] | None:
         call = _CallSite(
             call_name,
@@ -2132,7 +2134,7 @@ class CallResolver:
             language,
             call_point,
             constructing,
-            receiver_rebound,
+            receiver_uncertain,
         )
         handled, result = self._resolve_caller_scoped_stages(call)
         if handled:

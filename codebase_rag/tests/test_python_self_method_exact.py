@@ -81,6 +81,20 @@ FILES = {
         "class Y:\n    def m(self):\n        return 2\n\n\n"
         "class A(X, Y):\n    def run(self):\n        return self.m()\n"
     ),
+    # Greptile review on PR #2951: a `@staticmethod`'s `self`, or a nested
+    # def's or lambda's own `self`, holds whatever its caller passes.
+    "unbound.py": (
+        "class Other3:\n    def m(self):\n        return 2\n\n\n"
+        "class Host3:\n    def m(self):\n        return 1\n\n"
+        "    @staticmethod\n    def bridge(self):\n        return self.m()\n\n"
+        "    def outer(self):\n"
+        "        def inner(self):\n            return self.m()\n\n"
+        "        def closure():\n            return self.m()\n\n"
+        "        return inner(Other3()) + closure()\n\n"
+        "    def lam(self):\n"
+        "        f = lambda self: self.m()\n        return f(Other3())\n\n"
+        "    @classmethod\n    def make(cls):\n        return cls.m(cls())\n"
+    ),
     "rebind_unknown.py": (
         "def pick():\n    return object()\n\n\n"
         "class Host:\n    def m(self):\n        return 1\n\n"
@@ -252,3 +266,31 @@ def test_a_call_an_unknown_rebinding_may_precede_is_not_exact(
     # from the instance; the call may run on what `pick()` returned, so the
     # enclosing class's method is only a guess (CodeRabbit, PR #2951).
     assert _calls_at(graph, caller, line) == {"rebind_unknown.Host.m": "heuristic"}
+
+
+@pytest.mark.parametrize(
+    ("caller", "line"),
+    [
+        ("unbound.Host3.bridge", 12),
+        ("unbound.Host3.outer.inner", 16),
+        ("unbound.Host3.lam", 24),
+    ],
+    ids=["staticmethod", "nested-def-parameter", "lambda-parameter"],
+)
+def test_a_receiver_the_method_does_not_bind_is_not_exact(
+    graph: RecordedGraph, caller: str, line: int
+) -> None:
+    # `Host3.bridge(Other3())` runs `Other3.m`: the enclosing class's method
+    # is only a guess there (Greptile, PR #2951).
+    assert _calls_at(graph, caller, line) == {"unbound.Host3.m": "heuristic"}
+
+
+@pytest.mark.parametrize(
+    ("caller", "line"),
+    [("unbound.Host3.outer.closure", 19), ("unbound.Host3.make", 29)],
+    ids=["closure-over-self", "classmethod-cls"],
+)
+def test_a_receiver_the_method_binds_stays_exact(
+    graph: RecordedGraph, caller: str, line: int
+) -> None:
+    assert _calls_at(graph, caller, line) == {"unbound.Host3.m": "exact"}

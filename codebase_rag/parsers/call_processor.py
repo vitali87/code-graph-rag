@@ -76,6 +76,7 @@ from .py.receiver_rebinding import (
     ReceiverRebinding,
     rebound_receivers,
     receiver_annotation,
+    receiver_is_bound,
     receiver_rebinding,
 )
 from .py.type_inference import PythonTypeInferenceEngine
@@ -8375,24 +8376,23 @@ class CallProcessor:
                 ctx.caller_qn,
                 ctx.language,
                 call_point=call_node.start_byte,
-                receiver_rebound=self._untyped_receiver_rebound(
+                receiver_uncertain=self._receiver_uncertain(
                     ctx, call_node, call_name, call_var_types
                 ),
             )
         return callee_info
 
     @staticmethod
-    def _untyped_receiver_rebound(
+    def _receiver_uncertain(
         ctx: _CallScanContext,
         call_node: Node,
         call_name: str,
         call_var_types: dict[str, str] | None,
     ) -> bool:
-        # `self = pick()` of a type the map cannot name leaves `self` out of
-        # it, as on a method that never rebinds it; a call such a rebinding
-        # may precede may run on `pick()`'s value, not on the instance
-        # (CodeRabbit, PR #2951). A typed receiver needs no flag: its type
-        # already keeps the call off the enclosing class.
+        # Whether an untyped `self.m()` / `cls.m()` may run on something
+        # other than the enclosing class's instance or class. A typed
+        # receiver needs no flag: its type already keeps the call off the
+        # enclosing class.
         receiver, _, member = call_name.partition(cs.SEPARATOR_DOT)
         if (
             not ctx.class_context
@@ -8401,6 +8401,14 @@ class CallProcessor:
             or (call_var_types and receiver in call_var_types)
         ):
             return False
+        # A `@staticmethod`'s parameter, or a nested def's or lambda's own,
+        # holds whatever its caller passes (Greptile review on PR #2951).
+        if not receiver_is_bound(call_node, receiver):
+            return True
+        # `self = pick()` of a type the map cannot name leaves `self` out of
+        # it, as on a method that never rebinds it; a call such a rebinding
+        # may precede may run on `pick()`'s value, not on the instance
+        # (CodeRabbit, PR #2951).
         if ctx.rebound_receivers is None:
             ctx.rebound_receivers = rebound_receivers(ctx.caller_node)
         return (
