@@ -2360,9 +2360,18 @@ def _ts_names_scoped_type(anchor: Node, name: str) -> bool:
                 and safe_decode_text(declaration.child_by_field_name(cs.FIELD_NAME))
                 == name
             ):
-                return current.parent is not None
+                return not _ts_is_module_level(current)
         current = current.parent
     return False
+
+
+def _ts_is_module_level(scope: Node) -> bool:
+    # The module itself, or a module-level `export` statement holding the
+    # declaration (`export class Service`), which is no nested scope
+    # (Greptile, PR #2959).
+    if scope.parent is None:
+        return True
+    return scope.type == cs.TS_EXPORT_STATEMENT and scope.parent.parent is None
 
 
 def _ts_cast_receiver_call_name(member: Node) -> str | None:

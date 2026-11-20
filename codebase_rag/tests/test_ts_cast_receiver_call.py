@@ -138,6 +138,11 @@ export function localClass(s: unknown) {
   class Service { handle(): number { return 4; } }
   return (s as Service).handle();
 }
+
+export class Exported {
+  handle(): number { return 5; }
+  self(s: unknown) { return (s as Exported).handle(); }
+}
 """
 
 
@@ -183,6 +188,15 @@ def test_a_cast_to_a_name_declared_in_scope_is_not_the_module_class(
     utility_graph: RecordedGraph, caller: str
 ) -> None:
     assert "scoped.Service.handle" not in _module_callees(utility_graph, caller)
+
+
+def test_a_cast_inside_an_exported_class_binds_that_class(
+    utility_graph: RecordedGraph,
+) -> None:
+    # Greptile, PR #2959: a module-level `export class` is no nested scope.
+    assert _module_callees(utility_graph, "scoped.Exported.self") == {
+        "scoped.Exported.handle": "exact"
+    }
 
 
 # Negative: what must not change.
