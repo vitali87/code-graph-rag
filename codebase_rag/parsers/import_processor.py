@@ -73,7 +73,12 @@ from .js_ts.module_paths import (
     discover_js_workspace_packages,
     resolve_js_workspace_import,
 )
-from .js_ts.reexports import JsExport, follow_js_reexports, js_ts_module_qn
+from .js_ts.reexports import (
+    JsExport,
+    JsNamespaceExport,
+    follow_js_reexports,
+    js_ts_module_qn,
+)
 from .js_ts.utils import get_js_ts_language_obj
 from .lua import utils as lua_utils
 from .php.namespaces import declared_namespace
@@ -6245,6 +6250,9 @@ class ImportProcessor:
         module_qn = cs.SEPARATOR_DOT.join(parts)
         if self._js_names_directory_only(parts):
             self._js_missing_file_modules.add(module_qn)
+        else:
+            # The file exists now: a watcher run read it again.
+            self._js_missing_file_modules.discard(module_qn)
         return JsImportTarget(module_qn, False)
 
     def _js_names_directory_only(self, parts: list[str]) -> bool:
@@ -6523,8 +6531,8 @@ class ImportProcessor:
         # as `math`. Only the coincidence of `lib` + `math` spelling
         # the `lib/math` directory made `math.add()` resolve before
         # (issue #3249).
-        self.js_export_bindings.setdefault(current_module, {})[namespace] = JsExport(
-            source_module, local=False
+        self.js_export_bindings.setdefault(current_module, {})[namespace] = (
+            JsNamespaceExport(source_module, local=False)
         )
         # It binds no local `math`, so the map entry only carries the
         # IMPORTS edge and never displaces an import of that name.
@@ -6594,7 +6602,8 @@ class ImportProcessor:
     ) -> str:
         """Where a JS/TS import of `qn` leads through the barrels re-exporting
         it; see `js_ts.reexports.follow_js_reexports`."""
-        if qn.rpartition(cs.SEPARATOR_DOT)[0] in self._js_missing_file_modules:
+        module_qn = qn.rpartition(cs.SEPARATOR_DOT)[0]
+        if module_qn in self._js_missing_file_modules and module_qn not in module_paths:
             # `import { trim } from "./fmt.js"` beside only `fmt/index.js`:
             # Node and TypeScript never resolve it to the index (bot review
             # on PR #3282), so neither does the walk.

@@ -27,6 +27,13 @@ class JsExport(NamedTuple):
     local: bool
 
 
+class JsNamespaceExport(JsExport):
+    """`export * as ns from "./x"`: the whole `x` module, whose qn may also
+    spell another module's export, so the walk stops there (PR #3282)."""
+
+    __slots__ = ()
+
+
 def follow_js_reexports(
     qn: str,
     import_mapping: Mapping[str, Mapping[str, str]],
@@ -64,10 +71,11 @@ def js_ts_module_qn(module_qn: str, module_paths: Mapping[str, Path]) -> str | N
 
 class _Step(NamedTuple):
     """A qn the walk reached: a module's export, or (`local`) one of its own
-    bindings."""
+    bindings, or (`module`) a whole module a namespace export names."""
 
     qn: str
     local: bool
+    module: bool = False
 
 
 class _ReexportWalk:
@@ -129,19 +137,18 @@ class _ReexportWalk:
             if following is None:
                 break
             step = following
-            if self._names_module(step):
+            if step.module:
                 # A namespace (`export * as math from "./ops"`) has reached
                 # its module. Walked on, `src.lib.ops` read as the `ops`
                 # export of `src/lib/index.ts`, which may name another
-                # module (bot review on PR #3282).
+                # module (bot review on PR #3282). Only a namespace stops
+                # the walk: a named re-export landing on a qn that also
+                # spells a file goes on.
                 break
         self._path.difference_update(entered)
         if not cut:
             self._settled.update(dict.fromkeys(entered, step.qn))
         return step.qn, cut
-
-    def _names_module(self, step: _Step) -> bool:
-        return not step.local and js_ts_module_qn(step.qn, self._modules) == step.qn
 
     def _exported_as_another(self, qn: str) -> bool:
         """Whether the module publishes `qn`'s name for another binding.
@@ -180,12 +187,22 @@ class _ReexportWalk:
                 return None, cut
             return _Step(f"{namespace}{cs.SEPARATOR_DOT}{name}", local=False), cut
         if (export := self._exports.get(barrel, {}).get(name)) is not None:
-            return _Step(export.target, export.local), False
+            return (
+                _Step(
+                    export.target,
+                    export.local,
+                    module=isinstance(export, JsNamespaceExport),
+                ),
+                False,
+            )
         # `export *` passes on every name a source exports except `default`.
         if name == cs.TS_EXPORT_DEFAULT:
             return None, False
         star, cut = self._star_source(barrel, name)
-        return (_Step(star, local=False) if star is not None else None), cut
+        if star is None:
+            return None, cut
+        # A namespace another module exports, passed on by `export *`.
+        return _Step(star, local=False, module=star in self._modules), cut
 
     def _binding(self, qn: str) -> _Step | None:
         # A binding the module exports but does not define is an import of

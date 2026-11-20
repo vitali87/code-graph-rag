@@ -16,7 +16,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import create_and_run_updater
+from evals.cgr_graph import _StatefulIngestor
 
 _TS_INDEX = (
     "export function pad(s: string, n: number): string { return s.padStart(n); }\n"
@@ -353,3 +356,62 @@ def test_a_star_reexport_does_not_pass_on_a_module_its_source_never_exports(
     assert ("src.lib.util.add", cs.EdgeResolution.EXACT) not in calls.get(
         "src.app.run", set()
     ), calls
+
+
+def test_a_named_reexport_onto_a_qn_spelling_a_file_still_follows(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Bot review on PR #3282: only a namespace export stops the walk at a
+    # module. `b` re-exports `foo` from `./a`, whose `foo` is `ops.bar`;
+    # `a/foo.ts` merely spells `src.a.foo` too.
+    _write(
+        temp_repo,
+        {
+            "src/ops.ts": "export function bar(): number { return 1; }\n",
+            "src/a.ts": 'export { bar as foo } from "./ops";\n',
+            "src/a/foo.ts": "export function other(): number { return 2; }\n",
+            "src/b.ts": 'export { foo } from "./a";\n',
+            "src/app.ts": 'import { foo } from "./b";\n'
+            "export function run(): number { return foo(); }\n",
+        },
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    calls = _calls(temp_repo, mock_ingestor)
+    assert calls.get("src.app.run") == {("src.ops.bar", cs.EdgeResolution.EXACT)}, calls
+
+
+def test_an_explicit_extension_follows_once_the_file_exists(tmp_path: Path) -> None:
+    # Bot review on PR #3282: a watcher's updater read `./fmt.js` while only
+    # `fmt/` existed; once `fmt.js` is written and read, its re-export of
+    # `clean` is followed again.
+    if "javascript" not in load_parsers()[0]:
+        pytest.skip("javascript parser not available")
+    root = tmp_path / "repo"
+    _write(
+        root,
+        {
+            "js/fmt/index.js": _JS_INDEX,
+            "js/ops.js": "export function trim(s) { return s.trim(); }\n",
+            "js/a.js": 'import { clean } from "./fmt.js";\n'
+            "export function viaExt(x) { return clean(x); }\n",
+        },
+    )
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
+    )
+    updater.run(force=True)
+
+    _write(root, {"js/fmt.js": 'export { trim as clean } from "./ops.js";\n'})
+    updater.reingest(["js/fmt.js", "js/a.js"])
+
+    calls = {
+        (str(edge[1]), str(edge[4]), str(store.props_for(edge).get(cs.KEY_RESOLUTION)))
+        for edge in store.edges
+        if edge[2] == cs.RelationshipType.CALLS.value
+    }
+    assert ("repo.js.a.viaExt", "repo.js.ops.trim", cs.EdgeResolution.EXACT) in calls, (
+        calls
+    )
