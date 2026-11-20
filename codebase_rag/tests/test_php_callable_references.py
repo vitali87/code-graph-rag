@@ -451,7 +451,7 @@ def test_relative_scoped_calls_bind_early_late_and_parent(tmp_path: Path) -> Non
     assert (f"{_CHILD}.__construct", f"{_R}.__construct") in calls
 
 
-def test_stored_closures_are_referenced_and_direct_arguments_stay_dead(
+def test_stored_closures_and_direct_arguments_are_referenced(
     tmp_path: Path,
 ) -> None:
     ingestor = _index(tmp_path, _RESOLVER_FILES)
@@ -473,11 +473,12 @@ def test_stored_closures_are_referenced_and_direct_arguments_stay_dead(
 
     assert (f"{_R}.viaVariable", variable) in refs
     assert (f"{_R}.viaArrow", arrow) in refs
-    # A closure passed directly as an argument is issue #2925, not this one.
-    assert (f"{_R}.direct", direct) not in refs
+    # A closure passed directly as an argument is bound by the argument
+    # scan of issue #2925, not by this one; both must hold together.
+    assert (f"{_R}.direct", direct) in refs
     assert variable not in dead, sorted(dead)
     assert arrow not in dead, sorted(dead)
-    assert direct in dead, sorted(dead)
+    assert direct not in dead, sorted(dead)
 
     # The private methods named by the repro stay live; a method nobody
     # names does not. Public methods are roots either way.
