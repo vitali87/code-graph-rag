@@ -620,6 +620,22 @@ _DANGLES = [("page", "util")]
         pytest.param(
             "export default (Math);\n", _DANGLES, id="global-namespace-parens"
         ),
+        # A top-level alias holds what its name holds (Greptile, PR #3312).
+        pytest.param(
+            "const JSON = String;\nexport default JSON;\n",
+            [],
+            id="an-alias-named-like-a-namespace",
+        ),
+        pytest.param(
+            f"{_TS_PLAIN_SLUG}\nconst alias = (slug);\nexport default alias;\n",
+            [],
+            id="an-alias-of-a-definition",
+        ),
+        pytest.param(
+            "const a = b;\nconst b = a;\nexport default a;\n",
+            _DANGLES,
+            id="an-alias-cycle",
+        ),
         # Negative: a declaration of the module shadows the global.
         pytest.param(
             "const String = 5;\nexport default String;\n",

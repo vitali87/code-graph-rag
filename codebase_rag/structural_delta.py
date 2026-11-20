@@ -1654,6 +1654,23 @@ class _AfterBindings:
             return False
         if local == cs.JS_DEFAULT_EXPORT_NAME:
             return not (for_callers and name in exports.inert)
+        return self._js_local_value(
+            module, path, local, bindings, seen, for_callers, frozenset()
+        )
+
+    def _js_local_value(
+        self,
+        module: str,
+        path: str,
+        local: str,
+        bindings: list[ImportBinding],
+        seen: frozenset[tuple[str, str]],
+        for_callers: bool,
+        followed: frozenset[str],
+    ) -> bool:
+        """Whether the module's binding `local` holds a value: a definition,
+        a name it imports, a top-level alias of one, or a global."""
+        exports = self._js_exports(path)
         if f"{module}{cs.SEPARATOR_DOT}{local}" in self._facts(path)[0]:
             return True
         # `import * as ns` binds a module object, never one of its names.
@@ -1664,12 +1681,22 @@ class _AfterBindings:
             for binding in bindings
         ):
             return True
+        # `const slug = String;` holds what the name it is bound to holds
+        # (Greptile review on PR #3312); a cycle of aliases holds nothing.
+        if (target := exports.aliases.get(local)) is not None:
+            return target not in followed and self._js_local_value(
+                module,
+                path,
+                target,
+                bindings,
+                seen,
+                for_callers,
+                followed | {local},
+            )
         # A global no import or declaration of the module shadows (`export
         # default String;`) is there to export whatever the edit did, though
         # a namespace object (`JSON`, `Math`) serves no caller (Greptile
-        # reviews on PR #3312). A shadowing `const JSON = String` is a value
-        # of the module's own, which, like any `const` the graph holds no
-        # definition for, is not followed.
+        # reviews on PR #3312).
         if (
             local not in cs.JS_GLOBAL_VALUE_NAMES
             or local in exports.declared
@@ -1737,6 +1764,9 @@ class _JsExports(NamedTuple):
     # The names the module's own top-level declarations bind, exported or
     # not: one of them is no global (`const JSON = String`).
     declared: frozenset[str] = frozenset()
+    # `{alias: name}` for each top-level `const alias = name` (under its
+    # wrappers): the alias holds what the name holds.
+    aliases: dict[str, str] = {}
 
     def erased(self, binding: ImportBinding) -> bool:
         if binding.line is None or binding.col is None:
@@ -1762,8 +1792,10 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
     local: dict[str, str] = {}
     inert: set[str] = set()
     declared: set[str] = set()
+    aliases: dict[str, str] = {}
     for statement in root.children:
         declared.update(_js_declared_names(statement))
+        aliases.update(_js_aliases(statement))
         if statement.type not in (cs.TS_EXPORT_STATEMENT, cs.TS_IMPORT_STATEMENT):
             continue
         at = (statement.start_point[0] + 1, statement.start_point[1])
@@ -1789,6 +1821,7 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
         inert=frozenset(inert),
         commonjs=is_commonjs_module(root),
         declared=frozenset(declared),
+        aliases=aliases,
     )
 
 
@@ -1801,6 +1834,26 @@ _JS_VALUE_DECLARATIONS = frozenset(
         cs.TS_CLASS_DECLARATION,
     }
 )
+
+
+def _js_aliases(statement: Node) -> Iterator[tuple[str, str]]:
+    """(alias, name) for each declarator of a top-level `const alias = name`,
+    through `export` and the value's wrappers."""
+    if statement.type == cs.TS_EXPORT_STATEMENT:
+        statement = statement.child_by_field_name(cs.FIELD_DECLARATION) or statement
+    if statement.type not in (cs.TS_LEXICAL_DECLARATION, cs.TS_VARIABLE_DECLARATION):
+        return
+    for declarator in statement.named_children:
+        target = declarator.child_by_field_name(cs.FIELD_NAME)
+        value = declarator.child_by_field_name(cs.FIELD_VALUE)
+        if (
+            declarator.type == cs.TS_VARIABLE_DECLARATOR
+            and target is not None
+            and target.type == cs.TS_IDENTIFIER
+            and value is not None
+            and (value := _js_unwrapped(value)).type == cs.TS_IDENTIFIER
+        ):
+            yield _node_text(target), _node_text(value)
 
 
 def _js_declared_names(statement: Node) -> Iterator[str]:
