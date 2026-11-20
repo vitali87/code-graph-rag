@@ -66,12 +66,14 @@ class _RustCallScope(NamedTuple):
 
 class _RustPathScope(NamedTuple):
     """Where a Rust caller's paths are read: its file module, the `mod` its
-    `self::`/`super::` count from, its impl target, and its own qn."""
+    `self::`/`super::` count from, its impl target, its own qn, and the
+    `use`s of the bodies, blocks and `mod`s around it."""
 
     module_qn: str
     effective_module: str
     class_context: str | None
     caller_qn: str
+    calls: _RustCallScope
 
 
 _RUST_RELATIVE_PATH_HEADS = frozenset(
@@ -631,9 +633,15 @@ class TypeInferenceEngine:
             ),
             class_context,
             caller_qn,
+            self._rust_call_scope(caller_node, module_qn),
         )
         bindings = [
-            (start, end, name, self._rust_variant_payload_type(variant, scope))
+            (
+                start,
+                end,
+                name,
+                self._rust_variant_payload_type(variant, scope, start),
+            )
             for start, end, name, variant in engine.collect_match_arm_bindings(
                 caller_node
             )
@@ -657,7 +665,7 @@ class TypeInferenceEngine:
         return bindings
 
     def _rust_variant_payload_type(
-        self, variant_path: str, scope: _RustPathScope
+        self, variant_path: str, scope: _RustPathScope, arm_start: int
     ) -> str:
         # `Strategy::Literal(s)` binds `s` to the payload type the enum
         # declares for `Literal` (issue #2923), as the enum's own module
@@ -685,8 +693,8 @@ class TypeInferenceEngine:
             )
             target = f"{enum_qn}{cs.SEPARATOR_DOT}{written}"
         else:
-            enum_qn = self._resolve_rust_type_qn(enum_path, module_qn, exact=True)
-            target = f"{enum_qn}{cs.SEPARATOR_DOT}{written}"
+            enum_qn = self._rust_scoped_type_path(enum_path, scope, arm_start)
+            target = f"{enum_qn}{cs.SEPARATOR_DOT}{written}" if enum_qn else None
         # A raw `::` target (an external crate's variant) has no dotted
         # enum qn, so it finds no payloads either.
         enum_qn, _, variant = (target or "").rpartition(cs.SEPARATOR_DOT)
@@ -694,10 +702,62 @@ class TypeInferenceEngine:
         if payload is None:
             return written
         enum_module = enum_qn.rpartition(cs.SEPARATOR_DOT)[0]
-        payload_qn = self._resolve_rust_type_qn(payload, enum_module, exact=True)
+        payload_qn = self._rust_payload_type_qn(payload, enum_module)
         if self.function_registry.get(payload_qn) is None:
             return written
         return payload_qn
+
+    def _rust_scoped_type_path(
+        self, path: str, scope: _RustPathScope, arm_start: int
+    ) -> str | None:
+        # The qn `Strategy` or `a::Strategy` names where the match is
+        # written: a `use` in a body or block around it, then one in each
+        # enclosing `mod`, shadow the file's own (PR #3014 review). An
+        # external binding (`use other_crate::Strategy`) names no enum here.
+        head, _, rest = path.partition(cs.SEPARATOR_DOUBLE_COLON)
+        bound = self._rust_local_use(head, scope.module_qn, arm_start, scope.calls)
+        if bound is None:
+            mapping = self.import_processor.import_mapping
+            bound = next(
+                (
+                    mapping[owner][head]
+                    for owner in scope.calls.scopes
+                    if head in mapping.get(owner, {})
+                ),
+                None,
+            )
+        if bound is None:
+            return self._resolve_rust_type_qn(path, scope.module_qn, exact=True)
+        if cs.SEPARATOR_DOUBLE_COLON in bound:
+            return None
+        tail = rest.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+        return f"{bound}{cs.SEPARATOR_DOT}{tail}" if tail else bound
+
+    def _rust_payload_type_qn(self, payload: str, enum_module: str) -> str:
+        # A payload path as the enum's module reads it: `a::Handler` is that
+        # module's child `a`, or whatever its `use` binds `a` to, before any
+        # same-suffixed type elsewhere (PR #3014 review).
+        if cs.SEPARATOR_DOUBLE_COLON in payload:
+            head, _, rest = payload.partition(cs.SEPARATOR_DOUBLE_COLON)
+            tail = rest.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+            mapped = self.import_processor.import_mapping.get(enum_module, {}).get(head)
+            if head in _RUST_RELATIVE_PATH_HEADS:
+                candidate = self.import_processor._rewrite_rust_local_use_path(
+                    payload, enum_module
+                )
+            elif mapped is not None:
+                candidate = (
+                    f"{mapped}{cs.SEPARATOR_DOT}{tail}"
+                    if cs.SEPARATOR_DOUBLE_COLON not in mapped
+                    else None
+                )
+            else:
+                candidate = (
+                    f"{enum_module}{cs.SEPARATOR_DOT}{head}{cs.SEPARATOR_DOT}{tail}"
+                )
+            if candidate is not None and candidate in self.function_registry:
+                return candidate
+        return self._resolve_rust_type_qn(payload, enum_module, exact=True)
 
     def _rust_imported_variant(
         self, name: str, module_qn: str, caller_qn: str

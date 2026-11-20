@@ -49,7 +49,9 @@ def _index(
     )
     (project / "src" / "lib.rs").write_text(_STRATEGIES + lib_rs, encoding="utf-8")
     for module, source in (modules or {}).items():
-        (project / "src" / f"{module}.rs").write_text(source, encoding="utf-8")
+        path = project / "src" / f"{module}.rs"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     return f"{name}.src.lib"
 
@@ -434,6 +436,85 @@ pub mod inner {
             caller,
             edges,
         )
+
+
+def _strategy_module(strat: str) -> str:
+    return (
+        f"pub struct {strat};\n"
+        f"impl {strat} {{ pub fn hit(&self) -> bool {{ true }} }}\n"
+        f"pub enum Strategy {{\n    Literal({strat}),\n}}\n"
+    )
+
+
+def test_a_function_local_use_of_the_enum_shadows_the_files(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # PR #3014 review: `Strategy::Literal(s)` read the file's `use` of
+    # `left::Strategy` though the function's own `use` binds `right`'s.
+    source = """\
+pub mod left;
+pub mod right;
+use crate::left::Strategy;
+
+fn run(strategy: right::Strategy) -> bool {
+    use crate::right::Strategy;
+    match strategy {
+        Strategy::Literal(s) => s.hit(),
+    }
+}
+
+fn other(strategy: Strategy) -> bool {
+    match strategy {
+        Strategy::Literal(s) => s.hit(),
+    }
+}
+"""
+    modules = {"left": _strategy_module("LStrat"), "right": _strategy_module("RStrat")}
+    base = _index(temp_repo, mock_ingestor, "rs_match_local_use", source, modules)
+    package = base.removesuffix(".lib")
+    run = _hit_edges(mock_ingestor, f"{base}.run")
+    assert list(run.values()) == [(f"{package}.right.RStrat.hit", _EXACT)], run
+    other = _hit_edges(mock_ingestor, f"{base}.other")
+    assert list(other.values()) == [(f"{package}.left.LStrat.hit", _EXACT)], other
+
+
+def test_a_relative_payload_path_is_the_enum_modules_child(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # PR #3014 review: `V(a::Handler)` in `right` is `right::a::Handler`,
+    # never `left::a::Handler` matched by its suffix.
+    handler = (
+        "pub struct Handler;\nimpl Handler { pub fn hit(&self) -> bool { true } }\n"
+    )
+    right = """\
+pub mod a;
+
+pub enum Job {
+    V(a::Handler),
+}
+
+pub fn run(job: Job) -> bool {
+    match job {
+        Job::V(x) => x.hit(),
+    }
+}
+"""
+    modules = {
+        "left": "pub mod a;\n",
+        "left/a": handler,
+        "right": right,
+        "right/a": handler,
+    }
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_match_relative_payload",
+        "pub mod left;\npub mod right;\n",
+        modules,
+    )
+    package = base.removesuffix(".lib")
+    edges = _hit_edges(mock_ingestor, f"{package}.right.run")
+    assert list(edges.values()) == [(f"{package}.right.a.Handler.hit", _EXACT)], edges
 
 
 _INCREMENTAL = {
