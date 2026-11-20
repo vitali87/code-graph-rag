@@ -96,6 +96,21 @@ WARN_OPEN_SERVICES_LEFT_RUNNING = (
 )
 # The running containers of one service, one ID per line.
 COMPOSE_PS_RUNNING_ARGS = ("ps", "--quiet", "--status", "running")
+# The running containers as JSON, with the addresses Docker publishes each
+# port on (`Publishers`): one object per line, or one array on older Compose.
+COMPOSE_PS_RUNNING_JSON_ARGS = ("ps", "--format", "json", "--status", "running")
+COMPOSE_PS_PUBLISHERS_KEY = "Publishers"
+COMPOSE_PS_PUBLISHER_HOST_KEY = "URL"
+COMPOSE_PS_PUBLISHER_TARGET_KEY = "TargetPort"
+COMPOSE_PS_PUBLISHER_PORT_KEY = "PublishedPort"
+COMPOSE_PS_PUBLISHER_PROTOCOL_KEY = "Protocol"
+# Bolt runs over TCP, Docker's default for a port mapping that names none.
+COMPOSE_PS_PUBLISHER_TCP = "tcp"
+# A container's labels, printed as one `key=value,...` string. The label
+# marks a container `docker compose run` made, which `ps` lists too.
+COMPOSE_PS_LABELS_KEY = "Labels"
+COMPOSE_PS_LABEL_SEPARATOR = ","
+COMPOSE_ONE_OFF_LABEL = "com.docker.compose.oneoff=True"
 # How long a start that did not finish waits for the services it started to
 # answer, so that one still initialising is checked too before it returns.
 STARTED_SERVICES_CHECK_TIMEOUT_S = 15.0
@@ -158,6 +173,7 @@ COMPOSE_PORT_TARGET_KEY = "target"
 COMPOSE_PORT_PUBLISHED_KEY = "published"
 COMPOSE_PORT_HOST_IP_KEY = "host_ip"
 QDRANT_CONTAINER_HTTP_PORT = 6333
+MEMGRAPH_CONTAINER_BOLT_PORT = 7687
 # The port qdrant-client connects to when QDRANT_URL names none.
 QDRANT_CLIENT_DEFAULT_PORT = 6333
 ENV_MEMGRAPH_USER = "MEMGRAPH_USER"
@@ -195,6 +211,12 @@ QDRANT_ROOT_MAX_BYTES = 65536
 # A stopped stack refuses the connection at once; a running one answers well
 # inside this, so the check costs nothing noticeable when the vector store opens.
 BUNDLED_QDRANT_PROBE_TIMEOUT_S = 1.0
+# How long the check of MEMGRAPH_HOST waits on one of its addresses for a
+# server answering there.
+MEMGRAPH_ADDRESS_PROBE_TIMEOUT_S = 1.0
+# The same wait on an address of this machine: long enough for Windows, which
+# retries a refused connection for about two seconds before it reports it.
+MEMGRAPH_LOCAL_ADDRESS_PROBE_TIMEOUT_S = 5.0
 QDRANT_API_KEY_HEADER = "api-key"
 ERR_COMPOSE_AUTH_MISMATCH = (
     "Compose would start {variables} with a value that does not come from "
@@ -239,6 +261,15 @@ ERR_MEMGRAPH_REJECTS_CREDENTIALS = (
     "with, so changing MEMGRAPH_PASSWORD later does not change it: set "
     "MEMGRAPH_PASSWORD back, or log in with it and run "
     "SET PASSWORD FOR <user> TO '<new password>'; and then set the new one."
+)
+ERR_MEMGRAPH_RUNS_ON_ANOTHER_PORT = (
+    "The shared stack's Memgraph is running on port {running}, but "
+    "MEMGRAPH_PORT now resolves to {port} (from the environment, the .env "
+    "file in the current directory, or the .env file next to {path}). "
+    "Starting the stack here would move Memgraph to port {port}, away from "
+    "everything using port {running}. Unset MEMGRAPH_PORT or set it to "
+    "{running} to use the running stack, or run 'cgr daemon restart' to move "
+    "the stack to port {port}."
 )
 ERR_STACK_ACCEPTS_ANONYMOUS = (
     "Credentials are configured, but these running services still accept "

@@ -18,6 +18,7 @@ from codebase_rag.flow_verdict import (
     CYPHER_FLOW_COVERAGE_GAPS,
     CYPHER_FLOW_EDGES,
     CYPHER_FLOW_REMOTE_EDGES,
+    CYPHER_FLOW_WRITE_EDGES,
 )
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.utils.path_utils import derive_project_name
@@ -71,6 +72,7 @@ def _registry(
         if query in (
             CYPHER_FLOW_EDGES,
             CYPHER_FLOW_REMOTE_EDGES,
+            CYPHER_FLOW_WRITE_EDGES,
             CYPHER_FLOW_COVERAGE_GAPS,
             CYPHER_CRASH_POSITIONAL_PARAMS,
         ):

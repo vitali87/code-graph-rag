@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -192,6 +192,12 @@ class DefinitionProcessor(
         # method resolves via the field's declared type. Populated at class
         # ingestion, read by the type-inference engine at call resolution.
         self.class_field_types: dict[str, dict[str, str]] = {}
+        # {name of a C++ data member a call can invoke (a function pointer, a
+        # `std::function`): the types declaring it}, so `ops->cb()` may still
+        # reach a free `cb` (#3176 review). Keyed by type so a deleted or
+        # re-parsed one takes its names with it (Greptile, PR #3220).
+        # Populated at class ingestion, read at resolution.
+        self.cpp_callable_fields: dict[str, set[str]] = {}
         # Java anonymous-class override methods: (anon_method_qn, method_name,
         # base_type_name, module_qn). An anon class `new Base(){ @Override m(){} }`
         # is not modelled as a subclass, so its overrides register under the
@@ -565,11 +571,15 @@ class DefinitionProcessor(
             f"{module_qn}{cs.SEPARATOR_DOT}{file_path.suffix.lstrip(cs.SEPARATOR_DOT)}"
         )
 
-    def emit_type_edges(self) -> int:
+    def emit_type_edges(
+        self, restore_imports: Callable[[str], None] | None = None
+    ) -> int:
         """Resolve queued return/parameter annotations into RETURNS/ACCEPTS.
 
         Runs once the registry holds every file's types (issue #1527); the
         queue empties, so a watch-mode re-parse only re-resolves its own.
+        `restore_imports` loads an unchanged module's imports, by its qn, for
+        the annotations requeued from it (#3007 review).
         """
         from .type_facts import (
             TypeReferenceResolver,
@@ -594,6 +604,7 @@ class DefinitionProcessor(
             self.csharp_class_generic_arity,
         )
         resolver.join_partial_groups(self.csharp_partial_groups)
+        resolver.join_unparsed(self.rehydrated_definition_paths, restore_imports)
         emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
         # Parameter OF_TYPE edges resolve in the same pass, for the same
         # reason: the annotation may name a type from a later file.
@@ -877,6 +888,8 @@ class DefinitionProcessor(
             module_props[cs.KEY_DOCSTRING] = docstring
         if fingerprint := interface_fingerprint(root_node, language):
             module_props[cs.KEY_INTERFACE_FINGERPRINT] = fingerprint
+        if package := self.go_package_names.get(module_qn):
+            module_props[cs.KEY_GO_PACKAGE] = package
         if language == cs.SupportedLanguage.PHP and (
             namespace := declared_namespace(root_node)
         ):
@@ -1028,6 +1041,7 @@ class DefinitionProcessor(
             module_qn, self._pending_direct_module_exports
         )
         self._pending_direct_module_exports = []
+        self.record_esm_default_export(root_node, module_qn)
 
     def process_dependencies(self, filepath: Path) -> None:
         logger.debug(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))
@@ -1049,7 +1063,9 @@ class DefinitionProcessor(
             cs.NodeLabel.EXTERNAL_PACKAGE, {cs.KEY_NAME: dep_name}
         )
 
-        rel_properties = {cs.KEY_VERSION_SPEC: dep_spec} if dep_spec else {}
+        rel_properties: PropertyDict = (
+            {cs.KEY_VERSION_SPEC: dep_spec} if dep_spec else {}
+        )
         if properties:
             rel_properties |= properties
 

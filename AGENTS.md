@@ -6,8 +6,7 @@ alone cannot explain.
 
 Codex, Cursor, Windsurf and Copilot's coding agent read this file directly;
 Claude Code reads it through `CLAUDE.md`, and Copilot chat and code review
-through `.github/copilot-instructions.md`. Those files only point here, so
-edit this one.
+through `.github/copilot-instructions.md`.
 
 ## Bumping tree-sitter
 
@@ -41,13 +40,14 @@ To move them:
    `cgr-graph-rs` floor in `pyproject.toml`), as CI requires for any change
    to the library. If the new crate needs a newer Rust than
    `RUST_TOOLCHAIN` in `.clusterfuzzlite/Dockerfile`, raise that too: the
-   fuzz build compiles the crate with it and fails otherwise.
+   fuzz build compiles the crate with it and fails otherwise. The same goes
+   for `RUST_FUZZ_TOOLCHAIN`, the nightly the crate's cargo-fuzz targets are
+   built with, and for the `rust` image in the root `Dockerfile`, which
+   builds the crate into the release image and must be no older than
+   `RUST_TOOLCHAIN` (`test_rust_extension_packaging.py` checks this).
 5. Run `codebase_rag/tests/test_native_trees.py` and
    `cargo test --manifest-path rust/cgr_graph_rs/Cargo.toml`.
 
-If only one side moves, nothing breaks for users: the bridge sees a
-py-tree-sitter it was not checked against, turns itself off, and the Python
-code runs, only slower. `test_native_trees.py` fails in that case, and when
-the pins disagree with the checked pair, so the slowdown cannot slip in
-unnoticed. Dependabot bumps the `pyproject.toml` pin on its own; such a pull
+`test_native_trees.py` fails when the pins disagree with the checked pair.
+Dependabot bumps the `pyproject.toml` pin on its own; such a pull
 request fails those tests until steps 1 to 5 are done.

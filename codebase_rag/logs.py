@@ -60,6 +60,10 @@ CPP_FRONTEND_NO_COMPDB = (
     "bear -- make)"
 )
 CPP_FRONTEND_COVERED = "C/C++ libclang frontend covered {count} file(s)"
+CPP_FRONTEND_TU_LOAD_FAILED = (
+    "C/C++ libclang frontend could not parse {file} (compile directory "
+    "{directory}); its macros, includes and aliases are skipped"
+)
 CPP_FRONTEND_HYBRID_PENDING = (
     "C/C++ hybrid frontend queued {count} macro use(s) for span attribution"
 )
@@ -175,7 +179,7 @@ REGISTRY_REHYDRATED = "Rehydrated {count} definitions from the graph for resolut
 IMPORT_STATE_RESTORED = (
     "Restored the imports of {count} unchanged modules the re-parsed files reach"
 )
-INCREMENTAL_REBUILD_INBOUND = "Rebuilding inbound edges from {count} dependent files"
+INCREMENTAL_REBUILD_INBOUND = "Restored {count} inbound edges from unchanged files"
 MARKDOWN_BROKEN_LINKS = (
     "{count} relative Markdown link(s) in {documents} document(s) point at files "
     "that do not exist; each document lists them in its Module's broken_links"
@@ -314,6 +318,18 @@ QDRANT_BUNDLED_NOT_RUNNING = (
     "embedded store at '{path}'. Run 'cgr daemon up' to store them in the "
     "stack's Qdrant"
 )
+QDRANT_BUNDLED_OTHER_MEMGRAPH = (
+    "The cgr stack's Qdrant at {url} holds the embeddings of the stack's own "
+    "Memgraph, and the Memgraph in use, {memgraph}, is not it, so embeddings "
+    "stay in the embedded store at '{path}'. Set QDRANT_URL={url} to share the "
+    "stack's Qdrant on purpose"
+)
+QDRANT_BUNDLED_OTHER_GRAPH = (
+    "The cgr stack's Qdrant holds the embeddings of the stack's own Memgraph, "
+    "and the graph in use is not in Memgraph (GRAPH_BACKEND={backend}), so "
+    "embeddings stay in the embedded store at '{path}'. Set QDRANT_URL to the "
+    "stack's Qdrant to share it on purpose"
+)
 QDRANT_BUNDLED_UNVERIFIED = (
     "Could not confirm through Docker Compose that the cgr stack's Qdrant is "
     "running ({detail}), so embeddings stay in the embedded store at '{path}'"
@@ -382,6 +398,15 @@ LOCALS_QUERY_FAILED = "Failed to create locals query for {lang}: {error}"
 GRAMMAR_LOADED = "Successfully loaded {lang} grammar."
 GRAMMAR_LOAD_FAILED = "Failed to load {lang} grammar: {error}"
 PARSERS_LAZY_READY = "Parser registry ready; grammars load on first use."
+# Once per sync, after every file was seen: files of a supported language
+# indexed as bare File nodes for want of its grammar (issue #2905).
+GRAMMARS_MISSING_FILES = (
+    "{count} file(s) ({languages}) were indexed as plain File nodes, with no "
+    "modules, functions, classes or imports: their tree-sitter grammars are "
+    "not installed. Install them, e.g. "
+    'pip install "code-graph-rag[treesitter-full]", then sync again.'
+)
+GRAMMARS_MISSING_LANGUAGE_COUNT = "{language}: {count}"
 LANG_LIST_AST_GREP_UNREADABLE = (
     "Cannot read the ast-grep tier's language configs, so its languages are "
     "left out of the list: {error}"
@@ -399,6 +424,14 @@ CGRIGNORE_READ_FAILED = "Failed to read {path}: {error}"
 
 CGR_INSTRUCTIONS_LOADED = "Loaded project instructions from {path} ({chars} chars)"
 CGR_INSTRUCTIONS_READ_FAILED = "Failed to read project instructions {path}: {error}"
+CGR_INSTRUCTIONS_UNAPPROVED = (
+    "Skipped {path}: its current content has not been approved. Approve it in an "
+    "interactive session (cgr start), or export CGR_TRUST_PROJECT_INSTRUCTIONS=true "
+    "(a .env file cannot set it)"
+)
+CGR_INSTRUCTIONS_STORE_UNREADABLE = (
+    "Ignoring unreadable instruction approvals {path}: {error}"
+)
 
 # File watcher logs
 WATCHER_ACTIVE = "File watcher is now active."
@@ -505,6 +538,10 @@ WATCHING = "Watching for changes in: {path} (project {project})"
 
 # Build logs
 BUILD_BINARY = "Building binary: {name}"
+# Not the grammar-bindings BUILD_SUCCESS / BUILD_FAILED above: those name a
+# language and take `lang`, which this build never passed (issue #2880).
+BUILD_BINARY_SUCCESS = "Successfully built binary {name}"
+BUILD_BINARY_FAILED = "Failed to build binary {name}: stdout={stdout}, stderr={stderr}"
 BUILD_PROGRESS = "This may take a few minutes..."
 BUILD_READY = "Binary is ready for distribution!"
 BINARY_INFO = "Binary: {path}"
@@ -556,6 +593,13 @@ MG_SET_WITHOUT_BACKEND = (
 MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
 MG_CONNECTED = "Successfully connected to Memgraph."
+MG_UNSUPPORTED_VERSION = (
+    "Memgraph {version} at {host}:{port} is not supported: cgr needs "
+    "{major}.x or later, and a query this server cannot parse fails with a "
+    "bare parser error (such as \"mismatched input '|'\" for a generated "
+    "query's label alternation). Run `cgr daemon up` to start the supported "
+    "server."
+)
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
 MG_DELIBERATE_EXIT = (
     "Command ended with {kind} inside the graph connection; closing it normally"
@@ -580,6 +624,9 @@ MG_LIST_PROJECTS_FAILED = (
 )
 MG_DELETING_PROJECT = "--- Deleting project: {project_name} ---"
 MG_PROJECT_DELETED = "--- Project {project_name} deleted. ---"
+MG_PROJECT_NOT_DELETED = (
+    "--- Project {project_name} not deleted: its root no longer matches. ---"
+)
 MG_ENSURING_CONSTRAINTS = "Ensuring constraints..."
 MG_CONSTRAINTS_DONE = "Constraints checked/created."
 MG_LEGACY_PURGE = (
@@ -1005,6 +1052,7 @@ JAVA_FOUND_INSTANCE = "Found instance method: {result}"
 JAVA_INSTANCE_NOT_FOUND = "Instance method not found: {type}.{method}"
 JAVA_ENHANCED_FOR_VAR = "Enhanced for loop variable: {name} -> {type}"
 JAVA_ENHANCED_FOR_VAR_ALT = "Enhanced for loop variable (alt): {name} -> {type}"
+JAVA_CATCH_PARAMETER = "Catch parameter: {name} -> {type}"
 
 # JS type inference logs
 JS_VAR_DECLARATOR_FOUND = "Found variable declarator: {var_name} in {module_qn}"
@@ -1166,6 +1214,10 @@ MCP_SERVER_NO_ROOT = (
     "[GraphCode MCP] No project root configured, using current directory: {path}"
 )
 MCP_SERVER_ROOT_RESOLVED = "[GraphCode MCP] Project root resolved to: {path}"
+MCP_SERVER_BROAD_ROOT = (
+    "[GraphCode MCP] TARGET_REPO_PATH is {path}, which holds your home "
+    "directory: every file tool can reach every file under it."
+)
 MCP_SERVER_USING_ROOT = "[GraphCode MCP] Using project root: {path}"
 MCP_SERVER_WORKSPACE = "MCP server scoped to workspace {name!r} ({count} repos)"
 MCP_SERVER_CONFIG_ERROR = "[GraphCode MCP] Configuration error: {error}"
@@ -1173,6 +1225,7 @@ MCP_SERVER_INIT_SERVICES = "[GraphCode MCP] Initializing services..."
 MCP_SERVER_INIT_SUCCESS = "[GraphCode MCP] Services initialized successfully"
 MCP_SERVER_CALLING_TOOL = "[GraphCode MCP] Calling tool: {name}"
 MCP_SERVER_UNKNOWN_TOOL = "[GraphCode MCP] Unknown tool: {name}"
+MCP_SERVER_READ_ONLY_REFUSED = "[GraphCode MCP] Refused {name}: the server is read-only"
 MCP_SERVER_TOOL_ERROR = "[GraphCode MCP] Error executing tool '{name}': {error}"
 MCP_SERVER_STARTING = "[GraphCode MCP] Starting MCP server..."
 MCP_SERVER_CREATED = "[GraphCode MCP] Server created, starting stdio transport..."
@@ -1206,11 +1259,40 @@ CLI_SYNC_MARKER_NOT_CLEARED = (
     "The sync of {project} finished, but its incomplete-run marker could not "
     "be cleared: {error}. The graph is complete; the next sync clears it."
 )
+REBUILD_OVER_STRANDED_RUNS = (
+    "{count} earlier run(s) that wrote to project {project} stopped part-way, "
+    "so its graph may be partial. Re-indexing the whole repository instead of "
+    "only what changed."
+)
+STRANDED_RUNS_RETIRED = (
+    "Cleared {count} incomplete-run marker(s) the rebuild of {project} superseded."
+)
+STRANDED_RUNS_UNREADABLE = (
+    "Could not read which earlier runs left project {project} partial "
+    "({error}); their markers stay until a later full sync."
+)
+EXITED_RUNS_RETIRED = (
+    "Cleared {count} incomplete-run marker(s) of {project} left by runs whose "
+    "process has exited."
+)
+EXITED_RUNS_UNREADABLE = (
+    "Could not read which runs of {project} left markers ({error}); those markers stay."
+)
+EXITED_RUNS_NOT_RETIRED = (
+    "The incomplete-run markers of {project} left by exited runs could not be "
+    "cleared: {error}. cgr status may list it as interrupted."
+)
+STRANDED_RUNS_NOT_RETIRED = (
+    "The rebuild of {project} finished, but the incomplete-run markers it "
+    "superseded could not be cleared: {error}. The graph is complete; the next "
+    "full sync clears them."
+)
 CLI_DELETE_MARKER_NOT_CLEARED = (
     "Project {project} was deleted, but its incomplete-run marker could not be "
     "cleared: {error}. cgr status may list it as interrupted until it is synced "
     "again."
 )
+CLI_PRUNE_VECTORS_FAILED = "Embedding deletion failed for {project}: {error}"
 CLI_DELETE_GLOSS_SWEEP_SKIPPED = (
     "The delete of project {project} failed, and whether it still exists "
     "could not be read: {error}. Its notes (glosses) were not swept."
@@ -1290,6 +1372,7 @@ INTERFACE_FLOW_SOURCES_UNREAD = (
     "in; every dependent caller is re-parsed."
 )
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
+PRIOR_FLOWS_UNREAD = "Could not read the prior resource flows of {path}: {error}"
 DEPENDENCIES_RESYNC = (
     "A dependency manifest changed; rebuilding the external dependencies of "
     "'{project}' from every manifest"
@@ -1429,6 +1512,19 @@ PRUNE_SKIPPED_REGISTRY_UNREAD = (
     "run prunes them."
 )
 PRUNE_PENDING_NOT_UPDATED = "Orphan-prune pending marker not updated"
+EXPOSES_CLEANUP_MARKER_NOT_UPDATED = "EXPOSES cleanup marker not updated"
+EXPOSES_CLEANUP_NOT_RECORDED = (
+    "Could not record a skipped EXPOSES cleanup in {path} ({error}). This run "
+    "keeps no directory-mtime map instead, so the next run cannot treat the "
+    "project as in sync and retries the cleanup."
+)
+EXPOSES_CLEANUP_SNAPSHOT_KEPT = (
+    "Could not remove {path} ({error}). The hash cache marks every file "
+    "unconfirmed instead, so the next run re-parses the project and retries "
+    "the cleanup. If the cache cannot be written either, that run may treat "
+    "the project as in sync: delete the file by hand, or re-run once the path "
+    "is writable."
+)
 PRUNE_QUERY_FAILED = "Could not read {label} paths from the graph; skipping its prune."
 PRUNE_FOUND = "Found {count} orphan {label} nodes to remove"
 PRUNE_DELETING = "Pruning orphan {label}: {path}"
@@ -1556,6 +1652,10 @@ JAVA_FRONTEND_UNAVAILABLE = (
 )
 JAVA_FRONTEND_FACTS = (
     "javac facts: {calls} resolved call sites, {externals} external sites"
+)
+TSCONFIG_UNPARSEABLE = (
+    "Could not read {path} as JSONC; its `paths` and `baseUrl` are ignored, "
+    "so its alias imports resolve as packages"
 )
 
 # Sync lock (issue #2441)

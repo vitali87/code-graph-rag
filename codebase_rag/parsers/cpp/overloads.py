@@ -85,8 +85,12 @@ def cpp_overload_signature(method_node: Node) -> OverloadSignature | None:
     mangled), so the caller keeps the plain name.
     """
     declarator = _function_declarator(method_node)
-    if declarator is None:
-        return None
+    return None if declarator is None else cpp_declarator_signature(declarator)
+
+
+def cpp_declarator_signature(declarator: Node) -> OverloadSignature | None:
+    """The signature one `function_declarator` spells, for a declaration that
+    declares several functions (`static int f(int), g(double);`)."""
     parameters = declarator.child_by_field_name(cs.FIELD_PARAMETERS)
     if parameters is None:
         return None

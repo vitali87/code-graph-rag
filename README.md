@@ -61,11 +61,8 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Security Enhancements**: Incorporates an OSS Scanner build image and threat model.
-- **Data Export**: Ensures all node properties within the graph are exported.
-- **SQL Fixes**: Addresses several SQL-related issues including grammar errors and dead-code roots.
-- **Rust Fixes**: Improves indexing of methods and handling of types in Rust code.
-- **Build Fixes**: Repairs build issues related to eMudhra root certificates and distrusted components.
+- **Security Fix**: Addressed a potential issue with parameter defaults.
+- **Stack Handling**: Improved stack management for Qdrant and Memgraph.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -146,7 +143,7 @@ To upgrade an existing install, run `uv tool upgrade code-graph-rag` (with pipx,
 You also need Python 3.12+ and `ripgrep`. The graph lives in an embedded SQLite file by default, so there is no database server to run: no Docker and no `cmake`. Memgraph and Neo4j remain available as opt-in backends ([Graph Backends](docs/architecture/embedded-graph.md)). Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
 
 > [!NOTE]
-> The wheel is pure Python (`py3-none-any`), so it installs on any platform with Python 3.12 or newer. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md#older-system-interpreters) for the commands.
+> cgr requires its native extension, `cgr-graph-rs`, which ships for CPython 3.12 or newer on Linux (x86_64, aarch64), macOS and Windows x64, so it installs on those platforms only. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md#older-system-interpreters) for the commands.
 
 ## Quick Start
 
@@ -233,6 +230,10 @@ Please see [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines. Good 
 For issues or questions, check the [Troubleshooting](docs/advanced/troubleshooting.md) guide first, then open an issue.
 
 If cgr is useful to you, please consider pledging support on [GitHub Sponsors](https://github.com/sponsors/vitali87). cgr links the page under `cgr --version` and, in a terminal, after most commands finish; set `CGR_SPONSOR_PLEDGE=false` to hide that line.
+
+## Accessibility
+
+[ACCESSIBILITY.md](ACCESSIBILITY.md) describes what cgr and its documentation support for people using assistive technology or alternative settings, the known limitations and their workarounds, and how to report a barrier.
 
 ## License
 
