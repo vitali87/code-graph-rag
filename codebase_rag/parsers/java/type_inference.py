@@ -330,6 +330,20 @@ class JavaTypeInferenceEngine(
         for loop in _nodes_of_type(enclosing, cs.TS_ENHANCED_FOR_STATEMENT):
             if _encloses(loop, site):
                 self._process_enhanced_for_statement(loop, types, module_qn)
+        # A catch parameter and a try-with-resources variable are in scope in
+        # their clause and statement, nearer than the fields (bot review on
+        # PR #2991).
+        for param in _nodes_of_type(enclosing, cs.TS_CATCH_FORMAL_PARAMETER):
+            if param.parent is not None and _encloses(param.parent, site):
+                self._process_catch_formal_parameter(param, types, module_qn)
+        for resource in _nodes_of_type(enclosing, cs.TS_JAVA_RESOURCE):
+            statement = resource.parent.parent if resource.parent else None
+            if (
+                statement is not None
+                and resource.end_byte <= site.start_byte
+                and _encloses(statement, site)
+            ):
+                self._process_java_resource(resource, types, module_qn)
         # A lambda around `site` binds its parameters nearer than the fields
         # and the method's own names, outermost first so the innermost wins
         # (bot review on PR #2991).

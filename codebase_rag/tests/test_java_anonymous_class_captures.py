@@ -213,6 +213,31 @@ public class Nearest {
     return new Local();
   }
 
+  Handler caught() {
+    try {
+      return null;
+    } catch (Other codec) {
+      class Local implements Handler {
+        @Override
+        public String handle(String in) {
+          return codec.encode(in); // catch-parameter
+        }
+      }
+      return new Local();
+    }
+  }
+
+  Handler withResource() {
+    try (Other codec = new Other()) {
+      return new Handler() {
+        @Override
+        public String handle(String in) {
+          return codec.encode(in); // resource-variable
+        }
+      };
+    }
+  }
+
   static Base anonymousInherited(final Codec codec) {
     return new Base() {
       String run(String in) {
@@ -310,7 +335,14 @@ def test_a_field_of_the_anonymous_class_shadows_the_captured_name(
 
 
 @pytest.mark.parametrize(
-    "marker", ["lambda-parameter", "inherited-field", "anonymous-inherited-field"]
+    "marker",
+    [
+        "lambda-parameter",
+        "inherited-field",
+        "anonymous-inherited-field",
+        "catch-parameter",
+        "resource-variable",
+    ],
 )
 def test_the_nearest_binding_of_the_name_types_the_receiver(
     graph: RecordedGraph, marker: str
