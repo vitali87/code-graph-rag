@@ -2489,15 +2489,19 @@ class CallResolver:
         # `Base(1)` names the class, not its constructor: unqualified lookup
         # never finds a constructor, so the construction path must bind it
         # (INSTANTIATES and the destructor edge) instead (CodeRabbit, PR #2948).
+        # A data member of the name hides a base's method as a member
+        # function does: `void (*dispatch)();` in `D` makes `dispatch()` call
+        # the pointer, not `B::dispatch` (Greptile, PR #2948). So lookup runs
+        # over every class declaring the name, field or method.
         definers = [
             class_qn
             for class_qn in self._mro(owner)
             if qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
             != call.call_name
-            and self.function_registry.get(
-                f"{class_qn}{cs.SEPARATOR_DOT}{call.call_name}"
+            and (
+                self._declares_cpp_method(class_qn, call.call_name)
+                or self._declares_cpp_field(class_qn, call.call_name)
             )
-            == cs.NodeLabel.METHOD.value
         ]
         # A member hides the name in every base its class derives from, so
         # lookup finds the definers no other definer derives from: in a
@@ -2511,12 +2515,25 @@ class CallResolver:
                 other != class_qn and class_qn in self._mro(other) for other in definers
             )
         ]
-        if len(found) != 1:
+        if len(found) != 1 or not self._declares_cpp_method(found[0], call.call_name):
             return None
         return (
             cs.NodeLabel.METHOD.value,
             f"{found[0]}{cs.SEPARATOR_DOT}{call.call_name}",
         )
+
+    def _declares_cpp_method(self, class_qn: str, name: str) -> bool:
+        return (
+            self.function_registry.get(f"{class_qn}{cs.SEPARATOR_DOT}{name}")
+            == cs.NodeLabel.METHOD.value
+        )
+
+    def _declares_cpp_field(self, class_qn: str, name: str) -> bool:
+        # A function-pointer or `std::function` member, or any typed field
+        # (an object with `operator()`).
+        return class_qn in self.cpp_callable_fields.get(
+            name, ()
+        ) or name in self.type_inference.class_field_types.get(class_qn, {})
 
     def _enclosing_class(self, qualified_name: str) -> str | None:
         # The nearest class above a definition, through any functions it is

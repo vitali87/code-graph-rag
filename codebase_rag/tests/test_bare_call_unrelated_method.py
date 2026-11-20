@@ -119,6 +119,13 @@ FILES = {
         "  void closed() { { auto dispatch = [] {}; } dispatch(); }\n"
         "};\n"
     ),
+    # A data member hides a base's method of its name: `dispatch()` calls
+    # the pointer (Greptile, PR #2948).
+    "c/field.h": (
+        "class FB { public: void dispatch() {} };\n"
+        "class FD : public FB {\n public:\n"
+        "  void (*dispatch)();\n  void run() { dispatch(); }\n};\n"
+    ),
     "c/hide.cpp": (
         '#include "hide.h"\nvoid HD::run(void (*dispatch)()) { dispatch(); }\n'
     ),
@@ -216,6 +223,12 @@ def test_a_cpp_parameter_or_local_hides_an_inherited_method(
     graph: RecordedGraph, caller: str
 ) -> None:
     assert "c.hide.h.HB.dispatch" not in _callees(graph, caller)
+
+
+def test_a_cpp_data_member_hides_an_inherited_method(graph: RecordedGraph) -> None:
+    # Whatever the name fallback makes of the call, it is no exact edge to
+    # the base's method the field hides.
+    assert _callees(graph, "c.field.FD.run").get("c.field.FB.dispatch") != "exact"
 
 
 # Negative: what must not change.
