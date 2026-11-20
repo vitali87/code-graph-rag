@@ -14,6 +14,8 @@ from .source_encoding import decode_python_source, decode_wide_source
 def read_source_lines(file_path: Path, encoding: str = ENCODING_UTF8) -> list[str]:
     """The file's lines as the indexer read them, line endings kept."""
     raw_bytes = file_path.read_bytes()
+    if file_path.suffix == cs.EXT_IPYNB:
+        return _notebook_lines(raw_bytes)
     # The indexer parsed a Python source in the encoding it declares, and
     # the lines it recorded are lines of that text (issue #2445).
     # Any other UTF-16/32 source with a BOM was parsed as its decoded text
@@ -109,6 +111,24 @@ def validate_source_location(
         return True, path_obj
     except Exception:
         return False, None
+
+
+def _notebook_lines(raw_bytes: bytes) -> list[str]:
+    """A notebook's Python source as lines, each ending kept: the indexer
+    recorded its lines against that text, not the JSON on disk, whose same
+    lines are JSON strings or, minified, do not exist (issue #2480)."""
+    # Imported here for the reason _notebook_source_lines gives.
+    from ..parsers.notebook import notebook_source_text
+
+    text = notebook_source_text(raw_bytes)
+    if text is None:
+        return []
+    # Split on newlines alone, as the parser counted them.
+    parts = text.split("\n")
+    lines = [f"{part}\n" for part in parts[:-1]]
+    if parts[-1]:
+        lines.append(parts[-1])
+    return lines
 
 
 def _notebook_source_lines(

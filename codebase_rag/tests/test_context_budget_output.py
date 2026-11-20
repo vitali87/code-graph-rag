@@ -359,3 +359,49 @@ def test_a_decorated_test_is_quoted_with_its_decorators(temp_repo: Path) -> None
     assert test["source"] == (
         "@pytest.mark.slow\ndef test_core():\n    assert core(1) == 2"
     )
+
+
+def _notebook_calling_core(indent: int | None) -> str:
+    cell = {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "from app import core\n",
+            "\n",
+            "def report():\n",
+            "    return core(2)\n",
+        ],
+    }
+    document = {
+        "cells": [cell],
+        "metadata": {"language_info": {"name": "python"}},
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+    return json.dumps(document, indent=indent, sort_keys=True) + "\n"
+
+
+@pytest.mark.parametrize("indent", [1, None], ids=["pretty", "minified"])
+def test_a_notebook_caller_is_quoted_as_python(
+    temp_repo: Path, indent: int | None
+) -> None:
+    # The cached reader read a notebook as its JSON, so the caller's line
+    # was a JSON string, or, in a minified notebook, past the file's end
+    # and missing. The indexer recorded the line against the notebook's
+    # Python source, the text `extract_source_lines` reads back.
+    store = _repo(
+        temp_repo,
+        {
+            "app.py": "def core(x):\n    return x + 1\n",
+            "analysis.ipynb": _notebook_calling_core(indent),
+        },
+    )
+
+    slice_ = context(store.fetch_all, PROJECT, f"{PROJECT}.app.core", 4000, temp_repo)
+
+    callers = [
+        p for p in slice_["pieces"] if p["why_included"] == cs.CONTEXT_WHY_CALLER
+    ]
+    assert [p["source"].strip() for p in callers] == ["return core(2)"], slice_
