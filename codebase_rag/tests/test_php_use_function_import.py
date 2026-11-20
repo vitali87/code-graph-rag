@@ -90,7 +90,9 @@ def test_reparse_clears_stale_php_function_imports(tmp_path: Path) -> None:
     assert "enum_value" not in processor.php_function_imports.get("proj.mod", set())
 
 
-def test_class_alias_survives_a_same_named_const_and_reparse(tmp_path: Path) -> None:
+def test_const_and_function_aliases_survive_a_same_named_class_and_reparse(
+    tmp_path: Path,
+) -> None:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.PHP not in parsers:
         pytest.skip("php tree-sitter grammar not installed")
@@ -103,13 +105,13 @@ def test_class_alias_survives_a_same_named_const_and_reparse(tmp_path: Path) -> 
         b"use function Helpers\\build as Target;\n"
     ).root_node
     processor.parse_imports(both, "proj.mod", cs.SupportedLanguage.PHP, queries)
-    assert processor.php_class_imports["proj.mod"]["Target"] == "Vendor.Widget"
     assert "Target" in processor.php_const_imports["proj.mod"]
     assert "Target" in processor.php_function_imports["proj.mod"]
 
     cleared = php.parse(b"<?php\nnamespace App;\n").root_node
     processor.parse_imports(cleared, "proj.mod", cs.SupportedLanguage.PHP, queries)
-    assert "proj.mod" not in processor.php_class_imports
+    assert "proj.mod" not in processor.php_const_imports
+    assert "proj.mod" not in processor.php_function_imports
 
 
 def test_same_alias_construction_follows_the_class(tmp_path: Path) -> None:
@@ -186,11 +188,6 @@ def test_grouped_use_records_prefixed_class_function_and_const(tmp_path: Path) -
         b"use function Other\\{alpha, beta as b};\n"
     ).root_node
     processor.parse_imports(source, "proj.mod", cs.SupportedLanguage.PHP, queries)
-    classes = processor.php_class_imports["proj.mod"]
-    assert classes["R"] == "App.Resolver"
-    assert classes["C"] == "App.Models.Crate"
-    assert "foo" not in classes
-    assert "BAR" not in classes
     assert processor.php_function_imports["proj.mod"] == {"foo", "alpha", "b"}
     assert processor.php_const_imports["proj.mod"] == {"BAR"}
     mapping = processor.import_mapping["proj.mod"]

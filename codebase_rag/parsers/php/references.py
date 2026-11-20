@@ -15,8 +15,8 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...types_defs import NodeType
 from ..call_resolver import CallResolver, _php_fold
-from ..php import namespaces as php_namespaces
 from . import callables as php_callables
+from . import class_names as php_class_names
 
 _CLASS_LABELS = frozenset(
     {NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM, NodeType.TYPE}
@@ -146,18 +146,14 @@ def _receiver_methods(
             if relative is None:
                 return []
             return _scope_methods_of(host, class_context, relative, method)
-        return _methods_on_classes(
-            host, _classes_for_type(host, module_qn, scope), method
-        )
+        return _methods_on_classes(host, _classes_for_type(host, scope), method)
     if receiver.type == cs.TS_PHP_VARIABLE_NAME:
         if safe_text(receiver) == cs.PHP_THIS:
             return _methods_on_classes(host, _one(class_context), method)
         type_node = php_callables.parameter_class_type(receiver)
         if type_node is None:
             return []
-        return _methods_on_classes(
-            host, _classes_for_type(host, module_qn, type_node), method
-        )
+        return _methods_on_classes(host, _classes_for_type(host, type_node), method)
     # A class named by a string is absolute, as in `'App\\Handler::m'`
     # (PR #3652 review).
     dotted = php_callables.string_class(receiver)
@@ -225,55 +221,19 @@ def _methods_on_classes(
     ]
 
 
-def _classes_for_type(host: _PhpEmitter, module_qn: str, node: Node) -> list[str]:
-    dotted = _compile_class_name(host, module_qn, node)
+def _classes_for_type(host: _PhpEmitter, node: Node) -> list[str]:
+    dotted = _compile_class_name(node)
     if dotted is None:
         return []
     return _classes_for_fqcn(host._resolver, dotted)
 
 
-def _compile_class_name(host: _PhpEmitter, module_qn: str, node: Node) -> str | None:
-    # Compiler resolution, not the string-callable rule. Unqualified names
-    # take a `use` alias or the enclosing namespace. A qualified name applies
-    # the import to its first segment, then prepends the namespace. A leading
-    # slash is already absolute.
-    text = safe_text(node)
-    if not text:
-        return None
-    absolute = text.startswith(cs.PHP_NAMESPACE_SEPARATOR)
-    parts = [part for part in text.lstrip("\\").split("\\") if part]
-    if not parts:
-        return None
-    if absolute:
-        return cs.SEPARATOR_DOT.join(parts)
-    if node.type == cs.TS_PHP_RELATIVE_NAME:
-        # `namespace\Foo` is `Foo` in the enclosing namespace, never an import.
-        namespace = php_namespaces.enclosing_namespace(node)
-        body = cs.SEPARATOR_DOT.join(parts[1:])
-        return f"{namespace}.{body}" if namespace else body
-    mapped = _class_import(host, module_qn, parts[0])
-    if len(parts) == 1:
-        if mapped is not None:
-            return mapped
-        namespace = php_namespaces.enclosing_namespace(node)
-        return f"{namespace}.{parts[0]}" if namespace else parts[0]
-    if mapped is not None:
-        tail = cs.SEPARATOR_DOT.join(parts[1:])
-        return f"{mapped}.{tail}" if tail else mapped
-    namespace = php_namespaces.enclosing_namespace(node)
-    body = cs.SEPARATOR_DOT.join(parts)
-    return f"{namespace}.{body}" if namespace else body
-
-
-def _class_import(host: _PhpEmitter, module_qn: str, name: str) -> str | None:
-    # Class aliases live apart from `use function` and `use const`. Those
-    # may reuse the same local name, and the shared import map keeps only
-    # the later path, which is not what `new` means.
-    class_map = host._resolver.import_processor.php_class_imports.get(module_qn, {})
-    head = host._resolver._php_import_key(name, class_map)
-    if head is None:
-        return None
-    return class_map[head]
+def _compile_class_name(node: Node) -> str | None:
+    # Compiler resolution, not the string-callable rule: the same reading a
+    # written `new Name` gets, with the `use` aliases of the site's own
+    # namespace block (PR #3652 review).
+    path = php_class_names.written_class_path(node)
+    return cs.SEPARATOR_DOT.join(path) if path else None
 
 
 def _classes_for_fqcn(resolver: CallResolver, dotted: str) -> list[str]:

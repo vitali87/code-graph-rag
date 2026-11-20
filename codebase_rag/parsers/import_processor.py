@@ -1057,25 +1057,6 @@ def _php_use_clauses(use_node: Node) -> tuple[str, list[Node]]:
     ]
 
 
-def _php_bare_class_use(clause: Node) -> tuple[str, str] | None:
-    """(global class name, local name) for a top-level `use Foo [as Bar]`."""
-    alias_node = clause.child_by_field_name(cs.FIELD_ALIAS)
-    alias_at = alias_node.start_byte if alias_node is not None else None
-    name_node = next(
-        (
-            child
-            for child in clause.named_children
-            if child.type == cs.TS_PHP_NAME and child.start_byte != alias_at
-        ),
-        None,
-    )
-    name = safe_decode_with_fallback(name_node) if name_node is not None else ""
-    if not name:
-        return None
-    alias = safe_decode_with_fallback(alias_node) if alias_node is not None else ""
-    return name, alias or name
-
-
 def _ts_alias_candidates(
     import_path: str, aliases: Sequence[tuple[str, str, bool]]
 ) -> list[tuple[int, str]]:
@@ -1966,7 +1947,6 @@ class ImportProcessor:
         "python_binding_order",
         "php_function_imports",
         "php_const_imports",
-        "php_class_imports",
         "php_module_namespaces",
         "php_class_index",
         "php_class_module",
@@ -2421,10 +2401,6 @@ class ImportProcessor:
         # classes, but PHP keeps them in a different symbol table, so a
         # class lookup must ignore these (issue #3117 review).
         self.php_const_imports: dict[str, set[str]] = {}
-        # Class aliases only. A `use const` or `use function` of the same
-        # local name is legal and overwrites `import_mapping`, but it does
-        # not bind `new` (issue #3117 review).
-        self.php_class_imports: dict[str, dict[str, str]] = {}
         # The `namespace Vendor\Pkg` a PHP module declares, keyed by module qn,
         # stored dotted (`Vendor.Pkg`) to match how import targets are recorded.
         #
@@ -2864,7 +2840,6 @@ class ImportProcessor:
         # `use function` import does not leave a stale exemption behind.
         self.php_function_imports.pop(module_qn, None)
         self.php_const_imports.pop(module_qn, None)
-        self.php_class_imports.pop(module_qn, None)
         # A re-index that removes or edits the `namespace` declaration must not
         # leave the old namespace bound to this module.
         self.php_module_namespaces.pop(module_qn, None)
@@ -8033,16 +8008,6 @@ class ImportProcessor:
     ) -> None:
         binding = _php_use_clause_binding(clause, prefix)
         if binding is None:
-            # `use Foo;` in a namespace imports the global class `Foo`. Only
-            # the class map takes it: the shared map has never bound a bare
-            # name, and function and call lookups keep that.
-            if not (prefix or is_function or is_const) and (
-                bare := _php_bare_class_use(clause)
-            ):
-                imported_path, local_name = bare
-                self.php_class_imports.setdefault(module_qn, {})[local_name] = (
-                    imported_path
-                )
             return
         imported_path, local_name = binding
         self.import_mapping[module_qn][local_name] = imported_path
@@ -8052,17 +8017,13 @@ class ImportProcessor:
             use_node,
             imported_path.split(cs.SEPARATOR_DOT)[-1],
         )
+        # Class aliases are read from the syntax tree, scoped to their
+        # namespace block (`php/class_names.py`); only function and constant
+        # imports are kept here.
         if is_function:
             self.php_function_imports.setdefault(module_qn, set()).add(local_name)
         elif is_const:
             self.php_const_imports.setdefault(module_qn, set()).add(local_name)
-        else:
-            # `use \Vendor\Widget` is the same class as `use Vendor\Widget`.
-            # The FQCN index keys have no leading dot (PR #3652 review). The
-            # shared map still keeps it, which is issue #3656.
-            self.php_class_imports.setdefault(module_qn, {})[local_name] = (
-                imported_path.lstrip(cs.SEPARATOR_DOT)
-            )
 
     def _handle_php_include_require(self, node: Node, module_qn: str) -> None:
         for child in node.children:

@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.dead_code import (
@@ -1206,3 +1208,129 @@ class Main
     _run_updater(store, root, force=False)
 
     assert edge in refs(), sorted(refs())
+
+
+def test_failed_class_restore_leaves_the_class_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Restoring an unchanged PHP class reads the graph for its module. When
+    # that read fails, the run is retried with the same updater, and a qn the
+    # registry already claimed is skipped, so its class-index entry never
+    # came back (PR #3652 review).
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=_StatefulIngestor(),
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name="App",
+    )
+    row = {
+        cs.KEY_QUALIFIED_NAME: "App.Resolver.Resolver",
+        cs.KEY_LABEL: cs.NodeLabel.CLASS.value,
+        cs.KEY_PATH: "Resolver.php",
+        cs.KEY_NAMESPACE: "App",
+        cs.KEY_NAME: "Resolver",
+    }
+    read_module_qns = updater._read_module_qns_by_path
+    attempts: list[int] = []
+
+    def fail_once() -> dict[str, str]:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise RuntimeError("graph read failed")
+        return read_module_qns()
+
+    monkeypatch.setattr(updater, "_read_module_qns_by_path", fail_once)
+    with pytest.raises(RuntimeError):
+        updater._rehydrate_definition_row(row)
+    assert updater._rehydrate_definition_row(row)
+    index = updater.factory.import_processor.php_class_index
+    assert "App.Resolver.Resolver" in index.get("app.resolver", set()), index
+
+
+def test_namespace_blocks_keep_their_own_aliases(tmp_path: Path) -> None:
+    # PHP scopes `use` to its namespace block. Two blocks importing different
+    # classes under one alias each reference their own (PR #3652 review).
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Vendor.php": r"""<?php
+namespace Vendor;
+
+class One
+{
+    private function run(): void {}
+}
+
+class Two
+{
+    private function run(): void {}
+}
+""",
+            "src/Blocks.php": r"""<?php
+namespace A {
+    use Vendor\One as R;
+
+    function a(): array { return [R::class, 'run']; }
+}
+
+namespace B {
+    use Vendor\Two as R;
+
+    function b(): array { return [R::class, 'run']; }
+}
+""",
+        },
+    )
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    one = f"{_PROJECT}.src.Vendor.One.run"
+    two = f"{_PROJECT}.src.Vendor.Two.run"
+    a = _one({src for src, dst in refs if src.endswith(".a")}, "function a")
+    b = _one({src for src, dst in refs if src.endswith(".b")}, "function b")
+    assert (a, one) in refs, sorted(refs)
+    assert (a, two) not in refs, sorted(refs)
+    assert (b, two) in refs, sorted(refs)
+    assert (b, one) not in refs, sorted(refs)
+
+
+def test_reassigned_typed_parameter_is_not_trusted(tmp_path: Path) -> None:
+    # `$h = new OtherHandler()` replaces what the typed parameter held, so
+    # `[$h, 'run']` must not name `Handler::run` (PR #3652 review).
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Wire.php": r"""<?php
+namespace App;
+
+class Handler
+{
+    private function run(): void {}
+}
+
+class OtherHandler
+{
+    private function run(): void {}
+}
+
+class Wire
+{
+    public function rebound(Handler $h): array
+    {
+        $h = new OtherHandler();
+        return [$h, 'run'];
+    }
+
+    public function kept(Handler $h): array
+    {
+        return [$h, 'run'];
+    }
+}
+""",
+        },
+    )
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    wire = f"{_PROJECT}.src.Wire.Wire"
+    handler_run = f"{_PROJECT}.src.Wire.Handler.run"
+    assert (f"{wire}.rebound", handler_run) not in refs, sorted(refs)
+    assert (f"{wire}.kept", handler_run) in refs, sorted(refs)

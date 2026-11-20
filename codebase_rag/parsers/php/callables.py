@@ -15,6 +15,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ..call_resolver import _php_fold
 from ..utils import safe_decode_text
+from . import class_names as php_class_names
 
 _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
 _STRING_CALLABLE = re.compile(
@@ -269,6 +270,9 @@ def parameter_class_type(var_node: Node) -> Node | None:
         if owner.type in cs.FQN_PHP_FUNCTION_TYPES:
             found = _parameter_class_on(owner, wanted)
             if found.declared:
+                # `$h = new Other()` in the body: the declared type is stale.
+                if php_class_names.variable_rebound(owner, var_node):
+                    return None
                 return found.node
         owner = owner.parent
     return None

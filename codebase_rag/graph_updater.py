@@ -4555,8 +4555,11 @@ class GraphUpdater:
             self.function_registry.claim_other_space(qn, node_type)
         ):
             return False
-        self.function_registry[qn] = node_type
+        # Before the registry claims the qn: the PHP restore can read the
+        # graph and fail, and a retry skips a qn already registered, which
+        # left its class-index entry missing (PR #3652 review).
         self._rehydrate_php_class(node_type, qn, row)
+        self.function_registry[qn] = node_type
         # A `@line` variant rejoins its natural qn's duplicate list: a call
         # into the name fans out to every same-named definition, and one read
         # back as a plain entry left the incremental graph with a single edge
