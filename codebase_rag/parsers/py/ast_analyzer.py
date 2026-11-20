@@ -1516,8 +1516,12 @@ class PythonAstAnalyzerMixin(_AstBase):
         # A literal types a name only when every binding of it is one: the
         # type map is flat per function, so `x = Bag(); x.get(k); x = {}`,
         # or a later `x = make_bag()` or `(x := make_bag())`, must not let
-        # the literal decide every call on `x` (bot review on PR #2912).
+        # the literal decide every call on `x` (bot review on PR #2912). A
+        # parameter is such a binding too: `def f(x: Bag)` then `x = {}`
+        # keeps the calls made through the argument (Greptile, PR #2912).
         rebound = self._names_bound_to_non_literals(binders)
+        if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+            rebound.update(_parameter_names(node))
         self._type_binders_simple(
             binders, nested_walruses, local_var_types, module_qn, rebound
         )

@@ -84,6 +84,8 @@ APP = (
     "class Resets:\n"
     "    def __init__(self):\n"
     "        self.cache = Bag()\n        self.cache.get(1)\n        self.cache = {}\n\n\n"
+    "def param_then_literal(x: Bag):\n"
+    "    first = x.get(1)\n    x = {}\n    return first\n\n\n"
     "def walrus_then_literal():\n"
     "    if (x := make_bag()) is not None:\n        first = x.get(1)\n"
     "    x = {}\n    return first\n"
@@ -158,6 +160,7 @@ def test_a_call_on_a_builtin_value_binds_no_first_party_method(
         "bag_then_literal",
         "walrus_then_literal",
         "Resets.__init__",
+        "param_then_literal",
     ],
 )
 def test_a_literal_does_not_retype_a_name_also_bound_to_an_instance(
