@@ -4000,10 +4000,10 @@ def _erased_by_the_edit(
     declaration is gone when the edited text spells it fewer times than the
     base, comments and strings aside: a commented-out `def run` is gone,
     and a `def run` another class keeps does not stand in for a deleted
-    `A.run` (Greptile review on PR #3307). Of the definitions one
-    declaration spells, those whose line the edit left as it was are still
-    there. A name no source spells (`anonymous_3_4`), or a text that cannot
-    be read, is left to the recovery.
+    `A.run` (Greptile review on PR #3307). When fewer declarations went
+    than definitions were removed, those whose line the edit left as it was
+    are still there. A name no source spells (`anonymous_3_4`), or a text
+    that cannot be read, is left to the recovery.
     """
     groups: dict[tuple[str, bytes], list[tuple[str, int | None]]] = {}
     patterns: dict[tuple[str, bytes], tuple[_Edit, re.Pattern[bytes]]] = {}
@@ -4018,8 +4018,15 @@ def _erased_by_the_edit(
     erased: set[str] = set()
     for key, members in groups.items():
         edit, declared = patterns[key]
-        before = sum(1 for _ in declared.finditer(edit.base_code))
-        if before <= sum(1 for _ in declared.finditer(edit.code)):
+        dropped = sum(1 for _ in declared.finditer(edit.base_code)) - sum(
+            1 for _ in declared.finditer(edit.code)
+        )
+        if dropped <= 0:
+            continue
+        # As many declarations gone as definitions removed: each of them is
+        # one, whatever line the diff paired it with.
+        if dropped >= len(members):
+            erased.update(qn for qn, _row in members)
             continue
         erased.update(qn for qn, row in members if not _kept(edit, declared, row))
     return erased
