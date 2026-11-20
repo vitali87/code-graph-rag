@@ -129,10 +129,19 @@ class _ReexportWalk:
             if following is None:
                 break
             step = following
+            if self._names_module(step):
+                # A namespace (`export * as math from "./ops"`) has reached
+                # its module. Walked on, `src.lib.ops` read as the `ops`
+                # export of `src/lib/index.ts`, which may name another
+                # module (bot review on PR #3282).
+                break
         self._path.difference_update(entered)
         if not cut:
             self._settled.update(dict.fromkeys(entered, step.qn))
         return step.qn, cut
+
+    def _names_module(self, step: _Step) -> bool:
+        return not step.local and js_ts_module_qn(step.qn, self._modules) == step.qn
 
     def _exported_as_another(self, qn: str) -> bool:
         """Whether the module publishes `qn`'s name for another binding.

@@ -280,6 +280,35 @@ def test_a_nested_namespace_export_binds_its_members_exactly(
     }, calls
 
 
+def test_a_namespace_stops_at_the_module_it_names(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Bot review on PR #3282: `math` reaches `src.lib.ops`, which also spells
+    # the barrel's own `ops` export, a namespace of `./other`. Walked on, it
+    # bound `math.add()` to `other.add`.
+    _write(
+        temp_repo,
+        {
+            "src/lib/ops.ts": _ADD,
+            "src/lib/other.ts": _ADD,
+            "src/lib/index.ts": 'export * as math from "./ops";\n'
+            'export * as ops from "./other";\n',
+            "src/app.ts": 'import { math, ops } from "./lib";\n'
+            "export function run(): number { return math.add(1, 2); }\n"
+            "export function other(): number { return ops.add(1, 2); }\n",
+        },
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    calls = _calls(temp_repo, mock_ingestor)
+    assert calls.get("src.app.run") == {("src.lib.ops.add", cs.EdgeResolution.EXACT)}, (
+        calls
+    )
+    assert calls.get("src.app.other") == {
+        ("src.lib.other.add", cs.EdgeResolution.EXACT)
+    }, calls
+
+
 def test_a_namespace_export_passes_through_a_star_reexport(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
