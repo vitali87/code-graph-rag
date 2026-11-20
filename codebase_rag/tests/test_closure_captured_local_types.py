@@ -194,6 +194,17 @@ _CAPTURED = {
         "a.Outer.method.Inner.run",
         "a.Range.reset",
     ),
+    "js-let-in-a-sibling-block-of-the-middle-function": (
+        # `mid`'s block `r` is another variable, which `inner` never reads
+        # (Greptile on #3331).
+        "c.js",
+        _JS_CLASSES + "function outer() {\n  const r = new Range();\n"
+        "  function mid(o) {\n    if (o) {\n      let r = o;\n    }\n"
+        "    function inner() { return r.reset(); }\n    return inner;\n  }\n"
+        "  return mid;\n}\nmodule.exports = { outer };\n",
+        "c.outer.mid.inner",
+        "c.Range.reset",
+    ),
 }
 
 
@@ -340,6 +351,21 @@ def test_a_name_the_nested_function_binds_is_not_captured(
     assert f"{module}.Range.reset" not in targets, calls
     if expected is not None:
         assert calls.get(caller) == expected, calls
+
+
+def test_a_variable_bound_twice_lends_no_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `inner` may run after `r = Other()` or without it, so neither class is
+    # its certain target; the flat map's last `Other` made the call an exact
+    # `Other.reset` (Greptile on #3331).
+    text = _PY_CLASSES + (
+        "def outer(flag):\n    r = Range()\n    if flag:\n        r = Other()\n\n"
+        "    def inner():\n        return r.reset()\n\n    return inner\n"
+    )
+    calls = _reset_calls(temp_repo, {"a.py": text}, mock_ingestor)
+    exact = {c for c, res in calls.get("a.outer.inner", set()) if res == _EXACT}
+    assert not exact, calls
 
 
 def test_the_enclosing_functions_own_call_is_unchanged(

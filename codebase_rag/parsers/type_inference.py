@@ -28,7 +28,7 @@ from .js_ts import JsTypeInferenceEngine
 from .js_ts import utils as js_ts_utils
 from .lua import LuaTypeInferenceEngine
 from .py import PythonTypeInferenceEngine, resolve_class_name
-from .py.ast_analyzer import own_scope_names
+from .py.ast_analyzer import names_bound_more_than_once, own_scope_names
 from .rs import RustTypeInferenceEngine
 from .rs import utils as rs_utils
 from .rs.type_inference import is_constructor_guess
@@ -618,7 +618,20 @@ class TypeInferenceEngine:
                     ):
                         captured.setdefault(name, type_name)
                 hidden.update(bindings[span])
-            hidden |= self._own_scope_names(scope, language)
+            own = self._own_scope_names(scope, language)
+            if not python:
+                # A `let r` in a block of `scope` the caller is not in is
+                # another variable: it hides nothing from the caller, unless
+                # `scope` also assigns `r` (Greptile on #3331).
+                held = {name for span in around for name in bindings[span]}
+                elsewhere = {
+                    name
+                    for span, names in bindings.items()
+                    if not span[0] <= pos < span[1]
+                    for name in names
+                }
+                own -= (elsewhere - held) - js_ts_utils.js_ts_assigned_names(scope)
+            hidden |= own
             scope = _enclosing_function(scope, language)
         return captured
 
@@ -647,14 +660,18 @@ class TypeInferenceEngine:
         if language == cs.SupportedLanguage.PYTHON:
             # The Python map is already this body's own: names a nested def
             # binds are left out of it (#1922). A Python local holds in the
-            # whole def, blocks or not.
-            bindings = {
-                (scope.start_byte, scope.end_byte): (
-                    self.python_type_inference.build_local_variable_type_map(
-                        scope, module_qn, class_context
-                    )
+            # whole def, blocks or not. A name bound at more than one place
+            # (`r = Range()`, then `if flag: r = Other()`) may hold either
+            # class when the nested def runs, so it lends no type, though it
+            # still hides an outer `r` (Greptile on #3331).
+            types: dict[str, str | None] = dict(
+                self.python_type_inference.build_local_variable_type_map(
+                    scope, module_qn, class_context
                 )
-            }
+            )
+            for name in names_bound_more_than_once(scope) & types.keys():
+                types[name] = None
+            bindings = {(scope.start_byte, scope.end_byte): types}
         else:
             bindings = self.js_type_inference.own_scope_variable_types(
                 scope, module_qn, language

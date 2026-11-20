@@ -730,6 +730,27 @@ def js_ts_own_scope_names(func_node: Node, assigned: bool = True) -> frozenset[s
     return frozenset(names)
 
 
+def js_ts_assigned_names(func_node: Node) -> frozenset[str]:
+    """Every plain name a function assigns in its own body (`r = v`), its
+    nested functions not entered (Greptile on #3331)."""
+    names: set[str] = set()
+    body = func_node.child_by_field_name(cs.FIELD_BODY)
+    stack: list[Node] = list(body.children) if body is not None else []
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+            left = node.child_by_field_name(cs.FIELD_LEFT)
+            if (
+                left is not None
+                and left.type == cs.TS_IDENTIFIER
+                and (name := safe_decode_text(left))
+            ):
+                names.add(name)
+        if node.type not in cs.JS_TS_FUNCTION_NODES:
+            stack.extend(node.children)
+    return frozenset(names)
+
+
 # The node types that bind every name of a pattern, and the field holding it.
 _JS_TS_PATTERN_FIELDS = {
     cs.TS_VARIABLE_DECLARATOR: cs.FIELD_NAME,
