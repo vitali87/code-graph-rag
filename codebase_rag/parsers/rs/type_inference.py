@@ -678,6 +678,16 @@ class RustTypeInferenceEngine:
         body = enum_node.child_by_field_name(cs.FIELD_BODY)
         if body is None:
             return payloads
+        # A payload naming one of the enum's own type parameters (`Value(T)`
+        # in `enum Command<T>`) is whatever the matched value's argument is,
+        # which this map cannot know: it is no type of that name in the module
+        # (bot review on PR #3014).
+        params = enum_node.child_by_field_name(cs.TS_RS_TYPE_PARAMETERS)
+        generic = {
+            safe_decode_text(param.child_by_field_name(cs.FIELD_NAME))
+            for param in (params.children if params is not None else ())
+            if param.type == cs.TS_RS_TYPE_PARAMETER
+        }
         for variant in body.named_children:
             if variant.type != cs.TS_RS_ENUM_VARIANT:
                 continue
@@ -692,8 +702,10 @@ class RustTypeInferenceEngine:
             types = fields.children_by_field_name(cs.FIELD_TYPE)
             if len(types) != 1:
                 continue
-            if (name := safe_decode_text(name_node)) and (
-                payload := self._binding_type_name(types[0])
+            if (
+                (name := safe_decode_text(name_node))
+                and (payload := self._binding_type_name(types[0]))
+                and payload.partition(cs.SEPARATOR_DOUBLE_COLON)[0] not in generic
             ):
                 payloads[name] = payload
         return payloads

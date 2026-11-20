@@ -607,6 +607,30 @@ fn run(job: Job) -> bool {
     assert (f"{package}.x.a.Handler.hit", _EXACT) not in edges.values(), edges
 
 
+def test_a_generic_payload_takes_no_namesake_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # PR #3014 review: `Value(T)` in `enum Command<T>` is the matched value's
+    # type argument, never the module's unrelated `struct T`.
+    source = """\
+pub struct T;
+impl T { pub fn hit(&self) -> bool { false } }
+
+pub enum Command<T> {
+    Value(T),
+}
+
+fn run(command: Command<PrefixStrategy>) -> bool {
+    match command {
+        Command::Value(s) => s.hit(),
+    }
+}
+"""
+    base = _index(temp_repo, mock_ingestor, "rs_match_generic", source)
+    edges = _hit_edges(mock_ingestor, f"{base}.run")
+    assert (f"{base}.T.hit", _EXACT) not in edges.values(), edges
+
+
 _INCREMENTAL = {
     "Cargo.toml": _CARGO.format(name="rs_match_incremental"),
     "src/lib.rs": "pub mod strategies;\npub mod run;\n",
