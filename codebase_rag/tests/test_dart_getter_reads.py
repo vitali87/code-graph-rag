@@ -825,6 +825,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     # target to importers too (issue #2482).
     processor.dart_exposed_libraries = {"m": ["m.lib"]}
     processor._cpp_shadowed_include_targets = set()
+    processor._cpp_shadowed_include_sites = {}
     processor._cpp_declaration_mappings = set()
     # A C/C++ file's `#include` targets are per file too: `m`'s go, another
     # file's stay (issue #3154).

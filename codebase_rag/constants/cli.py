@@ -1064,6 +1064,13 @@ RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "
     "so the rename would leave them under the old name"
 )
+# A token one translation unit binds to the target and another to a namesake
+# (two headers' `#define LIMIT`, review of PR #3002).
+RENAME_SHARED_SITE = (
+    "Refusing to rename {qn}: {count} site(s) also name another definition of "
+    "{name} the graph binds there ({locations}); rewriting them would leave "
+    "that definition's users without the name"
+)
 # Go reads an identifier's first letter as its visibility (issue #2813).
 RENAME_GO_UNEXPORTS = (
     "Refusing to rename {qn} to {name}: a Go name starting with a lower-case "

@@ -1578,23 +1578,7 @@ class Renamer:
             for s in sites
             if s.resolution != _CHAIN or (s.path, s.line, s.col) not in covered
         ]
-        structural = [s for s in sites if s.resolution == _STRUCTURAL]
-        if structural:
-            raise RenameRefused(
-                cs.RENAME_STRUCTURAL_UNLOCATABLE.format(qn=qn, count=len(structural)),
-                structural,
-                unlocatable,
-            )
-        # Every graph-known occurrence without a rewrite location blocks,
-        # whatever bound it: `allow_heuristic` accepts rewriting through a
-        # guessed site, not leaving a known one under the old name.
-        siteless = [s for s in sites if s.kind == "unlocatable"]
-        if siteless:
-            raise RenameRefused(
-                cs.RENAME_SITELESS.format(qn=qn, count=len(siteless)),
-                siteless,
-                unlocatable,
-            )
+        self._refuse_unrewritable_sites(qn, members, old_name, sites, unlocatable)
         ambiguous = [
             s for s in sites if s.resolution in AMBIGUOUS or s.resolution == _CHAIN
         ]
@@ -1993,6 +1977,95 @@ class Renamer:
                     and isinstance(path := row.get(cs.KEY_PATH), str)
                 )
         return paths
+
+    def _refuse_unrewritable_sites(
+        self,
+        qn: str,
+        members: list[str],
+        old_name: str,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+    ) -> None:
+        """Refuse a rename whose planned sites cannot all be rewritten.
+
+        `allow_heuristic` opts into guessed sites, and none of these is a
+        guess: each is a known site the rename would leave behind or break.
+        """
+        structural = [s for s in sites if s.resolution == _STRUCTURAL]
+        if structural:
+            raise RenameRefused(
+                cs.RENAME_STRUCTURAL_UNLOCATABLE.format(qn=qn, count=len(structural)),
+                structural,
+                unlocatable,
+            )
+        # Every graph-known occurrence without a rewrite location blocks,
+        # whatever bound it: `allow_heuristic` accepts rewriting through a
+        # guessed site, not leaving a known one under the old name.
+        siteless = [s for s in sites if s.kind == "unlocatable"]
+        if siteless:
+            raise RenameRefused(
+                cs.RENAME_SITELESS.format(qn=qn, count=len(siteless)),
+                siteless,
+                unlocatable,
+            )
+        if shared := self._sites_another_namesake_binds(members, old_name, sites):
+            raise RenameRefused(
+                cs.RENAME_SHARED_SITE.format(
+                    qn=qn,
+                    count=len(shared),
+                    name=old_name,
+                    locations=_locations(shared),
+                ),
+                shared,
+                unlocatable,
+            )
+
+    def _sites_another_namesake_binds(
+        self, hierarchy: list[str], old_name: str, sites: list[RenameSite]
+    ) -> list[RenameSite]:
+        """C/C++ use sites the graph also binds to another definition of
+        `old_name`.
+
+        A header expanded in two translation units binds one `LIMIT` token
+        to `a.h`'s `#define LIMIT` in one and to `b.h`'s in the other, and
+        the hybrid frontend records both, at that one site. Rewriting the
+        token for one leaves the other's units without the name.
+        """
+        definitions = [s.path for s in sites if s.kind == "definition"]
+        if not definitions or not all(
+            get_language_for_extension(Path(path).suffix) in cs.C_FAMILY_LANGUAGES
+            for path in definitions
+        ):
+            return []
+        # An overload fan-out's guessed sibling is the ambiguity
+        # `allow_heuristic` decides, not a second definition. A function-like
+        # macro's use keeps tree-sitter's `heuristic` label over libclang's
+        # `exact` one, so only the fan-out label is left out.
+        uses = {
+            (s.path, s.line, s.col): s
+            for s in sites
+            if s.kind != "definition" and s.resolution != cs.EdgeResolution.OVERLOAD
+        }
+        if not uses:
+            return []
+        shared: dict[tuple[str, int, int], RenameSite] = {}
+        for symbol in graph_query.resolve(self.fetch_all, self.project, old_name):
+            other = symbol["qualified_name"]
+            if other in hierarchy:
+                continue
+            try:
+                other_sites, _unlocatable, _name, _label = self._collect(other)
+            except (RenameRefused, PatcherError):
+                continue
+            for site in other_sites:
+                position = (site.path, site.line, site.col)
+                if (
+                    site.kind != "definition"
+                    and site.resolution != cs.EdgeResolution.OVERLOAD
+                    and position in uses
+                ):
+                    shared.setdefault(position, uses[position])
+        return [shared[position] for position in sorted(shared)]
 
     def _namesakes(
         self, old_name: str, hierarchy: list[str], target: Target
