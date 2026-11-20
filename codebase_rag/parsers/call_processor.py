@@ -75,6 +75,7 @@ from .py.flow_bindings import Binding, BindingKind, FlowBindings, call_base
 from .py.receiver_rebinding import (
     ReceiverRebinding,
     annotates_receiver,
+    bound_receiver,
     receiver_annotation,
     receiver_rebinding,
 )
@@ -6232,10 +6233,12 @@ class CallProcessor:
             self._resolver.python_rebound_receivers[caller_qn] = rebound
         else:
             self._resolver.python_rebound_receivers.pop(caller_qn, None)
-        if PythonTypeInferenceEngine.in_static_method(caller_node):
-            self._resolver.python_static_callers.add(caller_qn)
+        # The method's bound receiver, if any: a static method binds none,
+        # and `cls` in `def run(self, cls)` is a plain parameter.
+        if receiver := bound_receiver(caller_node):
+            self._resolver.python_bound_receivers[caller_qn] = receiver
         else:
-            self._resolver.python_static_callers.discard(caller_qn)
+            self._resolver.python_bound_receivers.pop(caller_qn, None)
         self._record_python_name_typed_params(caller_node, caller_qn, module_qn)
 
     def _record_python_name_typed_params(

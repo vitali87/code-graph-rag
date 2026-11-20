@@ -134,6 +134,22 @@ FILES = {
         '    def run(self: "qualpkg.qbase.QBase"):\n        return self.qh()\n\n\n'
         "class QSub(QBase):\n    def qh(self):\n        return 2\n"
     ),
+    # Fifth review round (Greptile, PR #2908): only the bound receiver is
+    # the instance, and a write through any name it is bound to, or by a
+    # `for` target, replaces the method.
+    "receivers.py": (
+        "def cb():\n    return 0\n\n\n"
+        "class RHolder:\n"
+        "    def __init__(this, callback):\n        this.r1 = callback\n\n"
+        "    def load(self, callback):\n"
+        "        for self.r2 in [callback]:\n            pass\n\n"
+        "    def r1(self):\n        return 1\n\n"
+        "    def r2(self):\n        return 2\n\n"
+        "    def r3(self):\n        return 3\n\n"
+        "    def call_r1(self):\n        return self.r1()\n\n"
+        "    def call_r2(self):\n        return self.r2()\n\n"
+        "    def other(self, cls):\n        return cls.r3()\n"
+    ),
     # A static method's `self` is whatever its caller passed.
     "static_untyped.py": (
         "class SHost:\n    def sm(self):\n        return 1\n\n"
@@ -304,6 +320,9 @@ def test_an_annotation_naming_the_class_still_dispatches_to_overrides(
         ("matched.Mine3.run", "matched.Mine3.mm"),
         ("static_untyped.SHost.run", "static_untyped.SHost.sm"),
         ("tuple_attr.THolder.run", "tuple_attr.THolder.tm2"),
+        ("receivers.RHolder.call_r1", "receivers.RHolder.r1"),
+        ("receivers.RHolder.call_r2", "receivers.RHolder.r2"),
+        ("receivers.RHolder.other", "receivers.RHolder.r3"),
     ],
     ids=[
         "later-rebinding",
@@ -312,6 +331,9 @@ def test_an_annotation_naming_the_class_still_dispatches_to_overrides(
         "pattern-binding",
         "static-untyped-self",
         "tuple-target-attribute",
+        "write-through-another-receiver-name",
+        "for-target-attribute",
+        "unbound-cls-parameter",
     ],
 )
 def test_a_self_call_the_class_may_not_answer_is_not_exact(

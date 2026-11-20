@@ -21,6 +21,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
+from .ast_analyzer import _parameter_names
 
 # Scopes whose assignments bind their own locals, not the method's receiver.
 _NESTED_SCOPES = frozenset(
@@ -98,25 +99,96 @@ def _annotated_class(text: str) -> str:
 
 
 def instance_attribute_names(class_node: Node) -> frozenset[str]:
-    """The attributes a class's methods assign on their receiver
-    (`self.m = callback`): an instance attribute is found before the class's
-    method of that name, so `self.m()` then calls the value (CodeRabbit, PR
-    #2908). A class nested in this one assigns its own."""
+    """The attributes a class's methods assign on their bound receiver,
+    whatever it is named (`self.m = callback`, `this.m = callback`), by an
+    assignment, a `for` target or a `with ... as` target: an instance
+    attribute is found before the class's method of that name, so `self.m()`
+    then calls the value (CodeRabbit, Greptile, PR #2908). A class nested in
+    this one assigns its own."""
     names: set[str] = set()
     body = class_node.child_by_field_name(cs.FIELD_BODY)
-    stack = list(body.children) if body is not None else []
-    while stack:
-        node = stack.pop()
-        if node.type == cs.TS_PY_CLASS_DEFINITION:
+    for method in _methods(body) if body is not None else ():
+        if (receiver := _receiver_parameter(method)) is None:
             continue
-        if node.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT):
-            target = node.child_by_field_name(cs.TS_FIELD_LEFT)
-            names.update(_receiver_attributes(target) if target is not None else ())
-        stack.extend(node.children)
+        stack = list(method.children)
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_PY_CLASS_DEFINITION:
+                continue
+            for target in _written_targets(node):
+                names.update(_receiver_attributes(target, receiver))
+            stack.extend(node.children)
     return frozenset(names)
 
 
-def _receiver_attributes(target: Node) -> Iterator[str]:
+def bound_receiver(caller: Node) -> str | None:
+    """The name `caller` reaches its class's instance (or, in a
+    classmethod, the class) by: the first parameter of the method around
+    it, unless that is a static method, which binds none, or a def or
+    lambda in between takes a parameter of the name (`def run(self, cls)`
+    binds only `self`; Greptile, PR #2908)."""
+    hidden: set[str] = set()
+    node: Node | None = caller
+    while node is not None and node.type != cs.TS_PY_CLASS_DEFINITION:
+        if node.type == cs.TS_PY_FUNCTION_DEFINITION and _is_method(node):
+            first = _receiver_parameter(node)
+            return None if first is None or first in hidden else first
+        if node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA):
+            hidden.update(_parameter_names(node))
+        node = node.parent
+    return None
+
+
+def _methods(body: Node) -> Iterator[Node]:
+    for child in body.named_children:
+        if child.type == cs.TS_PY_DECORATED_DEFINITION:
+            child = child.child_by_field_name(cs.FIELD_DEFINITION) or child
+        if child.type == cs.TS_PY_FUNCTION_DEFINITION:
+            yield child
+
+
+def _is_method(function: Node) -> bool:
+    parent = function.parent
+    if parent is not None and parent.type == cs.TS_PY_DECORATED_DEFINITION:
+        parent = parent.parent
+    return (
+        parent is not None
+        and parent.type == cs.TS_PY_BLOCK
+        and parent.parent is not None
+        and parent.parent.type == cs.TS_PY_CLASS_DEFINITION
+    )
+
+
+def _receiver_parameter(method: Node) -> str | None:
+    # A method's first parameter, or None for a static method.
+    decorated = method.parent
+    if decorated is not None and decorated.type == cs.TS_PY_DECORATED_DEFINITION:
+        for decorator in decorated.named_children:
+            text = (safe_decode_text(decorator) or "").lstrip(cs.DECORATOR_AT)
+            head = text.split(cs.CHAR_PAREN_OPEN, 1)[0].strip()
+            if (
+                decorator.type == cs.TS_PY_DECORATOR
+                and head.rsplit(cs.SEPARATOR_DOT, 1)[-1] in cs.STATIC_DECORATORS
+            ):
+                return None
+    return next(iter(_parameter_names(method)), None)
+
+
+def _written_targets(node: Node) -> Iterator[Node]:
+    # The targets one statement writes: an assignment's, a `for`'s, and a
+    # `with ... as` item's.
+    if node.type in (
+        cs.TS_PY_ASSIGNMENT,
+        cs.TS_PY_AUGMENTED_ASSIGNMENT,
+        cs.TS_PY_FOR_STATEMENT,
+    ):
+        if (target := node.child_by_field_name(cs.TS_FIELD_LEFT)) is not None:
+            yield target
+    elif node.type == cs.TS_PY_AS_PATTERN_TARGET:
+        yield from node.named_children
+
+
+def _receiver_attributes(target: Node, receiver: str) -> Iterator[str]:
     # The receiver attributes an assignment target writes, through tuple,
     # list and parenthesised targets (`self.m, self.x = cb, 0`; CodeRabbit,
     # PR #2908). An attribute's own object is a read, never a write.
@@ -124,10 +196,10 @@ def _receiver_attributes(target: Node) -> Iterator[str]:
     while pending:
         node = pending.pop()
         if node.type == cs.TS_PY_ATTRIBUTE:
-            receiver = node.child_by_field_name(cs.FIELD_OBJECT)
+            obj = node.child_by_field_name(cs.FIELD_OBJECT)
             if (
-                receiver is not None
-                and (safe_decode_text(receiver) in cs.PY_RECEIVER_NAMES)
+                obj is not None
+                and safe_decode_text(obj) == receiver
                 and (
                     name := safe_decode_text(
                         node.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
