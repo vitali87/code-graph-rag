@@ -711,52 +711,55 @@ class TypeInferenceEngine:
         self, path: str, scope: _RustPathScope, arm_start: int
     ) -> str | None:
         # The qn `Strategy` or `a::Strategy` names where the match is
-        # written: a `use` in a body or block around it, then one in each
-        # enclosing `mod`, shadow the file's own (PR #3014 review). An
-        # external binding (`use other_crate::Strategy`) names no enum here.
+        # written: a `use` in a body or block around it, then each enclosing
+        # `mod`'s own item or `use` of the name, innermost first, shadow the
+        # file's own (PR #3014 review). An external binding (`use
+        # other_crate::Strategy`) names no enum here; a `use` of a re-export
+        # (`crate::facade::Strategy`) is followed to the enum it names.
         head, _, rest = path.partition(cs.SEPARATOR_DOUBLE_COLON)
+        tail = rest.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
         bound = self._rust_local_use(head, scope.module_qn, arm_start, scope.calls)
-        if bound is None:
-            mapping = self.import_processor.import_mapping
-            bound = next(
-                (
-                    mapping[owner][head]
-                    for owner in scope.calls.scopes
-                    if head in mapping.get(owner, {})
-                ),
-                None,
-            )
+        mapping = self.import_processor.import_mapping
+        for owner in scope.calls.scopes:
+            if bound is not None:
+                break
+            if (item := f"{owner}{cs.SEPARATOR_DOT}{head}") in self.function_registry:
+                bound = item
+            else:
+                bound = mapping.get(owner, {}).get(head)
         if bound is None:
             return self._resolve_rust_type_qn(path, scope.module_qn, exact=True)
         if cs.SEPARATOR_DOUBLE_COLON in bound:
             return None
-        tail = rest.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
-        return f"{bound}{cs.SEPARATOR_DOT}{tail}" if tail else bound
+        qn = f"{bound}{cs.SEPARATOR_DOT}{tail}" if tail else bound
+        return follow_reexports(qn, mapping, self.function_registry)
 
     def _rust_payload_type_qn(self, payload: str, enum_module: str) -> str:
         # A payload path as the enum's module reads it: `a::Handler` is that
         # module's child `a`, or whatever its `use` binds `a` to, before any
-        # same-suffixed type elsewhere (PR #3014 review).
-        if cs.SEPARATOR_DOUBLE_COLON in payload:
-            head, _, rest = payload.partition(cs.SEPARATOR_DOUBLE_COLON)
-            tail = rest.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
-            mapped = self.import_processor.import_mapping.get(enum_module, {}).get(head)
-            if head in _RUST_RELATIVE_PATH_HEADS:
-                candidate = self.import_processor._rewrite_rust_local_use_path(
-                    payload, enum_module
-                )
-            elif mapped is not None:
-                candidate = (
-                    f"{mapped}{cs.SEPARATOR_DOT}{tail}"
-                    if cs.SEPARATOR_DOUBLE_COLON not in mapped
-                    else None
-                )
-            else:
-                candidate = (
-                    f"{enum_module}{cs.SEPARATOR_DOT}{head}{cs.SEPARATOR_DOT}{tail}"
-                )
-            if candidate is not None and candidate in self.function_registry:
-                return candidate
+        # same-suffixed type elsewhere (PR #3014 review). A head the module
+        # imports decides alone: an external `use external_crate::a` names
+        # no first-party `a::Handler`.
+        if cs.SEPARATOR_DOUBLE_COLON not in payload:
+            return self._resolve_rust_type_qn(payload, enum_module, exact=True)
+        head, _, rest = payload.partition(cs.SEPARATOR_DOUBLE_COLON)
+        tail = rest.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+        mapping = self.import_processor.import_mapping
+        mapped = mapping.get(enum_module, {}).get(head)
+        if mapped is not None:
+            if cs.SEPARATOR_DOUBLE_COLON in mapped:
+                return f"{mapped}{cs.SEPARATOR_DOUBLE_COLON}{rest}"
+            return follow_reexports(
+                f"{mapped}{cs.SEPARATOR_DOT}{tail}", mapping, self.function_registry
+            )
+        if head in _RUST_RELATIVE_PATH_HEADS:
+            candidate = self.import_processor._rewrite_rust_local_use_path(
+                payload, enum_module
+            )
+        else:
+            candidate = f"{enum_module}{cs.SEPARATOR_DOT}{head}{cs.SEPARATOR_DOT}{tail}"
+        if candidate in self.function_registry:
+            return candidate
         return self._resolve_rust_type_qn(payload, enum_module, exact=True)
 
     def _rust_imported_variant(

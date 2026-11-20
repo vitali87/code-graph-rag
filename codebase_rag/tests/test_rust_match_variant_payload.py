@@ -517,6 +517,96 @@ pub fn run(job: Job) -> bool {
     assert list(edges.values()) == [(f"{package}.right.a.Handler.hit", _EXACT)], edges
 
 
+def test_a_used_reexport_of_the_enum_is_followed(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # PR #3014 review: a function's `use crate::facade::Strategy` names a
+    # re-export, followed to the enum `inner` declares.
+    source = """\
+pub mod facade;
+pub mod inner;
+
+fn run(strategy: facade::Strategy) -> bool {
+    use crate::facade::Strategy;
+    match strategy {
+        Strategy::Literal(s) => s.hit(),
+    }
+}
+"""
+    modules = {
+        "inner": _strategy_module("IStrat"),
+        "facade": "pub use crate::inner::Strategy;\n",
+    }
+    base = _index(temp_repo, mock_ingestor, "rs_match_reexport", source, modules)
+    package = base.removesuffix(".lib")
+    edges = _hit_edges(mock_ingestor, f"{base}.run")
+    assert list(edges.values()) == [(f"{package}.inner.IStrat.hit", _EXACT)], edges
+
+
+def test_an_inline_modules_own_enum_shadows_the_files_import(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # PR #3014 review: inside `mod inner`, its own `Strategy` is meant, not
+    # the file's `use crate::left::Strategy`.
+    source = """\
+pub mod left;
+use crate::left::Strategy;
+
+pub mod inner {
+    pub struct OwnStrat;
+    impl OwnStrat { pub fn hit(&self) -> bool { false } }
+    pub enum Strategy {
+        Literal(OwnStrat),
+    }
+
+    pub fn run(strategy: Strategy) -> bool {
+        match strategy {
+            Strategy::Literal(s) => s.hit(),
+        }
+    }
+}
+"""
+    modules = {"left": _strategy_module("LStrat")}
+    base = _index(temp_repo, mock_ingestor, "rs_match_inline_own", source, modules)
+    edges = _hit_edges(mock_ingestor, f"{base}.inner.run")
+    assert list(edges.values()) == [(f"{base}.inner.OwnStrat.hit", _EXACT)], edges
+
+
+def test_an_imported_external_payload_head_takes_no_namesake(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # PR #3014 review: `use external_crate::a` binds `a`, so `V(a::Handler)`
+    # is the external crate's, never a first-party `x::a::Handler`.
+    handler = (
+        "pub struct Handler;\nimpl Handler { pub fn hit(&self) -> bool { true } }\n"
+    )
+    source = """\
+pub mod x;
+use external_crate::a;
+
+pub enum Job {
+    V(a::Handler),
+}
+
+fn run(job: Job) -> bool {
+    match job {
+        Job::V(h) => h.hit(),
+    }
+}
+"""
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_match_external_payload",
+        source,
+        {"x": "pub mod a;\n", "x/a": handler},
+        dependencies='\n[dependencies]\nexternal_crate = "1.0"\n',
+    )
+    package = base.removesuffix(".lib")
+    edges = _hit_edges(mock_ingestor, f"{base}.run")
+    assert (f"{package}.x.a.Handler.hit", _EXACT) not in edges.values(), edges
+
+
 _INCREMENTAL = {
     "Cargo.toml": _CARGO.format(name="rs_match_incremental"),
     "src/lib.rs": "pub mod strategies;\npub mod run;\n",
