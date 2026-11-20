@@ -289,25 +289,10 @@ class _RecordingStore:
 
 def _marker_writes(store: _RecordingStore) -> list[str]:
     marks = {
-        cq.CYPHER_MARK_PROJECT_INCOMPLETE: "mark",
+        cq.CYPHER_MARK_RUN_INCOMPLETE: "mark",
         cq.CYPHER_CLEAR_PROJECT_INCOMPLETE: "clear",
     }
     return [marks[query] for query in store.writes if query in marks]
-
-
-def test_an_isolated_check_clears_its_marker_once_restored(
-    indexed: tuple[Path, _StatefulIngestor],
-) -> None:
-    """The marker is set before the first write and cleared only after the
-    restore; this is the success half of the test below."""
-    root, inner = indexed
-    store = _RecordingStore(inner)
-    _edit(root)
-    parsers, queries = load_parsers()
-
-    run_check(root, "HEAD", PROJECT, store, parsers, queries, isolated=True)
-
-    assert _marker_writes(store) == ["mark", "clear"]
 
 
 def test_a_failed_restore_leaves_the_incomplete_marker_set(
@@ -316,7 +301,8 @@ def test_a_failed_restore_leaves_the_incomplete_marker_set(
     """The restore deletes before it re-creates, with no transaction around
     the two, so a failure between them leaves the graph partial. The
     persistent marker (#1679) must then stay set, so readers refuse and the
-    next full update repairs (bot review, #1718)."""
+    next full update repairs (bot review, #1718). The success half, and a
+    failed cache restore, are test_check_isolation_marker's."""
     root, inner = indexed
     store = _RecordingStore(inner)
     _edit(root)
