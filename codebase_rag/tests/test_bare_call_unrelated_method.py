@@ -135,6 +135,11 @@ FILES = {
         "class Seq {\n public:\n  Seq() : next_(Start()) {}\n"
         "  static int Start() { return 0; }\n  int next_;\n};\n"
     ),
+    # ... and so is a default member initializer (Greptile, PR #2948).
+    "c/dflt.h": (
+        "class Dflt {\n public:\n  static int Begin() { return 0; }\n"
+        "  int next_ = Begin();\n};\n"
+    ),
     # A file-scope call is no member initializer: it keeps the method filter.
     "c/glob.cpp": '#include "stat.h"\nint g = max(1, 2);\n',
     # Third review round (CodeRabbit, PR #2948): a `for` header's local ends
@@ -315,6 +320,7 @@ def test_a_cpp_member_initializer_keeps_its_call_of_a_member(
     # the module's, where no class answers the bare name; dropping the
     # name fallback there lost the edge (leveldb reference graph).
     assert "c.init.Seq.Start" in _callees(graph, "c.init")
+    assert "c.dflt.Dflt.Begin" in _callees(graph, "c.dflt")
 
 
 def test_a_bare_go_call_still_reaches_a_package_function(graph: RecordedGraph) -> None:

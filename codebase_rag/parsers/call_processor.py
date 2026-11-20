@@ -579,10 +579,17 @@ def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
 
 
 def _in_member_initializer(call_node: Node) -> bool:
-    # Whether a C++ call sits in a constructor's member-initializer list.
+    # Whether a C++ call initializes a member: in a constructor's
+    # member-initializer list, or as a default member initializer
+    # (`int next_ = Start();`, Greptile on PR #2948). Both run in the
+    # class's scope though the module's calls read them.
     node = call_node.parent
     while node is not None and node.type not in cs.CPP_NESTED_SCOPE_NODE_TYPES:
-        if node.type == cs.CppNodeType.FIELD_INITIALIZER_LIST:
+        if node.type == cs.CppNodeType.FIELD_INITIALIZER_LIST or (
+            node.type == cs.CppNodeType.FIELD_DECLARATION
+            and node.parent is not None
+            and node.parent.type == cs.TS_CPP_FIELD_DECLARATION_LIST
+        ):
             return True
         node = node.parent
     return False
@@ -7453,7 +7460,8 @@ class CallProcessor:
             # constructor and names the class's own members there; with no
             # class to look in, that call keeps the name fallback
             # (leveldb's `SkipList::NewNode`, `PosixWritableFile::Dirname`).
-            # Any other module-level call does not (CodeRabbit, PR #2948).
+            # A default member initializer is read the same way. Any other
+            # module-level call is not (CodeRabbit, PR #2948).
             and not (
                 ctx.is_cpp
                 and ctx.caller_spec[0] == cs.NodeLabel.MODULE
