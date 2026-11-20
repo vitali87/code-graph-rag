@@ -28,6 +28,7 @@ from .parameter_nodes import c_family_parameter_list
 from .php import class_names as php_class_names
 from .php.class_names import ClassPath as PhpClassPath
 from .php.class_names import ascii_fold as _php_fold
+from .php.utils import php_insteadof_exclusions
 from .py import resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
@@ -119,6 +120,8 @@ _LEXICAL_FIRST_LANGUAGES = frozenset({cs.SupportedLanguage.DART})
 _LINEARIZED_LANGUAGES = frozenset(
     {cs.SupportedLanguage.DART, cs.SupportedLanguage.SCALA, cs.SupportedLanguage.PHP}
 )
+# The PHP declarations a trait `use` can sit in.
+_PHP_TYPE_DECLARATIONS = frozenset(cs.SPEC_PHP_CLASS_TYPES)
 
 
 # Languages whose `recv.name()` member syntax reaches only methods, so the
@@ -374,6 +377,7 @@ class CallResolver:
         "cpp_callable_fields",
         "go_package_names",
         "_php_class_namespaces",
+        "_php_insteadof_memo",
         "_php_cased_index",
         "_js_return_class_cache",
     )
@@ -504,6 +508,9 @@ class CallResolver:
         # {PHP module qn: {class qn: folded namespace it is declared in}},
         # read off each file's declarations on first use (issue #2466).
         self._php_class_namespaces: dict[str, dict[str, PhpClassPath]] = {}
+        # PHP class qn -> the (method, trait) pairs its `insteadof` clauses
+        # exclude, read from its file once per pass.
+        self._php_insteadof_memo: dict[str, frozenset[tuple[str, str]]] = {}
         self._php_cased_index: _PhpCasedIndex | None = None
         # {JS/TS callable qn: the class a call to it returns}, read off its
         # declaration on first use (issue #2468).
@@ -728,6 +735,8 @@ class CallResolver:
         self._c_unit_reach_cache.clear()
         # A re-parsed PHP file may have moved a class between namespaces.
         self._php_class_namespaces.clear()
+        # Or changed which trait method its `insteadof` clauses pick.
+        self._php_insteadof_memo.clear()
         self._php_cased_index = None
         # A re-parsed TS file may declare a different return.
         self._js_return_class_cache.clear()
@@ -2480,7 +2489,7 @@ class CallResolver:
         ):
             return None
         hit = (
-            self._linearized_method(class_qn, name)
+            self._linearized_method(class_qn, name, call.language)
             if call.language in _LINEARIZED_LANGUAGES
             else self._resolve_inherited_method(class_qn, name)
         )
@@ -2488,13 +2497,60 @@ class CallResolver:
             return None
         return hit
 
-    def _linearized_method(self, class_qn: str, name: str) -> tuple[str, str] | None:
-        # The first of the class's linearized bases defining `name`.
-        for base in self._linearized_bases(class_qn, frozenset({class_qn}), {}):
+    def _linearized_method(
+        self, class_qn: str, name: str, language: cs.SupportedLanguage | None
+    ) -> tuple[str, str] | None:
+        # The first of the class's linearized bases defining `name`, but a
+        # PHP trait an `insteadof` clause of the class or a base excludes
+        # for `name`: `use A, B { A::label insteadof B; }` runs `A::label`,
+        # though B comes first in the order (Greptile on PR #3240).
+        bases = self._linearized_bases(class_qn, frozenset({class_qn}), {})
+        excluded = (
+            self._php_excluded_traits(name, [class_qn, *bases])
+            if language == cs.SupportedLanguage.PHP
+            else frozenset()
+        )
+        for base in bases:
             qn = f"{base}{cs.SEPARATOR_DOT}{name}"
-            if qn in self.function_registry:
+            if (
+                qn in self.function_registry
+                and base.rsplit(cs.SEPARATOR_DOT, 1)[-1].lower() not in excluded
+            ):
                 return self.function_registry[qn], qn
         return None
+
+    def _php_excluded_traits(self, name: str, classes: list[str]) -> frozenset[str]:
+        # The folded simple names of the traits whose `name` the classes'
+        # `insteadof` clauses exclude.
+        folded = name.lower()
+        return frozenset(
+            trait
+            for class_qn in classes
+            for method, trait in self._php_insteadof(class_qn)
+            if method == folded
+        )
+
+    def _php_insteadof(self, class_qn: str) -> frozenset[tuple[str, str]]:
+        # Read from the class's declaration in its file, which the AST cache
+        # re-parses when it was evicted or this is an incremental pass.
+        if (known := self._php_insteadof_memo.get(class_qn)) is not None:
+            return known
+        module_qn = module_qn_for_entity(
+            class_qn, self.type_inference.module_qn_to_file_path
+        )
+        root = self._cached_module_root(module_qn) if module_qn else None
+        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        found: set[tuple[str, str]] = set()
+        stack = [root] if root is not None else []
+        while stack:
+            node = stack.pop()
+            if node.type in _PHP_TYPE_DECLARATIONS and (
+                safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)) == simple
+            ):
+                found |= php_insteadof_exclusions(node)
+            stack.extend(node.children)
+        self._php_insteadof_memo[class_qn] = frozenset(found)
+        return self._php_insteadof_memo[class_qn]
 
     def _linearized_bases(
         self, class_qn: str, seen: frozenset[str], memo: dict[str, list[str]]

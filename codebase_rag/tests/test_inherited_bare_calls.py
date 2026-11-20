@@ -225,6 +225,21 @@ class Sign extends Base {
     public function foldedCall(): string { return HELPER(); }
 }
 """,
+    # `insteadof` picks the trait whose method runs, whatever the order
+    # (Greptile on PR #3240).
+    "picks.php": """\
+<?php
+trait First { public function label(): string { return "first"; } }
+trait Second { public function label(): string { return "second"; } }
+class Picked {
+    use First, Second { First::label insteadof Second; }
+    public function thisCall(): string { return $this->label(); }
+}
+class PickedLater {
+    use Second, First { Second::LABEL insteadof First; }
+    public function thisCall(): string { return $this->label(); }
+}
+""",
 }
 
 
@@ -249,8 +264,17 @@ def overrides(tmp_path_factory: pytest.TempPathFactory) -> dict[str, _Calls]:
         ("dart", "lib.signs.Banner.implicitCall", "lib.signs.Quiet.label"),
         ("scala", "Signs.Sign.implicitCall", "Signs.Loud.label"),
         ("php", "signs.Sign.thisCall", "signs.Loud.label"),
+        ("php", "picks.Picked.thisCall", "picks.First.label"),
+        ("php", "picks.PickedLater.thisCall", "picks.Second.label"),
     ],
-    ids=["dart-mixin", "dart-last-mixin", "scala-trait", "php-trait"],
+    ids=[
+        "dart-mixin",
+        "dart-last-mixin",
+        "scala-trait",
+        "php-trait",
+        "php-insteadof",
+        "php-insteadof-folded",
+    ],
 )
 def test_a_trait_or_mixin_overrides_the_superclass(
     overrides: dict[str, _Calls], grammar: str, caller: str, callee: str
