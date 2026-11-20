@@ -223,6 +223,10 @@ def _fetch_for(edges: list[Edge], budget: int = 100):
             return [{cs.KEY_NAME: name} for name in (P, EXTRA)]
         p = params or {}
         assert p.get(cs.KEY_PROJECT_PREFIX) == f"{P}.", "every read is scoped"
+        if query == cq.CYPHER_PROJECT_ROOT_PATH:
+            # The command asks where the project was indexed from, to read
+            # character columns there (issue #3162); this graph records none.
+            return []
         if cs.KEY_QNS in p:
             wanted = set(p[cs.KEY_QNS])
             out = [

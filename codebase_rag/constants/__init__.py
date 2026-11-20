@@ -25,6 +25,7 @@ from .fqn_specs import *  # noqa: F403
 from .graph import *  # noqa: F403
 from .graph import _NODE_LABEL_UNIQUE_KEYS as _NODE_LABEL_UNIQUE_KEYS
 from .health import *  # noqa: F403
+from .identifiers import *  # noqa: F403
 from .interface import *  # noqa: F403
 from .lang_tooling import *  # noqa: F403
 from .languages import *  # noqa: F403
@@ -32,8 +33,10 @@ from .mcp import *  # noqa: F403
 from .notebook import *  # noqa: F403
 from .port import *  # noqa: F403
 from .providers import *  # noqa: F403
+from .reference_graphs import *  # noqa: F403
 from .security import *  # noqa: F403
 from .sqlite_vectors import *  # noqa: F403
 from .stdlib_types import *  # noqa: F403
 from .structural import *  # noqa: F403
+from .surface import *  # noqa: F403
 from .trace import *  # noqa: F403

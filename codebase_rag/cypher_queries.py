@@ -29,7 +29,9 @@ from collections.abc import Iterable
 from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
+    CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS,
     DEFINITION_NODE_LABELS,
+    GLOSS_UNATTACHED_STATES,
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
     KEY_ROW_INDEX,
@@ -53,8 +55,17 @@ CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 # `:IncompleteRun` is the CLI's own sync marker, unattached to any project
 # tree on purpose (see CYPHER_MARK_PROJECT_INCOMPLETE); doctor reports it as
 # an interrupted sync, not as an orphan (issue #2394).
+# A LOST or AMBIGUOUS gloss keeps its note with no edge by design (#1808),
+# so it is no orphan either (issue #2652). The state is coalesced: a gloss
+# with none would make the test null, and WHERE drops a null row before the
+# degree check (bot review on PR #2697).
+_UNATTACHED_GLOSS_STATES = ", ".join(
+    f"'{state}'" for state in sorted(GLOSS_UNATTACHED_STATES)
+)
 CYPHER_AUDIT_ORPHANS = (
     "MATCH (n) WHERE NOT n:Project AND NOT n:IncompleteRun "
+    "AND NOT (n:Gloss AND coalesce(n.anchor_state, '') "
+    f"IN [{_UNATTACHED_GLOSS_STATES}]) "
     "OPTIONAL MATCH (n)--(x) "
     "WITH n, count(x) AS degree "
     "WHERE degree = 0 "
@@ -198,6 +209,13 @@ CYPHER_CLEAR_PROJECT_INCOMPLETE = (
 CYPHER_MARK_CLI_SYNC_INCOMPLETE = (
     CYPHER_MARK_PROJECT_INCOMPLETE + ", " + _CLI_SYNC_MARKER_OWNER_SET
 )
+# The MCP server's runs and `cgr check` name their process the same way
+# (review of PR #3496), so a full rebuild can tell a run whose process exited
+# from one still writing. No token: each of these runs has an id of its own.
+CYPHER_MARK_RUN_INCOMPLETE = (
+    CYPHER_MARK_PROJECT_INCOMPLETE
+    + ", m.owner_host = $owner_host, m.owner_pid = $owner_pid"
+)
 CYPHER_CLI_SYNC_MARKER_OWNER = (
     "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
     "RETURN m.owner_host AS owner_host, m.owner_pid AS owner_pid, "
@@ -260,6 +278,39 @@ CYPHER_PROJECT_IS_INCOMPLETE = (
     "RETURN coalesce(m.run_incomplete, false) AS run_incomplete, "
     "coalesce(m.writing, true) AS writing"
 )
+# The runs a full rebuild of the project supersedes (review of PR #3493): no
+# other path removes a marker its run left after its first write, so one
+# whose process died stayed down for good. Read before the rebuild marks,
+# with the process each marker names: `sync_guard.stranded_runs` keeps only
+# the runs whose process provably exited, since the checkout's sync lock
+# keeps out no writer of another checkout or CGR_HOME under the same project
+# name (review of PR #3496). A marker from before run ids existed is left
+# alone, as `CYPHER_CLEAR_LEGACY_PROJECT_INCOMPLETE` leaves it.
+CYPHER_STRANDED_RUN_IDS = (
+    "MATCH (m:IncompleteRun {project: $project_name}) "
+    "WHERE m.run_id IS NOT NULL AND m.run_id <> $run_id "
+    "AND coalesce(m.writing, true) "
+    "RETURN m.run_id AS run_id, m.owner_host AS owner_host, "
+    "m.owner_pid AS owner_pid"
+)
+# Deletes one run `CYPHER_STRANDED_RUN_IDS` returned, once the forced rebuild
+# that supersedes it has committed and cleared its own marker, and only while
+# the marker still names the exited process: the CLI sync's run id is shared,
+# so a CLI writer that started since has marked it under its own.
+# Every run of the project that may be writing, with the process it names,
+# whichever run it is, a marker from before run ids included: a deleted or
+# pruned project has no rebuild of its own to exclude (#2479).
+# `sync_guard` keeps as stopped only those whose process provably exited.
+CYPHER_WRITING_RUNS = (
+    "MATCH (m:IncompleteRun {project: $project_name}) "
+    "WHERE coalesce(m.writing, true) "
+    "RETURN m.run_id AS run_id, m.owner_host AS owner_host, "
+    "m.owner_pid AS owner_pid"
+)
+CYPHER_RETIRE_STRANDED_RUN = (
+    "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
+    "WHERE m.owner_host = $owner_host AND m.owner_pid = $owner_pid DELETE m"
+)
 
 # Every project with an outstanding marker, whichever path wrote it: `cgr
 # status` reports them so a sync that was interrupted is visible there, not
@@ -287,14 +338,18 @@ _DEFINITION_RELS = (
 
 
 def _belongs_to_p(var: str) -> str:
+    return _name_belongs_to_p(f"{var}.qualified_name")
+
+
+def _name_belongs_to_p(name: str) -> str:
     # A qualified name is `p`'s when it is `p` or sits under `p.`, but not
     # under a longer registered name such as `p.v2` (issue #1985): the rule
     # CYPHER_DELETE_MODULE applies. `nested` is bound to those longer names.
     return (
-        f"({var}.qualified_name = p.name "
-        f"OR {var}.qualified_name STARTS WITH (p.name + '.')) "
-        f"AND NOT any(q IN nested WHERE {var}.qualified_name = q "
-        f"OR {var}.qualified_name STARTS WITH (q + '.'))"
+        f"({name} = p.name "
+        f"OR {name} STARTS WITH (p.name + '.')) "
+        f"AND NOT any(q IN nested WHERE {name} = q "
+        f"OR {name} STARTS WITH (q + '.'))"
     )
 
 
@@ -348,10 +403,12 @@ WITH p, nested, collect(DISTINCT container) + collect(DISTINCT defined) AS owned
 CYPHER_RECORD_PROJECT_SYNC = (
     "MATCH (p:Project {name: $project_name}) SET p.last_synced_at = $last_synced_at"
 )
-# A project synced before the time was recorded reads back null.
+# A project synced before the time was recorded reads back null. The root
+# rides along so `cgr status` can mark one that is gone (#2479).
 CYPHER_PROJECT_SYNC_TIMES = (
     "MATCH (p:Project) "
-    "RETURN p.name AS name, p.last_synced_at AS last_synced_at ORDER BY p.name"
+    "RETURN p.name AS name, p.last_synced_at AS last_synced_at, "
+    "p.root_path AS root_path ORDER BY p.name"
 )
 
 # Retires a project whose checkout was just re-indexed under another name
@@ -364,14 +421,18 @@ CYPHER_PROJECT_SYNC_TIMES = (
 # Module's qn the bare project name, so the prefix test alone would miss them
 # (review of PR 2497); the trailing dot of the prefix still keeps a project
 # whose name only starts with this one (`acme.webapp` beside `acme.web`).
-CYPHER_RETIRE_PROJECT = """
+CYPHER_RETIRE_PROJECT = (
+    """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
 WHERE container.qualified_name = $project_name
    OR container.qualified_name STARTS WITH $project_prefix
 OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
-DETACH DELETE p, container, defined
+WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
 """
+    + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
+)
+
 
 # Deletes the Folder/File bound to `c` unless a project other than
 # `$project_name` claims it. Another project `q` claims a Folder/File it
@@ -388,12 +449,29 @@ WHERE other_claims = 0
 DETACH DELETE c
 """
 
+
 # Deletes what `p` claims, except a Folder or File another project claims
 # too: that one only loses `p`'s edges. The named nodes go first, so the
 # check that follows walks up from each Folder/File over what is left; no
 # large list is ever a grouping key, which cost seconds per thousand nodes.
-CYPHER_DELETE_PROJECT = f"""
-MATCH (p:Project {{name: $project_name}})
+# The resource-to-resource flows go before any of that: both ends of one are
+# shared Resource nodes, so no detach of what `p` claims reaches it, and its
+# `scope` names the function or module that produced it, one of `p`'s
+# qualified names (issue #2746).
+# Matching the scope by name rather than against `owned` takes a flow of a
+# unit cut off from `p` too, and keeps `owned` out of a grouping key. The
+# step follows `match_filter`, so prune's guarded variant removes no flow of
+# a project it leaves alone.
+def _delete_project(match_filter: str = "") -> str:
+    return f"""
+MATCH (p:Project {{name: $project_name}}){match_filter}
+OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH (p.name + '.')
+WITH p, collect(longer.name) AS nested
+OPTIONAL MATCH (:Resource)-[rf:FLOWS_TO]->(:Resource)
+WHERE {_name_belongs_to_p("rf.scope")}
+WITH p, collect(rf) AS flows
+FOREACH (r IN flows | DELETE r)
+WITH p
 {_CYPHER_PROJECT_CLAIMS}
 WITH [c IN owned WHERE c:Folder OR c:File] AS shareable,
 [c IN owned WHERE NOT (c:Folder OR c:File)] AS named
@@ -401,6 +479,85 @@ FOREACH (n IN named | DETACH DELETE n)
 WITH shareable
 UNWIND shareable AS c
 {_DELETE_UNLESS_CLAIMED_ELSEWHERE}"""
+
+
+CYPHER_DELETE_PROJECT = _delete_project()
+
+# A run of the project that may be writing the graph: one whose marker is
+# up and reached its first write, or one from before the phase existed
+# (#1705). Every writer marks before its first graph write, whichever
+# checkout or CGR_HOME it runs from, so the marker is the one signal a
+# same-name sync elsewhere gives `cgr prune` (#2479). A run still in its
+# read-only prologue (`writing=false`) has written nothing to lose, and
+# prune's own marker, `$run_id`, is not another writer.
+_WRITING_RUN = (
+    "OPTIONAL MATCH (writer:IncompleteRun {project: $project_name})\n"
+    "WHERE coalesce(writer.writing, true) "
+    "AND (writer.run_id IS NULL OR writer.run_id <> $run_id)\n"
+)
+
+# The same delete, made conditional on the project still naming the root the
+# run checked, and on no run of it writing (#2479): the WHERE and the DELETE
+# are one statement, so a concurrent sync repointing `root_path`, or one
+# starting to write, between `cgr prune`'s checks and its purge leaves the
+# project alone. It returns nothing either way; the caller reads whether the
+# project is gone afterwards.
+CYPHER_DELETE_PROJECT_IF_ROOT = _delete_project(
+    "\nWHERE p.root_path = $expected_root\n"
+    + _WRITING_RUN
+    + "WITH p, count(writer) AS writers\nWHERE writers = 0"
+)
+
+
+# The labels a project owns by name alone: each one's qualified name carries
+# its project's name, as a Module's does (the fact CYPHER_DELETE_MODULE
+# relies on). An ALLOWLIST, because a delete that fails open takes another
+# project's nodes: an ExternalModule or a Resource is keyed by a name no
+# project owns, a Gloss outlives the rebuild it is meant to survive (issue
+# #1828), and Package and Module are the units the sweep walks from.
+_DETACHABLE_LABELS: tuple[NodeLabel, ...] = (
+    NodeLabel.CLASS,
+    NodeLabel.CODE_SMELL,
+    NodeLabel.CONSTANT,
+    NodeLabel.ENUM,
+    NodeLabel.ENUM_VARIANT,
+    NodeLabel.FIELD,
+    NodeLabel.FUNCTION,
+    NodeLabel.INTERFACE,
+    NodeLabel.METHOD,
+    NodeLabel.MODULE_IMPLEMENTATION,
+    NodeLabel.MODULE_INTERFACE,
+    NodeLabel.PARAMETER,
+    NodeLabel.PATTERN,
+    NodeLabel.SECTION,
+    NodeLabel.SECURITY_ISSUE,
+    NodeLabel.TYPE,
+    NodeLabel.UNION,
+)
+# The qualified-name-keyed labels a project delete never takes by name.
+_NEVER_SWEPT_LABELS: frozenset[NodeLabel] = frozenset(
+    {
+        NodeLabel.EXTERNAL_MODULE,
+        NodeLabel.GLOSS,
+        NodeLabel.MODULE,
+        NodeLabel.PACKAGE,
+        NodeLabel.RESOURCE,
+    }
+)
+
+
+def _sweep_detached() -> str:
+    # One label at a time, deleting as it goes and carrying only the short
+    # `nested` list: grouping on a large list cost seconds per thousand
+    # nodes (see CYPHER_DELETE_PROJECT).
+    return "".join(
+        f"OPTIONAL MATCH (d:{label.value}) WHERE {_belongs_to_named('d')}\n"
+        "WITH nested, collect(d) AS detached\n"
+        "FOREACH (n IN detached | DETACH DELETE n)\n"
+        "WITH nested\n"
+        for label in _DETACHABLE_LABELS
+    )
+
 
 # The orphan prune's delete for a Folder whose directory is still on disk but
 # outside this project's walk (`.cgrignore`, `--exclude`; issue #2884). Folder
@@ -420,17 +577,21 @@ CYPHER_DELETE_UNCLAIMED_FOLDER = (
     "MATCH (c:Folder {absolute_path: $path})\n" + _DELETE_UNLESS_CLAIMED_ELSEWHERE
 )
 
+
 # Run after CYPHER_DELETE_PROJECT: the project's Packages and Modules that no
 # containment path from it reached, such as a tree the #897 repair cut off
 # from its Project, go too rather than outliving it as orphans (issue
 # #2665). Modules always carry the project prefix, the fact
-# CYPHER_DELETE_MODULE relies on. Glosses are keyed by qualified name as
-# well, but are neither label and hang off nothing this walks, so they
-# survive the rebuild they are meant to survive (issue #1828).
-CYPHER_DELETE_PROJECT_CUT_OFF_UNITS = f"""
+# CYPHER_DELETE_MODULE relies on. So do the definitions an interrupted sync
+# left with no edge to their module, which no walk reaches (#2479): they go
+# by name too. Glosses are keyed by qualified name as well, but are none of
+# these labels and hang off nothing this walks, so they survive the rebuild
+# they are meant to survive (issue #1828).
+def _delete_cut_off_units(guard: str = "", carried: str = "") -> str:
+    return f"""{guard}
 OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH $project_prefix
-WITH collect(longer.name) AS nested
-OPTIONAL MATCH (pkg:Package) WHERE {_belongs_to_named("pkg")}
+WITH {carried}collect(longer.name) AS nested
+{_sweep_detached()}OPTIONAL MATCH (pkg:Package) WHERE {_belongs_to_named("pkg")}
 WITH nested, collect(pkg) AS packages
 OPTIONAL MATCH (mod:Module) WHERE {_belongs_to_named("mod")}
 WITH packages, collect(mod) AS modules
@@ -440,6 +601,51 @@ OPTIONAL MATCH (u)-[:{_DEFINITION_RELS}|CONTAINS_SECTION*]->(defined)
 WITH collect(DISTINCT u) + collect(DISTINCT defined) AS gone
 FOREACH (n IN gone | DETACH DELETE n)
 """
+
+
+CYPHER_DELETE_PROJECT_CUT_OFF_UNITS = _delete_cut_off_units()
+
+# The same sweep for `cgr prune` (#2479), run only while no project of the
+# name exists and no run of it is writing, checked in the same statement:
+# the sweep matches by name, so a sync that recreated the project, or began
+# writing it, after the conditional delete would otherwise lose its nodes to
+# it. Both counts are carried as grouping keys into the first aggregation,
+# so a failed check leaves no row to sweep with rather than one with an
+# empty `nested`.
+CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE = _delete_cut_off_units(
+    "\nOPTIONAL MATCH (other:Project {name: $project_name})\n"
+    "WITH count(other) AS recreated\n"
+    + _WRITING_RUN
+    + "WITH recreated, count(writer) AS writers\n"
+    "WHERE recreated = 0 AND writers = 0",
+    "recreated, writers, ",
+)
+
+
+def _count_named(label: NodeLabel) -> str:
+    return f"""OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH $project_prefix
+WITH collect(longer.name) AS nested
+OPTIONAL MATCH (n:{label.value}) WHERE {_belongs_to_named("n")}
+RETURN count(n) AS residual"""
+
+
+# What of a project is left once the delete and the cut-off sweep above ran
+# (#2479): its Project node, and every node the sweep takes by name -- each
+# Package, Module and definition under its name but not under a longer
+# registered name. One aggregated row per label, so a gone project still
+# answers every row, and the caller sums them: chained in one part, the
+# label scans outgrew what the embedded engine compiles into one statement.
+# `cgr prune` reports a purge done only when the rows sum to 0, so a delete
+# that stopped halfway is an error rather than a success.
+CYPHER_COUNT_PROJECT_NODES = "\nUNION ALL\n".join(
+    [
+        "MATCH (p:Project {name: $project_name}) RETURN count(p) AS residual",
+        *(
+            _count_named(label)
+            for label in (NodeLabel.PACKAGE, NodeLabel.MODULE, *_DETACHABLE_LABELS)
+        ),
+    ]
+)
 
 
 # Damage detectors for the issue #897 migration. The superseded key merged
@@ -1172,6 +1378,8 @@ SET g.kind = $kind, g.status = $status, g.body = $body,
     g.anchor_quote = $anchor_quote, g.anchor_prefix = $anchor_prefix,
     g.anchor_suffix = $anchor_suffix,
     g.write_id = $write_id, g.mention_qns = $mention_qns,
+    g.mention_hashes = $mention_hashes, g.mention_quotes = $mention_quotes,
+    g.mentions_lost = null,
     g.project = $project_name, g.moved_from = null, g.candidate_qns = null
 WITH g, t, mentioned
 OPTIONAL MATCH (g)-[old:{_ANNOTATES}]->(prev)
@@ -1315,11 +1523,58 @@ SET g.anchor_state = CASE WHEN origin = t.qualified_name
 MERGE (g)-[:{_ANNOTATES}]->(t)"""
 CYPHER_GLOSS_MARK = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 SET g.anchor_state = $anchor_state, g.candidate_qns = $candidate_qns"""
-CYPHER_REANCHOR_GLOSS_MENTIONS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->()
-WHERE g.mention_qns IS NOT NULL AND {_GLOSS_OF_SYNCING_PROJECT}
-UNWIND g.mention_qns AS mention_qn
-MATCH (m {{qualified_name: mention_qn}})
-WHERE {_any_label("m", _GRAPH_DEFINITION_LABELS)}
+# A note's mentions are placed after its subject (issue #3230), by
+# `gloss_repair.repair_mentions`: the attached notes that mention anything,
+# with each mention's recorded anchors and the edges it has now; the
+# definitions currently under the mentioned names; and one statement per note
+# whose mentions changed. A mention is never bound by its name alone once
+# that name holds other code and the recorded code is found elsewhere, and
+# one that cannot be placed is listed in `mentions_lost` rather than dropped.
+CYPHER_GLOSS_MENTION_ANCHORS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->()
+WITH DISTINCT g
+WHERE g.mention_qns IS NOT NULL AND size(g.mention_qns) > 0
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN g.qualified_name AS qualified_name, g.project AS project,
+       g.target_qn AS target_qn, g.mention_qns AS mention_qns,
+       g.mention_hashes AS mention_hashes, g.mention_quotes AS mention_quotes,
+       g.mentions_lost AS mentions_lost, g.write_id AS write_id,
+       collect(m.qualified_name) AS attached"""
+CYPHER_DEFINITIONS_BY_QNS = f"""UNWIND $qns AS qn
+MATCH (t {{qualified_name: qn}})
+WHERE {_any_label("t", _GRAPH_DEFINITION_LABELS)}
+RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
+# The note's mentions as the repair placed them, and its MENTIONS edges
+# rebuilt to match. A mention kept on its name is bound by `attach_qns`; one
+# followed to a new name by `attach_keys`, its name and the hash the pass
+# read joined by `key_separator`, so a definition replaced between the read
+# and this write is not bound on the strength of its name. The targets are
+# matched BEFORE any edge is deleted, and only an edge to a node that is no
+# longer a target is deleted: with the definition indexes in place, Memgraph
+# 3 lost the edge when one statement deleted it and then merged it again.
+# The note must still carry the `write_id` the pass read: an `annotate` that
+# landed in between wrote newer mentions, which this result would overwrite.
+# And every followed key must still match a target: a definition replaced
+# under its new name would otherwise have that name saved without an edge,
+# and the next pass would read the newcomer as an in-place edit and bind it.
+# Either way nothing is written, and the next sync places the note afresh.
+CYPHER_GLOSS_SET_MENTIONS = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
+WHERE coalesce(g.write_id, '') = $write_id
+OPTIONAL MATCH (m)
+WHERE {_any_label("m", _GRAPH_DEFINITION_LABELS)} AND m.qualified_name STARTS WITH $project_prefix
+  AND (m.qualified_name IN $attach_qns
+       OR (m.qualified_name + $key_separator + m.anchor_hash) IN $attach_keys)
+WITH g, collect(DISTINCT m) AS targets
+WHERE all(key IN $attach_keys WHERE any(target IN targets
+          WHERE target.qualified_name + $key_separator + target.anchor_hash = key))
+SET g.mention_qns = $mention_qns, g.mention_hashes = $mention_hashes,
+    g.mention_quotes = $mention_quotes, g.mentions_lost = $mentions_lost
+WITH g, targets
+OPTIONAL MATCH (g)-[old:{_MENTIONS}]->(t)
+WHERE NOT t IN targets
+WITH g, targets, collect(old) AS stale_edges
+FOREACH (edge IN stale_edges | DELETE edge)
+WITH g, targets
+UNWIND targets AS m
 MERGE (g)-[:{_MENTIONS}]->(m)"""
 # Staleness (issue #1808): a gloss recorded its subject's `anchor_hash` as
 # `target_hash` when it was written; after a sync the two are compared and the
@@ -1346,7 +1601,8 @@ _GLOSS_ROW = (
     "g.commit_sha AS commit_sha, g.target_qn AS target_qn, "
     "g.target_hash AS target_hash, g.anchor_state AS anchor_state, "
     "g.moved_from AS moved_from, g.candidate_qns AS candidate_qns, "
-    "g.write_id AS write_id, collect(m.qualified_name) AS mentions"
+    "g.write_id AS write_id, g.mentions_lost AS mentions_lost, "
+    "collect(m.qualified_name) AS mentions"
 )
 CYPHER_GLOSS_READ = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
@@ -1501,6 +1757,39 @@ CYPHER_GRAPH_IMPLEMENTORS = """MATCH (impl)-[r:INHERITS|IMPLEMENTS]->(base)
 WHERE base.qualified_name = $qn AND impl.qualified_name STARTS WITH $project_prefix
 RETURN labels(impl)[0] AS label, impl.qualified_name AS qualified_name,
        impl.path AS path, type(r) AS rel_type"""
+# What a rename must not silently break (issue #3226): whether a method
+# overrides something outside the project, the override markers it carries,
+# how many project methods it overrides, its class, and the supertypes outside
+# the project that class extends or implements, any of which may declare it
+# too. A library type is an ExternalModule even when its name starts like the
+# project's (`java.lang.Runnable` in a project named `java`).
+CYPHER_RENAME_OVERRIDE_FACTS = f"""MATCH (n)
+WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (n)-[:OVERRIDES]->(base)
+WITH n, count(base) AS bases
+OPTIONAL MATCH (owner)-[:DEFINES_METHOD]->(n)
+OPTIONAL MATCH (owner)-[:INHERITS|IMPLEMENTS]->(outside)
+WHERE outside:{NodeLabel.EXTERNAL_MODULE.value}
+   OR NOT outside.qualified_name STARTS WITH $project_prefix
+WITH n, bases, owner, collect(DISTINCT outside.qualified_name) AS outside_supertypes
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
+       n.name AS name, n.path AS path,
+       n.overrides_external AS overrides_external, n.decorators AS decorators,
+       n.modifiers AS modifiers, bases, outside_supertypes,
+       owner.qualified_name AS owner"""
+# The direct supertypes of project classes, a step of the rename's walk up a
+# class chain for contracts declared further up (`Task extends Bridge`, where
+# `Bridge implements Runnable`).
+CYPHER_RENAME_SUPERTYPES = """MATCH (c)-[:INHERITS|IMPLEMENTS]->(s)
+WHERE c.qualified_name IN $qns AND c.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT c.qualified_name AS qualified_name,
+       s.qualified_name AS supertype, labels(s) AS labels"""
+# The project classes that directly extend or implement any of `$qns`, a
+# step of the rename's walk down to the classes that inherit a renamed member
+# (`Task extends Base implements Runnable`, where only `Base` declares `run()`).
+CYPHER_RENAME_SUBTYPES = """MATCH (c)-[:INHERITS|IMPLEMENTS]->(s)
+WHERE s.qualified_name IN $qns AND c.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT c.qualified_name AS qualified_name"""
 CYPHER_GRAPH_OVERRIDES = """MATCH (a)-[r:OVERRIDES]-(b)
 WHERE b.qualified_name = $qn AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS label, a.qualified_name AS qualified_name, a.path AS path,
@@ -1571,7 +1860,8 @@ _DELTA_DEFINITION_FIELDS = """RETURN labels(n)[0] AS label, n.qualified_name AS 
        n.positional_params AS positional_params,
        n.ast_fingerprint AS ast_fingerprint,
        n.ast_fingerprint_nodes AS ast_fingerprint_nodes,
-       n.ast_branch_fingerprints AS ast_branch_fingerprints"""
+       n.ast_branch_fingerprints AS ast_branch_fingerprints,
+       n.decorators AS decorators, n.modifiers AS modifiers"""
 CYPHER_DELTA_DEFINITIONS = f"""MATCH (n)
 WHERE {_any_label("n", _DELTA_DEFINITION_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
@@ -1654,7 +1944,7 @@ WHERE (n:Function OR n:Method) AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
        n.decorators AS decorators"""
-CYPHER_DELTA_MODULE_IMPORTS = """MATCH (m:Module)-[:IMPORTS]->(t:Module)
+CYPHER_DELTA_MODULE_IMPORTS = """MATCH (m:Module)-[r:IMPORTS]->(t:Module)
 WHERE m.qualified_name STARTS WITH $project_prefix
   AND t.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
@@ -1664,7 +1954,7 @@ WHERE m.qualified_name STARTS WITH $project_prefix
           WHERE t.qualified_name <> longer_project
             AND NOT t.qualified_name STARTS WITH (longer_project + '.'))
 RETURN DISTINCT m.qualified_name AS from_qn, m.path AS from_path,
-       t.qualified_name AS to_qn"""
+       t.qualified_name AS to_qn, r.imported_name AS imported_name"""
 # The import statements that bind a symbol BY NAME into or out of the
 # touched files (issue #2516), one row per bound name: an importer of a
 # touched module still naming a symbol the edit removed, and a touched
@@ -1693,6 +1983,14 @@ WHERE n.qualified_name STARTS WITH $project_prefix
             AND NOT n.qualified_name STARTS WITH (longer_project + '.'))
   AND n.path IN $paths
 RETURN n.qualified_name AS qualified_name, n.path AS path"""
+# The bases of the named classes, one level of a walk up from the classes
+# the snapshot's callers are written in: they decide what `this` or `self`
+# reaches there, and an edit can change them while every method keeps its
+# shape (bot reviews on PR #3632).
+CYPHER_DELTA_BASES = f"""MATCH (c)-[:INHERITS]->(b)
+WHERE {_any_label("c", _DELTA_DEFINITION_LABELS)} AND c.qualified_name IN $qns
+RETURN DISTINCT c.qualified_name AS from_qn,
+       coalesce(b.qualified_name, b.name) AS to_qn"""
 CYPHER_DELTA_MODULE_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(t:Module)
 WHERE m.qualified_name STARTS WITH $project_prefix
   AND t.qualified_name STARTS WITH $project_prefix
@@ -1728,6 +2026,12 @@ WITH DISTINCT doc
 MATCH (doc)-[:CONTAINS_SECTION]->(s:Section)
 RETURN doc.qualified_name AS from_qn, s.qualified_name AS qualified_name, s.name AS name,
        s.path AS path, s.start_line AS start_line, s.end_line AS end_line"""
+# What one module imports, with each statement's site (issue #1534).
+CYPHER_GRAPH_IMPORTS_OF = """MATCH (m:Module)-[r:IMPORTS]->(target)
+WHERE m.qualified_name = $qn AND m.qualified_name STARTS WITH $project_prefix
+RETURN target.qualified_name AS to_qn, r.line AS line, r.col AS col,
+       r.end_line AS end_line, r.end_col AS end_col, r.alias AS alias,
+       r.imported_name AS imported_name"""
 CYPHER_GRAPH_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(target)
 WHERE target.qualified_name = $qn AND m.qualified_name STARTS WITH $project_prefix
 RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,

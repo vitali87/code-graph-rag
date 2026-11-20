@@ -1,3 +1,4 @@
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import NamedTuple
@@ -104,25 +105,36 @@ class StructureProcessor:
 
         The repo root is always included: every directory's parent lookup
         resolves against it, and it is the fallback container.
+
+        Top-down, and a skipped directory is not entered: everything beneath
+        it is skipped too, and `rglob` listed every entry of `.git/objects`
+        only to reject each one (CodeRabbit review of #3644). `only` narrows
+        what is derived, not what is walked, so a requested directory is
+        reached through ancestors it does not name.
         """
         directories = {self.repo_path}
-        for path in self.repo_path.rglob(cs.GLOB_ALL):
-            # A linked directory is not walked (issue #2451), so it gets no
-            # container either: an in-repo one was an empty Package whose
-            # absolute path was its target's.
-            if not path.is_dir() or is_symlink_entry(path):
-                continue
-            if only is not None and (
-                cached_relative_path(path, self.repo_path).as_posix() not in only
-            ):
-                continue
-            if not should_skip_path(
-                path,
-                self.repo_path,
-                exclude_paths=self.exclude_paths,
-                unignore_paths=self.unignore_paths,
-            ):
-                directories.add(path)
+        for dirpath, dirnames, _filenames in os.walk(self.repo_path):
+            parent = Path(dirpath)
+            walked: list[str] = []
+            for name in dirnames:
+                path = parent / name
+                # A linked directory is not walked (issue #2451), so it gets no
+                # container either: an in-repo one was an empty Package whose
+                # absolute path was its target's.
+                if is_symlink_entry(path) or should_skip_path(
+                    path,
+                    self.repo_path,
+                    exclude_paths=self.exclude_paths,
+                    unignore_paths=self.unignore_paths,
+                    is_file=False,
+                ):
+                    continue
+                walked.append(name)
+                if only is None or (
+                    cached_relative_path(path, self.repo_path).as_posix() in only
+                ):
+                    directories.add(path)
+            dirnames[:] = walked
         return directories
 
     def _emit_package(

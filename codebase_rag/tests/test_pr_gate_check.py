@@ -1179,11 +1179,14 @@ REAL_ROLLUP_ALL_CONCLUDED = [
         "conclusion": "SUCCESS",
     },
     {"__typename": "CheckRun", "name": "Go Frontend", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "Toolchain Tests", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "Reference Graphs", "conclusion": "SUCCESS"},
     {
         "__typename": "CheckRun",
         "name": "Sonar Zero Issues Gate",
         "conclusion": "SUCCESS",
     },
+    {"__typename": "CheckRun", "name": "Greptile 5/5 Gate", "conclusion": "SUCCESS"},
     {"__typename": "CheckRun", "name": "CodeQL", "conclusion": "SKIPPED"},
     {"__typename": "CheckRun", "name": "Analyze (actions)", "conclusion": "SUCCESS"},
 ]
@@ -1827,7 +1830,10 @@ class TestAggregatedJobsCoversEveryDeclaredDependency:
         "Binary Smoke Test",
         "Wheel Smoke (unlocked resolution)",
         "Go Frontend",
+        "Toolchain Tests",
+        "Reference Graphs",
         "Sonar Zero Issues Gate",
+        "Greptile 5/5 Gate",
     )
 
     def test_every_declared_dependency_is_aggregated(self) -> None:
