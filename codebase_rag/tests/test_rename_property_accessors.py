@@ -22,6 +22,7 @@ from codebase_rag import constants as cs
 from codebase_rag.editing.rename import (
     QueryFn,
     RenameRefused,
+    reindexed_names,
     rename,
     renamed_qualified_name,
 )
@@ -204,6 +205,8 @@ def test_the_plan_names_both_accessors_and_the_decorator(
     [
         ("p.bank.Account.balance@10", "p.bank.Account.funds@10"),
         ("p.bank.Account.balance@10_4", "p.bank.Account.funds@10_4"),
+        # A Java/C# signature stays too, ahead of the marker.
+        ("p.Bank.balance(Map.Entry)@10", "p.Bank.funds(Map.Entry)@10"),
     ],
 )
 def test_the_expected_name_keeps_the_duplicate_marker(
@@ -423,3 +426,17 @@ def test_a_name_without_a_marker_is_renamed_as_before(
     member: str, expected: str
 ) -> None:
     assert renamed_qualified_name(member, "assist") == expected
+
+
+def test_the_reindexed_names_keep_a_method_signature() -> None:
+    # The group's first member takes the plain name; a Java/C# signature is
+    # part of that name, not of the marker.
+    assert reindexed_names(
+        ["p.Bank.balance(Map.Entry)", "p.Bank.balance(Map.Entry)@10"], "funds"
+    ) == [
+        ("p.Bank.balance(Map.Entry)", "p.Bank.funds(Map.Entry)"),
+        ("p.Bank.balance(Map.Entry)@10", "p.Bank.funds(Map.Entry)@10"),
+    ]
+    assert reindexed_names(["p.Bank.balance(Map.Entry)@10"]) == [
+        ("p.Bank.balance(Map.Entry)@10", "p.Bank.balance(Map.Entry)")
+    ]
