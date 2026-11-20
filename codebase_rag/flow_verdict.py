@@ -302,19 +302,28 @@ def _goes_on(
     # resource flows, or enter code (a handler), past which no edge says
     # where it goes.
     if start not in memo:
-        seen = {start}
-        queue: deque[tuple[str, str]] = deque([start])
-        found = start[0] == sink_qn
-        while queue and not found:
-            for state in _resource_successors(graph, *queue.popleft(), projects):
-                if state[0] == sink_qn or not _is_resource(state[0]):
-                    found = True
-                    break
-                if state not in seen:
-                    seen.add(state)
-                    queue.append(state)
-        memo[start] = found
+        memo[start] = _resource_walk_reaches(graph, start, sink_qn, projects)
     return memo[start]
+
+
+def _resource_walk_reaches(
+    graph: _FlowGraph,
+    start: tuple[str, str],
+    sink_qn: str,
+    projects: tuple[str, ...],
+) -> bool:
+    if start[0] == sink_qn:
+        return True
+    seen = {start}
+    queue: deque[tuple[str, str]] = deque([start])
+    while queue:
+        for state in _resource_successors(graph, *queue.popleft(), projects):
+            if state[0] == sink_qn or not _is_resource(state[0]):
+                return True
+            if state not in seen:
+                seen.add(state)
+                queue.append(state)
+    return False
 
 
 def _resource_successors(
