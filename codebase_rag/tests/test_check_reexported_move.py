@@ -611,6 +611,10 @@ _DANGLES = [("page", "util")]
         pytest.param(
             "export default (missing as unknown);\n", _DANGLES, id="unbound-name"
         ),
+        # A global the module does not bind is still there to export
+        # (Greptile, PR #3312): `slug(title)` runs `String(title)`.
+        pytest.param("export default (String);\n", [], id="parenthesized-global"),
+        pytest.param("export default String;\n", [], id="global"),
         # A name under a wrapper is the module's binding of it.
         pytest.param(
             f"{_TS_PLAIN_SLUG}\nexport default (slug as typeof slug);\n",

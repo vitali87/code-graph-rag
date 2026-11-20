@@ -1657,11 +1657,18 @@ class _AfterBindings:
         if f"{module}{cs.SEPARATOR_DOT}{local}" in self._facts(path)[0]:
             return True
         # `import * as ns` binds a module object, never one of its names.
-        return any(
+        if any(
             binding.imported_name != cs.IMPORTED_NAME_WILDCARD
             and not exports.erased(binding)
             and self._resolves(binding, local, seen, for_callers)
             for binding in bindings
+        ):
+            return True
+        # A global no import of the module shadows (`export default String;`)
+        # is there to export whatever the edit did (Greptile review on PR
+        # #3312).
+        return local in cs.JS_GLOBAL_VALUE_NAMES and not any(
+            binding.bound == local for binding in bindings
         )
 
     def _js_exports(self, path: str) -> _JsExports:

@@ -156,6 +156,34 @@ JS_BUILTIN_PATTERNS: frozenset[str] = frozenset(
     }
 )
 
+# The JS/TS global values a module can name with no declaration or import:
+# `export default String;` exports one, and it outlives any edit to the
+# module (Greptile review on PR #3312). Types alone (`Iterable`) are none.
+JS_GLOBAL_VALUE_NAMES: frozenset[str] = (
+    JS_BUILTIN_TYPES
+    | JS_GLOBAL_CLASS_NAMES
+    | frozenset(name for name in JS_BUILTIN_PATTERNS if "." not in name)
+    | frozenset(
+        {
+            "Symbol",
+            "BigInt",
+            "WeakRef",
+            "Math",
+            "JSON",
+            "Reflect",
+            "Proxy",
+            "Intl",
+            "globalThis",
+            "console",
+            "encodeURI",
+            "decodeURI",
+            "queueMicrotask",
+            "structuredClone",
+            "fetch",
+        }
+    )
+)
+
 JS_METHOD_BIND = "bind"
 JS_METHOD_CALL = "call"
 JS_METHOD_APPLY = "apply"
