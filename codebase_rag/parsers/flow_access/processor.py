@@ -351,6 +351,21 @@ def _py_handle_key(name: str) -> str:
     return f"{_PY_HANDLE_KEY}{name}"
 
 
+def _py_pattern_names(target: Node) -> list[str]:
+    # The names and `self.<attr>` targets an unpacking target binds
+    # (`f, (g, *rest) = ...`); a subscript target binds no name.
+    names: list[str] = []
+    pending = [target]
+    while pending:
+        node = pending.pop()
+        if node.type in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
+            if node.text is not None:
+                names.append(node.text.decode(cs.ENCODING_UTF8))
+        elif node.type != cs.TS_PY_SUBSCRIPT:
+            pending.extend(node.named_children)
+    return names
+
+
 # Live handle bindings threaded through the lean walk: variable -> the resource
 # handles it may hold. Set-valued so a name bound to different handles on
 # different branches writes to ALL of them at a later method call (issue #1204).
@@ -4771,6 +4786,13 @@ class FlowProcessor:
         # held before.
         target = python_bound_target(node)
         if target is None or target.text is None:
+            return
+        if target.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
+            # `f, other = io.StringIO(), None` binds each name to an element,
+            # which no handle constructor returned here, so every name it
+            # binds drops the handle it held (bot review on PR #2770).
+            for name in _py_pattern_names(target):
+                tainted.pop(_py_handle_key(name), None)
             return
         key = _py_handle_key(target.text.decode(cs.ENCODING_UTF8))
         bound = frozenset(
