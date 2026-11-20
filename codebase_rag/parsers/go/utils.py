@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 
 from tree_sitter import Node
 
@@ -202,14 +204,21 @@ def local_binding_scopes(func_node: Node) -> GoLocalScopes:
 
 # A name a function binds for itself -> each declaration of it with the byte
 # span it is in scope over.
-GoLocalBindings = dict[str, list[tuple[tuple[int, int], Node]]]
+GoLocalBindings = Mapping[str, tuple[tuple[tuple[int, int], Node], ...]]
+
+# Functions whose bindings stay walked: the call pass reads one caller's
+# twice in a row, for its span bindings and for the local names a bare call
+# may mean (issue #3332). Small, because every entry keeps its tree alive.
+_GO_BINDINGS_CACHE_SIZE = 4
 
 
+@lru_cache(maxsize=_GO_BINDINGS_CACHE_SIZE)
 def local_bindings(func_node: Node) -> GoLocalBindings:
     """`local_binding_scopes` with the declaring node of each span: a
     parameter or variadic parameter declaration, a `var` or `const` spec, or
-    a statement binding a `left` list."""
-    bindings: GoLocalBindings = {}
+    a statement binding a `left` list. Keyed on the node, which tree-sitter
+    compares by tree, so a re-parsed file walks its own."""
+    bindings: dict[str, list[tuple[tuple[int, int], Node]]] = {}
     stack = [func_node]
     while stack:
         node = stack.pop()
@@ -218,7 +227,7 @@ def local_bindings(func_node: Node) -> GoLocalBindings:
             for name in names:
                 bindings.setdefault(name, []).append((span, node))
         stack.extend(node.named_children)
-    return bindings
+    return MappingProxyType({name: tuple(found) for name, found in bindings.items()})
 
 
 def declaration_at(bindings: GoLocalBindings, name: str, point: int) -> Node | None:
@@ -254,15 +263,31 @@ def _bound_names(node: Node) -> list[str]:
     ]
 
 
-def _binding_span(node: Node) -> tuple[int, int] | None:
+def binding_scope(node: Node) -> Node | None:
+    """The block the names a declaring node binds belong to: a parameter's
+    function body (the block a body's top-level `:=` is in too), a type
+    switch itself, else the innermost block around it. A `:=` naming a
+    variable its block already declares assigns that variable."""
     if node.type in _GO_PARAMETER_TYPES:
         # parameter_declaration -> parameter_list -> the function; a
         # parameter of a bare function TYPE binds nothing anywhere.
         owner = node.parent.parent if node.parent is not None else None
         if owner is None or owner.type not in _GO_FUNCTION_TYPES:
             return None
-        body = owner.child_by_field_name(cs.FIELD_BODY)
-        return (body.start_byte, body.end_byte) if body is not None else None
+        return owner.child_by_field_name(cs.FIELD_BODY)
+    if node.type == cs.TS_GO_TYPE_SWITCH_STATEMENT:
+        return node
+    scope = node.parent
+    while scope is not None and scope.type not in _GO_SCOPE_TYPES:
+        scope = scope.parent
+    return scope
+
+
+def _binding_span(node: Node) -> tuple[int, int] | None:
+    if (scope := binding_scope(node)) is None:
+        return None
+    if node.type in _GO_PARAMETER_TYPES:
+        return (scope.start_byte, scope.end_byte)
     if node.type == cs.TS_GO_TYPE_SWITCH_STATEMENT:
         # `switch t := x.(type) {...}`: `t` is declared in each clause, after
         # the guard is evaluated.
@@ -271,10 +296,7 @@ def _binding_span(node: Node) -> tuple[int, int] | None:
         )
         start = guard.end_byte if guard is not None else node.start_byte
         return (start, node.end_byte)
-    scope = node.parent
-    while scope is not None and scope.type not in _GO_SCOPE_TYPES:
-        scope = scope.parent
-    return (node.end_byte, scope.end_byte) if scope is not None else None
+    return (node.end_byte, scope.end_byte)
 
 
 def extract_package_name(root: Node) -> str | None:
@@ -324,6 +346,18 @@ def extract_return_type_name(node: Node) -> str | None:
     if name is not None and name in _type_parameter_names(node):
         return None
     return name
+
+
+def return_type_props(node: Node) -> dict[str, str]:
+    # The names the call pass records for this definition's result, stored on
+    # its node so an incremental run restores them for a file it does not
+    # re-parse (issue #3272). Exactly the extractors ingest records with.
+    props: dict[str, str] = {}
+    if first := extract_first_return_type_name(node):
+        props[cs.KEY_FIRST_RETURN_TYPE] = first
+    if chain := extract_return_type_name(node):
+        props[cs.KEY_CHAIN_RETURN_TYPE] = chain
+    return props
 
 
 def extract_first_return_type_name(node: Node) -> str | None:

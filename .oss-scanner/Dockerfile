@@ -11,13 +11,14 @@
 # of CUDA wheels, and the embedding model it would load must come from
 # HuggingFace, which the offline audit cannot reach anyway.
 
+# Every base is pinned by digest, which Dependabot moves along with its tag.
 # gotypes/go.mod sets the floor at 1.27.2.
-FROM golang:1.27.2-trixie AS go
-FROM eclipse-temurin:21-jdk AS jdk
+FROM golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9 AS go
+FROM eclipse-temurin:25-jdk@sha256:b8705e936964c228dfce359e63dbf08f6c69cb380ed1d576b1f6b1064f15567d AS jdk
 
 # The full image brings a C toolchain, git and the common -dev headers, for the
 # crate's bundled SQLite and anything else built from source.
-FROM python:3.12-trixie
+FROM python:3.12-trixie@sha256:cad37dd20c7cac861af9003af8796d03ea7a998ec1e3a664429740fc9d7d2691
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -31,6 +32,14 @@ ENV UV_LINK_MODE=copy \
 
 COPY --from=go /usr/local/go /usr/local/go
 COPY --from=jdk /opt/java/openjdk /opt/java/openjdk
+
+# curl, cargo and go fetch through the system store: upgrade it, then deselect
+# the eMudhra roots Debian still ships.
+COPY --chmod=755 scripts/distrust_ca_roots.sh /usr/local/sbin/
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && distrust_ca_roots.sh
 
 # cgr-graph-rs (rust/cgr_graph_rs) is a path dependency, so the sync below
 # builds it. rustup is checked against the SHA-256 it publishes and pinned to

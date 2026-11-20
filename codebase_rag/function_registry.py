@@ -59,9 +59,12 @@ class FunctionRegistryTrie:
         "_object_binding_of",
         "_abstracts",
         "_module_private",
+        "_rust_visibility",
         "_body_scoped_names",
         "_callable_params",
         "_reserved",
+        "_internal_linkage",
+        "_same_definition",
     )
 
     def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
@@ -111,9 +114,22 @@ class FunctionRegistryTrie:
         # passes on only exported names, so a private one in a star source is
         # not a candidate for the barrel's member (follow_reexports).
         self._module_private: set[QualifiedName] = set()
+        # Rust functions not declared plain `pub`, each with the path its
+        # visibility is restricted to (`self`, `crate`, `super`, an `in`
+        # path). A glob imports only what is visible where it is written
+        # (PR #3242 review).
+        self._rust_visibility: dict[QualifiedName, str] = {}
         self._body_scoped_names: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
         self._reserved: dict[QualifiedName, tuple[int, int]] = {}
+        # C/C++ functions with internal linkage (`static` at file scope),
+        # by the module of the file defining them: callable only from their
+        # own translation unit (issue #3154).
+        self._internal_linkage: dict[QualifiedName, str] = {}
+        # Names one source definition is registered under twice (JS
+        # `View.prototype.lookup = function lookup()` is `View.lookup` and
+        # module-flat `view.lookup`), each mapped to the other.
+        self._same_definition: dict[QualifiedName, set[QualifiedName]] = {}
 
     def mark_callable_params(
         self, qualified_name: QualifiedName, params: dict[str, int]
@@ -185,11 +201,34 @@ class FunctionRegistryTrie:
     def is_module_private(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._module_private
 
+    def mark_rust_visibility(self, qualified_name: QualifiedName, path: str) -> None:
+        self._rust_visibility[qualified_name] = path
+
+    def rust_visibility(self, qualified_name: QualifiedName) -> str | None:
+        return self._rust_visibility.get(qualified_name)
+
     def mark_body_scoped_name(self, qualified_name: QualifiedName) -> None:
         self._body_scoped_names.add(qualified_name)
 
     def is_body_scoped_name(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._body_scoped_names
+
+    def mark_internal_linkage(
+        self, qualified_name: QualifiedName, module_qn: str
+    ) -> None:
+        self._internal_linkage[qualified_name] = module_qn
+
+    def internal_linkage_module(self, qualified_name: QualifiedName) -> str | None:
+        """The module defining `qualified_name` if it has internal linkage."""
+        return self._internal_linkage.get(qualified_name)
+
+    def mark_same_definition(self, first: QualifiedName, second: QualifiedName) -> None:
+        if first != second:
+            self._same_definition.setdefault(first, set()).add(second)
+            self._same_definition.setdefault(second, set()).add(first)
+
+    def same_definition(self, qualified_name: QualifiedName) -> set[QualifiedName]:
+        return self._same_definition.get(qualified_name, set())
 
     def register_unique_qn(
         self,
@@ -521,8 +560,11 @@ class FunctionRegistryTrie:
         self._forget_object_binding(qualified_name)
         self._abstracts.discard(qualified_name)
         self._module_private.discard(qualified_name)
+        self._rust_visibility.pop(qualified_name, None)
         self._body_scoped_names.discard(qualified_name)
+        self._internal_linkage.pop(qualified_name, None)
         self._callable_params.pop(qualified_name, None)
+        self._forget_same_definition(qualified_name)
 
         self._invalidate_ending_with_cache(simple_name)
         self._drop_member_alias_target(qualified_name)
@@ -546,6 +588,13 @@ class FunctionRegistryTrie:
             del members[key]
         if not members:
             self._object_bindings.pop(binding_qn, None)
+
+    def _forget_same_definition(self, qualified_name: QualifiedName) -> None:
+        for other in self._same_definition.pop(qualified_name, set()):
+            if partners := self._same_definition.get(other):
+                partners.discard(qualified_name)
+                if not partners:
+                    del self._same_definition[other]
 
     def _cleanup_trie_path(self, parts: list[str], node: TrieNode) -> bool:
         if not parts:
@@ -664,6 +713,29 @@ class FunctionRegistryTrie:
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
         node = self._navigate_to_prefix(prefix)
         return [] if node is None else self._collect_from_subtree(node)
+
+    def has_prefix(self, prefix: str) -> bool:
+        """Whether anything is registered at or under `prefix`.
+
+        `bool(find_with_prefix(...))` without the listing: it stops at the
+        first entry, so asking about a 2,000-definition module costs the
+        walk to its first one, not a copy of all of them (issue #2919).
+        """
+        node = self._navigate_to_prefix(prefix)
+        return node is not None and self._subtree_has_entry(node)
+
+    def _subtree_has_entry(self, node: TrieNode) -> bool:
+        # Descends into a child before looking at its siblings: a module's
+        # first child leads to an entry, so a wide module costs the walk down
+        # to one, not a pass over all of its children.
+        if cs.TRIE_QN_KEY in node:
+            return True
+        for key, child in node.items():
+            if not key.startswith(cs.TRIE_INTERNAL_PREFIX):
+                assert isinstance(child, dict)
+                if self._subtree_has_entry(child):
+                    return True
+        return False
 
     def add_member_alias(
         self, alias_qn: QualifiedName, target_qn: QualifiedName

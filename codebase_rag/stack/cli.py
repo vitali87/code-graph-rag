@@ -35,7 +35,7 @@ def _print_status(mgr: StackManager) -> None:
 def up_cmd() -> None:
     mgr = StackManager()
     try:
-        mgr.ensure_running()
+        mgr.ensure_running(move_running=True)
         _print_status(mgr)
     except StackError as e:
         # Echoed once: logged as well, it printed the whole block twice
