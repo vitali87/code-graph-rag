@@ -782,6 +782,9 @@ class _StatefulIngestor:
         cs.KEY_DOCSTRING,
         cs.KEY_NAME_START_LINE,
         cs.KEY_NAME_START_COL,
+        # Where a decorated definition's source opens, as the real query
+        # returns it: `definition` reads its start from it.
+        cs.KEY_DECORATED_START_LINE,
     )
     _GRAPH_SITE_KEYS = (
         cs.KEY_LINE,
