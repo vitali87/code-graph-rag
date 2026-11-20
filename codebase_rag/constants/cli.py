@@ -1015,6 +1015,21 @@ RENAME_DEFINITION_UNREADABLE = (
     "The index names a file the tree no longer has; re-index and retry."
 )
 RENAME_BAD_NAME = "Not a valid identifier: {name}"
+# Refused up front with the reason, rather than as a rewrite that "would no
+# longer parse" (issue #3225).
+RENAME_RESERVED_WORD = "Not a valid identifier: {name} is a reserved word in {language}"
+# A word the definition may take, but some of its uses may not: `fetch(1)`
+# inside an async function would become `await(1)`.
+RENAME_RESERVED_AT_SITES = (
+    "Not a valid identifier: {name} is a reserved word in {language} where "
+    "{count} use(s) sit ({locations})"
+)
+# Python reads an identifier NFKC-normalised, while strings that name it
+# (`__all__`, a patch target) keep the spelling, so the two would disagree.
+RENAME_PY_NORMALISED_NAME = (
+    "Not a valid identifier: {name} is read by Python as {normal}; "
+    "rename to {normal} instead"
+)
 # `{option}` is the opt-in as the caller spells it: `--allow-heuristic` on the
 # command line, `allow_heuristic` in MCP (issue #2886).
 RENAME_AMBIGUOUS = (
