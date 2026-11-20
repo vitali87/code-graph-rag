@@ -14,8 +14,13 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from codebase_rag import constants as cs
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
+from evals.cgr_graph import _StatefulIngestor
 
 _CARGO = '[package]\nname = "{name}"\nversion = "0.1.0"\nedition = "2021"\n'
 
@@ -379,3 +384,118 @@ fn imported(strategy: Strategy) -> bool {
             caller,
             edges,
         )
+
+
+def test_self_and_super_paths_read_the_callers_own_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # PR #3014 review: `self::Strategy` matched by name alone could take
+    # module `a`'s Strategy in module `b`, binding `a`'s payload exactly.
+    # `super::` counts from the inline `mod` the caller sits in.
+    module_a = """\
+pub struct AStrat;
+impl AStrat { pub fn hit(&self) -> bool { true } }
+pub enum Strategy {
+    Literal(AStrat),
+}
+"""
+    module_b = """\
+pub struct BStrat;
+impl BStrat { pub fn hit(&self) -> bool { false } }
+pub enum Strategy {
+    Literal(BStrat),
+}
+
+pub fn run(strategy: Strategy) -> bool {
+    match strategy {
+        self::Strategy::Literal(s) => s.hit(),
+    }
+}
+
+pub mod inner {
+    pub fn run(strategy: super::Strategy) -> bool {
+        match strategy {
+            super::Strategy::Literal(s) => s.hit(),
+        }
+    }
+}
+"""
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_match_relative",
+        "pub mod a;\npub mod b;\n",
+        {"a": module_a, "b": module_b},
+    )
+    package = base.removesuffix(".lib")
+    for caller in ("b.run", "b.inner.run"):
+        edges = _hit_edges(mock_ingestor, f"{package}.{caller}")
+        assert list(edges.values()) == [(f"{package}.b.BStrat.hit", _EXACT)], (
+            caller,
+            edges,
+        )
+
+
+_INCREMENTAL = {
+    "Cargo.toml": _CARGO.format(name="rs_match_incremental"),
+    "src/lib.rs": "pub mod strategies;\npub mod run;\n",
+    "src/strategies.rs": _STRATEGIES
+    + "pub enum Strategy {\n    Literal(LiteralStrategy),\n"
+    + "    Prefix(PrefixStrategy),\n}\n",
+    "src/run.rs": """\
+use crate::strategies::Strategy;
+
+pub fn check(strategy: Strategy) -> bool {
+    match strategy {
+        Strategy::Literal(s) => s.hit(),
+        Strategy::Prefix(s) => s.hit(),
+    }
+}
+""",
+}
+
+
+def _check_calls(store: _StatefulIngestor) -> dict[tuple[str, str, int], str]:
+    calls: dict[tuple[str, str, int], str] = {}
+    for edge in store.edges:
+        if edge[2] != cs.RelationshipType.CALLS.value or not str(edge[1]).endswith(
+            ".run.check"
+        ):
+            continue
+        props = store.props_for(edge)
+        line = props.get(cs.KEY_LINE)
+        assert isinstance(line, int), props
+        calls[(str(edge[1]), str(edge[4]), line)] = str(props.get(cs.KEY_RESOLUTION))
+    return calls
+
+
+def test_editing_only_the_caller_keeps_the_payload_types(tmp_path: Path) -> None:
+    # PR #3014 review: only parsing filled the payload map, so a sync that
+    # re-parses the caller but not the enum's unchanged file typed each arm
+    # by its variant name, losing the calls a full build binds.
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.RUST not in parsers:
+        pytest.skip("rust parser not available")
+    root = tmp_path / "rs_match_incremental"
+    for rel, text in _INCREMENTAL.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    store = _StatefulIngestor()
+
+    def sync(force: bool) -> dict[tuple[str, str, int], str]:
+        GraphUpdater(
+            ingestor=store, repo_path=root, parsers=parsers, queries=queries
+        ).run(force=force)
+        return _check_calls(store)
+
+    fresh = sync(force=True)
+    assert sorted(callee.rsplit(".", 2)[-2] for _, callee, _ in fresh) == [
+        "LiteralStrategy",
+        "PrefixStrategy",
+    ], fresh
+    assert set(fresh.values()) == {_EXACT}, fresh
+
+    run_rs = root / "src" / "run.rs"
+    run_rs.write_text(run_rs.read_text() + "// unrelated edit\n", encoding="utf-8")
+
+    assert sync(force=False) == fresh

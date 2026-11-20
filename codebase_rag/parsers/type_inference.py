@@ -31,7 +31,12 @@ from .py import PythonTypeInferenceEngine, resolve_class_name
 from .rs import RustTypeInferenceEngine
 from .rs import utils as rs_utils
 from .rs.type_inference import is_constructor_guess
-from .utils import follow_reexports, function_span_key
+from .utils import (
+    follow_reexports,
+    function_span_key,
+    module_qn_for_entity,
+    safe_decode_text,
+)
 
 if TYPE_CHECKING:
     from .factory import ASTCacheProtocol
@@ -57,6 +62,37 @@ class _RustCallScope(NamedTuple):
     uses: tuple[Mapping[str, str], ...]
     scopes: tuple[str, ...]
     span: tuple[int, int]
+
+
+class _RustPathScope(NamedTuple):
+    """Where a Rust caller's paths are read: its file module, the `mod` its
+    `self::`/`super::` count from, its impl target, and its own qn."""
+
+    module_qn: str
+    effective_module: str
+    class_context: str | None
+    caller_qn: str
+
+
+_RUST_RELATIVE_PATH_HEADS = frozenset(
+    {cs.RUST_CRATE_KEYWORD, cs.KEYWORD_SELF, cs.KEYWORD_SUPER}
+)
+
+
+def _rust_named_item(
+    scope: ASTNode | None, item_type: str, name: str
+) -> ASTNode | None:
+    if scope is None:
+        return None
+    return next(
+        (
+            child
+            for child in scope.named_children
+            if child.type == item_type
+            and safe_decode_text(child.child_by_field_name(cs.FIELD_NAME)) == name
+        ),
+        None,
+    )
 
 
 def _shared[T](value: T | None, empty: Callable[[], T]) -> T:
@@ -586,15 +622,18 @@ class TypeInferenceEngine:
         finds, so an unresolvable binding is strictly worse than none.
         """
         engine = self.rust_type_inference
+        # `self::`/`super::` count from the caller's innermost `mod`, which
+        # the caller's own tree names (PR #3014 review).
+        scope = _RustPathScope(
+            module_qn,
+            cs.SEPARATOR_DOT.join(
+                [module_qn, *rs_utils.build_module_path(caller_node)]
+            ),
+            class_context,
+            caller_qn,
+        )
         bindings = [
-            (
-                start,
-                end,
-                name,
-                self._rust_variant_payload_type(
-                    variant, module_qn, class_context, caller_qn
-                ),
-            )
+            (start, end, name, self._rust_variant_payload_type(variant, scope))
             for start, end, name, variant in engine.collect_match_arm_bindings(
                 caller_node
             )
@@ -618,11 +657,7 @@ class TypeInferenceEngine:
         return bindings
 
     def _rust_variant_payload_type(
-        self,
-        variant_path: str,
-        module_qn: str,
-        class_context: str | None,
-        caller_qn: str,
+        self, variant_path: str, scope: _RustPathScope
     ) -> str:
         # `Strategy::Literal(s)` binds `s` to the payload type the enum
         # declares for `Literal` (issue #2923), as the enum's own module
@@ -632,20 +667,30 @@ class TypeInferenceEngine:
         # scope. Otherwise, or for a variant without a single payload, the
         # variant name stands, which is the payload type under the newtype
         # idiom (`Command::Get(Get)`).
+        module_qn = scope.module_qn
         enum_path, separator, written = variant_path.rpartition(
             cs.SEPARATOR_DOUBLE_COLON
         )
+        head = enum_path.partition(cs.SEPARATOR_DOUBLE_COLON)[0]
         if not separator:
-            target = self._rust_imported_variant(written, module_qn, caller_qn)
-        elif enum_path == cs.RS_SELF_TYPE and class_context:
-            target = f"{class_context}{cs.SEPARATOR_DOT}{written}"
+            target = self._rust_imported_variant(written, module_qn, scope.caller_qn)
+        elif enum_path == cs.RS_SELF_TYPE and scope.class_context:
+            target = f"{scope.class_context}{cs.SEPARATOR_DOT}{written}"
+        elif head in _RUST_RELATIVE_PATH_HEADS:
+            # `self::Strategy` is this module's Strategy, `super::Strategy`
+            # its parent's: matched by name alone, a same-named enum of
+            # another module could win (PR #3014 review).
+            enum_qn = self.import_processor._rewrite_rust_local_use_path(
+                enum_path, scope.effective_module
+            )
+            target = f"{enum_qn}{cs.SEPARATOR_DOT}{written}"
         else:
             enum_qn = self._resolve_rust_type_qn(enum_path, module_qn, exact=True)
             target = f"{enum_qn}{cs.SEPARATOR_DOT}{written}"
         # A raw `::` target (an external crate's variant) has no dotted
         # enum qn, so it finds no payloads either.
         enum_qn, _, variant = (target or "").rpartition(cs.SEPARATOR_DOT)
-        payload = self.rust_variant_payload_types.get(enum_qn, {}).get(variant)
+        payload = self._rust_variant_payloads(enum_qn).get(variant)
         if payload is None:
             return written
         enum_module = enum_qn.rpartition(cs.SEPARATOR_DOT)[0]
@@ -674,11 +719,50 @@ class TypeInferenceEngine:
                 f"{base}{cs.SEPARATOR_DOT}{name}"
                 for key, base in scope.items()
                 if key.startswith(cs.RS_WILDCARD_PREFIX)
-                and name in self.rust_variant_payload_types.get(base, {})
+                and name in self._rust_variant_payloads(base)
             ]
             if globbed:
                 return globbed[0] if len(globbed) == 1 else None
         return None
+
+    def _rust_variant_payloads(self, enum_qn: str) -> dict[str, str]:
+        """{variant: payload type} the enum `enum_qn` declares.
+
+        Parsing fills the map, so an enum this run does not re-parse (its
+        file unchanged on an incremental sync) has no entry; its tree is
+        read here on first use instead, or a re-parsed caller would type
+        its arms by the variant name where a full build used the payload
+        (PR #3014 review). An enum with no single-field variant caches its
+        empty map the same way.
+        """
+        if (payloads := self.rust_variant_payload_types.get(enum_qn)) is not None:
+            return payloads
+        if self.function_registry.get(enum_qn) != NodeType.ENUM:
+            return {}
+        enum_node = self._rust_enum_node(enum_qn)
+        payloads = (
+            self.rust_type_inference.build_variant_payload_map(enum_node)
+            if enum_node is not None
+            else {}
+        )
+        self.rust_variant_payload_types[enum_qn] = payloads
+        return payloads
+
+    def _rust_enum_node(self, enum_qn: str) -> ASTNode | None:
+        # The `enum` item `enum_qn` names: in its file module, through the
+        # inline `mod` blocks the qn's middle segments name.
+        module_qn = module_qn_for_entity(enum_qn, self.module_qn_to_file_path)
+        if module_qn is None:
+            return None
+        entry = self.ast_cache.load(self.module_qn_to_file_path[module_qn])
+        if entry is None or entry[1] != cs.SupportedLanguage.RUST:
+            return None
+        *mods, name = enum_qn[len(module_qn) + 1 :].split(cs.SEPARATOR_DOT)
+        scope: ASTNode | None = entry[0]
+        for mod in mods:
+            item = _rust_named_item(scope, cs.TS_RS_MOD_ITEM, mod)
+            scope = item.child_by_field_name(cs.FIELD_BODY) if item else None
+        return _rust_named_item(scope, cs.TS_RS_ENUM_ITEM, name)
 
     def _substitute_rust_generic_bounds(
         self, caller_node: ASTNode, module_qn: str, var_types: dict[str, str]
