@@ -1,14 +1,17 @@
+import fnmatch
 import hashlib
 import os
 import posixpath
 import re
+import stat
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path, PurePath
+from typing import NamedTuple
 
-from pathspec import PathSpec
+from pathspec import GitIgnoreSpec, PathSpec, RegexPattern
 
 from .. import constants as cs
 
@@ -154,17 +157,141 @@ def portable_posix(path: str) -> str:
     return posixpath.normpath(path.replace(cs.SEPARATOR_BACKSLASH, cs.SEPARATOR_SLASH))
 
 
+def ordered_ignore_block(lines: Iterable[str]) -> str:
+    """One exclude-set entry that evaluates `lines` in order, as git does.
+
+    A `.gitignore` exclude followed by `!` lines is not a set of independent
+    patterns: the last matching line decides (issue #2835). Patterns cannot
+    hold a line break, so the joined lines are one entry, compiled apart from
+    the rest of the set; a set without such an entry behaves as before.
+    """
+    return cs.IGNORE_BLOCK_SEPARATOR.join(lines)
+
+
+def ordered_block_lines(pattern: str) -> list[str]:
+    return pattern.split(cs.IGNORE_BLOCK_SEPARATOR)
+
+
+class _BlockLine(NamedTuple):
+    line: str
+    pattern: RegexPattern
+
+
+class _OrderedBlock(NamedTuple):
+    lines: tuple[_BlockLine, ...]
+    # The block's excludes alone: a path none of them reaches is kept, so
+    # most paths cost one match, not one per line and directory level.
+    excludes: GitIgnoreSpec
+
+
+class _IgnoreMatcher(NamedTuple):
+    patterns: PathSpec
+    ordered_blocks: tuple[_OrderedBlock, ...]
+
+    def match_file(self, rel_path_str: str) -> bool:
+        return self.patterns.match_file(rel_path_str) or any(
+            _git_ignores(block, rel_path_str) for block in self.ordered_blocks
+        )
+
+
+def _ordered_block(lines: list[str]) -> _OrderedBlock:
+    spec = GitIgnoreSpec.from_lines(lines)
+    return _OrderedBlock(
+        lines=tuple(
+            _BlockLine(line, pattern)
+            for line, pattern in zip(lines, spec.patterns, strict=True)
+        ),
+        excludes=GitIgnoreSpec.from_lines(
+            line for line in lines if not line.startswith(cs.GITIGNORE_NEGATION)
+        ),
+    )
+
+
+def _git_ignores(block: _OrderedBlock, rel_path_str: str) -> bool:
+    """Whether git ignores the path: at the path itself or at one of its
+    parent directories, the last line matching that level is an exclude.
+
+    So an excluded directory keeps everything beneath it excluded (`gen/`
+    then `!gen/keep.py` keeps nothing), and a `!` line re-includes only what
+    it matches itself: `!pkgs/` leaves `pkgs/a/gen/` excluded by `gen/`,
+    while `src/**` then `!src/gen/` and `!src/gen/keep.py` keeps that file,
+    since `src/**` excludes what is inside `src`, not `src`.
+    """
+    if not block.excludes.match_file(rel_path_str):
+        return False
+    is_dir = rel_path_str.endswith(cs.SEPARATOR_SLASH)
+    parts = rel_path_str.rstrip(cs.SEPARATOR_SLASH).split(cs.SEPARATOR_SLASH)
+    for depth in range(1, len(parts) + 1):
+        level = cs.SEPARATOR_SLASH.join(parts[:depth])
+        level_is_dir = is_dir or depth < len(parts)
+        ignored = False
+        for entry in block.lines:
+            if entry.pattern.include is not None and _matches_level(
+                entry, level, level_is_dir
+            ):
+                ignored = entry.pattern.include
+        if ignored:
+            return True
+    return False
+
+
+def _matches_level(entry: _BlockLine, level: str, is_dir: bool) -> bool:
+    # Whether the line matches `level` itself. pathspec's regexes also match
+    # every path beneath a matched directory, marking where that directory
+    # ends, and git judges a path beneath it by its own lines.
+    probe = f"{level}{cs.SEPARATOR_SLASH}" if is_dir else level
+    found = entry.pattern.match_file(probe)
+    if found is None:
+        return False
+    match = found.match
+    if match.re.pattern == cs.PATHSPEC_ANY_DIR_REGEX:
+        return is_dir
+    mark = cs.PATHSPEC_DIR_MARK_GROUP
+    start = match.start(mark) if mark in match.re.groupindex else -1
+    if entry.line.endswith(cs.GITIGNORE_DIRS_INSIDE_SUFFIX):
+        return is_dir and 0 <= start < len(level)
+    if start >= 0:
+        return start == len(level)
+    # `x/**` matches what is inside x, which the probe `x/` is not.
+    return not (is_dir and match.end() == len(probe))
+
+
 # #495: .cgrignore lines and --exclude values are interpreted with
 # .gitignore (gitwildmatch) semantics: bare names match at any depth (as
 # before), and globs / anchoring / dir-only trailing slash now work. The
 # spec is compiled once per pattern set (frozensets are hashable).
 @lru_cache(maxsize=64)
-def compiled_ignore_spec(patterns: frozenset[str]) -> PathSpec:
-    return PathSpec.from_lines(cs.GITWILDMATCH_STYLE, sorted(patterns))
+def compiled_ignore_spec(patterns: frozenset[str]) -> _IgnoreMatcher:
+    blocks = {p for p in patterns if cs.IGNORE_BLOCK_SEPARATOR in p}
+    return _IgnoreMatcher(
+        patterns=PathSpec.from_lines(cs.GITWILDMATCH_STYLE, sorted(patterns - blocks)),
+        ordered_blocks=tuple(
+            _ordered_block(ordered_block_lines(b)) for b in sorted(blocks)
+        ),
+    )
 
 
 def matches_ignore_patterns(rel_path_str: str, patterns: frozenset[str]) -> bool:
     return compiled_ignore_spec(patterns).match_file(rel_path_str)
+
+
+def exclusions_matching(
+    match_path: str, exclude_paths: frozenset[str]
+) -> frozenset[str]:
+    """The exclude lines that match `match_path` (a directory ends in `/`).
+
+    The walk's decision made pattern by pattern, so a caller can name the
+    line that keeps a path out. An ordered `.gitignore` block is named by its
+    exclude lines that match, not as one multi-line entry.
+    """
+    return frozenset(
+        line
+        for pattern in exclude_paths
+        if matches_ignore_patterns(match_path, frozenset({pattern}))
+        for line in ordered_block_lines(pattern)
+        if not line.startswith(cs.GITIGNORE_NEGATION)
+        and matches_ignore_patterns(match_path, frozenset({line}))
+    )
 
 
 _GLOB_MAGIC = re.compile(r"[*?\[]")
@@ -231,6 +358,8 @@ def should_keep_dir(
     # at the file level too), so prune the subtree outright.
     if exclude_paths and matches_ignore_patterns(f"{rel_dir}/", exclude_paths):
         return False
+    if dirname in cs.VCS_METADATA_DIRS:
+        return unignore_names_vcs_dir(rel_dir, unignore_paths)
     if dirname not in cs.IGNORE_PATTERNS:
         return True
     # Cargo's src/bin/ holds first-party binaries, not build output;
@@ -318,6 +447,13 @@ def should_skip_path(
     match_path = rel_path_str if _is_file else f"{rel_path_str}/"
     if exclude_paths and matches_ignore_patterns(match_path, exclude_paths):
         return True
+    dir_parts = rel_path.parent.parts if _is_file else rel_path.parts
+    if (
+        verdict := _vcs_metadata_verdict(
+            dir_parts, rel_path_str, _is_file, unignore_paths
+        )
+    ) is not None:
+        return verdict
     # The rescuable half, decided BEFORE the general unignore below: that check
     # returns False for a directory-level `!` too, since gitwildmatch matches
     # `build/js/jquery.min.js` against the pattern `build`. Requiring a pattern
@@ -327,20 +463,152 @@ def should_skip_path(
         return not (
             unignore_paths and unignore_names_this_file(rel_path_str, unignore_paths)
         )
-    # unignore rescues only built-in ignores, never explicit user excludes.
-    if unignore_paths and matches_ignore_patterns(match_path, unignore_paths):
+    if _unignore_rescues(match_path, rel_path_str, _is_file, unignore_paths):
         return False
-    if (
-        not _is_file
-        and unignore_paths
-        and any(unignore_could_match_within(u, rel_path_str) for u in unignore_paths)
-    ):
-        # structure traversal must descend into a built-in-ignored dir when
-        # an unignore pattern can match beneath it (mirrors _should_keep_dir),
-        # or rescued files get no Folder/Package ancestry in the graph.
-        return False
-    dir_parts = rel_path.parent.parts if _is_file else rel_path.parts
     return has_ignored_dir_part(dir_parts)
+
+
+def _vcs_metadata_verdict(
+    dir_parts: tuple[str, ...],
+    rel_path_str: str,
+    is_file: bool,
+    unignore_paths: frozenset[str] | None,
+) -> bool | None:
+    # Whether to skip a path for the version-control metadata dirs on it:
+    # True or False when they decide, None when they do not.
+    if has_unrescued_vcs_part(dir_parts, unignore_paths):
+        return True
+    # A metadata dir a `!` line names, and a directory in it that the line
+    # spells a path through, are kept as the walk keeps them: the built-in
+    # check after this counts `.git` itself as ignored, so a file rescued
+    # there had no Folder ancestry (CodeRabbit review of #3644).
+    if (
+        not is_file
+        and not cs.VCS_METADATA_DIRS.isdisjoint(dir_parts)
+        and unignore_names_vcs_dir(rel_path_str, unignore_paths)
+    ):
+        return False
+    return None
+
+
+def _unignore_rescues(
+    match_path: str,
+    rel_path_str: str,
+    is_file: bool,
+    unignore_paths: frozenset[str] | None,
+) -> bool:
+    if not unignore_paths:
+        return False
+    # unignore rescues only built-in ignores, never explicit user excludes.
+    if matches_ignore_patterns(match_path, unignore_paths):
+        return True
+    # structure traversal must descend into a built-in-ignored dir when
+    # an unignore pattern can match beneath it (mirrors _should_keep_dir),
+    # or rescued files get no Folder/Package ancestry in the graph.
+    return not is_file and any(
+        unignore_could_match_within(u, rel_path_str) for u in unignore_paths
+    )
+
+
+def unignore_names_vcs_dir(rel_dir: str, unignore_paths: frozenset[str] | None) -> bool:
+    """Whether an unignore spells out a path through this directory.
+
+    Asked of a version-control metadata dir, and of a directory inside one.
+    Only such a line (`!submodule1/.git`) rescues anything in it. A line that
+    can match at any depth (`!*.[Cc]ache/`, `!**/packages/build/`, both in
+    .NET's standard `.gitignore`) keeps every other built-in-ignored
+    directory walkable, but walking `.git` for it recorded Git's own folders
+    as Folder nodes (issue #3642).
+    """
+    if not unignore_paths:
+        return False
+    dir_parts = tuple(rel_dir.split(cs.SEPARATOR_SLASH))
+    for pattern in unignore_paths:
+        bare = pattern.strip(cs.SEPARATOR_SLASH)
+        if cs.SEPARATOR_SLASH not in bare:
+            # `!.git/` names a `.git` at any depth, `!/.git/` only the root's.
+            anchored = pattern.startswith(cs.SEPARATOR_SLASH)
+            if bare == dir_parts[-1] and (not anchored or len(dir_parts) == 1):
+                return True
+            continue
+        if _pattern_reaches_dir(tuple(bare.split(cs.SEPARATOR_SLASH)), dir_parts):
+            return True
+    return False
+
+
+def _pattern_reaches_dir(
+    pattern_parts: tuple[str, ...], dir_parts: tuple[str, ...]
+) -> bool:
+    # Whether the pattern's leading segments match the whole directory path.
+    # Any segment may be a glob or `**`, except a metadata dir that ends the
+    # path: it must be spelled out, since a wildcard standing in for it
+    # (`*/*/x.py`) is a broad line, not a rescue.
+    #
+    # One dir segment at a time, keeping the set of pattern positions that
+    # can stand there, so each (pattern, dir) position pair is visited once:
+    # recursing on `**` both ways was exponential in the number of `**`
+    # segments (CodeRabbit review of #3644).
+    last = len(dir_parts) - 1
+    positions = _past_empty_double_stars({0}, pattern_parts)
+    for index, part in enumerate(dir_parts):
+        literal = index == last and part in cs.VCS_METADATA_DIRS
+        positions = _past_empty_double_stars(
+            _positions_after(positions, pattern_parts, part, literal), pattern_parts
+        )
+        if not positions:
+            return False
+    return True
+
+
+def _positions_after(
+    positions: set[int], pattern_parts: tuple[str, ...], part: str, literal: bool
+) -> set[int]:
+    # The pattern positions that can follow `positions` once a directory
+    # segment `part` is consumed. A `literal` part (a metadata dir ending the
+    # path) only an identical segment matches; a `**` never stands for it.
+    advanced: set[int] = set()
+    for position in positions:
+        if position == len(pattern_parts):
+            continue
+        segment = pattern_parts[position]
+        if segment == cs.GLOB_DOUBLE_STAR:
+            if not literal:
+                advanced.add(position)
+        elif segment == part if literal else fnmatch.fnmatchcase(part, segment):
+            advanced.add(position + 1)
+    return advanced
+
+
+def _past_empty_double_stars(
+    positions: set[int], pattern_parts: tuple[str, ...]
+) -> set[int]:
+    # A `**` may match no segment at all, so the position after it is
+    # reachable wherever it is.
+    reachable = set(positions)
+    pending = list(positions)
+    while pending:
+        position = pending.pop()
+        if (
+            position < len(pattern_parts)
+            and pattern_parts[position] == cs.GLOB_DOUBLE_STAR
+            and position + 1 not in reachable
+        ):
+            reachable.add(position + 1)
+            pending.append(position + 1)
+    return reachable
+
+
+def has_unrescued_vcs_part(
+    dir_parts: tuple[str, ...], unignore_paths: frozenset[str] | None
+) -> bool:
+    # Ahead of the general unignore: the same rule `should_keep_dir` applies
+    # to the walk, so the file predicates and the walk agree (issue #3642).
+    for index, part in enumerate(dir_parts):
+        if part in cs.VCS_METADATA_DIRS and not unignore_names_vcs_dir(
+            cs.SEPARATOR_SLASH.join(dir_parts[: index + 1]), unignore_paths
+        ):
+            return True
+    return False
 
 
 def has_ignored_dir_part(dir_parts: tuple[str, ...]) -> bool:
@@ -371,6 +639,8 @@ def should_skip_rel_file(
     if is_unconditionally_ignored_filename(filename):
         return True
     if exclude_paths and matches_ignore_patterns(rel_path_str, exclude_paths):
+        return True
+    if has_unrescued_vcs_part(dir_parts, unignore_paths):
         return True
     # Same position and rule as `should_skip_path`: the rescuable half needs a
     # pattern naming the FILE, decided before the general unignore below, or a
@@ -764,6 +1034,30 @@ def project_roots_from_rows(
         root = row.get("root_path")
         roots[name] = root if isinstance(root, str) else None
     return roots
+
+
+def root_proven_missing(root_path: str) -> bool:
+    """Whether a project root is provably gone, rather than unreadable.
+
+    Asked by `cgr prune` before it destroys a project (#2479): the cost of a
+    wrong answer is not a stale node but a lost graph. ``FileNotFoundError``
+    and ``NotADirectoryError`` establish absence -- a parent component that is
+    now a file makes the old directory unreachable by construction -- and a
+    stat that succeeds on a non-directory proves the checkout is gone too:
+    the recorded root is a path that no longer holds one. Every other
+    ``OSError`` (an EACCES on a protected parent, an EIO or ESTALE from a
+    mounted filesystem) leaves the question open, and open means live: such
+    a project is never a prune candidate. The stat is unbounded -- a
+    hard-mounted stale server hangs rather than raises, so the listing waits
+    on the mount instead of guessing.
+    """
+    try:
+        st = os.stat(root_path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return not stat.S_ISDIR(st.st_mode)
 
 
 def project_root_for_qualified_name(
