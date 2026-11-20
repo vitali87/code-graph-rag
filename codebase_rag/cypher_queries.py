@@ -1105,6 +1105,7 @@ WHERE {_any_label("n", _DEAD_CODE_NODE_LABELS)} AND n.qualified_name STARTS WITH
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.name AS name, n.path AS path, n.namespace AS namespace,
        n.start_line AS start_line, n.end_line AS end_line,
+       n.decorated_start_line AS decorated_start_line,
        n.decorators AS decorators, n.is_exported AS is_exported,
        n.overrides_external AS overrides_external,
        n.is_program_main AS is_program_main,
@@ -1851,6 +1852,9 @@ WHERE {_any_label("n", _DELTA_DEFINITION_LABELS)} AND n.qualified_name STARTS WI
 # is not prefix-scoped, so an unresolved or external target name can reach
 # this lookup, and a shared graph holding several projects would otherwise
 # let a same-named definition from another project decide the arity verdict.
+# The shared fields carry `decorators`: a caller a renamed symbol left
+# dangling is looked up here, and a Rust `#[test]` fn is a test by its
+# attribute alone (bot review on PR #2913).
 CYPHER_DELTA_DEFINITIONS_BY_QN = f"""MATCH (n)
 WHERE {_any_label("n", _DELTA_DEFINITION_LABELS)} AND n.qualified_name IN $qns
   AND n.qualified_name STARTS WITH $project_prefix
