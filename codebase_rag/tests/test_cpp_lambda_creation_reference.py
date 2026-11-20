@@ -70,7 +70,7 @@ EXTRA = """#include <vector>
 
 auto global_cmp = [](int a, int b) { return a < b; };
 
-int unused() {
+static int unused() {
     auto twice = [](int v) { return v * 2; };
     return twice(2);
 }
@@ -174,6 +174,8 @@ def test_a_lambda_in_an_out_of_class_method_is_referenced_by_the_method(
 
 
 def test_a_lambda_in_a_dead_function_stays_dead(tmp_path: Path) -> None:
+    # `unused` is `static`: a function with external linkage is exported,
+    # and an exported function is a root, so it would never be dead.
     root = tmp_path / PROJECT
     root.mkdir()
     (root / "extra.cpp").write_text(EXTRA, encoding="utf-8")
