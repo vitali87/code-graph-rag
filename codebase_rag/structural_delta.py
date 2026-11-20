@@ -1665,11 +1665,13 @@ class _AfterBindings:
         ):
             return True
         # A global no import of the module shadows (`export default String;`)
-        # is there to export whatever the edit did (Greptile review on PR
-        # #3312).
-        return local in cs.JS_GLOBAL_VALUE_NAMES and not any(
+        # is there to export whatever the edit did, though a namespace object
+        # (`JSON`, `Math`) serves no caller (Greptile reviews on PR #3312).
+        if local not in cs.JS_GLOBAL_VALUE_NAMES or any(
             binding.bound == local for binding in bindings
-        )
+        ):
+            return False
+        return not (for_callers and local in cs.JS_GLOBAL_NAMESPACE_NAMES)
 
     def _js_exports(self, path: str) -> _JsExports:
         if path not in self._exports:

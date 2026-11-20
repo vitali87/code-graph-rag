@@ -615,6 +615,11 @@ _DANGLES = [("page", "util")]
         # (Greptile, PR #3312): `slug(title)` runs `String(title)`.
         pytest.param("export default (String);\n", [], id="parenthesized-global"),
         pytest.param("export default String;\n", [], id="global"),
+        # Negative: a namespace object is exported, but `slug(title)` throws.
+        pytest.param("export default JSON;\n", _DANGLES, id="global-namespace"),
+        pytest.param(
+            "export default (Math);\n", _DANGLES, id="global-namespace-parens"
+        ),
         # A name under a wrapper is the module's binding of it.
         pytest.param(
             f"{_TS_PLAIN_SLUG}\nexport default (slug as typeof slug);\n",
