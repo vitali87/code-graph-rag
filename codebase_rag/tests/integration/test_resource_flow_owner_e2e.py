@@ -1,0 +1,349 @@
+"""Issue #2746: a resource-to-resource FLOWS_TO edge goes away with the code
+that produced it.
+
+`ENV::K -FLOWS_TO-> STDOUT` was written between two Resource nodes with only
+`{kind: "resource"}`: no owner, and one edge shared by every function in every
+project that leaked `K`. Neither the module delete of a re-parsed file nor
+`delete-project` reaches an edge between two Resources, and the orphan sweep
+keeps a component another project anchors (`STDOUT`). So a fixed leak stayed
+in the graph through an incremental re-index, a full rebuild and the
+deletion of the only project that ever produced it.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
+from codebase_rag.capture import resolve_capture
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+
+if TYPE_CHECKING:
+    from codebase_rag.services.graph_service import MemgraphIngestor
+
+pytestmark = [pytest.mark.integration]
+
+
+# The embedded engine is the default backend, and the project delete's
+# flow cleanup must compile there too.
+@pytest.fixture(params=["memgraph_ingestor", "sqlite_ingestor"])
+def ingestor(request: pytest.FixtureRequest) -> MemgraphIngestor:
+    return request.getfixturevalue(request.param)
+
+
+TOKEN = "resource::ENV::BILLING_TOKEN"
+STDOUT = "resource::STDOUT::<dynamic>"
+
+LEAK = """import os
+
+
+def show_config():
+    token = os.getenv("BILLING_TOKEN")
+    print(token)
+"""
+
+FIXED = LEAK.replace("print(token)", 'print("config loaded")')
+
+TWO_LEAKS = (
+    LEAK
+    + """
+
+def audit():
+    print(os.getenv("BILLING_TOKEN"))
+"""
+)
+
+PRINTER = 'def hello():\n    print("hi")\n'
+
+
+def _index(
+    ingestor: MemgraphIngestor, root: Path, project: str, *, force: bool = False
+) -> None:
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=ingestor,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=project,
+        capture=resolve_capture([cs.CaptureGroup.IO.value]),
+    ).run(force=force)
+
+
+def _write(root: Path, files: dict[str, str]) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    for rel, text in files.items():
+        (root / rel).write_text(text, encoding="utf-8")
+    return root
+
+
+def _token_flows(ingestor: MemgraphIngestor) -> list[tuple[str, str | None]]:
+    rows = ingestor.fetch_all(
+        "MATCH (:Resource {qualified_name: $src})-[r:FLOWS_TO]->(b) "
+        "RETURN b.qualified_name AS dst, r.scope AS scope",
+        {"src": TOKEN},
+    )
+    return sorted(
+        (str(row["dst"]), None if row["scope"] is None else str(row["scope"]))
+        for row in rows
+    )
+
+
+def test_a_fixed_leak_loses_its_flow_on_an_incremental_reindex(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    root = _write(tmp_path / "billing", {"app.py": LEAK})
+    _index(ingestor, root, "billing", force=True)
+    assert [dst for dst, _ in _token_flows(ingestor)] == [STDOUT]
+
+    _write(root, {"app.py": FIXED})
+    _index(ingestor, root, "billing")
+
+    assert _token_flows(ingestor) == []
+
+
+def test_a_full_rebuild_drops_a_fixed_leak(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    root = _write(tmp_path / "billing", {"app.py": LEAK})
+    _index(ingestor, root, "billing", force=True)
+
+    _write(root, {"app.py": FIXED})
+    _index(ingestor, root, "billing", force=True)
+
+    assert _token_flows(ingestor) == []
+
+
+def test_deleting_the_project_drops_its_flow_while_stdout_stays_anchored(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    _index(
+        ingestor,
+        _write(tmp_path / "other", {"main.py": PRINTER}),
+        "other",
+        force=True,
+    )
+    _index(
+        ingestor,
+        _write(tmp_path / "billing", {"app.py": LEAK}),
+        "billing",
+        force=True,
+    )
+
+    ingestor.delete_project("billing")
+
+    assert _token_flows(ingestor) == []
+
+
+def test_pruning_the_project_by_its_root_drops_its_flow(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # `cgr prune` deletes through the root-guarded form of the project delete,
+    # which must clean up the flows as the plain form does.
+    _index(
+        ingestor,
+        _write(tmp_path / "other", {"main.py": PRINTER}),
+        "other",
+        force=True,
+    )
+    _index(
+        ingestor,
+        _write(tmp_path / "billing", {"app.py": LEAK}),
+        "billing",
+        force=True,
+    )
+    root = ingestor.list_project_roots()["billing"]
+    assert root is not None
+
+    assert ingestor.delete_project("billing", expected_root=root) is True
+
+    assert _token_flows(ingestor) == []
+
+
+def test_each_function_owns_its_own_flow(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    root = _write(tmp_path / "billing", {"app.py": TWO_LEAKS})
+    _index(ingestor, root, "billing", force=True)
+
+    assert _token_flows(ingestor) == [
+        (STDOUT, "billing.app.audit"),
+        (STDOUT, "billing.app.show_config"),
+    ]
+
+
+def test_removing_one_of_two_leaks_keeps_the_other(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    root = _write(tmp_path / "billing", {"app.py": TWO_LEAKS})
+    _index(ingestor, root, "billing", force=True)
+
+    _write(root, {"app.py": TWO_LEAKS.replace("print(token)", "print(1)")})
+    _index(ingestor, root, "billing")
+
+    assert _token_flows(ingestor) == [(STDOUT, "billing.app.audit")]
+
+
+# Negative: what must not change.
+
+
+def test_a_leak_still_in_the_code_survives_a_reindex_of_its_file(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    root = _write(tmp_path / "billing", {"app.py": LEAK})
+    _index(ingestor, root, "billing", force=True)
+
+    _write(root, {"app.py": LEAK + "\n\ndef unrelated():\n    return 1\n"})
+    _index(ingestor, root, "billing")
+
+    assert [dst for dst, _ in _token_flows(ingestor)] == [STDOUT]
+
+
+def test_reindexing_another_file_keeps_the_leak(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    root = _write(tmp_path / "billing", {"app.py": LEAK, "util.py": PRINTER})
+    _index(ingestor, root, "billing", force=True)
+
+    _write(root, {"util.py": PRINTER + "\n\ndef more():\n    return 2\n"})
+    _index(ingestor, root, "billing")
+
+    assert [dst for dst, _ in _token_flows(ingestor)] == [STDOUT]
+
+
+def test_a_prune_held_back_by_a_writing_run_keeps_the_flow(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # The guard is part of the delete statement; a project it leaves alone
+    # keeps its flows too.
+    _index(
+        ingestor,
+        _write(tmp_path / "billing", {"app.py": LEAK}),
+        "billing",
+        force=True,
+    )
+    root = ingestor.list_project_roots()["billing"]
+    assert root is not None
+    ingestor._execute_query(
+        cq.CYPHER_MARK_PROJECT_INCOMPLETE,
+        {
+            cs.KEY_PROJECT_NAME: "billing",
+            cs.KEY_RUN_ID: "elsewhere",
+            cs.KEY_WRITING: True,
+        },
+    )
+
+    assert ingestor.delete_project("billing", expected_root=root) is False
+
+    assert [dst for dst, _ in _token_flows(ingestor)] == [STDOUT]
+
+
+def test_deleting_one_project_keeps_another_projects_same_leak(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    for project in ("billing", "payroll"):
+        _index(
+            ingestor,
+            _write(tmp_path / project, {"app.py": LEAK}),
+            project,
+            force=True,
+        )
+
+    ingestor.delete_project("billing")
+
+    assert [dst for dst, _ in _token_flows(ingestor)] == [STDOUT]
+
+
+# The leak runs through another file: `main` hands the token to `log`, whose
+# body prints it, or prints what `fetch` returns. An edit to app.py alone
+# re-parses only app.py, so `log` and `fetch` are not walked again.
+CALLER = 'import os\n\nfrom sink import log\n\n\ndef main():\n    log(os.getenv("BILLING_TOKEN"))\n'
+SINK = "def log(value):\n    print(value)\n"
+RETURNER = 'import os\n\n\ndef fetch():\n    return os.getenv("BILLING_TOKEN")\n'
+PRINTS_RETURN = "from source import fetch\n\n\ndef main():\n    print(fetch())\n"
+UNRELATED = "\n\ndef other():\n    return 1\n"
+
+
+@pytest.mark.parametrize(
+    ("files", "untainted"),
+    [
+        (
+            {"app.py": CALLER, "sink.py": SINK},
+            CALLER.replace('os.getenv("BILLING_TOKEN")', '"plain"'),
+        ),
+        (
+            {"app.py": PRINTS_RETURN, "source.py": RETURNER},
+            PRINTS_RETURN.replace("print(fetch())", 'print("plain")'),
+        ),
+    ],
+    ids=["through-a-parameter", "through-a-return"],
+)
+def test_an_edit_to_the_caller_alone_keeps_a_flow_through_another_file(
+    ingestor: MemgraphIngestor,
+    tmp_path: Path,
+    files: dict[str, str],
+    untainted: str,
+) -> None:
+    root = _write(tmp_path / "billing", files)
+    _index(ingestor, root, "billing", force=True)
+    composed = [(STDOUT, "billing.app.main")]
+    assert _token_flows(ingestor) == composed
+
+    _write(root, {"app.py": files["app.py"] + UNRELATED})
+    _index(ingestor, root, "billing")
+    assert _token_flows(ingestor) == composed
+
+    # Negative: once the caller no longer makes the tainted call, the flow
+    # goes with the re-parse.
+    _write(root, {"app.py": untainted})
+    _index(ingestor, root, "billing")
+    assert _token_flows(ingestor) == []
+
+
+DIRECT_AND_HANDOFF = (
+    "import os\n\nfrom noop import helper\n\n\ndef main():\n"
+    '    token = os.getenv("BILLING_TOKEN")\n    print(token)\n    helper(token)\n'
+)
+NOOP = "def helper(value):\n    return None\n"
+
+
+def test_a_fixed_direct_leak_stays_gone_beside_a_call_to_an_unchanged_file(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # The flow came from `print(token)` in main's own body. `helper(token)`
+    # still hands the token to an unchanged file, but the flow never went
+    # through `helper`, so removing the print removes the flow.
+    root = _write(tmp_path / "billing", {"app.py": DIRECT_AND_HANDOFF, "noop.py": NOOP})
+    _index(ingestor, root, "billing", force=True)
+    assert _token_flows(ingestor) == [(STDOUT, "billing.app.main")]
+
+    _write(root, {"app.py": DIRECT_AND_HANDOFF.replace("    print(token)\n", "")})
+    _index(ingestor, root, "billing")
+    assert _token_flows(ingestor) == []
+
+
+PASSES_THROUGH = (
+    "from source import fetch\n\n\ndef identity(value):\n    return value\n\n\n"
+    "def main():\n    print(identity(fetch()))\n"
+)
+
+
+def test_an_edit_above_a_pass_through_call_keeps_its_flow(
+    ingestor: MemgraphIngestor, tmp_path: Path
+) -> None:
+    # `identity(fetch())` hands the unchanged `fetch`'s return through a
+    # function of app.py; a comment above main shifts the call but keeps it.
+    root = _write(
+        tmp_path / "billing", {"app.py": PASSES_THROUGH, "source.py": RETURNER}
+    )
+    _index(ingestor, root, "billing", force=True)
+    assert _token_flows(ingestor) == [(STDOUT, "billing.app.main")]
+
+    _write(root, {"app.py": "# a comment\n" + PASSES_THROUGH})
+    _index(ingestor, root, "billing")
+    assert _token_flows(ingestor) == [(STDOUT, "billing.app.main")]

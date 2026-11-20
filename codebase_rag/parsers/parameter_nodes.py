@@ -456,6 +456,7 @@ def csharp_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
 def csharp_call_shape(func_node: Node) -> CSharpCallShape:
     """The arity bounds and staticness C# bare-call binding checks."""
     params = csharp_declared_parameters(func_node)
+    type_params = func_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
     return CSharpCallShape(
         required=sum(not (p.has_default or p.is_variadic) for p in params),
         variadic=any(p.is_variadic for p in params),
@@ -464,6 +465,7 @@ def csharp_call_shape(func_node: Node) -> CSharpCallShape:
             and safe_decode_text(child) == cs.TS_CSHARP_MODIFIER_STATIC
             for child in func_node.children
         ),
+        type_params=len(type_params.named_children) if type_params else 0,
     )
 
 
