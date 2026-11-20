@@ -336,6 +336,37 @@ def test_a_deleter_is_renamed_with_the_property(tmp_path: Path) -> None:
     )
 
 
+def test_a_qualified_property_getter_is_renamed_with_its_setter(
+    tmp_path: Path,
+) -> None:
+    # `@builtins.property` is `@property` (bot review on PR #2725): renaming
+    # the setter alone left `def balance` behind, and `@funds.setter` then
+    # named nothing when the class body ran.
+    source = "import builtins\n\n\n" + BANK.replace(
+        "    @property\n", "    @builtins.property\n"
+    )
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, updater = _indexed(root, {"bank.py": source})
+    setter = f"{PROJECT}.bank.Account.balance@13"
+    assert setter in _methods(store)
+
+    report = rename(
+        root,
+        _query(store),
+        PROJECT,
+        setter,
+        "funds",
+        allow_heuristic=True,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert (root / "bank.py").read_text(encoding="utf-8") == source.replace(
+        "balance", "funds"
+    )
+
+
 # Negative: what must not change.
 
 

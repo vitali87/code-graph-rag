@@ -559,6 +559,17 @@ def _python_root(source: bytes) -> Node | None:
     return None if parser is None else parser.parse(source).root_node
 
 
+def _def_line(definition: graph_query.DefinitionRow) -> int:
+    """The line of a definition's own `def`.
+
+    `start_line` opens at the first decorator, as `inspect.getsource` does,
+    wherever the graph records one; `_decorators` finds the `def` by its
+    own line, so a decorated getter read from `start_line` found none and
+    its setter was left out of the rename.
+    """
+    return definition["name_line"] or definition["start_line"] or 1
+
+
 def _decorators(root: Node | None, start_line: int, name: str) -> list[Node]:
     """The decorator expressions of the Python `def name` on `start_line`."""
     stack: list[Node] = [root] if root is not None else []
@@ -1335,11 +1346,11 @@ class Renamer:
         except PatcherError:
             return []
         root = self._parsed(source)
-        own = _decorators(root, definition["start_line"] or 1, name)
+        own = _decorators(root, _def_line(definition), name)
         # Only a `def` that is part of a property can have accessor twins;
         # every other method skips the graph read below.
         if not _accessor_tokens(own, name) and not any(
-            _text_or_none(expression) == cs.PY_PROPERTY_DECORATOR for expression in own
+            _text_or_none(expression) in cs.PY_PROPERTY_DECORATORS for expression in own
         ):
             return []
         natural = qn_markers.natural_qn(qn)
@@ -1362,7 +1373,7 @@ class Renamer:
             and (
                 _accessor_tokens(found, name)
                 or any(
-                    _text_or_none(expression) == cs.PY_PROPERTY_DECORATOR
+                    _text_or_none(expression) in cs.PY_PROPERTY_DECORATORS
                     for expression in found
                 )
             )
@@ -1422,7 +1433,7 @@ class Renamer:
                 for line, col in _accessor_tokens(
                     _decorators(
                         self._parsed(patcher.source(path)),
-                        definition["start_line"] or 1,
+                        _def_line(definition),
                         old_name,
                     ),
                     old_name,
