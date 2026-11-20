@@ -37,11 +37,11 @@ def misspelled_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.usefixtures("misspelled_orchestrator")
 def test_the_startup_gate_names_the_unknown_provider() -> None:
-    with patch.object(cli_module.app_context, "console") as console:
+    with patch.object(cli_module.app_context, "err_console") as err_console:
         with pytest.raises(typer.Exit) as exc_info:
             cli_module.validate_models_early()
     assert exc_info.value.exit_code == 1
-    printed = str(console.print.call_args)
+    printed = str(err_console.print.call_args)
     assert "Unknown provider 'antropic'" in printed, printed
     assert "Did you mean 'anthropic'?" in printed, printed
     assert "API_KEY" not in printed, printed
