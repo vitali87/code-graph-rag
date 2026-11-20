@@ -684,25 +684,42 @@ def object_literal_binding(func_node: Node) -> str | None:
 
 
 def _member_key(member: Node) -> str | None:
-    # The key a `pair` or a method of an object literal names.
+    # The key a `pair`, a method or a shorthand (`{ run }`) of an object
+    # literal names; a quoted key (`"run": ...`) names what it spells.
+    if member.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER:
+        return safe_decode_text(member)
     field = cs.FIELD_KEY if member.type == cs.TS_PAIR else cs.FIELD_NAME
-    return safe_decode_text(member.child_by_field_name(field))
+    key = member.child_by_field_name(field)
+    if key is not None and key.type == cs.TS_STRING:
+        key = next(
+            (c for c in key.named_children if c.type == cs.TS_STRING_FRAGMENT), key
+        )
+    return safe_decode_text(key)
 
 
 def _overridden_later(obj: Node, member: Node) -> bool:
-    # Whether a later spread (`...base`) or a later member with the same key
-    # may replace this member's value: the binding's key then holds what is
-    # not known here (bot review on PR #3118).
+    # Whether a later spread (`...base`), a later member with the same key,
+    # or a later computed key (`[k]: ...`) may replace this member's value:
+    # the binding's key then holds what is not known here (bot review on
+    # PR #3118).
     key = _member_key(member)
     later = False
     for child in obj.named_children:
         if child.id == member.id:
             later = True
         elif later and (
-            child.type == cs.TS_SPREAD_ELEMENT or _member_key(child) == key
+            child.type == cs.TS_SPREAD_ELEMENT
+            or (key is not None and _member_key(child) == key)
+            or _computed_key(child)
         ):
             return True
     return False
+
+
+def _computed_key(member: Node) -> bool:
+    field = cs.FIELD_KEY if member.type == cs.TS_PAIR else cs.FIELD_NAME
+    key = member.child_by_field_name(field)
+    return key is not None and key.type == cs.TS_JS_COMPUTED_PROPERTY_NAME
 
 
 def _object_holder_name(obj: Node) -> str | None:

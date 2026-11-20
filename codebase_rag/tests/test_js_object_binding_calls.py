@@ -141,6 +141,28 @@ _FILES = {
         "const api = { run() { return 1; }, ...base };\n"
         "export function use() { return api.run(); }\n"
     ),
+    # Bot review on PR #3118: a later shorthand, quoted key or computed
+    # key may replace a member as a spread does.
+    "shorthand.mjs": (
+        "const api = { run() { return 1; }, run };\n"
+        "function run() { return 2; }\n"
+        "export function use() { return api.run(); }\n"
+    ),
+    "quoted.mjs": (
+        "const api = {\n"
+        "  run() { return 1; },\n"
+        '  "run": () => 2,\n'
+        "};\n"
+        "export function use() { return api.run(); }\n"
+    ),
+    "computed.mjs": (
+        'const k = "run";\n'
+        "const api = {\n"
+        "  run() { return 1; },\n"
+        "  [k]: () => 2,\n"
+        "};\n"
+        "export function use() { return api.run(); }\n"
+    ),
     "cbdecl.mjs": (
         "const api = { run() { return 1; } };\n"
         "export function use(items, text) {\n"
@@ -361,6 +383,16 @@ def test_a_member_a_later_spread_may_replace_gets_no_exact_caller(
     # `run` (`spread.run@2`; `spread.run` is `base`'s).
     targets = _targets(calls, "spread.use")
     assert targets.get("spread.run@2") != cs.EdgeResolution.EXACT, targets
+
+
+@pytest.mark.parametrize("module", ["shorthand", "quoted", "computed"])
+def test_a_member_a_later_key_may_replace_gets_no_exact_caller(
+    calls: dict[tuple[str, str], str], module: str
+) -> None:
+    # `<module>.run` is `api`'s own `run`; the later `run` shorthand,
+    # `"run"` key or `[k]` key replaces it, so `api.run()` is not it.
+    targets = _targets(calls, f"{module}.use")
+    assert targets.get(f"{module}.run") != cs.EdgeResolution.EXACT, targets
 
 
 def test_a_callback_declaration_shadows_the_module_object(
