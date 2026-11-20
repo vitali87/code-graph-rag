@@ -19,9 +19,9 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.constant_nodes import (
     PendingConstantType,
-    emit_constant_type_edges,
     emit_declared_constants,
 )
+from codebase_rag.parsers.type_facts import emit_of_type_edges
 from evals.cgr_graph import _StatefulIngestor
 
 _CONSTANT = cs.NodeLabel.CONSTANT.value
@@ -211,6 +211,32 @@ def test_the_requeue_skips_a_malformed_row(tmp_path: Path) -> None:
     ]
 
 
+def test_the_requeue_queues_nothing_when_the_project_list_is_unread(
+    tmp_path: Path,
+) -> None:
+    # Unread, ownership falls back to the `svc.` prefix, which a `svc.v2`
+    # row passes; queued, it would resolve against this project's types.
+    store = _index(tmp_path, _BOTH)
+    updater = _updater(tmp_path / "proj", store, "proj")
+    rows = [
+        {
+            cs.KEY_QUALIFIED_NAME: "proj.v2.api.MAX",
+            cs.KEY_TYPE_NAME: "Limit",
+            cs.KEY_PATH: "api.py",
+        },
+    ]
+
+    def fetch_all(query: str, _params: object = None) -> list[dict[str, str]]:
+        if query == cs.CYPHER_PROJECT_CONSTANT_TYPES:
+            return rows
+        raise ConnectionError(query)
+
+    store.fetch_all = fetch_all  # type: ignore[method-assign]
+    updater._requeue_constant_types({cs.KEY_PROJECT_PREFIX: "proj."})
+    assert updater._registry_unread
+    assert updater.factory.definition_processor.pending_constant_types == []
+
+
 # --- The emitters directly -----------------------------------------------------
 
 
@@ -299,11 +325,15 @@ def test_a_module_without_a_path_queues_nothing(python_parser) -> None:  # noqa:
 class _Resolver:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
-        self._registry = {"proj.t.Limit": cs.NodeLabel.CLASS.value}
 
-    def resolve_annotation(self, type_name: str, module_qn: str) -> list[str]:
+    def resolve_annotation(
+        self, type_name: str, module_qn: str, path: str | None = None
+    ) -> list[str]:
         self.calls.append((type_name, module_qn))
         return ["proj.t.Limit"] if type_name == "Limit" else []
+
+    def label_for(self, qn: str) -> str:
+        return cs.NodeLabel.CLASS.value
 
 
 def test_type_edges_resolve_once_per_type_and_module_and_empty_the_queue() -> None:
@@ -313,12 +343,12 @@ def test_type_edges_resolve_once_per_type_and_module_and_empty_the_queue() -> No
         PendingConstantType("proj.m.C", "proj.m", "Unknown", "m.py"),
     ]
     resolver, ingestor = _Resolver(), _Recorder()
-    emitted = emit_constant_type_edges(pending, resolver, ingestor)  # type: ignore[arg-type]
+    emitted = emit_of_type_edges(cs.NodeLabel.CONSTANT, pending, resolver, ingestor)  # type: ignore[arg-type]
     assert emitted == 2
     assert resolver.calls == [("Limit", "proj.m"), ("Unknown", "proj.m")]
-    assert {(src[2], tgt[2]) for src, _rel, tgt in ingestor.rels} == {
-        ("proj.m.A", "proj.t.Limit"),
-        ("proj.m.B", "proj.t.Limit"),
+    assert {(src[0], src[2], tgt[0], tgt[2]) for src, _rel, tgt in ingestor.rels} == {
+        (_CONSTANT, "proj.m.A", cs.NodeLabel.CLASS.value, "proj.t.Limit"),
+        (_CONSTANT, "proj.m.B", cs.NodeLabel.CLASS.value, "proj.t.Limit"),
     }
     assert pending == []
 

@@ -583,7 +583,6 @@ class DefinitionProcessor(
         `restore_imports` loads an unchanged module's imports, by its qn, for
         the annotations requeued from it (#3007 review).
         """
-        from .constant_nodes import emit_constant_type_edges
         from .type_facts import (
             TypeReferenceResolver,
             emit_of_type_edges,
@@ -623,8 +622,8 @@ class DefinitionProcessor(
         emitted += emit_of_type_edges(
             cs.NodeLabel.FIELD, self.pending_field_types, resolver, self.ingestor
         )
-        emitted += emit_constant_type_edges(
-            self.pending_constant_types, resolver, self.ingestor
+        emitted += emit_of_type_edges(
+            cs.NodeLabel.CONSTANT, self.pending_constant_types, resolver, self.ingestor
         )
         return emitted
 

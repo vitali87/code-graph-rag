@@ -27,7 +27,6 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..services import IngestorProtocol
-from .type_facts import TypeReferenceResolver
 from .utils import safe_decode_text
 
 # `MAX`, `MAX_SIZE`, `HTTP2_PREFACE`. A single leading uppercase letter, then
@@ -347,44 +346,10 @@ def _constant_props(
     return props
 
 
-def emit_constant_type_edges(
-    pending: list[PendingConstantType],
-    resolver: TypeReferenceResolver,
-    ingestor: IngestorProtocol,
-) -> int:
-    """OF_TYPE edges for every queued constant, after Pass 2.
-
-    One resolve per DISTINCT (declared type, module), as the sibling passes do.
-    """
-    memo: dict[tuple[str, str], list[str]] = {}
-    emitted = 0
-    for fact in pending:
-        key = (fact.type_name, fact.module_qn)
-        targets = memo.get(key)
-        if targets is None:
-            targets = memo[key] = resolver.resolve_annotation(
-                fact.type_name, fact.module_qn
-            )
-        source = (cs.NodeLabel.CONSTANT.value, cs.KEY_QUALIFIED_NAME, fact.constant_qn)
-        for target_qn in targets:
-            ingestor.ensure_relationship_batch(
-                source,
-                cs.RelationshipType.OF_TYPE,
-                (str(resolver._registry[target_qn]), cs.KEY_QUALIFIED_NAME, target_qn),
-            )
-            emitted += 1
-    # Emptied like the sibling passes: a reused updater (watch mode) would
-    # otherwise re-resolve every old fact each run and re-emit OF_TYPE from a
-    # Constant that no longer exists (#1899's local review P1).
-    pending.clear()
-    return emitted
-
-
 __all__ = [
     "DeclaredConstant",
     "PendingConstantType",
     "declared_constants",
-    "emit_constant_type_edges",
     "emit_declared_constants",
     "python_declared_constants",
 ]

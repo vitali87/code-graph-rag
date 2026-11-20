@@ -4234,6 +4234,12 @@ class GraphUpdater:
             self.ingestor.fetch_all(cs.CYPHER_PROJECT_CONSTANT_TYPES, project_params),
             cs.KEY_QUALIFIED_NAME,
         )
+        # With the project list unread, `_owns` degrades to the prefix rule
+        # and lets those sibling rows through, so queue nothing: a missing
+        # OF_TYPE comes back on the next healthy run, a cross-project one
+        # never goes (CodeRabbit, PR #2135).
+        if self._registry_unread:
+            return
         pending = self.factory.definition_processor.pending_constant_types
         for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)

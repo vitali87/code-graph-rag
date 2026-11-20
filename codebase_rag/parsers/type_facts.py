@@ -616,7 +616,7 @@ def emit_of_type_edges[F: tuple[str, str, str, str]](
     resolver: TypeReferenceResolver,
     ingestor: IngestorProtocol,
 ) -> int:
-    """OF_TYPE edges for every queued Parameter or Field, after Pass 2.
+    """OF_TYPE edges for every queued Parameter, Field or Constant, after Pass 2.
 
     Each fact is (qn, module_qn, type_name, path). One resolve per DISTINCT
     (annotation, module) rather than per member: measured on this repo, 7,868
