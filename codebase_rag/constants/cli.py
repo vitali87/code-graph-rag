@@ -874,6 +874,44 @@ INTERACTIVE_INSTRUCTIONS_NESTED = (
 INTERACTIVE_PROMPT_KEEP = "Keep"
 INTERACTIVE_KEEP_ALL = "all"
 INTERACTIVE_KEEP_NONE = "none"
+# Saving keeps from interactive setup (issue #2448).
+CGRIGNORE_UNIGNORE_PREFIX = "!"
+CGRIGNORE_KEEPS_HEADER = "# Kept by `cgr --interactive-setup`"
+# The mode of a `.cgrignore` the save creates: an ordinary checkout file.
+CGRIGNORE_FILE_MODE = 0o644
+INTERACTIVE_PROMPT_SAVE_KEEPS = (
+    "Save {lines} to .cgrignore so every later sync keeps them too?"
+)
+INTERACTIVE_MSG_KEEPS_SAVED = "Saved {lines} to {file}; every later sync keeps them."
+# A kept path `.cgrignore` itself excludes: its excludes beat its `!` lines,
+# so keeping it means removing that line (review of PR 2510).
+INTERACTIVE_PROMPT_SAVE_KEEPS_LIFTING = (
+    "Save {lines} to .cgrignore and remove its {lifted} exclusion, so every "
+    "later sync keeps them too?"
+)
+INTERACTIVE_MSG_KEEPS_SAVED_LIFTING = (
+    "Saved {lines} to {file} and removed its {lifted} exclusion; every later "
+    "sync keeps them."
+)
+INTERACTIVE_MSG_KEEPS_STILL_EXCLUDED = (
+    "{lifted} is still excluded: {file} excludes it, and its exclusions win "
+    "over any keep. To keep it, remove that line from {file}."
+)
+INTERACTIVE_MSG_KEEPS_THIS_RUN = (
+    "Kept for this run only: the next sync without --interactive-setup excludes "
+    "them again. To keep them, add {lines} to {file}."
+)
+INTERACTIVE_MSG_KEEPS_NOT_SAVED = (
+    "Could not write {file} ({error}); the choice is kept for this run only."
+)
+# A kept path another exclusion still matches: a `!` line cannot keep it, and
+# saving one would report a keep that never happens (review of PR 2510).
+INTERACTIVE_MSG_KEEPS_BLOCKED = (
+    "Not kept: {blocked}. Each is still excluded by the line shown in "
+    ".cgrignore or .gitignore, and an exclusion wins over any keep. To keep "
+    "one, narrow or remove that line."
+)
+INTERACTIVE_BLOCKED_KEEP = "{path} (excluded by {patterns})"
 INTERACTIVE_EXPAND_SUFFIX = "e"
 INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
@@ -1007,6 +1045,46 @@ RENAME_UNPLANNED_ALSO_GUESSED = (
 RENAME_UNPLANNED_SHOWN = 10
 RENAME_UNPLANNED_MORE = "{shown}, and {more} more"
 RENAME_CLI_ALLOW_HEURISTIC = "--allow-heuristic"
+# A method that overrides or implements something the project does not define
+# stops doing so when renamed, and nothing at a call site shows it (issue
+# #3226). `{option}` is spelled as for RENAME_AMBIGUOUS.
+RENAME_EXTERNAL_OVERRIDE = (
+    "Refusing to rename {qn}: {reasons}. The renamed method would no longer "
+    "override it, and nothing would call it in its place; pass {option} to "
+    "rename it anyway"
+)
+RENAME_CLI_ALLOW_EXTERNAL_OVERRIDE = "--allow-external-override"
+RENAME_OVERRIDES_EXTERNAL = "{qn} overrides a method outside the project"
+RENAME_PROTOCOL_METHOD = "{qn} is the Python protocol method {name}"
+RENAME_UNMATCHED_OVERRIDE = (
+    "{qn} is marked {marker} but overrides no method in the project"
+)
+RENAME_OVERRIDE_ALSO_OUTSIDE = (
+    "{qn} is marked {marker} and its class also extends or implements "
+    "{supertypes}, outside the project, which may declare it"
+)
+RENAME_IMPLEMENTS_OUTSIDE = (
+    "{qn} implements {name} of {supertypes}, outside the project"
+)
+RENAME_INHERITED_IMPLEMENTS_OUTSIDE = (
+    "{qn} is inherited by {subclass}, which implements {name} of {supertypes}, "
+    "outside the project, through it"
+)
+# The columns of CYPHER_RENAME_OVERRIDE_FACTS that are no node property.
+RENAME_FACT_BASES = "bases"
+RENAME_FACT_OUTSIDE_SUPERTYPES = "outside_supertypes"
+RENAME_FACT_OWNER = "owner"
+# The column of CYPHER_RENAME_SUPERTYPES naming the supertype.
+RENAME_FACT_SUPERTYPE = "supertype"
+# A rename site inside a string that spells the symbol's import path:
+# `mock.patch("pkg.core.helper")`, an entry point `"pkg.core:main"` (issue
+# #2810). Read in Python sources and in the config files that hold entry
+# points; `setup.cfg` and `.ini` spell an entry point without quotes.
+RENAME_SITE_KIND_STRING = "string"
+RENAME_STRING_SUFFIXES = frozenset({".py", ".toml", ".cfg", ".ini"})
+RENAME_BARE_ENTRY_POINT_SUFFIXES = frozenset({".cfg", ".ini", ".toml"})
+RENAME_ENTRY_POINT_SEPARATOR = ":"
+PY_PACKAGE_INIT = "__init__"
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
 RENAME_RESOLUTION_BAD_POSITION = "position outside its file"
 RENAME_RESOLUTION_CLASS_VIA_PARAM = (
@@ -1016,6 +1094,13 @@ RENAME_RESOLUTION_CLASS_VIA_PARAM = (
 RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "
     "so the rename would leave them under the old name"
+)
+# A token one translation unit binds to the target and another to a namesake
+# (two headers' `#define LIMIT`, review of PR #3002).
+RENAME_SHARED_SITE = (
+    "Refusing to rename {qn}: {count} site(s) also name another definition of "
+    "{name} the graph binds there ({locations}); rewriting them would leave "
+    "that definition's users without the name"
 )
 # Go reads an identifier's first letter as its visibility (issue #2813).
 RENAME_GO_UNEXPORTS = (

@@ -511,6 +511,12 @@ class FunctionRegistryTrieProtocol(Protocol):
 
     def is_body_scoped_name(self, qualified_name: QualifiedName) -> bool: ...
 
+    def mark_internal_linkage(
+        self, qualified_name: QualifiedName, module_qn: str
+    ) -> None: ...
+
+    def internal_linkage_module(self, qualified_name: QualifiedName) -> str | None: ...
+
     def mark_same_definition(
         self, first: QualifiedName, second: QualifiedName
     ) -> None: ...
@@ -1341,6 +1347,20 @@ class CppDefinitionSpan(NamedTuple):
     end_line: int
     label: str
     qualified_name: str
+    # 0-based, end exclusive: two definitions can share a line. A span read
+    # back from the graph has no end column, so its last line counts whole.
+    start_col: int = 0
+    end_col: int | None = None
+
+    def contains(self, line: int, col: int) -> bool:
+        """Whether the 1-based `line`, 0-based `col` lies inside the span."""
+        if not self.start_line <= line <= self.end_line:
+            return False
+        if line == self.start_line and col < self.start_col:
+            return False
+        return not (
+            line == self.end_line and self.end_col is not None and col >= self.end_col
+        )
 
 
 class PendingMacroCall(NamedTuple):
@@ -1348,11 +1368,17 @@ class PendingMacroCall(NamedTuple):
 
     The caller is resolvable only after the tree-sitter pass has recorded its
     definition spans; a use outside every span attributes to the fallback
-    Module, mirroring the module-caller rule for ordinary calls.
+    Module, mirroring the module-caller rule for ordinary calls. The site
+    (1-based lines, 0-based columns) is the macro name's span, the same one
+    tree-sitter records for a function-like macro it parses as a call, so the
+    two edges MERGE into one (issue #2944).
     """
 
     rel_path: str
     line: int
+    col: int
+    end_line: int
+    end_col: int
     callee_qn: str
     fallback_module_qn: str
 
@@ -1793,7 +1819,7 @@ RELATIONSHIP_PROPERTY_SCHEMAS: tuple[RelationshipPropertySchema, ...] = (
     ),
     RelationshipPropertySchema(
         (RelationshipType.FLOWS_TO,),
-        "{kind: string, via: string?}",
+        "{kind: string, via: string?, scope: string?, through: list[string]?}",
     ),
     # Declaration order of the variant within its enum, so a query can restore
     # the source order the graph does not otherwise preserve. Always written

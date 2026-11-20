@@ -356,6 +356,31 @@ PY_DUNDER_LEN = "__len__"
 PY_DUNDER_BOOL = "__bool__"
 # `obj(...)` on an instance runs `type(obj).__call__`.
 PY_DUNDER_CALL = "__call__"
+# A `for` calls `__iter__` once, then `__next__` on what it returned each
+# step; `async for` awaits `__aiter__` and `__anext__`.
+PY_DUNDER_ITER = "__iter__"
+PY_DUNDER_NEXT = "__next__"
+PY_DUNDER_AITER = "__aiter__"
+PY_DUNDER_ANEXT = "__anext__"
+# `a < b` calls `a.__lt__(b)`, else the reflection `b.__gt__(a)`.
+PY_COMPARISON_DUNDERS: dict[str, tuple[str, str]] = {
+    "<": ("__lt__", "__gt__"),
+    "<=": ("__le__", "__ge__"),
+    ">": ("__gt__", "__lt__"),
+    ">=": ("__ge__", "__le__"),
+    "==": ("__eq__", "__eq__"),
+    "!=": ("__ne__", "__ne__"),
+}
+PY_UNARY_OPERATOR_DUNDERS: dict[str, str] = {
+    "-": "__neg__",
+    "+": "__pos__",
+    "~": "__invert__",
+}
+# `a += b` is `+` spelled with this suffix; it tries `__iadd__` first.
+PY_AUGMENTED_OPERATOR_SUFFIX = "="
+PY_DUNDER_MARK = "__"
+PY_REFLECTED_DUNDER_PREFIX = "__r"
+PY_INPLACE_DUNDER_PREFIX = "__i"
 # Operands with these characters are not simple attribute/name chains (calls,
 # nested subscripts, whitespace), so the operator-dispatch synthesiser skips them.
 PY_OPERAND_REJECT_CHARS = "()[]{}\n\t "

@@ -343,6 +343,8 @@ class CallResolver:
         "_ctor_param_attrs",
         "_pending_field_bindings",
         "_module_language_cache",
+        "_c_includers_cache",
+        "_c_unit_reach_cache",
         "rehydrated_definition_paths",
         "rust_function_modules",
         "declared_module_qns",
@@ -471,6 +473,11 @@ class CallResolver:
         self._ctor_param_attrs: dict[tuple[str, str], str] = {}
         self._pending_field_bindings: list[tuple[str, int | str, str]] = []
         self._module_language_cache: dict[str, cs.SupportedLanguage | None] = {}
+        # {included C/C++ module qn: the modules that `#include` it}, built
+        # once per call pass from the include map, and {module qn: every
+        # module a translation unit compiling it includes}.
+        self._c_includers_cache: dict[str, set[str]] | None = None
+        self._c_unit_reach_cache: dict[str, frozenset[str]] = {}
         # {PHP module qn: {class qn: folded namespace it is declared in}},
         # read off each file's declarations on first use (issue #2466).
         self._php_class_namespaces: dict[str, dict[str, PhpClassPath]] = {}
@@ -693,6 +700,9 @@ class CallResolver:
         # makes `_languages_can_call` drop the candidate a clean index
         # resolves (issue #1575).
         self._module_language_cache.clear()
+        # A re-parsed C file may include other headers.
+        self._c_includers_cache = None
+        self._c_unit_reach_cache.clear()
         # A re-parsed PHP file may have moved a class between namespaces.
         self._php_class_namespaces.clear()
         self._php_cased_index = None
@@ -5366,14 +5376,41 @@ class CallResolver:
                 for qn in possible_matches
                 if self.function_registry[qn] == cs.NodeLabel.METHOD.value
             ]
+        possible_matches = self._drop_unreachable_bare_names(
+            possible_matches, call_name, search_name, module_qn, language
+        )
+        if language in cs.C_FAMILY_LANGUAGES:
+            possible_matches = self._linkable_from(possible_matches, module_qn)
+        if not possible_matches:
+            logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
+            return None
+        if language == cs.SupportedLanguage.CSHARP and len(possible_matches) > 1:
+            possible_matches = self._csharp_prefer_imported(
+                possible_matches, module_qn, call_name
+            )
+
+        best_candidate_qn = self._best_trie_candidate(possible_matches, module_qn)
+        logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
+        self.last_resolution = cs.EdgeResolution.HEURISTIC
+        return self.function_registry[best_candidate_qn], best_candidate_qn
+
+    def _drop_unreachable_bare_names(
+        self,
+        matches: list[str],
+        call_name: str,
+        search_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+    ) -> list[str]:
+        """The candidates a bare call can name under its language's scoping."""
         if language == cs.SupportedLanguage.RUST and search_name == call_name:
             # A bare Rust path NEVER names a method (inherent methods need
             # self./Self::/Type::), so a same-named method must not soak
             # up the edge when the real target is external, prelude, or a
             # shadowing closure the graph cannot see (issue #1011).
-            possible_matches = [
+            matches = [
                 qn
-                for qn in possible_matches
+                for qn in matches
                 if self.function_registry[qn] != cs.NodeLabel.METHOD.value
             ]
         elif (
@@ -5390,27 +5427,112 @@ class CallResolver:
             # it, so with none naming the call (and no star import) the name
             # is a builtin or a local, not that function (issue #2929).
             places = self._python_binding_places(call_name, module_qn)
-            possible_matches = [
+            matches = [
                 qn
-                for qn in possible_matches
+                for qn in matches
                 if self._in_python_module(qn, module_qn)
                 or (
                     self.function_registry[qn] != cs.NodeLabel.METHOD.value
                     and any(_place_may_bind(qn, call_name, place) for place in places)
                 )
             ]
-        if not possible_matches:
-            logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
-            return None
-        if language == cs.SupportedLanguage.CSHARP and len(possible_matches) > 1:
-            possible_matches = self._csharp_prefer_imported(
-                possible_matches, module_qn, call_name
-            )
+        return matches
 
-        best_candidate_qn = self._best_trie_candidate(possible_matches, module_qn)
-        logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
-        self.last_resolution = cs.EdgeResolution.HEURISTIC
-        return self.function_registry[best_candidate_qn], best_candidate_qn
+    def _linkable_from(self, candidates: list[str], module_qn: str) -> list[str]:
+        # A `static` C/C++ function has internal linkage: only its own
+        # translation unit can call it, i.e. its own file or one that
+        # `#include`s it, directly or through other headers. A bare `now()` in
+        # main.c bound a.c's private `static now()` over the extern one it
+        # links against (redis: every cross-file `mstime()` landed on
+        # quicklist.c's static copy, issue #3154). Compared by defining
+        # module, not by qn prefix: `proj.main.h.helper` and `proj.a.b.now`
+        # both start with another file's module (`proj.main`, `proj.a`).
+        registry = self.function_registry
+        private = {
+            qn: unit
+            for qn in candidates
+            if (unit := registry.internal_linkage_module(qn)) is not None
+            and unit != module_qn
+        }
+        if not private:
+            return candidates
+        units = self._include_closure(module_qn)
+        if any(unit not in units for unit in private.values()):
+            # A header is compiled inside each file that includes it: a
+            # `wrap()` in util.h may call the `static helper()` main.c
+            # defines before `#include "util.h"`, or one an earlier header
+            # of main.c defines.
+            units = self._translation_unit_reach(module_qn)
+        return [qn for qn in candidates if private.get(qn, module_qn) in units]
+
+    def linkable_variants(
+        self, callee_qn: str, variants: list[str], module_qn: str
+    ) -> list[str]:
+        """The variants of a C/C++ callee a call from `module_qn` may bind.
+
+        The edge fans out from the resolved `f` to each of its overloads, and
+        one written after it may be a `static` that another translation unit
+        defines: `f(1.0)` in b.cpp bound a.cpp's extern `f(double)` and then
+        its `static f(int)` too (#3154 review). The callee itself is what the
+        resolution chose, and stays.
+        """
+        if len(variants) < 2:
+            return variants
+        linkable = set(self._linkable_from(variants, module_qn))
+        return [qn for qn in variants if qn == callee_qn or qn in linkable]
+
+    def _include_closure(self, module_qn: str) -> set[str]:
+        imports = self.import_processor
+        import_mapping = imports.import_mapping
+        # A header a later include displaced from its local name (`a/util.h`
+        # then `b/util.h`) is still included, so its statics are reachable.
+        displaced = imports.displaced_include_targets()
+        seen = {module_qn}
+        pending = [module_qn]
+        while pending:
+            current = pending.pop()
+            for target in (
+                *(import_mapping.get(current) or {}).values(),
+                *displaced.get(current, ()),
+            ):
+                # `export module foo;` binds the name `foo` but includes nothing.
+                if target not in seen and not imports.declares_cpp_module(
+                    current, target
+                ):
+                    seen.add(target)
+                    pending.append(target)
+        return seen
+
+    def _translation_unit_reach(self, module_qn: str) -> frozenset[str]:
+        """Every module compiled together with `module_qn`: what each file
+        that includes it, directly or through other headers, includes."""
+        if (reach := self._c_unit_reach_cache.get(module_qn)) is not None:
+            return reach
+        includers = self._c_includers()
+        units = {module_qn}
+        pending = [module_qn]
+        while pending:
+            for includer in includers.get(pending.pop(), ()):
+                if includer not in units:
+                    units.add(includer)
+                    pending.append(includer)
+        reach = frozenset(
+            reached for unit in units for reached in self._include_closure(unit)
+        )
+        self._c_unit_reach_cache[module_qn] = reach
+        return reach
+
+    def _c_includers(self) -> dict[str, set[str]]:
+        if self._c_includers_cache is None:
+            imports = self.import_processor
+            includers: dict[str, set[str]] = {}
+            displaced = imports.displaced_include_targets()
+            for module_qn, mapping in imports.import_mapping.items():
+                for target in (*mapping.values(), *displaced.get(module_qn, ())):
+                    if not imports.declares_cpp_module(module_qn, target):
+                        includers.setdefault(target, set()).add(module_qn)
+            self._c_includers_cache = includers
+        return self._c_includers_cache
 
     def _in_python_module(self, qn: str, module_qn: str) -> bool:
         # Defined in the module itself, not in a module under it: a package's
@@ -6226,6 +6348,23 @@ class CallResolver:
         # builtin container does not borrow a first-party dunder. A Protocol-typed
         # operand dispatches to the dunder on each structural implementer (which may
         # define the dunder even when the Protocol stub does not, e.g. __len__).
+        return {
+            target
+            for _receiver, target in self.operator_dunder_receivers(
+                operand_text, dunder, module_qn, local_var_types
+            )
+        }
+
+    def operator_dunder_receivers(
+        self,
+        operand_text: str,
+        dunder: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> set[tuple[str, tuple[str, str]]]:
+        """`operator_dunder_targets`, each with the concrete class it was
+        found on: a Protocol-typed operand's conformer, or the operand's own
+        class when the method is a base's."""
         if not local_var_types or not (var_type := local_var_types.get(operand_text)):
             return set()
         import_map = self.import_processor.import_mapping.get(module_qn, {})
@@ -6241,11 +6380,11 @@ class CallResolver:
                 classes.add(named_impl)
         else:
             classes = {class_qn}
-        targets: set[tuple[str, str]] = set()
+        receivers: set[tuple[str, tuple[str, str]]] = set()
         for candidate in classes:
             if resolved := self._try_resolve_method(candidate, dunder):
-                targets.add(resolved)
-        return targets
+                receivers.add((candidate, resolved))
+        return receivers
 
     def _protocol_structural_implementers(self, protocol_qn: str) -> set[str]:
         # Classes that define every method declared on the Protocol (own or

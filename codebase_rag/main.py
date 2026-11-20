@@ -9,8 +9,10 @@ import mimetypes
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import uuid
 from collections import deque
@@ -56,14 +58,17 @@ from . import exceptions as ex
 from . import logs as ls
 from .cli_runtime import app_context, connect_memgraph, dim, style
 from .config import (
+    CGRIGNORE_FILENAME,
     ModelConfig,
     approve_repo_instructions,
+    excludes_once_kept,
     load_ignore_patterns,
     provider_env_api_key,
     repo_instructions,
     settings,
 )
 from .context_pruning import describe_prune, prune_old_tool_results
+from .editing.transaction import repo_write_lock
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .providers.base import get_provider_from_config
@@ -115,6 +120,7 @@ from .types_defs import (
 from .utils.interruptible_thread import run_in_interruptible_thread
 from .utils.path_utils import (
     derive_project_name,
+    exclusions_matching,
     is_symlink_entry,
     ordered_block_lines,
 )
@@ -1984,12 +1990,13 @@ def prompt_for_unignored_directories(
     cgrignore = load_ignore_patterns(repo_path)
     cli_patterns = frozenset(cli_excludes) if cli_excludes else frozenset()
     # An ordered .gitignore block is offered by its exclude lines, as before.
-    pre_excluded = cli_patterns | {
+    exclude_lines = frozenset(
         line
         for pattern in cgrignore.exclude
         for line in ordered_block_lines(pattern)
         if not line.startswith("!")
-    }
+    )
+    pre_excluded = cli_patterns | exclude_lines
 
     if not detected and not pre_excluded:
         return cgrignore.unignore
@@ -2004,21 +2011,184 @@ def prompt_for_unignored_directories(
     )
 
     if response.lower() == cs.INTERACTIVE_KEEP_ALL:
-        return frozenset(all_candidates) | cgrignore.unignore
+        kept = frozenset(all_candidates)
+    elif response.lower() == cs.INTERACTIVE_KEEP_NONE:
+        kept = frozenset()
+    else:
+        expand_requests, regular_selections = _parse_keep_selection(response)
+        selected: set[str] = set()
+        for root in _selected_roots(expand_requests, sorted_roots):
+            selected.update(_prompt_nested_selection(root, groups[root]))
+        for root in _selected_roots(regular_selections, sorted_roots):
+            selected.update(groups[root])
+        kept = frozenset(selected)
 
-    if response.lower() == cs.INTERACTIVE_KEEP_NONE:
-        return cgrignore.unignore
+    # A path both excluded and unignored in `.cgrignore` is still excluded
+    # (its excludes win), so it counts as new.
+    _offer_to_save_keeps(
+        repo_path, kept - (cgrignore.unignore - exclude_lines), exclude_lines
+    )
+    return kept | cgrignore.unignore
 
-    expand_requests, regular_selections = _parse_keep_selection(response)
-    selected: set[str] = set()
 
-    for root in _selected_roots(expand_requests, sorted_roots):
-        selected.update(_prompt_nested_selection(root, groups[root]))
+def _offer_to_save_keeps(
+    repo_path: Path, new_keeps: frozenset[str], exclude_lines: frozenset[str]
+) -> None:
+    """Offer to save new keeps to `.cgrignore` so later syncs keep them too.
 
-    for root in _selected_roots(regular_selections, sorted_roots):
-        selected.update(groups[root])
+    Otherwise a choice made here holds for this run only: the next ordinary
+    sync reads the exclusions from `.cgrignore` alone and removes the kept
+    directories from the graph again (#2448). A kept path that `.cgrignore`
+    itself excludes needs that line removed, not a `!` line beside it:
+    `.cgrignore` excludes beat its `!` lines (review of PR 2510).
+    """
+    blocked = _keeps_still_excluded(repo_path, new_keeps)
+    if blocked:
+        listing = cs.SEPARATOR_COMMA_SPACE.join(
+            cs.INTERACTIVE_BLOCKED_KEEP.format(
+                path=path, patterns=cs.SEPARATOR_COMMA_SPACE.join(patterns)
+            )
+            for path, patterns in blocked.items()
+        )
+        app_context.console.print(
+            style(
+                cs.INTERACTIVE_MSG_KEEPS_BLOCKED.format(blocked=listing),
+                cs.Color.YELLOW,
+            )
+        )
+        new_keeps = new_keeps - frozenset(blocked)
+    if not new_keeps:
+        return
+    lines = [f"{cs.CGRIGNORE_UNIGNORE_PREFIX}{path}" for path in sorted(new_keeps)]
+    listing = cs.SEPARATOR_COMMA_SPACE.join(lines)
+    lifted = sorted(new_keeps & exclude_lines)
+    lifted_listing = cs.SEPARATOR_COMMA_SPACE.join(lifted)
+    prompt = cs.INTERACTIVE_PROMPT_SAVE_KEEPS.format(lines=listing)
+    if lifted:
+        prompt = cs.INTERACTIVE_PROMPT_SAVE_KEEPS_LIFTING.format(
+            lines=listing, lifted=lifted_listing
+        )
+    ignore_file = repo_path / CGRIGNORE_FILENAME
+    if not Confirm.ask(style(prompt, cs.Color.CYAN), default=True):
+        declined = cs.INTERACTIVE_MSG_KEEPS_THIS_RUN.format(
+            lines=listing, file=CGRIGNORE_FILENAME
+        )
+        if lifted:
+            declined = cs.INTERACTIVE_MSG_KEEPS_STILL_EXCLUDED.format(
+                lifted=lifted_listing, file=CGRIGNORE_FILENAME
+            )
+        app_context.console.print(style(declined, cs.Color.YELLOW))
+        return
+    try:
+        with repo_write_lock(repo_path):
+            _merge_keeps_into_ignore_file(ignore_file, lines, frozenset(lifted))
+    except OSError as e:
+        app_context.console.print(
+            style(
+                cs.INTERACTIVE_MSG_KEEPS_NOT_SAVED.format(
+                    file=CGRIGNORE_FILENAME, error=e
+                ),
+                cs.Color.YELLOW,
+            )
+        )
+        return
+    saved = cs.INTERACTIVE_MSG_KEEPS_SAVED.format(
+        lines=listing, file=CGRIGNORE_FILENAME
+    )
+    if lifted:
+        saved = cs.INTERACTIVE_MSG_KEEPS_SAVED_LIFTING.format(
+            lines=listing, lifted=lifted_listing, file=CGRIGNORE_FILENAME
+        )
+    app_context.console.print(style(saved, cs.Color.GREEN))
 
-    return frozenset(selected) | cgrignore.unignore
+
+def _keeps_still_excluded(
+    repo_path: Path, new_keeps: frozenset[str]
+) -> dict[str, list[str]]:
+    """The keeps an exclusion other than their own line still matches.
+
+    Saving lifts only an exclusion written exactly as the kept path. Another
+    one that matches it (`bin/` for a kept `app/bin`, or `generated/` for a
+    kept `generated/node_modules`, since a `!` line cannot keep a path inside
+    an excluded directory) still wins after the save, on this run and every
+    later sync, so the keep must not be reported saved (Greptile review of
+    PR 2510). Removing that line instead would also bring in every other
+    path it excludes, which nobody chose. The ignore files are read as a
+    later sync reads them, so a `.gitignore` with `!` lines is judged line
+    by line too. A blocked keep's own line stays, and may in turn block
+    another, hence the loop.
+    """
+    blocked: dict[str, list[str]] = {}
+    while True:
+        remaining = excludes_once_kept(repo_path, new_keeps - frozenset(blocked))
+        found = {
+            keep: patterns
+            for keep in sorted(new_keeps)
+            if (patterns := _exclusions_of_kept_dir(keep, remaining))
+        }
+        if found.keys() == blocked.keys():
+            return found
+        blocked = found
+
+
+def _exclusions_of_kept_dir(keep: str, excludes: frozenset[str]) -> list[str]:
+    directory = f"{keep.strip().strip(cs.SEPARATOR_SLASH)}{cs.SEPARATOR_SLASH}"
+    return sorted(exclusions_matching(directory, excludes))
+
+
+def _merge_keeps_into_ignore_file(
+    ignore_file: Path, keep_lines: list[str], lifted: frozenset[str]
+) -> None:
+    """Add `keep_lines` to `ignore_file` and drop its `lifted` exclusions.
+
+    Called under the tree's write lock, and reads the file there rather than
+    reusing what the prompt saw: two setups saving at once each read the old
+    file before either replaced it, so the later save dropped the other's
+    keep (Greptile review of PR 2510).
+    """
+    existing = (
+        ignore_file.read_text(encoding=cs.ENCODING_UTF8)
+        if ignore_file.is_file()
+        else ""
+    )
+    original = existing.splitlines()
+    lines = [line for line in original if line.strip() not in lifted]
+    present = {line.strip() for line in lines}
+    added = [line for line in keep_lines if line not in present]
+    if added:
+        lines += [cs.CGRIGNORE_KEEPS_HEADER, *added]
+    if lines != original:
+        _replace_ignore_file(ignore_file, "".join(f"{line}\n" for line in lines))
+
+
+def _replace_ignore_file(ignore_file: Path, content: str) -> None:
+    """Replace `ignore_file` with `content`, or leave it as it was.
+
+    Written beside it and then moved over it: writing in place truncates
+    first, so a write that failed part-way (a full disk) would lose the
+    rules already there (review of PR 2510).
+    """
+    # Created exclusively under a fresh name: a fixed name could already be
+    # a link the repository ships, and writing through it would overwrite
+    # whatever it points at (review of PR 2510, CWE-377).
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f"{ignore_file.name}.", suffix=cs.TMP_EXTENSION, dir=ignore_file.parent
+    )
+    temp_file = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding=cs.ENCODING_UTF8) as handle:
+            handle.write(content)
+        # mkstemp makes the file 0600; keep the mode a checkout file has.
+        mode = (
+            stat.S_IMODE(ignore_file.stat().st_mode)
+            if ignore_file.is_file()
+            else cs.CGRIGNORE_FILE_MODE
+        )
+        temp_file.chmod(mode)
+        os.replace(temp_file, ignore_file)
+    except OSError:
+        temp_file.unlink(missing_ok=True)
+        raise
 
 
 def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:

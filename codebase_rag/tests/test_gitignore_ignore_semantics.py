@@ -108,12 +108,44 @@ class TestGitignoreUnignoreSemantics:
         assert _skip("bin/other/x.py", unignore=frozenset({"bin/keep"}))
 
     def test_user_exclude_beats_unignore(self) -> None:
-        # existing precedence: unignore rescues only built-in ignores,
-        # never explicit user excludes.
+        # existing precedence: unignore rescues only built-in ignores, never
+        # an explicit user exclude of the path itself, of the directory it
+        # sits in, or of a directory a glob unignore reaches into.
         assert _skip(
             "gen/x.py",
             exclude=frozenset({"gen"}),
             unignore=frozenset({"gen/x.py"}),
+        )
+        assert _skip(
+            "gen/x.py", exclude=frozenset({"gen"}), unignore=frozenset({"gen"})
+        )
+        assert _skip(
+            "gen/x.py",
+            exclude=frozenset({"gen"}),
+            unignore=frozenset({"gen/*.py"}),
+        )
+        assert _skip(
+            "gen/x.js",
+            exclude=frozenset({"*.js"}),
+            unignore=frozenset({"gen/x.js"}),
+        )
+
+    @pytest.mark.parametrize(
+        ("exclude", "unignore", "rel_path"),
+        [
+            ("secrets/", "secrets/public", "secrets/public/a.py"),
+            ("a/**/secrets/", "a/secrets/public", "a/secrets/public/x.py"),
+            ("/secrets/", "secrets/public", "secrets/public/secrets/config.py"),
+        ],
+    )
+    def test_a_literal_keep_does_not_open_an_excluded_directory(
+        self, exclude: str, unignore: str, rel_path: str
+    ) -> None:
+        # A `!` line naming one path inside an excluded directory keeps
+        # nothing there, however the directory is excluded: as in git, a
+        # path whose parent directory is excluded stays excluded (issue #2835).
+        assert _skip(
+            rel_path, exclude=frozenset({exclude}), unignore=frozenset({unignore})
         )
 
 
@@ -136,9 +168,20 @@ class TestDirPruning:
             unignore_paths=unignore,
         )
 
-    def test_excluded_dir_stays_pruned_despite_unignore(self) -> None:
-        updater = self._updater(frozenset({"gen"}), frozenset({"gen/keep.py"}))
-        assert not updater._should_keep_dir("gen", "")
+    @pytest.mark.parametrize(
+        ("exclude", "unignore", "dirname"),
+        [
+            ("gen", "gen/keep.py", "gen"),
+            ("gen", "gen/sub/keep.py", "gen"),
+            ("gen", "gen/*.py", "gen"),
+            ("secrets/", "secrets/public", "secrets"),
+        ],
+    )
+    def test_excluded_dir_stays_pruned_despite_unignore(
+        self, exclude: str, unignore: str, dirname: str
+    ) -> None:
+        updater = self._updater(frozenset({exclude}), frozenset({unignore}))
+        assert not updater._should_keep_dir(dirname, "")
 
     def test_builtin_pruned_dir_kept_when_unignore_targets_beneath(self) -> None:
         updater = self._updater(None, frozenset({"bin/keep.py"}))

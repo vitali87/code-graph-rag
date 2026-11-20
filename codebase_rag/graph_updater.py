@@ -98,6 +98,7 @@ from .parsers.field_nodes import (
     add_callable_fields,
     drop_callable_fields,
 )
+from .parsers.flow_access import PriorResourceFlow
 from .parsers.frontends import (
     EMITTING_FRONTENDS,
     FRONTENDS,
@@ -129,6 +130,7 @@ from .parsers.py.ast_analyzer import clear_scope_facts
 from .parsers.rs import utils as rs_utils
 from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import (
+    has_internal_linkage,
     mark_js_ts_module_private,
     mark_rust_visibility,
     sorted_captures,
@@ -2462,10 +2464,12 @@ class GraphUpdater:
             # resolving it would re-attribute in-function uses to the Module.
             if call.rel_path not in self._reparsed_file_keys:
                 continue
+            # By column too: the edge is located at the use, so a use in the
+            # second of two definitions sharing a line must not join the first.
             containing = [
                 s
                 for s in spans.get(call.rel_path, ())
-                if s.start_line <= call.line <= s.end_line
+                if s.contains(call.line, call.col)
                 and s.qualified_name != call.callee_qn
             ]
             if containing:
@@ -2474,10 +2478,22 @@ class GraphUpdater:
             else:
                 caller_label = cs.NodeLabel.MODULE.value
                 caller_qn = call.fallback_module_qn
+            # The use's site joins the CALLS MERGE key: tree-sitter parses a
+            # function-like use as a call at the same site and emits its own
+            # edge, so the two collapse into one located edge rather than a
+            # located and a site-less one (issue #2944). An object-like use is
+            # an identifier to tree-sitter, so this edge is its only one.
             self._sink.ensure_relationship_batch(
                 (caller_label, cs.KEY_QUALIFIED_NAME, caller_qn),
                 cs.RelationshipType.CALLS,
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, call.callee_qn),
+                {
+                    cs.KEY_LINE: call.line,
+                    cs.KEY_COL: call.col,
+                    cs.KEY_END_LINE: call.end_line,
+                    cs.KEY_END_COL: call.end_col,
+                    cs.KEY_RESOLUTION: cs.EdgeResolution.EXACT,
+                },
             )
             emitted += 1
         logger.info(ls.CPP_FRONTEND_MACRO_CALLS.format(count=emitted))
@@ -4610,6 +4626,19 @@ class GraphUpdater:
         # only its own body can call by that name (issue #2402).
         if row.get(cs.KEY_IS_BODY_SCOPED_NAME):
             self.function_registry.mark_body_scoped_name(qn)
+        # Restore C/C++ internal linkage for unchanged files: a re-parsed
+        # file's bare call must not bind another file's `static` (#3154).
+        path = row.get(cs.KEY_PATH)
+        if (
+            node_type == NodeType.FUNCTION
+            and isinstance(path, str)
+            and get_language_for_extension(PurePosixPath(path).suffix)
+            in cs.C_FAMILY_LANGUAGES
+            and has_internal_linkage(row)
+        ):
+            self.function_registry.mark_internal_linkage(
+                qn, self._recorded_module_qn(path)
+            )
         # Restore a C# extension method's index entry for unchanged files, or
         # a re-parsed `b.Describe()` finds no extension and gets no edge
         # (issue #3275).
@@ -7267,15 +7296,46 @@ class GraphUpdater:
         Method nodes and their edges linger alongside the new ones.
         """
         if isinstance(self.ingestor, QueryProtocol):
-            self.ingestor.execute_write(
-                cs.CYPHER_DELETE_MODULE,
-                {
-                    cs.KEY_PATH: file_key,
-                    cs.KEY_PROJECT_NAME: self.project_name,
-                    cs.KEY_PROJECT_PREFIX: self.project_name + ".",
-                    cs.KEY_NESTED_PROJECTS: self._nested_project_names(),
-                },
-            )
+            params: PropertyDict = {
+                cs.KEY_PATH: file_key,
+                cs.KEY_PROJECT_NAME: self.project_name,
+                cs.KEY_PROJECT_PREFIX: self.project_name + ".",
+                cs.KEY_NESTED_PROJECTS: self._nested_project_names(),
+            }
+            if self.capture.rel_enabled(cs.RelationshipType.FLOWS_TO):
+                self._remember_prior_flows(self.ingestor, params)
+            self.ingestor.execute_write(cs.CYPHER_DELETE_MODULE, params)
+
+    def _remember_prior_flows(
+        self, ingestor: QueryProtocol, params: PropertyDict
+    ) -> None:
+        """Hand the flow walk the resource flows the delete is about to take.
+
+        One composed through a callee in a file the run does not re-parse
+        (`log(os.getenv("K"))` with `log` printing, unchanged) cannot be
+        rebuilt from the caller, and the walk puts it back while the caller
+        still makes that call (review of PR #2759). A failed read keeps none.
+        """
+        try:
+            rows = ingestor.fetch_all(cs.CYPHER_MODULE_RESOURCE_FLOWS, params)
+        except Exception as error:
+            logger.debug(ls.PRIOR_FLOWS_UNREAD, path=params[cs.KEY_PATH], error=error)
+            return
+        flows: list[PriorResourceFlow] = []
+        for row in rows:
+            values = [row.get(key) for key in cs.PRIOR_FLOW_COLUMNS]
+            through = row.get(cs.PRIOR_FLOW_THROUGH)
+            if all(isinstance(value, str) for value in values):
+                flows.append(
+                    PriorResourceFlow(
+                        *(str(value) for value in values),
+                        through=tuple(
+                            str(qn)
+                            for qn in (through if isinstance(through, list) else ())
+                        ),
+                    )
+                )
+        self.factory.call_processor.remember_prior_flows(flows)
 
     def _nested_project_names(self) -> list[str]:
         """Registered projects whose names extend this one, whose modules

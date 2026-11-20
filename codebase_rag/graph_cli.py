@@ -230,7 +230,12 @@ def _depth_option[F: Callable[..., None]](fn: F) -> F:
     )(fn)
 
 
-@cli.command("callers", help=ch.CMD_GRAPH_CALLERS, short_help=ch.CMD_GRAPH_CALLERS)
+@cli.command(
+    "callers",
+    help=ch.CMD_GRAPH_CALLERS,
+    short_help=ch.CMD_GRAPH_CALLERS,
+    epilog=ch.EPILOG_GRAPH_COLUMNS,
+)
 @click.argument("qualified_name")
 @_depth_option
 @_graph_options
@@ -241,11 +246,18 @@ def callers_cmd(
         project,
         repo_path,
         qualified_name,
-        lambda f, n, qn: graph_query.callers(f, n, qn, depth),
+        lambda f, n, qn: graph_query.callers(
+            f, n, qn, depth, graph_query.source_root_for(f, n, repo_path)
+        ),
     )
 
 
-@cli.command("callees", help=ch.CMD_GRAPH_CALLEES, short_help=ch.CMD_GRAPH_CALLEES)
+@cli.command(
+    "callees",
+    help=ch.CMD_GRAPH_CALLEES,
+    short_help=ch.CMD_GRAPH_CALLEES,
+    epilog=ch.EPILOG_GRAPH_COLUMNS,
+)
 @click.argument("qualified_name")
 @_depth_option
 @_graph_options
@@ -256,7 +268,9 @@ def callees_cmd(
         project,
         repo_path,
         qualified_name,
-        lambda f, n, qn: graph_query.callees(f, n, qn, depth),
+        lambda f, n, qn: graph_query.callees(
+            f, n, qn, depth, graph_query.source_root_for(f, n, repo_path)
+        ),
     )
 
 
@@ -295,7 +309,10 @@ def overrides_cmd(
 
 
 @cli.command(
-    "importers", help=ch.CMD_GRAPH_IMPORTERS, short_help=ch.CMD_GRAPH_IMPORTERS
+    "importers",
+    help=ch.CMD_GRAPH_IMPORTERS,
+    short_help=ch.CMD_GRAPH_IMPORTERS,
+    epilog=ch.EPILOG_GRAPH_COLUMNS,
 )
 @click.argument("module_qualified_name")
 @click.option("--through-reexports", is_flag=True, help=ch.HELP_GRAPH_THROUGH_REEXPORTS)
@@ -306,13 +323,16 @@ def importers_cmd(
     project: str | None,
     repo_path: Path,
 ) -> None:
+    query = (
+        graph_query.importers_through_reexports
+        if through_reexports
+        else graph_query.importers
+    )
     _run_target_query_and_emit(
         project,
         repo_path,
         module_qualified_name,
-        graph_query.importers_through_reexports
-        if through_reexports
-        else graph_query.importers,
+        lambda f, n, qn: query(f, n, qn, graph_query.source_root_for(f, n, repo_path)),
     )
 
 

@@ -1173,12 +1173,16 @@ def _run_graph_sync(
 
     cgrignore = load_ignore_patterns(repo)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
-    exclude_paths = cli_excludes | cgrignore.exclude or None
     unignore_paths: frozenset[str] | None
     if interactive_setup:
         unignore_paths = prompt_for_unignored_directories(repo, exclude)
+        # Read again: a keep saved at the prompt may have lifted an exclusion
+        # (a `.cgrignore` line it removed, or a `.gitignore` line its `!` line
+        # cancels), and this run keeps it too (review of PR 2510).
+        cgrignore = load_ignore_patterns(repo)
     else:
         unignore_paths = cgrignore.unignore or None
+    exclude_paths = cli_excludes | cgrignore.exclude or None
 
     elapsed = time.monotonic()
     with (
@@ -1642,13 +1646,15 @@ def index(
 
     cgrignore = load_ignore_patterns(repo_to_index)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
-    exclude_paths = cli_excludes | cgrignore.exclude or None
     unignore_paths: frozenset[str] | None = None
     if interactive_setup:
         unignore_paths = prompt_for_unignored_directories(repo_to_index, exclude)
+        # As in `start`: a saved keep may have lifted an exclusion.
+        cgrignore = load_ignore_patterns(repo_to_index)
     else:
         _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
         unignore_paths = cgrignore.unignore or None
+    exclude_paths = cli_excludes | cgrignore.exclude or None
 
     try:
         indexed_source = source_state(Path(repo_to_index))
@@ -2387,6 +2393,11 @@ def rename_command(
         False, cs.RENAME_CLI_ALLOW_HEURISTIC, help=ch.HELP_RENAME_ALLOW_HEURISTIC
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_RENAME_DRY_RUN),
+    allow_external_override: bool = typer.Option(
+        False,
+        cs.RENAME_CLI_ALLOW_EXTERNAL_OVERRIDE,
+        help=ch.HELP_RENAME_ALLOW_EXTERNAL_OVERRIDE,
+    ),
 ) -> None:
     from .editing.rename import RenameRefused, rename, sites_for
     from .graph_cli import _project_and_fetch
@@ -2418,6 +2429,8 @@ def rename_command(
                     dry_run=dry_run,
                     reingest=reingest,
                     heuristic_opt_in=cs.RENAME_CLI_ALLOW_HEURISTIC,
+                    allow_external_override=allow_external_override,
+                    external_override_opt_in=cs.RENAME_CLI_ALLOW_EXTERNAL_OVERRIDE,
                 )
             except RenameRefused as refused:
                 typer.echo(str(refused), err=True)

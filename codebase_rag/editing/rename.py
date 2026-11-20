@@ -29,7 +29,7 @@ rewritten: prose is not a graph edge.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
@@ -39,6 +39,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import cypher_queries as cq
 from .. import graph_query
+from ..config import load_ignore_patterns
 from ..function_registry import TYPE_SPACE_KINDS
 from ..graph_updater import ReingestAborted
 from ..language_spec import csharp_partial_key_from_graph, get_language_for_extension
@@ -54,7 +55,9 @@ from ..utils.path_utils import (
     base_module_qn,
     declaration_implementations,
     python_stub_implementations,
+    walk_eligible_files,
 )
+from ..utils.source_encoding import python_source_view
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
 from .occurrences import (
@@ -98,6 +101,15 @@ _Span = tuple[str, tuple[int, int], tuple[int, int]]
 _MEMBER_NAME_TYPES = frozenset(
     {cs.TS_IDENTIFIER, cs.TS_PROPERTY_IDENTIFIER, "field_identifier"}
 )
+# A Python `__name__` method is called by the interpreter (`str()`, `with`,
+# `len()`), never by a site the graph records.
+_PY_PROTOCOL_NAME = re.compile(r"__\w+__")
+# The module-level functions the interpreter calls by name (PEP 562); any
+# other module-level `__name__` function or class is an ordinary name.
+_PY_MODULE_HOOKS = frozenset({"__getattr__", "__dir__"})
+# `@Override` / `@java.lang.Override` (Java, Kotlin, Scala, Dart `@override`)
+# and the `override` modifier (Kotlin, C#, TypeScript, Swift).
+_OVERRIDE_MARKER = "override"
 
 
 # The same shapes `ImportRewriter.rename_in_all` rewrites. Kept identical so
@@ -523,6 +535,27 @@ def _chain_links(
     return sorted(found)
 
 
+def _replace_in_string(
+    patcher: Patcher, site: RenameSite, old_name: str, new_name: str
+) -> None:
+    # Inside a string the name is no identifier node, so the identifier
+    # check cannot vouch for it; the bytes must still spell the old name.
+    source = patcher.source(site.path)
+    start = line_col_to_byte(source, site.line, site.col)
+    end = start + len(old_name.encode(cs.ENCODING_UTF8))
+    if source[start:end] != old_name.encode(cs.ENCODING_UTF8):
+        raise PatcherError(
+            cs.PATCH_IDENTIFIER_MISMATCH.format(
+                path=site.path,
+                line=site.line,
+                col=site.col,
+                expected=old_name,
+                found=source[start:end].decode(cs.ENCODING_UTF8, errors="replace"),
+            )
+        )
+    patcher.replace_span(site.path, (start, end), new_name)
+
+
 def _called_member(call: Node, name: str) -> Node | None:
     # The member name a call invokes (`name` in `obj.name(...)`), if it is
     # `name`; None for a bare call or another member.
@@ -811,6 +844,8 @@ class Renamer:
         after_apply: Callable[[list[str]], None] | None = None,
         reingest: Reingest | None = None,
         heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
+        allow_external_override: bool = False,
+        external_override_opt_in: str = cs.MCPParamName.ALLOW_EXTERNAL_OVERRIDE,
     ) -> None:
         self.repo_root = repo_root.resolve()
         self.fetch_all = fetch_all
@@ -827,6 +862,8 @@ class Renamer:
         # How the caller spells the opt-in the heuristic refusal tells the
         # user to pass: a CLI flag is not an MCP parameter (issue #2886).
         self.heuristic_opt_in = heuristic_opt_in
+        self.allow_external_override = allow_external_override
+        self.external_override_opt_in = external_override_opt_in
         # The members of the hierarchy being planned that only a guessed
         # OVERRIDES edge reaches: their declarations are guessed sites.
         self._guessed_members: frozenset[str] = frozenset()
@@ -1535,18 +1572,9 @@ class Renamer:
                 [],
                 [],
             )
-        sites: list[RenameSite] = []
-        unlocatable: list[str] = []
-        old_name: str | None = None
-        label: str | None = None
-        for member in members:
-            member_sites, member_unlocatable, member_name, member_label = self._collect(
-                member
-            )
-            old_name = old_name or member_name
-            label = label or member_label
-            sites.extend(member_sites)
-            unlocatable.extend(member_unlocatable)
+        if not self.allow_external_override:
+            self._refuse_external_overrides(qn, members)
+        sites, unlocatable, old_name, label = self._collect_members(members)
         assert old_name is not None
         covered = {(s.path, s.line, s.col) for s in sites if s.resolution != _CHAIN}
         sites = [
@@ -1554,23 +1582,7 @@ class Renamer:
             for s in sites
             if s.resolution != _CHAIN or (s.path, s.line, s.col) not in covered
         ]
-        structural = [s for s in sites if s.resolution == _STRUCTURAL]
-        if structural:
-            raise RenameRefused(
-                cs.RENAME_STRUCTURAL_UNLOCATABLE.format(qn=qn, count=len(structural)),
-                structural,
-                unlocatable,
-            )
-        # Every graph-known occurrence without a rewrite location blocks,
-        # whatever bound it: `allow_heuristic` accepts rewriting through a
-        # guessed site, not leaving a known one under the old name.
-        siteless = [s for s in sites if s.kind == "unlocatable"]
-        if siteless:
-            raise RenameRefused(
-                cs.RENAME_SITELESS.format(qn=qn, count=len(siteless)),
-                siteless,
-                unlocatable,
-            )
+        self._refuse_unrewritable_sites(qn, members, old_name, sites, unlocatable)
         ambiguous = [
             s for s in sites if s.resolution in AMBIGUOUS or s.resolution == _CHAIN
         ]
@@ -1611,6 +1623,7 @@ class Renamer:
                 unplanned,
             )
         sites.extend(unplanned)
+        sites.extend(self._dotted_path_sites(members, old_name))
         if crossing := self._go_sites_losing_visibility(qn, sites, old_name, new_name):
             raise RenameRefused(
                 cs.RENAME_GO_UNEXPORTS.format(
@@ -1651,6 +1664,304 @@ class Renamer:
             unplanned=tuple(unplanned),
             companions=companions,
         )
+
+    def _collect_members(
+        self, members: list[str]
+    ) -> tuple[list[RenameSite], list[str], str | None, str | None]:
+        """Every hierarchy member's sites and unlocatable occurrences, with
+        the first old name and label a member reports."""
+        sites: list[RenameSite] = []
+        unlocatable: list[str] = []
+        old_name: str | None = None
+        label: str | None = None
+        for member in members:
+            member_sites, member_unlocatable, member_name, member_label = self._collect(
+                member
+            )
+            old_name = old_name or member_name
+            label = label or member_label
+            sites.extend(member_sites)
+            unlocatable.extend(member_unlocatable)
+        return sites, unlocatable, old_name, label
+
+    def _refuse_external_overrides(self, qn: str, members: list[str]) -> None:
+        """Refuse a rename that would silently stop an override (issue #3226).
+
+        The graph's override hierarchy holds project methods only, so
+        renaming it whole keeps those consistent. A member that overrides a
+        library base (`Thread.run`, `TestCase.setUp`), declares an override
+        the project does not define (`@Override toString()`), or is a Python
+        protocol method is called by code outside the project under its old
+        name: after the rename nothing calls it, and no site shows why.
+        """
+        prefix = f"{self.project}{cs.SEPARATOR_DOT}"
+        facts = {
+            member: row
+            for member in members
+            for row in self.fetch_all(
+                cq.CYPHER_RENAME_OVERRIDE_FACTS,
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: member},
+            )[:1]
+        }
+        # A class that defines a member of the hierarchy answers for the
+        # supertypes above it through that member's own facts.
+        owners = {
+            owner
+            for row in facts.values()
+            if isinstance(owner := row.get(cs.RENAME_FACT_OWNER), str)
+        }
+        reasons = [
+            reason
+            for member, row in facts.items()
+            if (reason := self._member_override_reason(member, row, owners, prefix))
+            is not None
+        ]
+        if reasons:
+            raise RenameRefused(
+                cs.RENAME_EXTERNAL_OVERRIDE.format(
+                    qn=qn,
+                    reasons="; ".join(reasons),
+                    option=self.external_override_opt_in,
+                ),
+                [],
+                [],
+            )
+
+    def _member_override_reason(
+        self, member: str, row: ResultRow, owners: set[str], prefix: str
+    ) -> str | None:
+        """Why renaming `member` would stop it answering something outside
+        the project, or None."""
+        owner = row.get(cs.RENAME_FACT_OWNER)
+        if not isinstance(owner, str):
+            return _external_override_reason(member, row)
+        row = dict(row)
+        # A display, not the bare `sorted` list: the row's lists hold
+        # `ResultScalar`, and a `list[str]` is not one (lists are invariant).
+        row[cs.RENAME_FACT_OUTSIDE_SUPERTYPES] = [
+            *sorted(self._outside_supertypes(owner, owners, prefix))
+        ]
+        if (reason := _external_override_reason(member, row)) is not None:
+            return reason
+        name = str(row.get(cs.KEY_NAME) or member.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        return self._inherited_contract_reason(member, name, owner, owners, prefix)
+
+    def _inherited_contract_reason(
+        self, qn: str, name: str, owner: str, owners: set[str], prefix: str
+    ) -> str | None:
+        """Why a project class that inherits `qn` needs its name, or None.
+
+        `Task extends Base implements Runnable` declares no `run()`: the one
+        it inherits from `Base` implements `Runnable`, so renaming `Base.run()`
+        leaves `Task` owing it, though `Base` itself implements nothing. A
+        class that declares a member of the hierarchy answers for itself and
+        the classes below it. Only a JDK contract method's name can be owed
+        this way, so other names skip the walk.
+        """
+        if not any(name in names for names in cs.JAVA_STDLIB_CONTRACT_METHODS.values()):
+            return None
+        seen = {owner}
+        frontier = [owner]
+        while frontier:
+            step: list[str] = []
+            for row in self.fetch_all(
+                cq.CYPHER_RENAME_SUBTYPES,
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: frontier},
+            ):
+                subclass = row.get(cs.KEY_QUALIFIED_NAME)
+                if not isinstance(subclass, str) or subclass in seen | owners:
+                    continue
+                seen.add(subclass)
+                declaring = _contract_declarers(
+                    name, sorted(self._outside_supertypes(subclass, owners, prefix))
+                )
+                if declaring:
+                    return cs.RENAME_INHERITED_IMPLEMENTS_OUTSIDE.format(
+                        qn=qn,
+                        subclass=subclass,
+                        name=name,
+                        supertypes=cs.SEPARATOR_COMMA_SPACE.join(declaring),
+                    )
+                step.append(subclass)
+            frontier = step
+        return None
+
+    def _outside_supertypes(self, owner: str, stops: set[str], prefix: str) -> set[str]:
+        """The supertypes outside the project that `owner` extends or
+        implements, directly or through project classes up its chain.
+
+        `Task extends Bridge` and `Bridge implements Runnable`: renaming
+        `Task.run` with its project base `Base.run` leaves `Task` owing
+        `Runnable.run`. The walk does not climb past a class in `stops`,
+        which defines a member of the hierarchy itself.
+        """
+        outside: set[str] = set()
+        seen = {owner}
+        frontier = [owner]
+        while frontier:
+            step: list[str] = []
+            for row in self.fetch_all(
+                cq.CYPHER_RENAME_SUPERTYPES,
+                {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: frontier},
+            ):
+                supertype = row.get(cs.RENAME_FACT_SUPERTYPE)
+                if not isinstance(supertype, str) or supertype in seen:
+                    continue
+                seen.add(supertype)
+                labels = row.get(cs.KEY_LABELS)
+                if not supertype.startswith(prefix) or (
+                    isinstance(labels, list)
+                    and cs.NodeLabel.EXTERNAL_MODULE.value in labels
+                ):
+                    outside.add(supertype)
+                elif supertype not in stops:
+                    step.append(supertype)
+            frontier = step
+        return outside
+
+    def _dotted_path_sites(self, members: list[str], old_name: str) -> list[RenameSite]:
+        """Strings spelling a member's whole import path, at its name.
+
+        `mock.patch("pkg.core.helper")`, `monkeypatch.setattr("pkg.mod.fn")`
+        and a `[project.scripts]` entry point `"pkg.core:main"` name the
+        definition by path, not by a code reference, so the rename rewrote
+        every code site and left them: the patching test raised
+        `AttributeError` and the console script pointed nowhere (issue
+        #2810). Only a string that IS the path, a whole string literal or
+        config value, is a site; a longer path, another module's, a bare name
+        or prose around the path stays as written. So does a path another
+        module of the repository spells too (`apps/b/pkg/core.py` beside
+        `apps/a/pkg/core.py`), unless the file sits under this module's
+        import root and not under the other's.
+        """
+        spelled = self._spelled_import_paths(members, old_name)
+        if not spelled:
+            return []
+        longest_first = sorted(spelled, key=len, reverse=True)
+        alternatives = "|".join(re.escape(path) for path in longest_first)
+        entry_points = "|".join(
+            re.escape(path)
+            for path in longest_first
+            if cs.RENAME_ENTRY_POINT_SEPARATOR in path
+        )
+        quoted = re.compile(rf"""(["'])(?P<path>{alternatives})\1""")
+        bare = re.compile(rf"(?<![\w.:])(?P<path>{entry_points})(?![\w.:])")
+        files = self._string_site_files()
+        rivals = self._rival_roots(files, spelled)
+        name_length = len(old_name.encode(cs.ENCODING_UTF8))
+        found: dict[tuple[str, int, int], RenameSite] = {}
+        for file in files:
+            rel = PurePosixPath(file.relative_to(self.repo_root).as_posix())
+            try:
+                raw = file.read_bytes()
+            except OSError:
+                continue
+            # The view the patcher edits: a Python file declaring Latin-1 is
+            # its UTF-8 text, where `é` is two bytes, so a column counted in
+            # the file's own bytes misses the name there.
+            source, _codec = python_source_view(
+                raw, get_language_for_extension(file.suffix), file
+            )
+            patterns = [(quoted, False)]
+            if file.suffix in cs.RENAME_BARE_ENTRY_POINT_SUFFIXES:
+                patterns.append((bare, True))
+            for path, end in _whole_value_paths(source, file.suffix, patterns):
+                spelling = spelled[path]
+                if not _owns_spelling(rel, spelling, rivals.get(spelling.module, [])):
+                    continue
+                line, col = byte_to_line_col(source, end - name_length)
+                found.setdefault(
+                    (rel.as_posix(), line, col),
+                    RenameSite(
+                        cs.RENAME_SITE_KIND_STRING,
+                        rel.as_posix(),
+                        line,
+                        col,
+                        spelling.member,
+                        cs.EdgeResolution.EXACT,
+                    ),
+                )
+        return list(found.values())
+
+    def _spelled_import_paths(
+        self, members: list[str], old_name: str
+    ) -> dict[str, _Spelling]:
+        """Each dotted (`pkg.core.helper`) and entry point (`pkg.core:helper`)
+        path spelling a Python member, mapped to that member."""
+        spelled: dict[str, _Spelling] = {}
+        for member in members:
+            module_qn, module_path = self._module_of(member)
+            inner = member.removeprefix(f"{module_qn}{cs.SEPARATOR_DOT}")
+            if (
+                module_path is None
+                or inner == member
+                or inner.rsplit(cs.SEPARATOR_DOT, 1)[-1] != old_name
+                or get_language_for_extension(Path(module_path).suffix)
+                != cs.SupportedLanguage.PYTHON
+            ):
+                continue
+            for import_path, root in self._python_import_paths(module_path):
+                spelling = _Spelling(member, module_path, import_path, root)
+                spelled[f"{import_path}{cs.SEPARATOR_DOT}{inner}"] = spelling
+                spelled[f"{import_path}{cs.RENAME_ENTRY_POINT_SEPARATOR}{inner}"] = (
+                    spelling
+                )
+        return spelled
+
+    def _rival_roots(
+        self, files: list[Path], spelled: dict[str, _Spelling]
+    ) -> dict[str, list[PurePosixPath]]:
+        """The import roots from which another Python file of the repository
+        is a spelled module path too, by that path."""
+        modules = {spelling.module for spelling in spelled.values()}
+        own = {spelling.path for spelling in spelled.values()}
+        tails = {module.rsplit(cs.SEPARATOR_DOT, 1)[-1] for module in modules}
+        rivals: dict[str, list[PurePosixPath]] = {}
+        for file in files:
+            rel = file.relative_to(self.repo_root).as_posix()
+            stem = file.parent.name if file.stem == cs.PY_PACKAGE_INIT else file.stem
+            if file.suffix != cs.EXT_PY or rel in own or stem not in tails:
+                continue
+            for import_path, root in self._python_import_paths(rel):
+                if import_path in modules:
+                    rivals.setdefault(import_path, []).append(root)
+        return rivals
+
+    def _string_site_files(self) -> list[Path]:
+        # The indexer's own walk, under the repository's `.cgrignore` and
+        # `.gitignore`: a file the project leaves out (a saved fixture) is not
+        # the rename's to edit. It prunes `node_modules` and virtualenvs as it
+        # goes, and skips a symlink, whose in-repository target is walked as
+        # itself and patched once.
+        ignore = load_ignore_patterns(self.repo_root)
+        return [
+            Path(directory) / name
+            for directory, name, _rel in walk_eligible_files(
+                self.repo_root, ignore.exclude or None, ignore.unignore or None
+            )
+            if Path(name).suffix in cs.RENAME_STRING_SUFFIXES
+        ]
+
+    def _python_import_paths(self, module_path: str) -> list[tuple[str, PurePosixPath]]:
+        """The dotted names a Python file imports as, one per import root,
+        with that root.
+
+        A root is the repository or a directory that is not itself a package,
+        so `src/pkg/core.py` imports as `pkg.core` (and `src.pkg.core`), and
+        `pkg/core.py` as `pkg.core`.
+        """
+        parts = list(Path(module_path).with_suffix("").parts)
+        if parts and parts[-1] == cs.PY_PACKAGE_INIT:
+            parts.pop()
+        paths: list[tuple[str, PurePosixPath]] = []
+        for start in range(len(parts)):
+            root = self.repo_root.joinpath(*parts[:start])
+            if start and (root / f"{cs.PY_PACKAGE_INIT}.py").is_file():
+                continue
+            paths.append(
+                (cs.SEPARATOR_DOT.join(parts[start:]), PurePosixPath(*parts[:start]))
+            )
+        return paths
 
     def _go_sites_losing_visibility(
         self, qn: str, sites: list[RenameSite], old_name: str, new_name: str
@@ -1825,6 +2136,95 @@ class Renamer:
                 )
         return paths
 
+    def _refuse_unrewritable_sites(
+        self,
+        qn: str,
+        members: list[str],
+        old_name: str,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+    ) -> None:
+        """Refuse a rename whose planned sites cannot all be rewritten.
+
+        `allow_heuristic` opts into guessed sites, and none of these is a
+        guess: each is a known site the rename would leave behind or break.
+        """
+        structural = [s for s in sites if s.resolution == _STRUCTURAL]
+        if structural:
+            raise RenameRefused(
+                cs.RENAME_STRUCTURAL_UNLOCATABLE.format(qn=qn, count=len(structural)),
+                structural,
+                unlocatable,
+            )
+        # Every graph-known occurrence without a rewrite location blocks,
+        # whatever bound it: `allow_heuristic` accepts rewriting through a
+        # guessed site, not leaving a known one under the old name.
+        siteless = [s for s in sites if s.kind == "unlocatable"]
+        if siteless:
+            raise RenameRefused(
+                cs.RENAME_SITELESS.format(qn=qn, count=len(siteless)),
+                siteless,
+                unlocatable,
+            )
+        if shared := self._sites_another_namesake_binds(members, old_name, sites):
+            raise RenameRefused(
+                cs.RENAME_SHARED_SITE.format(
+                    qn=qn,
+                    count=len(shared),
+                    name=old_name,
+                    locations=_locations(shared),
+                ),
+                shared,
+                unlocatable,
+            )
+
+    def _sites_another_namesake_binds(
+        self, hierarchy: list[str], old_name: str, sites: list[RenameSite]
+    ) -> list[RenameSite]:
+        """C/C++ use sites the graph also binds to another definition of
+        `old_name`.
+
+        A header expanded in two translation units binds one `LIMIT` token
+        to `a.h`'s `#define LIMIT` in one and to `b.h`'s in the other, and
+        the hybrid frontend records both, at that one site. Rewriting the
+        token for one leaves the other's units without the name.
+        """
+        definitions = [s.path for s in sites if s.kind == "definition"]
+        if not definitions or not all(
+            get_language_for_extension(Path(path).suffix) in cs.C_FAMILY_LANGUAGES
+            for path in definitions
+        ):
+            return []
+        # An overload fan-out's guessed sibling is the ambiguity
+        # `allow_heuristic` decides, not a second definition. A function-like
+        # macro's use keeps tree-sitter's `heuristic` label over libclang's
+        # `exact` one, so only the fan-out label is left out.
+        uses = {
+            (s.path, s.line, s.col): s
+            for s in sites
+            if s.kind != "definition" and s.resolution != cs.EdgeResolution.OVERLOAD
+        }
+        if not uses:
+            return []
+        shared: dict[tuple[str, int, int], RenameSite] = {}
+        for symbol in graph_query.resolve(self.fetch_all, self.project, old_name):
+            other = symbol["qualified_name"]
+            if other in hierarchy:
+                continue
+            try:
+                other_sites, _unlocatable, _name, _label = self._collect(other)
+            except (RenameRefused, PatcherError):
+                continue
+            for site in other_sites:
+                position = (site.path, site.line, site.col)
+                if (
+                    site.kind != "definition"
+                    and site.resolution != cs.EdgeResolution.OVERLOAD
+                    and position in uses
+                ):
+                    shared.setdefault(position, uses[position])
+        return [shared[position] for position in sorted(shared)]
+
     def _namesakes(
         self, old_name: str, hierarchy: list[str], target: Target
     ) -> _Namesakes:
@@ -1905,6 +2305,9 @@ class Renamer:
             if key in done or site.kind in ("unlocatable", "import"):
                 continue
             done.add(key)
+            if site.kind == cs.RENAME_SITE_KIND_STRING:
+                _replace_in_string(patcher, site, old_name, new_name)
+                continue
             patcher.replace_identifier_at(
                 site.path, site.line, site.col, old_name, new_name
             )
@@ -2391,6 +2794,178 @@ class Renamer:
         )
 
 
+def _external_override_reason(qn: str, row: ResultRow) -> str | None:
+    if row.get(cs.KEY_OVERRIDES_EXTERNAL) is True:
+        return cs.RENAME_OVERRIDES_EXTERNAL.format(qn=qn)
+    name = str(row.get(cs.KEY_NAME) or qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+    path = row.get(cs.KEY_PATH)
+    if (
+        isinstance(path, str)
+        and get_language_for_extension(Path(path).suffix) == cs.SupportedLanguage.PYTHON
+        and _PY_PROTOCOL_NAME.fullmatch(name)
+        and (
+            row.get(cs.KEY_LABEL) == cs.NodeLabel.METHOD
+            or (
+                row.get(cs.KEY_LABEL) == cs.NodeLabel.FUNCTION
+                and name in _PY_MODULE_HOOKS
+            )
+        )
+    ):
+        return cs.RENAME_PROTOCOL_METHOD.format(qn=qn, name=name)
+    outside = row.get(cs.RENAME_FACT_OUTSIDE_SUPERTYPES)
+    supertypes = sorted(str(s) for s in outside) if isinstance(outside, list) else []
+    # A project base explains an override marker only when the class has no
+    # supertype outside the project that may declare the method as well
+    # (`Task extends Base implements Runnable`).
+    if row.get(cs.RENAME_FACT_BASES) and not supertypes:
+        return None
+    marker = _override_marker(row)
+    if marker is None:
+        return _implemented_outside(qn, name, supertypes)
+    if row.get(cs.RENAME_FACT_BASES):
+        return cs.RENAME_OVERRIDE_ALSO_OUTSIDE.format(
+            qn=qn, marker=marker, supertypes=cs.SEPARATOR_COMMA_SPACE.join(supertypes)
+        )
+    return cs.RENAME_UNMATCHED_OVERRIDE.format(qn=qn, marker=marker)
+
+
+def _implemented_outside(qn: str, name: str, supertypes: list[str]) -> str | None:
+    """Why an unmarked member is the implementation of a JDK contract.
+
+    `Base implements Runnable` with an unmarked `run()`, and `Leaf extends
+    Base` with `@Override run()`: `Base.run()` explains the marker, so no
+    marker points at `Runnable`. Carrying `Base`'s supertypes down to the
+    marked `Leaf.run()` would also refuse `Sub.plain()` over `Task
+    implements Runnable`, the same shape; only the name tells them apart.
+    """
+    declaring = _contract_declarers(name, supertypes)
+    if not declaring:
+        return None
+    return cs.RENAME_IMPLEMENTS_OUTSIDE.format(
+        qn=qn, name=name, supertypes=cs.SEPARATOR_COMMA_SPACE.join(declaring)
+    )
+
+
+def _contract_declarers(name: str, supertypes: list[str]) -> list[str]:
+    """The JDK types among `supertypes` whose contract requires `name`."""
+    return [
+        supertype
+        for supertype in supertypes
+        if name in cs.JAVA_STDLIB_CONTRACT_METHODS.get(supertype, frozenset())
+    ]
+
+
+def _override_marker(row: ResultRow) -> str | None:
+    decorators = row.get(cs.KEY_DECORATORS)
+    for decorator in decorators if isinstance(decorators, list) else ():
+        text = str(decorator).lstrip("@").split("(", 1)[0].strip()
+        if text.rsplit(cs.SEPARATOR_DOT, 1)[-1].lower() == _OVERRIDE_MARKER:
+            return str(decorator)
+    modifiers = row.get(cs.KEY_MODIFIERS)
+    if isinstance(modifiers, list) and _OVERRIDE_MARKER in modifiers:
+        return _OVERRIDE_MARKER
+    return None
+
+
+class _Spelling(NamedTuple):
+    """A string spelling of a member's import path: the member, its module's
+    file, the dotted module path it goes through and the import root that
+    path is read from (`src` for `src/pkg/core.py` as `pkg.core`)."""
+
+    member: str
+    path: str
+    module: str
+    root: PurePosixPath
+
+
+# A quoted config value is the whole value: after `key =`, an array's `[` or
+# `,`, or alone on its line, and followed by nothing but a separator or a
+# comment. An unquoted entry point (`setup.cfg`) is everything after `=`, an
+# extras list and a comment aside. The space after the extras list belongs to
+# the list, so a run of spaces with no list has one way to match, not one per
+# split between two `\s*`, and a long one is read in linear time.
+_VALUE_BEFORE = re.compile(r"(?:^|[=\[,{])\s*$")
+_VALUE_AFTER = re.compile(r"\s*(?:$|[,\]}#;])")
+_BARE_VALUE_AFTER = re.compile(r"\s*(?:\[[^\]]*\]\s*)?(?:[#;].*)?$")
+# Keeps every byte a lone undecodable byte occupied, so an offset in the
+# decoded text maps back to the same offset in the file.
+_EXACT_BYTES = "surrogateescape"
+
+
+def _whole_value_paths(
+    source: bytes, suffix: str, patterns: list[tuple[re.Pattern[str], bool]]
+) -> Iterator[tuple[str, int]]:
+    """The spelled paths `patterns` find in a file that are a whole string
+    literal (Python) or a whole config value, each with the byte offset
+    where it ends. Each pattern says whether it finds unquoted values."""
+    text = source.decode(cs.ENCODING_UTF8, errors=_EXACT_BYTES)
+    tree: Node | None = None
+    for pattern, bare in patterns:
+        for match in pattern.finditer(text):
+            path = match.group("path")
+            start = len(
+                text[: match.start("path")].encode(
+                    cs.ENCODING_UTF8, errors=_EXACT_BYTES
+                )
+            )
+            end = start + len(path.encode(cs.ENCODING_UTF8, errors=_EXACT_BYTES))
+            if suffix == cs.EXT_PY:
+                tree = tree or _python_tree(source)
+                whole = tree is not None and _whole_python_string(tree, start, end)
+            else:
+                whole = _whole_config_value(text, match, bare)
+            if whole:
+                yield path, end
+
+
+def _python_tree(source: bytes) -> Node | None:
+    parser = load_parsers()[0].get(cs.SupportedLanguage.PYTHON)
+    return None if parser is None else parser.parse(source).root_node
+
+
+def _whole_python_string(tree: Node, start: int, end: int) -> bool:
+    # The bytes between the string's own quotes: `"Do not call
+    # 'pkg.core.helper' directly"` holds the path, but is not it.
+    # A fragment of `"pkg.core.helper" "_v2"` is a whole string node, but
+    # the value is the concatenation, a longer path.
+    node = tree.descendant_for_byte_range(start, end)
+    while node is not None and node.type != cs.TS_PY_STRING:
+        node = node.parent
+    if (
+        node is None
+        or node.child_count < 2
+        or (
+            node.parent is not None and node.parent.type == cs.TS_PY_CONCATENATED_STRING
+        )
+    ):
+        return False
+    return node.children[0].end_byte == start and node.children[-1].start_byte == end
+
+
+def _whole_config_value(text: str, match: re.Match[str], bare: bool) -> bool:
+    line_start = text.rfind("\n", 0, match.start()) + 1
+    line_end = text.find("\n", match.end())
+    before = text[line_start : match.start()]
+    after = text[match.end() : len(text) if line_end < 0 else line_end]
+    if bare:
+        return before.rstrip().endswith("=") and bool(_BARE_VALUE_AFTER.match(after))
+    return bool(_VALUE_BEFORE.search(before)) and bool(_VALUE_AFTER.match(after))
+
+
+def _owns_spelling(
+    rel: PurePosixPath, spelling: _Spelling, rivals: list[PurePosixPath]
+) -> bool:
+    """Whether a string in `rel` spelling a path another module spells too
+    means this member: the nearest import root holding `rel` is its own."""
+    if not rivals:
+        return True
+    holding = [root for root in (spelling.root, *rivals) if rel.is_relative_to(root)]
+    if not holding:
+        return False
+    depth = max(len(root.parts) for root in holding)
+    return [root for root in holding if len(root.parts) == depth] == [spelling.root]
+
+
 class _Namesakes(NamedTuple):
     positions: set[tuple[str, int, int]]
     statements: list[_Span]
@@ -2514,6 +3089,8 @@ def rename(
     after_apply: Callable[[list[str]], None] | None = None,
     reingest: Reingest | None = None,
     heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
+    allow_external_override: bool = False,
+    external_override_opt_in: str = cs.MCPParamName.ALLOW_EXTERNAL_OVERRIDE,
 ) -> RenameReport:
     """The op: plan (and refuse on ambiguity) or plan and apply.
 
@@ -2528,6 +3105,8 @@ def rename(
         after_apply=after_apply,
         reingest=reingest,
         heuristic_opt_in=heuristic_opt_in,
+        allow_external_override=allow_external_override,
+        external_override_opt_in=external_override_opt_in,
     )
     if dry_run:
         return renamer.preview(qualified_name, new_name, allow_heuristic)

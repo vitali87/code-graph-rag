@@ -18,13 +18,14 @@ cgr rename myproj.pkg.util.helper assist             # apply
 *Real project names carry a path hash, so `myproj` reads `myproj__425345f0`; the JSON report is saved and read with `jq`.*
 
 The MCP tool of the same name takes `qualified_name`, `new_name`, and the
-optional `allow_heuristic`, `dry_run` and `project` fields, and returns the
-same report as JSON.
+optional `allow_heuristic`, `allow_external_override`, `dry_run` and
+`project` fields, and returns the same report as JSON.
 
 ## What gets rewritten
 
-Sites come from the graph, never from text search (the source is read only
-to [cross-check](#cross-check-against-the-source) the plan):
+Sites come from the graph, never from text search, except the `string` sites
+in the table (otherwise the source is read only to
+[cross-check](#cross-check-against-the-source) the plan):
 
 | Site kind    | Source                                                          |
 |--------------|-----------------------------------------------------------------|
@@ -32,6 +33,7 @@ to [cross-check](#cross-check-against-the-source) the plan):
 | `call`       | `CALLS` edges into the definition, using the per-site `line`/`col` recorded at ingest (see [graph schema](graph-schema.md#edge-site-properties)). |
 | `reference`  | `REFERENCES` and `INSTANTIATES` edges, the same way.            |
 | `import`     | `IMPORTS` edges whose `imported_name` is the symbol; the statement is retargeted by the [import rewriter](patchers.md#import-rewriting-for-rename-and-move), and an alias (`import helper as h`) is kept, so aliased call sites need no edit. |
+| `string`     | A string that is exactly the Python symbol's import path, `"pkg.core.helper"` or the entry-point form `"pkg.core:main"`, in a `.py`, `.toml`, `.cfg` or `.ini` file (an unquoted `pkg.core:main` in a config file too). This covers `mock.patch(...)`, `monkeypatch.setattr(...)`, `[project.scripts]` and `setup.cfg` entry points. The import path is taken from every import root, so `src/pkg/core.py` matches `pkg.core.helper`. Only a whole string literal or config value counts: a longer path, another module's path, a bare name, or prose around the path (in the same string, a comment or a longer value) is left as written. So is a path another module of the repository spells too (two apps each with a `pkg/core.py`) in a file under that module's import root rather than this one's. |
 
 Python modules that export the symbol through `__all__` (the defining module
 and any package `__init__` importing it) have the entry renamed too. Markdown
@@ -90,6 +92,27 @@ but records no position to rewrite, so renaming would leave that edge
 pointing at the old name. `--allow-heuristic` does NOT bypass this, because
 the problem is a missing location rather than an uncertain one. A class that
 is only instantiated or called renames normally.
+
+A method that overrides or implements something outside the project
+refuses too, naming why: code the project does not contain calls it by its
+old name, so after the rename the override silently stops, and no call site
+shows it. That covers a method the graph marks `overrides_external`
+(`Worker(threading.Thread).run`, `TestCase.setUp`), a Python `__dunder__`
+method (or a module's `__getattr__`/`__dir__` hook), and a method carrying
+`@Override` or the `override` modifier (Java, C#, TypeScript, Dart) that
+overrides no method in the project, or whose class also extends or
+implements a type outside the project that may declare it, directly
+(`Task extends Base implements Runnable`) or through a project class up its
+chain that does not define the method itself
+(`Task extends Bridge`, `Bridge extends Base implements Runnable`). Java
+asks no `@Override` of an implementation, so an unmarked method also refuses
+when its class implements a JDK type that declares its name (`run()` of
+`Runnable` or `Thread`, `compareTo()`, `close()`, `call()`, `iterator()`),
+even when only a subclass's override carries the marker, and when a project
+class below it that does not declare the method implements one through it
+(`Task extends Base implements Runnable`, with `run()` only in `Base`). Pass
+`--allow-external-override` (`allow_external_override: true`) when renaming
+it is the intent (issue #3226).
 
 The rename also refuses when the new name is not a valid identifier, when
 the qualified name has no definition in the graph, or when the definition's

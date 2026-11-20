@@ -222,6 +222,7 @@ def test_interactive_setup_offers_the_exclude_line(tmp_path: Path) -> None:
     root = _repo(tmp_path, *_CASES["issue"])
     with (
         patch("codebase_rag.main.Prompt.ask", return_value="all"),
+        patch("codebase_rag.main.Confirm.ask", return_value=False),
         patch("codebase_rag.main.app_context"),
     ):
         kept = prompt_for_unignored_directories(root)
@@ -244,6 +245,7 @@ def test_interactive_setup_offers_every_exclude_of_the_block(tmp_path: Path) -> 
     root = _repo(tmp_path, "out_a/\n" + _ISSUE_GITIGNORE, [])
     with (
         patch("codebase_rag.main.Prompt.ask", return_value="all"),
+        patch("codebase_rag.main.Confirm.ask", return_value=False),
         patch("codebase_rag.main.app_context"),
     ):
         kept = prompt_for_unignored_directories(root)
