@@ -119,6 +119,14 @@ class EnvAliases:
             tuple[ResourceKind | None, list[tuple[Node, Node | None]]],
         ] = {}
 
+    def for_scope(self, scope_node: Node) -> EnvAliases:
+        """The aliases accesses inside `scope_node` can resolve: an inline
+        callback walked as part of its caller binds names of its own, which
+        the caller's candidate search skipped as a nested scope."""
+        return EnvAliases(
+            scope_node, self._descriptor, self._member_reads, self._import_is_live
+        )
+
     def kind_of(self, obj: Node) -> ResourceKind | None:
         name = _text(obj)
         if (
@@ -485,7 +493,14 @@ def _top_level_nodes(root: Node, descriptor: LanguageDescriptor) -> list[Node]:
     out: list[Node] = []
     for stmt in root.named_children:
         out.append(stmt)
-        for child in stmt.named_children:
+        # `export const env = process.env` holds its declarators one level
+        # down, as `_statement_values` reads them (bot review on PR #2767).
+        inner = (
+            stmt.child_by_field_name(cs.FIELD_DECLARATION) or stmt
+            if stmt.type == cs.TS_EXPORT_STATEMENT
+            else stmt
+        )
+        for child in inner.named_children:
             if child.type in (descriptor.declarator_type, descriptor.assignment_type):
                 out.append(child)
     return out

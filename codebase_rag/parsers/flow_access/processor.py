@@ -1528,6 +1528,10 @@ class FlowProcessor:
         jc.local_names.update(
             self._js_local_names(node, jc.descriptor, jc.flow.language)
         )
+        # Its own env aliases (`const env = process.env` in the callback)
+        # are candidates only from where it starts (bot review on PR #2767).
+        if jc.env_aliases is not None:
+            jc = jc._replace(env_aliases=jc.env_aliases.for_scope(node))
         self._inline_callback_depth += 1
         try:
             for stmt in self._lean_body_statements(node, jc.flow, jc.descriptor):

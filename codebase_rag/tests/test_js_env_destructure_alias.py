@@ -198,6 +198,15 @@ function loopShadowsModuleAlias() {
   }
 }
 
+// Bot review on PR #2767: an alias bound in an inline callback the caller
+// walks is read there too.
+function callbackAlias(items) {
+  items.forEach(() => {
+    const callbackEnv = process.env;
+    console.log(callbackEnv.JE_CALLBACK);
+  });
+}
+
 module.exports = { dotted };
 """
 
@@ -213,6 +222,13 @@ function tsParam({ JE_TS_PARAM }: NodeJS.ProcessEnv = process.env): void {
 function tsAliased(): void {
   const env: NodeJS.ProcessEnv = process.env;
   console.log(env.JE_TS_ALIAS);
+}
+
+// Bot review on PR #2767: an exported alias is an alias.
+export const tsExportedEnv = process.env;
+
+function tsReadsExported(): void {
+  console.log(tsExportedEnv.JE_EXPORTED);
 }
 
 export { tsDestructured };
@@ -285,6 +301,8 @@ CASES = [
     ("blockShadowsOwnAlias", "JE_OWN_OUTER"),
     ("readBeforeRebind", "JE_BEFORE_REBIND"),
     ("paramNamedProcess", "JE_PAST_PARAM"),
+    ("callbackAlias", "JE_CALLBACK"),
+    ("tsReadsExported", "JE_EXPORTED"),
 ]
 
 
