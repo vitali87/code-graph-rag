@@ -184,6 +184,16 @@ public class Base {
 }
 """
 
+# Bot review on PR #2991: a private field is not inherited, so it hides no
+# captured local in a subclass.
+PRIVATE_BASE = """\
+package com.acme;
+
+public class PrivateBase {
+  private Other codec = new Other();
+}
+"""
+
 NEAREST = """\
 package com.acme;
 
@@ -251,6 +261,14 @@ public class Nearest {
     }
   }
 
+  static PrivateBase privateInherited(final Codec codec) {
+    return new PrivateBase() {
+      String run(String in) {
+        return codec.encode(in); // private-field
+      }
+    };
+  }
+
   static Base anonymousInherited(final Codec codec) {
     return new Base() {
       String run(String in) {
@@ -286,6 +304,7 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     _write(root, f"{base}/Other.java", OTHER)
     _write(root, f"{base}/Scoped.java", SCOPED)
     _write(root, f"{base}/Base.java", BASE)
+    _write(root, f"{base}/PrivateBase.java", PRIVATE_BASE)
     _write(root, f"{base}/Nearest.java", NEAREST)
     return _index(root, MagicMock())
 
@@ -363,6 +382,14 @@ def test_the_nearest_binding_of_the_name_types_the_receiver(
     line = _scoped_line(marker, NEAREST)
     assert _callers_of_encode(graph, OTHER_ENCODE, "Nearest").get(line) == "exact"
     assert line not in _callers_of_encode(graph, source="Nearest")
+
+
+def test_a_private_superclass_field_does_not_hide_the_capture(
+    graph: RecordedGraph,
+) -> None:
+    line = _scoped_line("private-field", NEAREST)
+    assert _callers_of_encode(graph, source="Nearest").get(line) == "exact"
+    assert line not in _callers_of_encode(graph, OTHER_ENCODE, "Nearest")
 
 
 def test_a_resource_is_not_captured_in_its_finally_block(

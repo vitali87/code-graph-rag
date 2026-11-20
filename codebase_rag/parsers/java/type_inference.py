@@ -316,7 +316,9 @@ class JavaTypeInferenceEngine(
             # A field inherited from the superclass hides it too, and is
             # what the name reads (bot review on PR #2991).
             inherited = (
-                self._lookup_java_field_type(base, name, module_qn) if base else None
+                self._lookup_java_field_type(base, name, module_qn, inherited_only=True)
+                if base
+                else None
             )
             types[name] = inherited or type_name
 
