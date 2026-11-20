@@ -2,6 +2,7 @@ import asyncio
 import functools
 import itertools
 import json
+import shlex
 import sys
 import uuid
 from collections.abc import Callable, Collection
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
+from mcp.types import ToolAnnotations
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.tools import ToolFuncPlain
 
@@ -18,7 +20,7 @@ from codebase_rag import gloss, graph_query
 from codebase_rag import logs as lg
 from codebase_rag import structural_delta as sd
 from codebase_rag import tool_errors as te
-from codebase_rag.config import load_ignore_patterns
+from codebase_rag.config import load_ignore_patterns, settings
 from codebase_rag.gloss_anchor import ParsedSource, SourceReader, parse_source
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.models import ToolMetadata
@@ -32,6 +34,7 @@ from codebase_rag.services.llm import (
     run_to_text_answer,
 )
 from codebase_rag.services.provenance import head_commit
+from codebase_rag.sync_guard import retire_stranded_runs, run_owner, stranded_runs
 from codebase_rag.sync_lock import repo_sync_lock
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.ast_grep_service import AstGrepService
@@ -46,7 +49,11 @@ from codebase_rag.tools.directory_lister import (
 )
 from codebase_rag.tools.duplicate_detection import create_find_duplicates_tool
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
-from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
+from codebase_rag.tools.file_reader import (
+    FileReader,
+    create_file_reader_tool,
+    read_file_text,
+)
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
 from codebase_rag.tools.semantic_search import (
     create_get_function_source_tool,
@@ -78,7 +85,7 @@ from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependenc
 from codebase_rag.utils.path_utils import derive_project_name, nested_project_names
 from codebase_rag.utils.terminal_console import terminal_aware_console
 from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
-from codebase_rag.workspaces import WorkspaceConfig
+from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo
 
 if TYPE_CHECKING:
     from codebase_rag.crash_correlation import (
@@ -158,6 +165,12 @@ _NOT_GRAPH_READERS = frozenset(
         cs.MCPToolName.UPDATE_REPOSITORY,
         cs.MCPToolName.REINGEST,
         cs.MCPToolName.RENAME,
+        cs.MCPToolName.CHANGE_SIGNATURE,
+        # An EDIT like RENAME and CHANGE_SIGNATURE above: it runs its own
+        # re-ingest behind the incomplete-run marker and holds the result to
+        # the postcondition contract, so refusing up front on a partial graph
+        # would block the operation that repairs it (issue #1534).
+        cs.MCPToolName.MOVE,
         cs.MCPToolName.SURGICAL_REPLACE_CODE,
         cs.MCPToolName.READ_FILE,
         cs.MCPToolName.WRITE_FILE,
@@ -267,6 +280,108 @@ def _plain_function(tool: Tool) -> ToolFuncPlain[...]:
     # this registry calls directly is built without one, which this states
     # once instead of at each call site.
     return tool.function
+
+
+def _recording(
+    callback: Callable[[list[str]], ReingestReport], calls: list[list[str]]
+) -> Callable[[list[str]], ReingestReport]:
+    def recorded(paths: list[str]) -> ReingestReport:
+        calls.append(paths)
+        return callback(paths)
+
+    return recorded
+
+
+def _not_indexed_hint(
+    workspace: WorkspaceConfig,
+    missing: list[WorkspaceRepo],
+    roots: dict[str, str | None],
+) -> str:
+    """Which workspace projects the graph lacks, and for each repo whose
+    code the graph holds under another project, which one (issue #2867)."""
+    hint = cs.MCP_WORKSPACE_NOT_INDEXED.format(
+        workspace=workspace.name,
+        names=cs.SEPARATOR_COMMA_SPACE.join(r.project_name for r in missing),
+    )
+    windows = sys.platform == cs.PLATFORM_WINDOWS
+    for repo in missing:
+        # Forward slashes: `C:/...` reads the same in every shell. The project
+        # name is quoted too: a workspace file does not constrain it, and the
+        # command is meant to be pasted into a shell (PR #2964 review).
+        path = _shell_argument(repo.repo_path().as_posix(), windows)
+        project = _shell_argument(repo.project_name, windows)
+        if path is None or project is None:
+            hint += cs.MCP_WORKSPACE_INDEX_UNQUOTABLE.format(
+                path=repo.repo_path().as_posix(), project=repo.project_name
+            )
+            continue
+        hint += cs.MCP_WORKSPACE_INDEX_COMMAND.format(path=path, project=project)
+    for repo in missing:
+        holder = _project_holding(repo.repo_path(), roots)
+        if holder is None:
+            continue
+        project, root = holder
+        template = (
+            cs.MCP_WORKSPACE_REPO_INDEXED_AS
+            if root == repo.repo_path()
+            else cs.MCP_WORKSPACE_REPO_INDEXED_INSIDE
+        )
+        hint += template.format(
+            path=repo.repo_path(),
+            project=project,
+            root=root,
+            expected=repo.project_name,
+        )
+    return hint
+
+
+def _shell_argument(value: str, windows: bool) -> str | None:
+    """`value` as one argument of a command pasted into this host's shell,
+    or None when no quoting keeps it one.
+
+    `shlex.quote` quotes for a POSIX shell only: cmd.exe reads its single
+    quotes as ordinary characters, so a project named `alpha & whoami & rem `
+    ran `whoami` there (Greptile review of PR #2964). Double quotes keep `&`,
+    `|` and spaces literal in cmd.exe, PowerShell and Git Bash alike, but
+    not the characters each still expands inside them.
+    """
+    if not windows:
+        return shlex.quote(value)
+    # Left bare when every shell reads it as one word, as `shlex.quote`
+    # leaves a plain value bare.
+    if cs.MCP_WINDOWS_SHELL_PLAIN.fullmatch(value):
+        return value
+    if any(c in cs.MCP_WINDOWS_SHELL_UNQUOTABLE or not c.isprintable() for c in value):
+        return None
+    return f'"{value}"'
+
+
+def _project_holding(
+    repo_path: Path, roots: dict[str, str | None]
+) -> tuple[str, Path] | None:
+    # The project indexed from the repo itself or from the closest directory
+    # above it: that index is where the repo's code is.
+    holders = [
+        (name, root)
+        for name, raw in roots.items()
+        if raw
+        and (root := _resolved_root(raw)) is not None
+        and repo_path.is_relative_to(root)
+    ]
+    if not holders:
+        return None
+    return max(holders, key=lambda h: len(h[1].parts))
+
+
+def _resolved_root(raw: str) -> Path | None:
+    # Another project's stored root may since have become a link loop
+    # (`resolve` raises RuntimeError for one on Python 3.12) or unreadable:
+    # it holds none of the workspace's repos, and must not cost the listing
+    # the projects already found (CodeRabbit, PR #2964).
+    try:
+        return Path(raw).resolve()
+    except (OSError, RuntimeError):
+        return None
 
 
 def _resolution_section(resolution: "FrameResolutionRate") -> dict:
@@ -681,6 +796,8 @@ class MCPToolsRegistry:
                 cs.MCPToolName.REMOTE_DEPENDENCIES, {}, [], self.remote_dependencies
             ),
             cs.MCPToolName.RENAME: self._rename_tool(),
+            cs.MCPToolName.CHANGE_SIGNATURE: self._change_signature_tool(),
+            cs.MCPToolName.MOVE: self._move_tool(),
             cs.MCPToolName.CONTEXT: self._context_tool(),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
@@ -906,7 +1023,7 @@ class MCPToolsRegistry:
                 properties={
                     cs.MCPParamName.PROJECT: MCPInputSchemaProperty(
                         type=cs.MCPSchemaType.STRING,
-                        description=td.MCP_PARAM_PROJECT,
+                        description=self._project_default_description(),
                     ),
                     cs.MCPParamName.THRESHOLD: MCPInputSchemaProperty(
                         type=cs.MCPSchemaType.NUMBER,
@@ -1231,6 +1348,8 @@ class MCPToolsRegistry:
         # the check and the read leaves an approved read running against the
         # partial graph (Greptile, PR #1547).
         async with self._ingestor_lock:
+            if refusal := await _run_in_thread(self._unindexed_refusal, project):
+                return {cs.DICT_KEY_ERROR: refusal}
             if refusal := await _run_in_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.FLOW_VERDICT
             ):
@@ -1266,6 +1385,8 @@ class MCPToolsRegistry:
         if project is None:
             return {cs.DICT_KEY_ERROR: workspace_refusal}
         async with self._ingestor_lock:
+            if refusal := await _run_in_thread(self._unindexed_refusal, project):
+                return {cs.DICT_KEY_ERROR: refusal}
             if refusal := await _run_in_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.EXPLAIN_TRACEBACK
             ):
@@ -1293,6 +1414,8 @@ class MCPToolsRegistry:
         if project is None:
             return {cs.DICT_KEY_ERROR: workspace_refusal}
         async with self._ingestor_lock:
+            if refusal := await _run_in_thread(self._unindexed_refusal, project):
+                return {cs.DICT_KEY_ERROR: refusal}
             if refusal := await _run_in_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.RANK_ROOT_CAUSES
             ):
@@ -1319,13 +1442,28 @@ class MCPToolsRegistry:
             # graph under this lock; an interleaved read mixes generations.
             async with self._ingestor_lock:
                 projects = await _run_in_thread(self.ingestor.list_projects)
+            if self.workspace is None:
+                return ListProjectsSuccessResult(projects=projects, count=len(projects))
             # A workspace server lists the workspace's projects that are
             # indexed: a workspace repo not yet in the graph is not a project
             # a query can reach, and one outside the workspace is not served.
-            if self.workspace is not None:
-                allowed = set(self.workspace.project_names())
-                projects = [p for p in projects if p in allowed]
-            return ListProjectsSuccessResult(projects=projects, count=len(projects))
+            allowed = set(self.workspace.project_names())
+            indexed = set(projects)
+            projects = [p for p in projects if p in allowed]
+            missing = [r for r in self.workspace.repos if r.project_name not in indexed]
+            if not missing:
+                return ListProjectsSuccessResult(projects=projects, count=len(projects))
+            # Named rather than dropped (issue #2867): with the repos' parent
+            # directory indexed as one project, every workspace project was
+            # missing and the answer was an unexplained empty list.
+            async with self._ingestor_lock:
+                roots = await _run_in_thread(self.ingestor.list_project_roots)
+            return ListProjectsSuccessResult(
+                projects=projects,
+                count=len(projects),
+                not_indexed=[r.project_name for r in missing],
+                hint=_not_indexed_hint(self.workspace, missing, roots),
+            )
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))
             return ListProjectsErrorResult(error=str(e), projects=[], count=0)
@@ -1497,6 +1635,11 @@ class MCPToolsRegistry:
         # a marker saying so lets a fresh process clear it and carry on rather
         # than refuse until a full update (#1705 review). The phase advances
         # to writing immediately before `delete_project`.
+        #
+        # The runs whose markers this re-index supersedes are read first
+        # (review of PR #3493). It deletes the project before rebuilding it,
+        # so it is already the full rebuild they need.
+        stranded = stranded_runs(self.ingestor, project_name, self._run_id)
         if (refusal := self._require_marker(project_name, writing=False)) is not None:
             raise RuntimeError(refusal)
         self._cleanup_embeddings_then_begin_writing(project_name)
@@ -1528,6 +1671,7 @@ class MCPToolsRegistry:
         # (#1705 review).
         if (stuck := self._require_marker_cleared(project_name)) is not None:
             raise RuntimeError(stuck)
+        retire_stranded_runs(self.ingestor, project_name, stranded)
         self._live_updater = updater
 
         return cs.MCP_INDEX_SUCCESS_PROJECT.format(
@@ -1596,6 +1740,10 @@ class MCPToolsRegistry:
         # Aborts on failure because the marker is the only protection that
         # survives a restart; nothing has been touched yet, so stopping costs
         # nothing.
+        #
+        # The runs whose markers this update supersedes are read first, and
+        # force a full re-index (review of PR #3493).
+        stranded = stranded_runs(self.ingestor, project_name, self._run_id)
         if (refusal := self._require_marker(project_name)) is not None:
             raise RuntimeError(refusal)
         self.ingestor.ensure_constraints()
@@ -1611,7 +1759,13 @@ class MCPToolsRegistry:
             exclude_paths=exclude_paths,
             project_name=project_name,
         )
-        updater.run()
+        if stranded:
+            logger.warning(
+                lg.REBUILD_OVER_STRANDED_RUNS.format(
+                    project=project_name, count=len(stranded)
+                )
+            )
+        updater.run(force=bool(stranded))
         self.ingestor.flush_all()
         # Cleared only after the flush: the marker must outlive any failure
         # that leaves batches uncommitted.
@@ -1624,6 +1778,7 @@ class MCPToolsRegistry:
         # (#1705 review).
         if (stuck := self._require_marker_cleared(project_name)) is not None:
             raise RuntimeError(stuck)
+        retire_stranded_runs(self.ingestor, project_name, stranded)
         self._live_updater = updater
         return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
 
@@ -1688,7 +1843,10 @@ class MCPToolsRegistry:
             cs.KEY_RUN_ID: self._run_id,
         }
         if incomplete:
-            query = cq.CYPHER_MARK_PROJECT_INCOMPLETE
+            # Naming this process lets a full rebuild retire the marker once
+            # it has exited without clearing it (review of PR #3496).
+            query = cq.CYPHER_MARK_RUN_INCOMPLETE
+            params |= run_owner()
             params[cs.KEY_WRITING] = writing
         else:
             query = cq.CYPHER_CLEAR_PROJECT_INCOMPLETE
@@ -2197,13 +2355,16 @@ class MCPToolsRegistry:
             self._flag_from_failed_clear = None
         return persisted_incomplete
 
-    def _hydrate_reingest_updater(self, project_name: str) -> GraphUpdater:
+    def _hydrate_reingest_updater(
+        self, project_name: str, purged: list[int | None] | None = None
+    ) -> GraphUpdater:
         """Build a scoped updater when none is retained.
 
         Split out of `_reingest_sync` to keep it under the
         cognitive-complexity limit; the guards and their reasoning are
         unchanged. Raises rather than returning on a refusal, exactly as
-        it did inline.
+        it did inline. `purged` receives how many legacy structure nodes the
+        constraint migration removed, or None when the ingestor cannot say.
         """
         # A scoped re-ingest completes a graph; it cannot stand in for
         # the first index. After delete_project or wipe_database the
@@ -2258,7 +2419,9 @@ class MCPToolsRegistry:
         # the index and update paths mark before. Invariant (c).
         if (refusal := self._require_marker(project_name)) is not None:
             raise RuntimeError(refusal)
-        self.ingestor.ensure_constraints()
+        removed = self.ingestor.ensure_constraints()
+        if purged is not None:
+            purged.append(removed if isinstance(removed, int) else None)
         # The same exclusion set the index and update paths use, or an
         # agent-named path under a CLI-excluded directory would be
         # indexed here and kept by every later update.
@@ -2490,8 +2653,14 @@ class MCPToolsRegistry:
                 cs.MCPToolName.FIND_DUPLICATE_CODE,
             ):
                 return refusal
+            # The same default the other graph tools take (issue #2757). Left
+            # as None, the tool refused on any multi-project graph with every
+            # project's name.
             result = await _plain_function(self._find_duplicates_tool)(
-                project=project, threshold=threshold, min_size=min_size, limit=limit
+                project=dup_project,
+                threshold=threshold,
+                min_size=min_size,
+                limit=limit,
             )
         if isinstance(result, te.ToolFailure):
             return result
@@ -2736,7 +2905,8 @@ class MCPToolsRegistry:
             for key, description in params.items()
         }
         properties[cs.MCPParamName.PROJECT] = MCPInputSchemaProperty(
-            type=cs.MCPSchemaType.STRING, description=td.MCP_PARAM_PROJECT
+            type=cs.MCPSchemaType.STRING,
+            description=self._project_default_description(),
         )
         return ToolMetadata(
             name=name,
@@ -2868,7 +3038,12 @@ class MCPToolsRegistry:
             project=project, workspace=self.workspace.name, known=listed
         )
 
-    def _root_not_indexed_error(self, project_name: str, known: list[str]) -> str:
+    def _root_not_indexed_error(
+        self,
+        project_name: str,
+        known: list[str],
+        message: str = cs.MCP_ROOT_NOT_INDEXED,
+    ) -> str:
         root = Path(self.project_root)
         # A repository indexed under a name of its own is the likeliest
         # meaning, then names spelled close to the derived one; both only
@@ -2877,9 +3052,9 @@ class MCPToolsRegistry:
             graph_query.projects_rooted_at(self.ingestor.list_project_roots(), root)
         )
         close = graph_query.close_project_names(project_name, self._nameable(known))
-        return cs.MCP_ROOT_NOT_INDEXED.format(
-            path=root.resolve()
-        ) + graph_query.did_you_mean(list(dict.fromkeys([*rooted, *close])))
+        return message.format(path=root.resolve()) + graph_query.did_you_mean(
+            list(dict.fromkeys([*rooted, *close]))
+        )
 
     def _flow_endpoint_refusal(
         self, project_name: str, source: str, sink: str
@@ -2953,6 +3128,17 @@ class MCPToolsRegistry:
             self.ingestor.fetch_all, project_name, target
         )
 
+    def _project_default_description(self) -> str:
+        """The `project` description for a tool that reads one project: it
+        names the project an omitted argument means (issue #2757)."""
+        if self.workspace is None:
+            default = td.MCP_PROJECT_DEFAULT_SERVER.format(
+                project=derive_project_name(Path(self.project_root))
+            )
+        else:
+            default = td.MCP_PROJECT_DEFAULT_WORKSPACE
+        return td.MCP_PARAM_PROJECT_DEFAULT.format(default=default)
+
     def _workspace_scope(self, project: str | None) -> tuple[str | None, str | None]:
         """(the project a request means, why it is refused) under a workspace.
 
@@ -3004,6 +3190,26 @@ class MCPToolsRegistry:
             workspace=self.workspace.name,
             count=len(names),
             known=cs.SEPARATOR_COMMA_SPACE.join(names),
+        )
+
+    def _unindexed_refusal(self, project: str) -> str | None:
+        """Why a fixed-root handler must not read `project`, or None.
+
+        `_fixed_root_project` derives the name without asking the graph. A
+        project the graph does not hold has no FLOWS_TO edge and no Module
+        to report as uncovered, so flow_verdict answered NO_FLOW, the
+        verified absence, and the traceback tools resolved nothing with no
+        note (issue #3193). The check `_graph_query` makes, with its
+        messages: a workspace default is a named project, a derived one is
+        the server's root.
+        """
+        known = self.ingestor.list_projects()
+        if project in known:
+            return None
+        if self.workspace is not None:
+            return self._unknown_project_error(project, known)
+        return self._root_not_indexed_error(
+            project, known, cs.MCP_FIXED_ROOT_NOT_INDEXED
         )
 
     def _workspace_default_project(self) -> str | None:
@@ -3129,7 +3335,11 @@ class MCPToolsRegistry:
             cs.MCPToolName.CALLERS,
             project,
             lambda name: graph_query.callers(
-                self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
+                self.ingestor.fetch_all,
+                name,
+                qualified_name,
+                self._depth(depth),
+                self._source_root_for(name),
             ),
             target=qualified_name,
         )
@@ -3141,7 +3351,11 @@ class MCPToolsRegistry:
             cs.MCPToolName.CALLEES,
             project,
             lambda name: graph_query.callees(
-                self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
+                self.ingestor.fetch_all,
+                name,
+                qualified_name,
+                self._depth(depth),
+                self._source_root_for(name),
             ),
             target=qualified_name,
         )
@@ -3186,7 +3400,12 @@ class MCPToolsRegistry:
                 graph_query.importers_through_reexports
                 if through_reexports
                 else graph_query.importers
-            )(self.ingestor.fetch_all, name, module_qualified_name),
+            )(
+                self.ingestor.fetch_all,
+                name,
+                module_qualified_name,
+                self._source_root_for(name),
+            ),
             target=module_qualified_name,
         )
 
@@ -3287,7 +3506,8 @@ class MCPToolsRegistry:
                         cs.MCPSchemaType.INTEGER, td.MCP_PARAM_BUDGET_TOKENS
                     ),
                     cs.MCPParamName.PROJECT: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                        cs.MCPSchemaType.STRING,
+                        self._project_default_description(),
                     ),
                 },
                 required=[cs.MCPParamName.TARGET],
@@ -3358,11 +3578,15 @@ class MCPToolsRegistry:
                     cs.MCPParamName.ALLOW_HEURISTIC: prop(
                         cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_ALLOW_HEURISTIC
                     ),
+                    cs.MCPParamName.ALLOW_EXTERNAL_OVERRIDE: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_ALLOW_EXTERNAL_OVERRIDE
+                    ),
                     cs.MCPParamName.DRY_RUN: prop(
                         cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
                     ),
                     cs.MCPParamName.PROJECT: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                        cs.MCPSchemaType.STRING,
+                        self._project_default_description(),
                     ),
                 },
                 required=[cs.MCPParamName.QUALIFIED_NAME, cs.MCPParamName.NEW_NAME],
@@ -3371,6 +3595,114 @@ class MCPToolsRegistry:
             returns_json=True,
         )
 
+    def _move_tool(self) -> ToolMetadata:
+        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
+            return MCPInputSchemaProperty(type=kind, description=description)
+
+        return ToolMetadata(
+            name=cs.MCPToolName.MOVE,
+            description=td.MCP_TOOLS[cs.MCPToolName.MOVE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUALIFIED_NAME: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                    ),
+                    cs.MCPParamName.TARGET_MODULE: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_TARGET_MODULE
+                    ),
+                    cs.MCPParamName.KEEP_ALIAS: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_KEEP_ALIAS
+                    ),
+                    cs.MCPParamName.DRY_RUN: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_MOVE_DRY_RUN
+                    ),
+                    cs.MCPParamName.PROJECT: prop(
+                        cs.MCPSchemaType.STRING,
+                        self._project_default_description(),
+                    ),
+                },
+                required=[
+                    cs.MCPParamName.QUALIFIED_NAME,
+                    cs.MCPParamName.TARGET_MODULE,
+                ],
+            ),
+            handler=self.move,
+            returns_json=True,
+        )
+
+    async def move(
+        self,
+        qualified_name: str,
+        target_module: str,
+        keep_alias: bool = False,
+        dry_run: bool = False,
+        project: str | None = None,
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.MOVE,
+            project,
+            lambda name: self._run_move(
+                name, qualified_name, target_module, keep_alias, dry_run
+            ),
+        )
+
+    def _run_move(
+        self,
+        project_name: str,
+        qualified_name: str,
+        target_module: str,
+        keep_alias: bool,
+        dry_run: bool,
+    ) -> object:
+        from codebase_rag.editing.move import MoveRefused, move
+
+        # The selected project's repo-relative paths name files only under the
+        # root it was indexed from; resolving them beneath this server's
+        # checkout would cut and rewrite another tree's files (issue #1542).
+        root = graph_query.source_root_for(
+            self.ingestor.fetch_all, project_name, Path(self.project_root)
+        )
+        if root is None:
+            return {
+                cs.DICT_KEY_ERROR: cs.MOVE_WRONG_ROOT.format(project=project_name),
+                cs.KEY_CYCLE: [],
+            }
+        # As for `change_signature`: a preview never re-ingests, and an
+        # applied move that is refused before it re-ingests releases the
+        # mid-update mark its hydrated updater set.
+        reingest, release = (
+            (None, None) if dry_run else self._signature_reingest(project_name)
+        )
+        try:
+            report = move(
+                root,
+                self.ingestor.fetch_all,
+                project_name,
+                qualified_name,
+                target_module,
+                keep_alias=keep_alias,
+                dry_run=dry_run,
+                reingest=reingest,
+            )
+        except MoveRefused as refused:
+            return {cs.DICT_KEY_ERROR: str(refused), cs.KEY_CYCLE: list(refused.cycle)}
+        finally:
+            if release is not None:
+                release()
+        payload_marker_error: str | None = None
+        if report.graph_incomplete:
+            # The same invalidation, in memory and durably, that
+            # `_run_rename` applies after a failed re-ingest.
+            self._live_updater = None
+            self._invalidate_graph_for(project_name)
+            payload_marker_error = self._require_marker(project_name, writing=True)
+        payload = dict(report._asdict())
+        payload[cs.KEY_VERDICT] = report.verdict._asdict() if report.verdict else None
+        if payload_marker_error is not None:
+            payload[cs.DICT_KEY_ERROR] = payload_marker_error
+        return payload
+
     async def rename(
         self,
         qualified_name: str,
@@ -3378,6 +3710,7 @@ class MCPToolsRegistry:
         allow_heuristic: bool = False,
         dry_run: bool = False,
         project: str | None = None,
+        allow_external_override: bool = False,
     ) -> object:
         # The graph read and the edit share the ingestor lock (taken by
         # `_graph_query`): a rebuild landing between planning and writing
@@ -3386,11 +3719,29 @@ class MCPToolsRegistry:
             cs.MCPToolName.RENAME,
             project,
             lambda name: self._run_rename(
-                name, qualified_name, new_name, allow_heuristic, dry_run
+                name,
+                qualified_name,
+                new_name,
+                allow_heuristic,
+                dry_run,
+                allow_external_override,
             ),
         )
 
-    def _rename_reingest_updater(self, project_name: str) -> GraphUpdater:
+    def _retained_updater_for(self, project_name: str) -> GraphUpdater | None:
+        """The warm updater a rename re-ingests through, if this project has one.
+
+        Without one the rename hydrates a cold updater, which marks the
+        project before it builds (`_hydrate_reingest_updater`).
+        """
+        retained = self._live_updater
+        if retained is None or retained.project_name != project_name:
+            return None
+        return retained
+
+    def _rename_reingest_updater(
+        self, project_name: str, purged: list[int | None] | None = None
+    ) -> GraphUpdater:
         """The updater the rename re-ingests through, refusing a partial graph.
 
         A retained updater for THIS project is reused as-is: it is warm, and
@@ -3415,9 +3766,9 @@ class MCPToolsRegistry:
         cognitive-complexity limit; choosing the updater and refusing over a
         partial graph is one decision, and wrapping the call is another.
         """
-        retained = self._live_updater
-        if retained is None or retained.project_name != project_name:
-            return self._hydrate_reingest_updater(project_name)
+        retained = self._retained_updater_for(project_name)
+        if retained is None:
+            return self._hydrate_reingest_updater(project_name, purged)
         # Recovery FIRST, then the latch: reading the latch before
         # `_persisted_incomplete` can clear a stranded recoverable marker left
         # this path refusing a rename the cold path allows.
@@ -3433,7 +3784,10 @@ class MCPToolsRegistry:
         return retained
 
     def _guarded_rename_reingest(
-        self, project_name: str
+        self,
+        project_name: str,
+        clear_errors: list[str] | None = None,
+        purged: list[int | None] | None = None,
     ) -> Callable[[list[str]], ReingestReport] | None:
         """The rename's re-ingest callback, behind the incomplete-run marker.
 
@@ -3449,13 +3803,17 @@ class MCPToolsRegistry:
         `writing=False` at the mark, because the updater's prologue is
         read-only; `before_write` advances the phase at the exact point the
         first delete is about to be issued.
+
+        A clear that fails is appended to `clear_errors`, so the rename
+        reports it rather than reading as a clean success (CodeRabbit, PR
+        #2900). A hydration's purge count goes to `purged`.
         """
         if (
             self._live_updater is None
             and project_name not in self.ingestor.list_projects()
         ):
             return None
-        updater = self._rename_reingest_updater(project_name)
+        updater = self._rename_reingest_updater(project_name, purged)
 
         def guarded(paths: list[str]) -> ReingestReport:
             if (
@@ -3496,10 +3854,15 @@ class MCPToolsRegistry:
                     # round of this PR shipped a marker with no expressible
                     # exit and refused every later run for the process
                     # lifetime, which was worse than the leak it replaced.
-                    self._require_marker_cleared(project_name)
+                    record_clear()
                 raise
-            self._require_marker_cleared(project_name)
+            record_clear()
             return report
+
+        def record_clear() -> None:
+            stuck = self._require_marker_cleared(project_name)
+            if stuck is not None and clear_errors is not None:
+                clear_errors.append(stuck)
 
         return guarded
 
@@ -3510,6 +3873,7 @@ class MCPToolsRegistry:
         new_name: str,
         allow_heuristic: bool,
         dry_run: bool,
+        allow_external_override: bool = False,
     ) -> object:
         from codebase_rag.editing.rename import RenameRefused, rename, sites_for
 
@@ -3523,6 +3887,32 @@ class MCPToolsRegistry:
             return {
                 cs.DICT_KEY_ERROR: cs.RENAME_WRONG_ROOT.format(project=project_name)
             }
+        # Hydrating a cold updater puts this run's marker down before the
+        # rename knows whether it will re-ingest at all, and only the
+        # re-ingest callback clears it. A preview or a refusal never calls
+        # it, so the marker outlived the call and every graph tool refused
+        # the project as incomplete, for good (issue #2801). Hydration stays
+        # up front: it is what refuses a rename over a partial graph, or one
+        # whose marker cannot be written, before any file changes.
+        hydrates = self._retained_updater_for(project_name) is None
+        guarded: Callable[[list[str]], ReingestReport] | None = None
+        reingested: list[list[str]] = []
+        clear_errors: list[str] = []
+        # What hydration's constraint migration purged. Counted, not probed
+        # beforehand: with a legacy constraint in force it removes every
+        # Folder/File two projects own, which no probe sees for projects over
+        # one root (CodeRabbit, PR #2900).
+        hydration_purged: list[int | None] = []
+        # None until the rename says what it left on disk: an exception out
+        # of a commit can leave a written file behind when its restore fails
+        # too (CodeRabbit, PR #2900), so only a returned report or a refusal,
+        # raised before any edit, settles it. A preview stages in memory and
+        # never commits, so it leaves nothing whatever it raises; a failed
+        # preview keeping the marker would refuse a healthy project (Greptile,
+        # PR #2900).
+        edits_remain: bool | None = False if dry_run else None
+        marker_error: str | None = None
+        refusal: RenameRefused | None = None
         try:
             # The applied rename is held to its postcondition contract through
             # the scoped re-ingest (issue #1531); a project that is not indexed
@@ -3531,7 +3921,10 @@ class MCPToolsRegistry:
             # root above, and the guarded callback rejects a cached updater
             # built for a different project, so the delta is measured under
             # the same name the re-ingest writes.
-            reingest = self._guarded_rename_reingest(project_name)
+            guarded = self._guarded_rename_reingest(
+                project_name, clear_errors, hydration_purged
+            )
+            reingest = None if guarded is None else _recording(guarded, reingested)
             report = rename(
                 root,
                 self.ingestor.fetch_all,
@@ -3542,15 +3935,42 @@ class MCPToolsRegistry:
                 dry_run=dry_run,
                 reingest=reingest,
                 heuristic_opt_in=cs.MCPParamName.ALLOW_HEURISTIC,
+                allow_external_override=allow_external_override,
             )
+            edits_remain = report.applied
         except RenameRefused as refused:
+            refusal = refused
+            edits_remain = False
+        finally:
+            # The callback, once called, settles the marker itself (cleared,
+            # or kept over a graph it may have written). Uncalled, nothing
+            # touched the graph after hydration, so the run is complete -- if
+            # hydration purged nothing and no edit is left on disk. A rename
+            # that committed its edits but never re-ingested (its graph read
+            # failed) leaves a graph behind the tree, and the marker stays
+            # rather than coming off until the re-mark below (CodeRabbit, PR
+            # #2900). A failed clear raises the in-process flag and is
+            # reported in the result, never dropped.
+            if (
+                hydrates
+                and guarded is not None
+                and not reingested
+                and hydration_purged == [0]
+                and edits_remain is False
+            ):
+                marker_error = self._require_marker_cleared(project_name)
+        if marker_error is None and clear_errors:
+            marker_error = clear_errors[-1]
+        if refusal is not None:
             return {
-                cs.DICT_KEY_ERROR: str(refused),
-                cs.KEY_AMBIGUOUS: sites_for(refused.ambiguous),
-                cs.KEY_UNLOCATABLE: list(refused.unlocatable),
-                cs.KEY_UNPLANNED: sites_for(refused.unplanned),
+                cs.DICT_KEY_ERROR: " ".join(
+                    part for part in (str(refusal), marker_error) if part
+                ),
+                cs.KEY_AMBIGUOUS: sites_for(refusal.ambiguous),
+                cs.KEY_UNLOCATABLE: list(refusal.unlocatable),
+                cs.KEY_UNPLANNED: sites_for(refusal.unplanned),
             }
-        payload_marker_error: str | None = None
+        payload_marker_error: str | None = marker_error
         if getattr(report, "graph_incomplete", False):
             # The rollback's re-ingest failed: the same invalidation the
             # scoped re-ingest applies, so no later call reuses a partial graph.
@@ -3574,6 +3994,161 @@ class MCPToolsRegistry:
             # The graph is partial AND the record of it could not be written.
             # Reported, never swallowed: this needs operational recovery and
             # a restarted process cannot infer it.
+            payload[cs.DICT_KEY_ERROR] = payload_marker_error
+        return payload
+
+    def _change_signature_tool(self) -> ToolMetadata:
+        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
+            return MCPInputSchemaProperty(type=kind, description=description)
+
+        return ToolMetadata(
+            name=cs.MCPToolName.CHANGE_SIGNATURE,
+            description=td.MCP_TOOLS[cs.MCPToolName.CHANGE_SIGNATURE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUALIFIED_NAME: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                    ),
+                    cs.MCPParamName.NEW_PARAMS: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.ARRAY,
+                        description=td.MCP_PARAM_NEW_PARAMS,
+                        items={cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING},
+                    ),
+                    cs.MCPParamName.MAPPING: prop(
+                        cs.MCPSchemaType.OBJECT, td.MCP_PARAM_MAPPING
+                    ),
+                    cs.MCPParamName.ALLOW_HEURISTIC: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_ALLOW_HEURISTIC
+                    ),
+                    cs.MCPParamName.DRY_RUN: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
+                    ),
+                    cs.MCPParamName.PROJECT: prop(
+                        cs.MCPSchemaType.STRING,
+                        self._project_default_description(),
+                    ),
+                },
+                required=[
+                    cs.MCPParamName.QUALIFIED_NAME,
+                    cs.MCPParamName.NEW_PARAMS,
+                ],
+            ),
+            handler=self.change_signature,
+            returns_json=True,
+        )
+
+    async def change_signature(
+        self,
+        qualified_name: str,
+        new_params: list[str],
+        mapping: dict[str, str] | None = None,
+        allow_heuristic: bool = False,
+        dry_run: bool = False,
+        project: str | None = None,
+    ) -> object:
+        # Under the ingestor lock for the same reason as `rename`: a rebuild
+        # landing between planning and writing would rewrite stale sites.
+        return await self._graph_query(
+            cs.MCPToolName.CHANGE_SIGNATURE,
+            project,
+            lambda name: self._run_change_signature(
+                name, qualified_name, new_params, mapping, allow_heuristic, dry_run
+            ),
+        )
+
+    def _signature_reingest(
+        self, project_name: str
+    ) -> tuple[Callable[[list[str]], ReingestReport] | None, Callable[[], None]]:
+        """The guarded re-ingest callback for an applied signature change, and
+        a release to run once the change returns.
+
+        Built before planning, as for `rename`, so a graph left partial by an
+        earlier run refuses the change before any file is written. Hydrating
+        a cold updater marks the project mid-update, and only the callback
+        clears that mark; a change refused before it re-ingests (a bad
+        parameter list, an unmapped hierarchy) would otherwise leave the
+        project marked and every later read refusing. The release clears the
+        mark this call made when the callback never ran. A retained updater
+        marks nothing up front, so there is nothing to release.
+        """
+        before = self._live_updater
+        guarded = self._guarded_rename_reingest(project_name)
+        hydrated = guarded is not None and self._live_updater is not before
+        ran = False
+
+        def reingest(paths: list[str]) -> ReingestReport:
+            nonlocal ran
+            ran = True
+            assert guarded is not None
+            return guarded(paths)
+
+        def release() -> None:
+            if hydrated and not ran:
+                self._require_marker_cleared(project_name)
+
+        return (reingest if guarded is not None else None), release
+
+    def _run_change_signature(
+        self,
+        project_name: str,
+        qualified_name: str,
+        new_params: list[str],
+        mapping: dict[str, str] | None,
+        allow_heuristic: bool,
+        dry_run: bool,
+    ) -> object:
+        from codebase_rag.editing.signature import change_signature
+        from codebase_rag.editing.signature_spec import (
+            SignatureRefused,
+            sites_for,
+            unmapped_for,
+        )
+
+        # Paths are meaningful only under the root the project was indexed
+        # from (issue #1542), exactly as for `rename`.
+        root = graph_query.source_root_for(
+            self.ingestor.fetch_all, project_name, Path(self.project_root)
+        )
+        if root is None:
+            return {
+                cs.DICT_KEY_ERROR: cs.RENAME_WRONG_ROOT.format(project=project_name)
+            }
+        # A preview never re-ingests, so it gets no callback: building one
+        # hydrates an updater and marks the project mid-update, and only the
+        # callback itself clears that mark.
+        reingest, release = (
+            (None, None) if dry_run else self._signature_reingest(project_name)
+        )
+        try:
+            report = change_signature(
+                root,
+                self.ingestor.fetch_all,
+                project_name,
+                qualified_name,
+                new_params,
+                mapping,
+                allow_heuristic=allow_heuristic,
+                dry_run=dry_run,
+                reingest=reingest,
+            )
+        except SignatureRefused as refused:
+            return {cs.DICT_KEY_ERROR: str(refused)}
+        finally:
+            if release is not None:
+                release()
+        payload_marker_error: str | None = None
+        if report.graph_incomplete:
+            # The rollback's re-ingest failed: the same invalidation, in
+            # memory and durably, that `_run_rename` applies.
+            self._live_updater = None
+            self._invalidate_graph_for(project_name)
+            payload_marker_error = self._require_marker(project_name, writing=True)
+        payload = dict(report._asdict())
+        payload[cs.KEY_SITES] = sites_for(report.sites)
+        payload[cs.KEY_UNMAPPED] = unmapped_for(report.unmapped)
+        payload[cs.KEY_VERDICT] = report.verdict._asdict() if report.verdict else None
+        if payload_marker_error is not None:
             payload[cs.DICT_KEY_ERROR] = payload_marker_error
         return payload
 
@@ -3723,6 +4298,8 @@ class MCPToolsRegistry:
         self, file_path: str, target_code: str, replacement_code: str
     ) -> str:
         logger.info(lg.MCP_SURGICAL_REPLACE.format(path=file_path))
+        if refused := self._sensitive_write_refused(file_path):
+            return refused
         try:
             async with self._ingestor_lock:
                 result = await _plain_function(self._file_editor_tool)(
@@ -3746,6 +4323,10 @@ class MCPToolsRegistry:
             return te.failure(cs.MCP_READ_OFFSET_NEGATIVE.format(offset=offset))
         if limit is not None and limit < cs.MCP_READ_LIMIT_MINIMUM:
             return te.failure(cs.MCP_READ_LIMIT_NOT_POSITIVE.format(limit=limit))
+        if not settings.ALLOW_SENSITIVE_READS and self.file_reader.is_sensitive(
+            file_path
+        ):
+            return te.failure(cs.MCP_READ_SENSITIVE_REFUSED.format(path=file_path))
         try:
             if offset is not None or limit is not None:
                 project_root = Path(self.project_root).resolve()
@@ -3760,16 +4341,25 @@ class MCPToolsRegistry:
                 )
             else:
                 # Returned as is: a ToolFailure must stay one (issue #2650).
-                return await _plain_function(self._file_reader_tool)(
-                    file_path=file_path
-                )
+                # Not through the agent's tool: that one defers a credential
+                # file for approval, and this path has already decided.
+                return await read_file_text(self.file_reader, file_path)
 
         except Exception as e:
             logger.error(lg.MCP_ERROR_READ.format(error=e))
             return te.failure(e)
 
+    def _sensitive_write_refused(self, file_path: str) -> te.ToolFailure | None:
+        if settings.ALLOW_SENSITIVE_WRITES or not self.file_reader.is_sensitive(
+            file_path
+        ):
+            return None
+        return te.failure(cs.MCP_WRITE_SENSITIVE_REFUSED.format(path=file_path))
+
     async def write_file(self, file_path: str, content: str) -> str:
         logger.info(lg.MCP_WRITE_FILE.format(path=file_path))
+        if refused := self._sensitive_write_refused(file_path):
+            return refused
         try:
             async with self._ingestor_lock:
                 result = await _plain_function(self._file_writer_tool)(
@@ -3803,11 +4393,29 @@ class MCPToolsRegistry:
                 inputSchema=metadata.input_schema,
             )
             for metadata in self._tools.values()
+            if self.serves(metadata.name)
         ]
+
+    def serves(self, name: str) -> bool:
+        """Whether this server offers `name`: every tool, or under read-only
+        mode only those that never write (issue #3458)."""
+        return not settings.MCP_READ_ONLY or name in cs.MCP_READ_ONLY_TOOLS
 
     def get_tool_handler(self, name: str) -> tuple[MCPHandlerType, bool] | None:
         metadata = self._tools.get(name)
         return None if metadata is None else (metadata.handler, metadata.returns_json)
+
+
+def tool_annotations(name: str) -> ToolAnnotations:
+    """What a client may assume of tool `name` before calling it, so its own
+    approval rules can tell `callers` from `wipe_database` (issue #3458).
+    Every tool works on this server's graph and files, never the open web."""
+    return ToolAnnotations(
+        read_only_hint=name in cs.MCP_READ_ONLY_TOOLS,
+        destructive_hint=name in cs.MCP_DESTRUCTIVE_TOOLS,
+        idempotent_hint=name in cs.MCP_IDEMPOTENT_TOOLS,
+        open_world_hint=False,
+    )
 
 
 def create_mcp_tools_registry(

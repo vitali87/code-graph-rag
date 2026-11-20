@@ -1,0 +1,260 @@
+"""Issue #2867: a workspace server's `list_projects` names the workspace
+projects the graph does not hold, and why.
+
+The workspace is an allow-list over the graph's projects, so a workspace
+repo that was never indexed under its own project name was dropped without
+a word. Indexing the directory that holds the repos (one project for all of
+them) left every workspace project unindexed, and `list_projects` answered
+`{"projects": [], "count": 0}` for a graph of 300,000 nodes.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from codebase_rag.mcp.tools import MCPToolsRegistry, _shell_argument
+from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo
+
+ALPHA = "alpha__1111"
+BETA = "beta__2222"
+GAMMA = "gamma__3333"
+PARENT = "projects__0000"
+# `cgr start --update-graph` indexes one directory and does not read
+# `--workspace`, so the hint names each repo's own command (Greptile, PR
+# #2964).
+INDEX_COMMAND = "cgr start --repo-path {path} --project-name {name} --update-graph"
+
+
+@pytest.fixture
+def root(tmp_path: Path) -> Path:
+    # The hint prints resolved paths.
+    return tmp_path.resolve()
+
+
+def _registry(
+    base: Path, roots: dict[str, Path], *repos: tuple[str, str]
+) -> tuple[MCPToolsRegistry, MagicMock]:
+    ingestor = MagicMock()
+    ingestor.list_projects.return_value = list(roots)
+    ingestor.list_project_roots.return_value = {
+        name: str(path) for name, path in roots.items()
+    }
+    ingestor.fetch_all.return_value = []
+    workspace = WorkspaceConfig(
+        name="ws",
+        repos=[
+            WorkspaceRepo(path=str(base / folder), project_name=name)
+            for folder, name in repos
+        ],
+    )
+    with patch("codebase_rag.mcp.tools.load_parsers", return_value=({}, {})):
+        registry = MCPToolsRegistry(
+            project_root=str(base),
+            ingestor=ingestor,
+            cypher_gen=MagicMock(),
+            workspace=workspace,
+        )
+    return registry, ingestor
+
+
+@pytest.mark.anyio
+async def test_a_workspace_project_missing_from_the_graph_is_named(
+    root: Path,
+) -> None:
+    registry, ingestor = _registry(
+        root,
+        {ALPHA: root / "a", BETA: root / "b"},
+        ("a", ALPHA),
+        ("b", BETA),
+        ("g", GAMMA),
+    )
+
+    result = await registry.list_projects()
+
+    assert result["projects"] == [ALPHA, BETA]
+    assert result["count"] == 2
+    assert result.get("not_indexed") == [GAMMA]
+    assert f"Workspace 'ws' projects not in the graph: {GAMMA}." in str(
+        result.get("hint")
+    )
+    hint = str(result.get("hint"))
+    assert INDEX_COMMAND.format(path=(root / "g").as_posix(), name=GAMMA) in hint
+    assert "--workspace" not in hint
+
+
+@pytest.mark.anyio
+async def test_repos_indexed_inside_their_parent_directory_say_so(
+    root: Path,
+) -> None:
+    # The report: the directory holding the repos was indexed as one
+    # project, so the graph has one Project node and the workspace none.
+    registry, ingestor = _registry(root, {PARENT: root}, ("a", ALPHA), ("b", BETA))
+
+    result = await registry.list_projects()
+
+    assert result["projects"] == []
+    assert result["count"] == 0
+    assert result.get("not_indexed") == [ALPHA, BETA]
+    hint = str(result.get("hint"))
+    for folder in ("a", "b"):
+        assert (
+            f"{root / folder} is indexed inside project '{PARENT}' "
+            f"(rooted at {root}), not as a project of its own."
+        ) in hint
+
+
+@pytest.mark.anyio
+async def test_the_closest_enclosing_project_is_the_one_named(
+    root: Path,
+) -> None:
+    registry, ingestor = _registry(
+        root,
+        {PARENT: root, "nested__4444": root / "group"},
+        ("group/a", ALPHA),
+    )
+
+    hint = str((await registry.list_projects()).get("hint"))
+
+    assert "inside project 'nested__4444'" in hint
+    assert PARENT not in hint
+
+
+@pytest.mark.anyio
+async def test_a_repo_indexed_under_another_name_says_which(
+    root: Path,
+) -> None:
+    registry, ingestor = _registry(root, {"custom": root / "a"}, ("a", ALPHA))
+
+    result = await registry.list_projects()
+
+    assert result.get("not_indexed") == [ALPHA]
+    assert (f"{root / 'a'} is indexed as project 'custom', not '{ALPHA}'.") in str(
+        result.get("hint")
+    )
+
+
+# Negative: what must not change.
+
+
+@pytest.mark.anyio
+async def test_a_fully_indexed_workspace_lists_its_projects_only(
+    root: Path,
+) -> None:
+    registry, ingestor = _registry(
+        root,
+        {ALPHA: root / "a", BETA: root / "b", "other__9999": root / "o"},
+        ("a", ALPHA),
+        ("b", BETA),
+    )
+
+    assert await registry.list_projects() == {"projects": [ALPHA, BETA], "count": 2}
+    ingestor.list_project_roots.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_without_a_workspace_every_project_is_listed(root: Path) -> None:
+    registry, ingestor = _registry(root, {ALPHA: root / "a"})
+    registry.workspace = None
+
+    assert await registry.list_projects() == {"projects": [ALPHA], "count": 1}
+
+
+@pytest.mark.anyio
+async def test_the_index_command_quotes_a_project_name_for_the_shell(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # PR #2964 review: a workspace file does not constrain the project name,
+    # and the hinted command is pasted into a shell, so shell syntax in the
+    # name must stay one literal argument. A POSIX host's shell here; the
+    # Windows quoting is pinned below.
+    hostile = "alpha; touch pwned"
+    registry, _ingestor = _registry(root, {}, ("a", hostile))
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    result = await registry.list_projects()
+    monkeypatch.undo()
+
+    hint = str(result.get("hint"))
+    assert "--project-name 'alpha; touch pwned' --update-graph" in hint
+    assert f"--project-name {hostile} " not in hint
+
+
+@pytest.mark.parametrize(
+    ("value", "quoted"),
+    [
+        ("alpha & whoami & rem ", '"alpha & whoami & rem "'),
+        ("alpha|calc", '"alpha|calc"'),
+        ("C:/Users/John Doe/a", '"C:/Users/John Doe/a"'),
+        ("alpha__1111", "alpha__1111"),
+        ("C:/Users/runneradmin/a-b.c", "C:/Users/runneradmin/a-b.c"),
+        ("a%PATH%", None),
+        ("a!x!", None),
+        ("$(whoami)", None),
+        ("a`b", None),
+        ('a"&calc&"', None),
+        ("alpha\u201dbeta", None),
+        ("alpha\u201cbeta", None),
+        ("alpha\u201ebeta", None),
+        ("a\\", None),
+        ("a\nb", None),
+    ],
+)
+def test_a_windows_argument_is_double_quoted_or_refused(
+    value: str, quoted: str | None
+) -> None:
+    # Greptile review of PR #2964: cmd.exe reads `shlex.quote`'s single
+    # quotes as ordinary characters, leaving `&` active. Double quotes keep
+    # it literal in cmd.exe, PowerShell and Git Bash; a character one of
+    # them expands even inside them gets no quoting at all. A plain value is
+    # left bare, as `shlex.quote` leaves it.
+    assert _shell_argument(value, windows=True) == quoted
+
+
+@pytest.mark.anyio
+async def test_on_windows_the_index_command_keeps_a_hostile_name_one_argument(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hostile = "alpha & whoami & rem "
+    registry, _ingestor = _registry(root, {}, ("a", hostile), ("b", "beta%PATH%"))
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    result = await registry.list_projects()
+    monkeypatch.undo()
+
+    hint = str(result.get("hint"))
+    assert f'--project-name "{hostile}" --update-graph' in hint, hint
+    assert f"'{hostile}'" not in hint, hint
+    # Negative: no command at all for the name a Windows shell would expand.
+    assert "--project-name beta" not in hint, hint
+    assert '--project-name "beta' not in hint, hint
+    assert "'beta%PATH%'" in hint, hint
+
+
+@pytest.mark.anyio
+async def test_a_root_that_cannot_be_resolved_does_not_erase_the_listing(
+    root: Path,
+) -> None:
+    # CodeRabbit review of PR #2964: another project's root replaced by a
+    # link loop made `resolve` raise (Python 3.12), and `list_projects`
+    # answered with an error and no projects at all.
+    loop = root / "loop"
+    try:
+        loop.symlink_to(loop)
+    except OSError:
+        pytest.skip("symlinks not available")
+    registry, _ingestor = _registry(
+        root,
+        {ALPHA: root / "a", "other__9999": loop},
+        ("a", ALPHA),
+        ("g", GAMMA),
+    )
+
+    result = await registry.list_projects()
+
+    assert "error" not in result, result
+    assert result["projects"] == [ALPHA], result
+    assert result.get("not_indexed") == [GAMMA], result

@@ -1,8 +1,11 @@
 from .package_paths import discover_dart_packages
 from .utils import (
+    DartCombinator,
+    DartDirective,
     dart_binding_spans,
     dart_body_node,
     dart_call_name,
+    dart_combinators,
     dart_definition_end_byte,
     dart_definition_end_point,
     dart_exposes_library,
@@ -17,9 +20,12 @@ from .utils import (
 )
 
 __all__ = [
+    "DartCombinator",
+    "DartDirective",
     "dart_binding_spans",
     "dart_body_node",
     "dart_call_name",
+    "dart_combinators",
     "dart_definition_end_byte",
     "dart_definition_end_point",
     "discover_dart_packages",
