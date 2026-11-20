@@ -6717,6 +6717,21 @@ class CallProcessor:
         # `new self` has no name field, and `self::m()` is not a bare method.
         # Handled here so the trie never binds the keyword (issue #3117).
         if php_references.ingest_php_call(self, ctx, call_node):
+            # Only the name lookup is replaced. A closure handed to
+            # `self::accept(...)` or `new static(...)` still reaches the
+            # callee, so the argument scan of issue #2925 runs as for any call.
+            self._ingest_argument_function_references(
+                call_node,
+                ctx.caller_spec,
+                ctx.module_qn,
+                ctx.local_var_types,
+                ctx.class_context,
+                ctx.resolve_func,
+                ctx.ensure_rel,
+                ctx.caller_qn,
+                ctx.arg_ref_rel,
+                ctx.language,
+            )
             return
         call_name = self._scan_call_name(ctx, call_node)
         if (

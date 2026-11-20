@@ -873,3 +873,60 @@ class Resolver
 }
 """,
     )
+
+
+def test_closure_passed_to_relative_call_is_referenced(
+    tmp_path: Path,
+) -> None:
+    # A relative call takes the issue #3117 path instead of the name lookup. It
+    # must still run the argument scan of issue #2925, or a closure handed to
+    # `self::accept(...)` reports dead.
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Relay.php": r"""<?php
+namespace App;
+
+class Base
+{
+    protected static function accept(callable $cb): void {}
+}
+
+class Relay extends Base
+{
+    public function viaSelf(): void
+    {
+        self::accept(function () { return 1; });
+    }
+
+    public function viaStatic(): void
+    {
+        static::accept(fn () => 2);
+    }
+
+    public function viaParent(): void
+    {
+        parent::accept(function () { return 3; });
+    }
+}
+"""
+        },
+    )
+    relay = f"{_PROJECT}.src.Relay.Relay"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    dead = _dead(ingestor)
+    for method in ("viaSelf", "viaStatic", "viaParent"):
+        closure = _one(
+            {
+                qn
+                for qn in _defined(ingestor, f"{relay}.{method}.")
+                if ".anonymous_" in qn
+            },
+            f"closure passed in {method}",
+        )
+        assert (f"{relay}.{method}", closure) in refs, (method, sorted(refs))
+        assert closure not in dead, (method, sorted(dead))
+    # The relative binding itself still holds.
+    base = f"{_PROJECT}.src.Relay.Base"
+    assert (f"{relay}.viaParent", f"{base}.accept") in calls
