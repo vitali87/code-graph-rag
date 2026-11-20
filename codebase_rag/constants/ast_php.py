@@ -66,9 +66,6 @@ TS_PHP_OPTIONAL_TYPE = "optional_type"
 TS_PHP_UNION_TYPE = "union_type"
 TS_PHP_NAMED_TYPE = "named_type"
 TS_PHP_PRIMITIVE_TYPE = "primitive_type"
-# PHP constructors are methods named `__construct`. A `new` expression runs
-# that method; Python's `__init__` is a different language (issue #3117).
-PHP_CONSTRUCTOR = "__construct"
 PHP_CLASS_CONST = "class"
 # `$this` is case-sensitive. The relative scopes are not: PHP folds them.
 PHP_THIS = "$this"

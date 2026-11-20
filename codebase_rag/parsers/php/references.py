@@ -201,9 +201,10 @@ def _relative_classes(
     classes = [class_context]
     if scope != cs.PhpRelativeScope.STATIC:
         return classes
-    for subclass in host._resolver._concrete_subclasses(class_context):
-        if _declared_method(host._resolver, subclass, cs.PHP_CONSTRUCTOR):
-            classes.append(subclass)
+    # `new static` builds whichever subclass the method runs on, whether or
+    # not that subclass declares a constructor: one that does not runs the
+    # constructor it inherits, which `php_constructor` finds.
+    classes.extend(sorted(host._resolver._concrete_subclasses(class_context)))
     return classes
 
 
@@ -238,6 +239,11 @@ def _compile_class_name(host: _PhpEmitter, module_qn: str, node: Node) -> str | 
         return None
     if absolute:
         return cs.SEPARATOR_DOT.join(parts)
+    if node.type == cs.TS_PHP_RELATIVE_NAME:
+        # `namespace\Foo` is `Foo` in the enclosing namespace, never an import.
+        namespace = php_namespaces.enclosing_namespace(node)
+        body = cs.SEPARATOR_DOT.join(parts[1:])
+        return f"{namespace}.{body}" if namespace else body
     mapped = _class_import(host, module_qn, parts[0])
     if len(parts) == 1:
         if mapped is not None:
@@ -320,6 +326,7 @@ def _emit_constructions(
     host._resolution = (
         cs.EdgeResolution.OVERLOAD if len(classes) > 1 else cs.EdgeResolution.EXACT
     )
+    called: set[str] = set()
     for class_qn in classes:
         host._emit_rel(
             caller_spec,
@@ -327,9 +334,11 @@ def _emit_constructions(
             (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_qn),
         )
         found = host._resolver.php_constructor(class_qn)
-        if found is None:
+        # Subclasses that inherit one constructor share its single edge.
+        if found is None or found[1] in called:
             continue
         _, ctor = found
+        called.add(ctor)
         host._emit_rel(
             caller_spec,
             cs.RelationshipType.CALLS,

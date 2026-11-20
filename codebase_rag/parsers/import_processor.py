@@ -1040,6 +1040,25 @@ def _php_use_clause_binding(clause: Node, prefix: str = "") -> tuple[str, str] |
     return imported_path, parts[-1] if parts else imported_path
 
 
+def _php_bare_class_use(clause: Node) -> tuple[str, str] | None:
+    """(global class name, local name) for a top-level `use Foo [as Bar]`."""
+    alias_node = clause.child_by_field_name(cs.FIELD_ALIAS)
+    alias_at = alias_node.start_byte if alias_node is not None else None
+    name_node = next(
+        (
+            child
+            for child in clause.named_children
+            if child.type == cs.TS_PHP_NAME and child.start_byte != alias_at
+        ),
+        None,
+    )
+    name = safe_decode_with_fallback(name_node) if name_node is not None else ""
+    if not name:
+        return None
+    alias = safe_decode_with_fallback(alias_node) if alias_node is not None else ""
+    return name, alias or name
+
+
 def _ts_alias_candidates(
     import_path: str, aliases: Sequence[tuple[str, str, bool]]
 ) -> list[tuple[int, str]]:
@@ -7967,8 +7986,24 @@ class ImportProcessor:
         else:
             prefix, clauses = grouped
         for child in clauses:
+            clause_is_function = decl_is_function or any(
+                c.type == cs.TS_PHP_FUNCTION for c in child.children
+            )
+            clause_is_const = decl_is_const or any(
+                c.type == cs.TS_PHP_CONST for c in child.children
+            )
             binding = _php_use_clause_binding(child, prefix)
             if binding is None:
+                # `use Foo;` in a namespace imports the global class `Foo`.
+                # Only the class map takes it: the shared map has never bound
+                # a bare name, and function and call lookups keep that.
+                if not (prefix or clause_is_function or clause_is_const) and (
+                    bare := _php_bare_class_use(child)
+                ):
+                    imported_path, local_name = bare
+                    self.php_class_imports.setdefault(module_qn, {})[local_name] = (
+                        imported_path
+                    )
                 continue
             imported_path, local_name = binding
             self.import_mapping[module_qn][local_name] = imported_path
@@ -7977,12 +8012,6 @@ class ImportProcessor:
                 local_name,
                 use_node,
                 imported_path.split(cs.SEPARATOR_DOT)[-1],
-            )
-            clause_is_function = decl_is_function or any(
-                c.type == cs.TS_PHP_FUNCTION for c in child.children
-            )
-            clause_is_const = decl_is_const or any(
-                c.type == cs.TS_PHP_CONST for c in child.children
             )
             if clause_is_function:
                 self.php_function_imports.setdefault(module_qn, set()).add(local_name)

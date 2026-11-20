@@ -359,7 +359,7 @@ def test_relative_construction_calls_the_constructor(tmp_path: Path) -> None:
     child_ctor = f"{_CHILD}.__construct"
 
     # `new self` is the enclosing class only. `new static` is that class plus
-    # every subclass that declares its own constructor. Grandchild does not.
+    # every subclass. Grandchild declares no constructor and runs Child's.
     assert (f"{_R}.create", _R) in instantiates
     assert (f"{_R}.create", ctor) in calls
     assert (f"{_R}.create", _CHILD) not in instantiates
@@ -367,7 +367,11 @@ def test_relative_construction_calls_the_constructor(tmp_path: Path) -> None:
     assert (f"{_R}.createStatic", ctor) in calls
     assert (f"{_R}.createStatic", _CHILD) in instantiates
     assert (f"{_R}.createStatic", child_ctor) in calls
-    assert (f"{_R}.createStatic", _GRAND) not in instantiates
+    assert (f"{_R}.createStatic", _GRAND) in instantiates
+    assert not any(
+        src == f"{_R}.createStatic" and dst.startswith(f"{_GRAND}.")
+        for src, dst in calls
+    )
 
     # `new parent` binds the extends parent. The protected-or-public parent
     # constructor is already an API root, so the edge is the proof.
@@ -930,3 +934,64 @@ class Relay extends Base
     # The relative binding itself still holds.
     base = f"{_PROJECT}.src.Relay.Base"
     assert (f"{relay}.viaParent", f"{base}.accept") in calls
+
+
+def test_namespace_relative_and_bare_global_imports_name_the_class(
+    tmp_path: Path,
+) -> None:
+    # `namespace\\Local::class` is `Local` in the enclosing namespace, and
+    # `use Shared;` in a namespace imports the global class `Shared`, not
+    # `App\\Shared`, which exists here too.
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Shared.php": r"""<?php
+class Shared
+{
+    private function handle(): void {}
+}
+""",
+            "src/App/Shared.php": r"""<?php
+namespace App;
+
+class Shared
+{
+    private function handle(): void {}
+}
+""",
+            "src/App/Local.php": r"""<?php
+namespace App;
+
+class Local
+{
+    private function handle(): void {}
+}
+""",
+            "src/App/Wiring.php": r"""<?php
+namespace App;
+
+use Shared;
+
+class Wiring
+{
+    public function relative(): array
+    {
+        return [namespace\Local::class, 'handle'];
+    }
+
+    public function global(): array
+    {
+        return [Shared::class, 'handle'];
+    }
+}
+""",
+        },
+    )
+    wiring = f"{_PROJECT}.src.App.Wiring.Wiring"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    local = f"{_PROJECT}.src.App.Local.Local.handle"
+    global_shared = f"{_PROJECT}.src.Shared.Shared.handle"
+    app_shared = f"{_PROJECT}.src.App.Shared.Shared.handle"
+    assert (f"{wiring}.relative", local) in refs, sorted(refs)
+    assert (f"{wiring}.global", global_shared) in refs, sorted(refs)
+    assert (f"{wiring}.global", app_shared) not in refs, sorted(refs)
