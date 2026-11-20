@@ -461,6 +461,23 @@ class CppTypeInferenceEngine:
             return None
         return text.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1] or None
 
+    def range_for_bindings(self, caller_node: Node) -> list[tuple[int, int, str]]:
+        """Each range-`for` variable in the caller's body, as (start, end,
+        name) of the loop it is bound in: `for (auto f : fs)` binds `f` on
+        the loop node itself, where no declaration holds it (Greptile and
+        CodeRabbit, PR #2948)."""
+        found: list[tuple[int, int, str]] = []
+        for node, _block_end in _scope_declarations(
+            caller_node.child_by_field_name(cs.FIELD_BODY)
+        ):
+            if node.type == cs.TS_CPP_FOR_RANGE_LOOP and (
+                name := self._declarator_name(
+                    node.child_by_field_name(cs.FIELD_DECLARATOR)
+                )
+            ):
+                found.append((node.start_byte, node.end_byte, name))
+        return found
+
     def _declarator_name(self, declarator: Node | None) -> str | None:
         # Unwrap pointer/reference/init declarators down to the bound identifier.
         current = declarator

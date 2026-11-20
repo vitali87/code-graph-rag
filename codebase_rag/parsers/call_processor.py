@@ -6307,9 +6307,12 @@ class CallProcessor:
         # parameters of the class's other member declarations.
         scopes: dict[str, list[tuple[int, int]]] = {}
         if caller_type == cs.NodeLabel.METHOD:
-            for start, end, name, _ in CppTypeInferenceEngine().declaration_scopes(
+            engine = CppTypeInferenceEngine()
+            for start, end, name, _ in engine.declaration_scopes(
                 caller_node, fields=False
             ):
+                scopes.setdefault(name, []).append((start, end))
+            for start, end, name in engine.range_for_bindings(caller_node):
                 scopes.setdefault(name, []).append((start, end))
         if scopes:
             self._resolver.cpp_local_scopes[caller_qn] = {

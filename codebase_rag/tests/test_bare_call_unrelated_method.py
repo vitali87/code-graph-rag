@@ -149,7 +149,9 @@ FILES = {
         "class SD : public SB {\n public:\n"
         "  void loop() {\n    for (auto dispatch = [] {}; false;) { dispatch(); }\n"
         "    dispatch();\n  }\n"
-        "  struct Inner { void run() { ping(); } };\n};\n"
+        "  struct Inner { void run() { ping(); } };\n"
+        "  void ranged(void (**fs)()) {\n"
+        "    for (auto dispatch : {fs[0]}) { dispatch(); }\n  }\n};\n"
     ),
     # Lua: a colon method beside a bare call of its name (CodeRabbit, PR
     # #2948); `flush()` is a global, never `M:flush`.
@@ -233,6 +235,14 @@ def test_a_cpp_member_reaches_an_inherited_method_by_name_lookup(
     # The base's method is what C++ name lookup finds, not a guess among
     # every `helper` in the project (`Other::helper` sits beside it).
     assert _callees(graph, caller) == {method: "exact"}
+
+
+def test_a_range_for_variable_hides_an_inherited_method(graph: RecordedGraph) -> None:
+    # `for (auto dispatch : ...) dispatch();` calls the loop variable
+    # (Greptile, CodeRabbit, PR #2948).
+    assert _callees(graph, "c.scopes.SD.ranged").get("c.scopes.SB.dispatch") != (
+        "exact"
+    )
 
 
 @pytest.mark.parametrize("caller", ["c.hide.h.HD.run", "c.hide.h.HD.local"])
