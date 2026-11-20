@@ -4,8 +4,8 @@ name: Deferred Release
 # bump. When CI takes longer, it tags the version as a deferred release and
 # leaves the release as a draft, and nothing else looked at it again until
 # the next merge, which faced the same wait (v0.4.1's CI passed 2.5 minutes
-# after its wait ended). This workflow runs each time CI on main completes and
-# publishes that draft once CI has passed at its tag.
+# after its wait ended). This workflow runs each time CI on main completes, and
+# every hour, and publishes that draft once CI has passed at its tag.
 #
 # Every fact is read again here, never taken from the triggering run: the run
 # only says that it is time to look. Nothing from it is checked out or run.
@@ -14,6 +14,11 @@ on:
     workflows: [CI]
     types: [completed]
     branches: [main]
+  # A look GitHub turned away for want of API allowance decided nothing
+  # (see the step), and no merge may follow to start another; this one
+  # comes within the hour regardless.
+  schedule:
+    - cron: "41 * * * *"
   workflow_dispatch:
 
 permissions: read-all
@@ -27,6 +32,7 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
       (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_repository.full_name == github.repository))
@@ -56,7 +62,22 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # Every workflow in the repository spends one hourly GITHUB_TOKEN
+          # allowance, and CI runs that finish together can use it up. A
+          # call refused for that says nothing about the release, so the
+          # look stops there, green and having published nothing more, and
+          # the next hourly run takes it up from what it left. Reading the
+          # allowance costs none of it.
+          stop_if_allowance_spent() {
+            local core
+            core=$(gh api rate_limit --jq '.resources.core | "\(.remaining) \(.reset | todate)"') || return 0
+            if [ "${core%% *}" = 0 ]; then
+              echo "::warning::GitHub's API allowance for this repository is spent until ${core#* }; the next hourly run takes this up"
+              exit 0
+            fi
+          }
           if ! LATEST=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name); then
+            stop_if_allowance_spent
             echo "::error::could not read the latest release; refusing to publish"
             exit 1
           fi
@@ -77,6 +98,7 @@ jobs:
           # draft someone wrote by hand is theirs to publish.
           if ! DRAFTS=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
               --jq '.[] | select(.draft and .author.login == "github-actions[bot]") | "\(.id) \(.tag_name)"'); then
+            stop_if_allowance_spent
             echo "::error::could not list the draft releases; refusing to publish"
             exit 1
           fi
@@ -99,8 +121,12 @@ jobs:
           # release that was never deferred. A plain tag here was replaced
           # by an earlier attempt that stopped before the draft went public.
           if [ -n "$COMMIT" ]; then
-            if [[ ! "$OBJECT" =~ ^[0-9a-f]{40}$ || ! "$COMMIT" =~ ^[0-9a-f]{40}$ ]] ||
-                ! MESSAGE=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${OBJECT}" --jq .message); then
+            if [[ ! "$OBJECT" =~ ^[0-9a-f]{40}$ || ! "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::could not read the annotation of ${TAG}; refusing to publish"
+              exit 1
+            fi
+            if ! MESSAGE=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${OBJECT}" --jq .message); then
+              stop_if_allowance_spent
               echo "::error::could not read the annotation of ${TAG}; refusing to publish"
               exit 1
             fi
@@ -111,6 +137,13 @@ jobs:
             git fetch --no-tags --depth=1 origin "$COMMIT"
             git push --force-with-lease="refs/tags/${TAG}:${OBJECT}" origin "${COMMIT}:refs/tags/${TAG}"
           fi
-          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${DRAFT}" \
-            -F draft=false -f make_latest=true > /dev/null
+          # Refused after the tag push, the draft is still published by the
+          # next look: it finds the plain tag, pushes nothing and comes back
+          # to this call.
+          if ! gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${DRAFT}" \
+              -F draft=false -f make_latest=true > /dev/null; then
+            stop_if_allowance_spent
+            echo "::error::could not publish the draft release of ${TAG}"
+            exit 1
+          fi
           echo "- **Release:** ${TAG} published, now that CI has passed at it" >> "$GITHUB_STEP_SUMMARY"

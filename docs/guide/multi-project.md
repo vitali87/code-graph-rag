@@ -153,9 +153,13 @@ graph synced before the record existed answers as before).
 handler (FastAPI, Flask) by its decorator alone: such a handler whose
 endpoint no indexed call site reaches is reported. A handler
 registered by a call (Go `HandleFunc`, Express `app.get(path, handler)`)
-stays live through that registration, whatever the switch. On a graph
-holding one project the report reads as "no callers indexed", which the
-command says; index the calling services first.
+stays live through that registration, whatever the switch. Endpoints are
+recorded only by the `io` capture group, so the switch needs the project
+indexed with `--capture io`: on a project that has route handlers but no
+recorded endpoint, the command refuses and says so rather than report
+nothing unreachable. On a graph holding one project the report reads as
+"no callers indexed", which the command says; index the calling services
+first.
 
 Two analyses follow the link across the boundary. `flow_verdict` continues
 a `FLOWS_TO` walk from a client's network resource into the handler it
@@ -164,7 +168,10 @@ that handler's project's own flow edges once the walk reaches the hop, and
 reports the pairs where the path crossed into another project as
 `remote_hops` (a service calling itself over HTTP is not a boundary). A
 `NO_FLOW` verdict needs full coverage of every project the walk entered,
-not only the asked one. The structural delta after a write lists, on a
+not only the asked one. The graph does not record where a handler sends
+the request it receives, so a question with a resource sink names every
+handler the walk entered and answers `UNKNOWN` rather than `NO_FLOW`, and
+a walk from a resource stops at the handler. The structural delta after a write lists, on a
 signature change, the `remote_callers`: call sites in other projects
 reaching the changed handler's endpoint, which no `CALLS` edge would ever
 name.

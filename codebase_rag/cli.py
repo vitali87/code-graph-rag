@@ -10,7 +10,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Coroutine, Generator, Iterable
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from fnmatch import fnmatch
 from functools import partial, wraps
 from importlib.metadata import version as get_version
@@ -212,10 +212,11 @@ class _CgrGroup(TyperGroup):
         # Every command reaches the graph through the ingestor, which raises
         # this at connect time with the fix in its message; printing it here
         # covers them all, the delegated groups and the chat included (#2443).
+        # On stderr, where a report command's stdout is its report (#2642).
         try:
             result = super().invoke(ctx)
         except GraphUnavailableError as e:
-            app_context.console.print(style(str(e), cs.Color.RED))
+            app_context.err_console.print(style(str(e), cs.Color.RED))
             raise typer.Exit(1) from e
         # Only a command that finished gets here: a failure exits by raising.
         pledge = sponsor_pledge(ctx.invoked_subcommand, sys.stderr.isatty())
@@ -1172,12 +1173,16 @@ def _run_graph_sync(
 
     cgrignore = load_ignore_patterns(repo)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
-    exclude_paths = cli_excludes | cgrignore.exclude or None
     unignore_paths: frozenset[str] | None
     if interactive_setup:
         unignore_paths = prompt_for_unignored_directories(repo, exclude)
+        # Read again: a keep saved at the prompt may have lifted an exclusion
+        # (a `.cgrignore` line it removed, or a `.gitignore` line its `!` line
+        # cancels), and this run keeps it too (review of PR 2510).
+        cgrignore = load_ignore_patterns(repo)
     else:
         unignore_paths = cgrignore.unignore or None
+    exclude_paths = cli_excludes | cgrignore.exclude or None
 
     elapsed = time.monotonic()
     with (
@@ -1641,13 +1646,15 @@ def index(
 
     cgrignore = load_ignore_patterns(repo_to_index)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
-    exclude_paths = cli_excludes | cgrignore.exclude or None
     unignore_paths: frozenset[str] | None = None
     if interactive_setup:
         unignore_paths = prompt_for_unignored_directories(repo_to_index, exclude)
+        # As in `start`: a saved keep may have lifted an exclusion.
+        cgrignore = load_ignore_patterns(repo_to_index)
     else:
         _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
         unignore_paths = cgrignore.unignore or None
+    exclude_paths = cli_excludes | cgrignore.exclude or None
 
     try:
         indexed_source = source_state(Path(repo_to_index))
@@ -1815,9 +1822,15 @@ def diff_index_command(
         Path(json_out).write_text(rendered + "\n", encoding="utf-8")
         _info(style(cs.CLI_MSG_DIFF_WRITTEN.format(path=json_out), cs.Color.CYAN))
     else:
-        app_context.console.print(rendered)
+        # Data, not console text: Rich would read `[id]` path segments as
+        # markup and highlight the JSON, so stdout would differ from the
+        # --json-out file (issue #2662).
+        typer.echo(rendered)
     if diff_is_empty(diff):
-        _info(style(cs.CLI_MSG_DIFF_EMPTY, cs.Color.GREEN))
+        # Without --json-out, stdout is the JSON and nothing else: a status
+        # line after it would stop `json.loads(stdout)` from parsing it.
+        with _console_on_stderr() if json_out is None else nullcontext():
+            _info(style(cs.CLI_MSG_DIFF_EMPTY, cs.Color.GREEN))
 
 
 @app.command(
@@ -2284,7 +2297,7 @@ def check_command(
             raise typer.Exit(code=1) from error
     typer.echo(json.dumps(delta, indent=cs.MCP_JSON_INDENT))
     if fail_on_found and has_findings(delta):
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=cs.CLI_EXIT_FOUND)
 
 
 EditReingest = Callable[[list[str]], ReingestReport]
@@ -2380,6 +2393,11 @@ def rename_command(
         False, cs.RENAME_CLI_ALLOW_HEURISTIC, help=ch.HELP_RENAME_ALLOW_HEURISTIC
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_RENAME_DRY_RUN),
+    allow_external_override: bool = typer.Option(
+        False,
+        cs.RENAME_CLI_ALLOW_EXTERNAL_OVERRIDE,
+        help=ch.HELP_RENAME_ALLOW_EXTERNAL_OVERRIDE,
+    ),
 ) -> None:
     from .editing.rename import RenameRefused, rename, sites_for
     from .graph_cli import _project_and_fetch
@@ -2411,6 +2429,8 @@ def rename_command(
                     dry_run=dry_run,
                     reingest=reingest,
                     heuristic_opt_in=cs.RENAME_CLI_ALLOW_HEURISTIC,
+                    allow_external_override=allow_external_override,
+                    external_override_opt_in=cs.RENAME_CLI_ALLOW_EXTERNAL_OVERRIDE,
                 )
             except RenameRefused as refused:
                 typer.echo(str(refused), err=True)
@@ -2431,6 +2451,75 @@ def rename_command(
     if marker_error is not None:
         typer.echo(marker_error, err=True)
         raise typer.Exit(code=1)
+    if not report.applied and not dry_run:
+        raise typer.Exit(code=1)
+
+
+@app.command(
+    name=ch.CLICommandName.MOVE,
+    help=ch.CMD_MOVE,
+    short_help=ch.CMD_MOVE,
+    epilog=ch.EXAMPLES_MOVE,
+    rich_help_panel=ch.PANEL_USE,
+)
+def move_command(
+    qualified_name: str = typer.Argument(..., help=ch.HELP_MOVE_QN),
+    target_module: str = typer.Argument(..., help=ch.HELP_MOVE_TARGET),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    keep_alias: bool = typer.Option(
+        False, "--keep-alias", help=ch.HELP_MOVE_KEEP_ALIAS
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_MOVE_DRY_RUN),
+) -> None:
+    from .editing.move import MoveRefused, move
+    from .graph_cli import _project_and_fetch
+    from .graph_query import source_root_for
+
+    name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    with ingestor:
+        # An explicit --project may name a graph indexed from another
+        # checkout; its repo-relative paths must not be edited under this one.
+        if source_root_for(fetch_all, name, repo_path) is None:
+            typer.echo(
+                cs.MOVE_CLI_WRONG_ROOT.format(project=name, root=repo_path.resolve()),
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        parsers, queries = load_parsers()
+        from .graph_updater import GraphUpdater
+
+        updater = GraphUpdater(
+            ingestor=ingestor,
+            repo_path=repo_path.resolve(),
+            parsers=parsers,
+            queries=queries,
+            project_name=name,
+        )
+        try:
+            report = move(
+                repo_path.resolve(),
+                fetch_all,
+                name,
+                qualified_name,
+                target_module,
+                keep_alias=keep_alias,
+                dry_run=dry_run,
+                reingest=updater.reingest,
+            )
+        except MoveRefused as refused:
+            typer.echo(str(refused), err=True)
+            raise typer.Exit(code=1) from refused
+    payload = dict(report._asdict())
+    if report.verdict is not None:
+        payload[cs.KEY_VERDICT] = report.verdict._asdict()
+    typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
     if not report.applied and not dry_run:
         raise typer.Exit(code=1)
 
@@ -2701,7 +2790,9 @@ def doctor() -> None:
         status_color = cs.Color.GREEN if result.passed else cs.Color.RED
         status_text = style(status, status_color, cs.StyleModifier.NONE)
 
-        check_name = f"{status_text} {result.name}"
+        # Escaped: a name or error naming an extra (`[treesitter-full]`) is
+        # text, not Rich markup to swallow (issue #2905).
+        check_name = f"{status_text} {escape(result.name)}"
         table.add_row(check_name)
 
     panel = Panel(
@@ -2725,7 +2816,7 @@ def doctor() -> None:
         app_context.console.print()
         app_context.console.print(style("Failed checks details:", cs.Color.YELLOW))
         for result in failed_checks:
-            error_msg = f"  {result.name}: {result.error}"
+            error_msg = f"  {escape(result.name)}: {escape(result.error or '')}"
             app_context.console.print(
                 style(error_msg, cs.Color.YELLOW, cs.StyleModifier.NONE)
             )
@@ -2858,7 +2949,7 @@ def stats(
     # scope that was asked for and came out empty would report the whole
     # shared graph as if it were that scope's (review of PR 2436).
     if not requested and (names or workspace_config is not None):
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_STATS_EMPTY_WORKSPACE.format(name=workspace)
                 if workspace_config is not None
@@ -2868,7 +2959,7 @@ def stats(
         )
         raise typer.Exit(1)
 
-    app_context.console.print(style(cs.CLI_MSG_CONNECTING_STATS, cs.Color.CYAN))
+    app_context.err_console.print(style(cs.CLI_MSG_CONNECTING_STATS, cs.Color.CYAN))
 
     refusal = ""
     try:
@@ -2885,7 +2976,7 @@ def stats(
     except GraphUnavailableError:
         raise
     except Exception as e:
-        app_context.console.print(
+        app_context.err_console.print(
             style(cs.CLI_ERR_STATS_FAILED.format(error=e), cs.Color.RED)
         )
         logger.exception(ls.STATS_ERROR.format(error=e))
@@ -2894,7 +2985,7 @@ def stats(
     # Outside the connection, as dead-code does: a typo must not look like a
     # failed query to the service layer's error logging.
     if refusal:
-        app_context.console.print(style(refusal, cs.Color.RED))
+        app_context.err_console.print(style(refusal, cs.Color.RED))
         raise typer.Exit(1)
     _print_stats(requested, node_results, rel_results, breakdown)
 
@@ -3000,9 +3091,11 @@ def _require_project(choice: ProjectChoice) -> str:
     # Raised OUTSIDE the connection context so a user typo never trips the
     # service layer's error logging on exit, and before anything is reported:
     # a name absent from the graph must error, not scan a nonexistent prefix
-    # and report a clean project.
+    # and report a clean project. On stderr: stdout is the scan's report
+    # (issue #2642).
     if choice.name is None:
-        _exit_with_error(choice.refusal)
+        app_context.err_console.print(style(choice.refusal, cs.Color.RED))
+        raise typer.Exit(1)
     return choice.name
 
 
@@ -3108,6 +3201,8 @@ def _build_dead_code_table(candidates: list[DeadCodeRow], project_name: str) -> 
     for row in candidates:
         table.add_row(
             row["label"],
+            # Text, not str: a plain str cell is parsed as markup, which drops
+            # route segments like `[id]` from the name (issue #2662).
             Text(row["qualified_name"]),
             Text(row["path"]),
             cs.CLI_DEADCODE_LINE_RANGE.format(
@@ -3204,17 +3299,21 @@ def _emit_dead_code(
         app_context.console.print(style(notice, cs.Color.YELLOW))
 
 
-def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
+def _notice_single_project_endpoint_roots() -> None:
     """Endpoint roots off on a graph holding one project: every endpoint
-    reads as uncalled. Stdout carries the JSON payload when that format is
-    chosen (local review P1), and only the table under --quiet, so the
-    notice goes to stderr then."""
-    if show_progress:
-        app_context.console.print(
-            style(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, cs.Color.YELLOW)
-        )
-    else:
-        typer.echo(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, err=True)
+    reads as uncalled. Stdout carries the report (local review P1), so the
+    notice goes to stderr, as the command's errors do (issue #2642)."""
+    app_context.err_console.print(
+        style(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, cs.Color.YELLOW)
+    )
+
+
+def _refuse_without_endpoint_data(error: ex.EndpointDataMissingError) -> NoReturn:
+    """No verdict, rather than one that reads as nothing unreachable. Stdout
+    carries the report, so the refusal goes to stderr, as the single-project
+    notice and the command's other errors do (issue #2642)."""
+    app_context.err_console.print(style(str(error), cs.Color.RED))
+    raise typer.Exit(1)
 
 
 @app.command(
@@ -3286,41 +3385,50 @@ def dead_code(
         and not settings.QUIET
     )
     if show_progress:
-        app_context.console.print(style(cs.CLI_DEADCODE_CONNECTING, cs.Color.CYAN))
+        app_context.err_console.print(style(cs.CLI_DEADCODE_CONNECTING, cs.Color.CYAN))
 
     choice = ProjectChoice(None)
     rows: list[ResultRow] = []
     structural_tier_symbols = 0
+    endpoint_gap: ex.EndpointDataMissingError | None = None
     try:
         with connect_memgraph(batch_size=1) as ingestor:
             projects = ingestor.list_projects()
             choice = choose_project(chosen, repo_path, projects, ingestor)
             if (resolved := choice.name) is not None:
                 logger.info(ls.DEADCODE_SCANNING.format(project_name=resolved))
-                rows, structural_tier_symbols = collect_dead_code_with_coverage(
-                    ingestor,
-                    resolved,
-                    _dead_code_config(
-                        include_tests,
-                        include_classes,
-                        entry_point,
-                        decorator_root,
-                        min_resolution,
-                        endpoint_roots,
-                        public_roots,
-                    ),
-                )
-                if not endpoint_roots and len(projects) <= 1:
-                    _notice_single_project_endpoint_roots(show_progress)
+                try:
+                    rows, structural_tier_symbols = collect_dead_code_with_coverage(
+                        ingestor,
+                        resolved,
+                        _dead_code_config(
+                            include_tests,
+                            include_classes,
+                            entry_point,
+                            decorator_root,
+                            min_resolution,
+                            endpoint_roots,
+                            public_roots,
+                        ),
+                    )
+                except ex.EndpointDataMissingError as e:
+                    # Held until the connection closes: a finding about the
+                    # project, which the service layer would log on exit as a
+                    # failed session with a traceback (issue #2896).
+                    endpoint_gap = e
+                if not endpoint_roots and len(projects) <= 1 and not endpoint_gap:
+                    _notice_single_project_endpoint_roots()
     except GraphUnavailableError:
         raise
     except Exception as e:
-        app_context.console.print(
+        app_context.err_console.print(
             style(cs.CLI_ERR_DEADCODE_FAILED.format(error=e), cs.Color.RED)
         )
         logger.exception(ls.DEADCODE_ERROR.format(error=e))
         raise typer.Exit(1) from e
 
+    if endpoint_gap is not None:
+        _refuse_without_endpoint_data(endpoint_gap)
     resolved = _require_project(choice)
 
     candidates = [
@@ -3336,7 +3444,7 @@ def dead_code(
     )
 
     if fail_on_found and candidates:
-        raise typer.Exit(1)
+        raise typer.Exit(code=cs.CLI_EXIT_FOUND)
 
 
 def _similarity_text(group: DuplicateGroup) -> str:
@@ -3372,9 +3480,7 @@ def _exact_copy_cells(
     return [numbers.get(member["qualified_name"], "")] if shown else []
 
 
-def _duplicates_location_cell(
-    member: DuplicateMember, root_path: Path | None
-) -> Text | str:
+def _duplicates_location_cell(member: DuplicateMember, root_path: Path | None) -> Text:
     """Location as an OSC 8 hyperlink into the editor, plain when rootless.
 
     Rich drops hyperlinks on non-terminal sinks, so file/JSON outputs are
@@ -3386,12 +3492,13 @@ def _duplicates_location_cell(
         start=member["start_line"],
         end=member["end_line"],
     )
+    # Always Text: a str cell would be read as markup (issue #2662).
+    cell = Text(location)
     if root_path is None:
-        return location
+        return cell
     url = editor_url(root_path / member["path"], member["start_line"])
     if url is None:
-        return location
-    cell = Text(location)
+        return cell
     cell.stylize(cs.STYLE_LINK.format(url=url))
     return cell
 
@@ -3458,7 +3565,7 @@ def _build_duplicates_table(
                 _duplicates_group_cell(number, group, root_path) if at == 0 else "",
                 group["kind"] if at == 0 else "",
                 _similarity_text(group) if at == 0 else "",
-                member["qualified_name"].removeprefix(prefix),
+                Text(member["qualified_name"].removeprefix(prefix)),
                 _duplicates_location_cell(member, root_path),
                 *_exact_copy_cells(copy_numbers[number - 1], member, show_copies),
             )
@@ -3586,7 +3693,7 @@ def _open_duplicate_group(
 ) -> None:
     """Open a group's first two members side by side in the user's editor."""
     if number > len(groups):
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_DUPLICATES_OPEN_UNKNOWN_GROUP.format(
                     number=number, count=len(groups)
@@ -3596,7 +3703,7 @@ def _open_duplicate_group(
         )
         raise typer.Exit(1)
     if root_path is None:
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_DUPLICATES_OPEN_NO_ROOT.format(project=project_name),
                 cs.Color.RED,
@@ -3609,10 +3716,10 @@ def _open_duplicate_group(
     try:
         argv = diff_command(left, right)
     except EditorTemplateError as e:
-        app_context.console.print(style(str(e), cs.Color.RED))
+        app_context.err_console.print(style(str(e), cs.Color.RED))
         raise typer.Exit(1) from e
     if argv is None:
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_DUPLICATES_OPEN_NO_TOOL.format(editor=resolve_editor()),
                 cs.Color.RED,
@@ -3624,7 +3731,7 @@ def _open_duplicate_group(
             argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
     except OSError as e:
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_DUPLICATES_OPEN_NO_TOOL.format(editor=argv[0]), cs.Color.RED
             )
@@ -3703,7 +3810,9 @@ def duplicates(
         and not settings.QUIET
     )
     if show_progress:
-        app_context.console.print(style(cs.CLI_DUPLICATES_CONNECTING, cs.Color.CYAN))
+        app_context.err_console.print(
+            style(cs.CLI_DUPLICATES_CONNECTING, cs.Color.CYAN)
+        )
 
     choice = ProjectChoice(None)
     roots: dict[str, str | None] = {}
@@ -3730,7 +3839,7 @@ def duplicates(
     except GraphUnavailableError:
         raise
     except Exception as e:
-        app_context.console.print(
+        app_context.err_console.print(
             style(cs.CLI_ERR_DUPLICATES_FAILED.format(error=e), cs.Color.RED)
         )
         logger.exception(ls.DUPLICATES_ERROR.format(error=e))
@@ -3754,7 +3863,7 @@ def duplicates(
         _open_duplicate_group(report.groups, open_group, root_path, resolved)
 
     if fail_on_found and report.groups:
-        raise typer.Exit(1)
+        raise typer.Exit(code=cs.CLI_EXIT_FOUND)
 
 
 def _project_to_delete(explicit: str | None, repo: Path | None) -> str:

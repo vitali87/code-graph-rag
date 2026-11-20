@@ -137,10 +137,11 @@ toolchain is needed, on:
 | Windows x64 | `win_amd64` |
 
 Each wheel is built against Python's stable ABI, so one per platform serves
-every CPython from 3.12 on. Anywhere else (PyPy, 32-bit or other
-architectures) code-graph-rag installs without it and the engine runs the
-Python twin of every part, which stays the reference: each Rust path is
-tested against it, and gives the same answers.
+every CPython from 3.12 on. code-graph-rag requires it everywhere and does
+not run without it, so it does not install anywhere else (PyPy, 32-bit or
+other architectures). Where the engine still has a Python twin of a part,
+it serves the inputs that part's Rust path declines, and each Rust path is
+tested against it.
 
 A checkout builds the crate it carries: `uv sync` compiles it with the Rust
 toolchain on your `PATH` (uv takes it as a path source), so a change to the
@@ -148,7 +149,7 @@ Python and Rust halves is tested together. `.github/workflows/rust-wheels.yml`
 builds the wheels. A release uploads any of the crate version's wheels PyPI
 does not have yet, then publishes code-graph-rag only once PyPI has every one
 of them (`scripts/check_cgr_graph_rs_on_pypi.py`). The crate has no sdist, so
-a platform without its wheel could not install that code-graph-rag. `make
+a platform without its wheel cannot install code-graph-rag. `make
 release`, which publishes from a workstation, cannot build every platform's
 wheel, so it stops until PyPI has them all.
 

@@ -69,6 +69,13 @@ TS_PY_LIST_SPLAT = "list_splat"
 TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
 TS_PY_DEFAULT_PARAMETER = "default_parameter"
 TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
+# `from __future__ import annotations` (PEP 563) keeps every annotation in
+# its module as a string that never runs.
+TS_PY_FUTURE_IMPORT_STATEMENT = "future_import_statement"
+PY_FUTURE_ANNOTATIONS = "annotations"
+# The literal sequence values an unpacking assignment pairs its targets with
+# by position (`a, b = x, y`, `(a, b) = (x, y)`, `[a, b] = [x, y]`).
+PY_UNPACKING_VALUE_TYPES = frozenset({"expression_list", "tuple", "list"})
 TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
 TS_PY_POSITIONAL_SEPARATOR = "positional_separator"
 TS_PY_KEYWORD_SEPARATOR = "keyword_separator"
@@ -76,6 +83,7 @@ TS_PY_KEYWORD_SEPARATOR = "keyword_separator"
 # carry (`f(*args)`, `f(**opts)`); the `_pattern` forms above are the
 # definition-side spellings.
 TS_PY_PARAMETERS = "parameters"
+TS_PY_LAMBDA_PARAMETERS = "lambda_parameters"
 TS_PY_LIST_SPLAT = "list_splat"
 TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
 # Scopes nested in a function body, where a parameter's name may be re-bound
@@ -129,6 +137,8 @@ TS_PY_UNION_PATTERN = "union_pattern"
 # `Foo(x=<pattern>)`, `*rest` / `**rest` inside a case pattern.
 TS_PY_KEYWORD_PATTERN = "keyword_pattern"
 TS_PY_SPLAT_PATTERN = "splat_pattern"
+# `Foo(...)` in a case pattern: the class whose instances the arm matches.
+TS_PY_CLASS_PATTERN = "class_pattern"
 # `import x as y` / `from m import x as y`; the alias is a local binding.
 TS_PY_ALIASED_IMPORT = "aliased_import"
 TS_PY_WILDCARD_NODE = "_"
@@ -346,6 +356,31 @@ PY_DUNDER_LEN = "__len__"
 PY_DUNDER_BOOL = "__bool__"
 # `obj(...)` on an instance runs `type(obj).__call__`.
 PY_DUNDER_CALL = "__call__"
+# A `for` calls `__iter__` once, then `__next__` on what it returned each
+# step; `async for` awaits `__aiter__` and `__anext__`.
+PY_DUNDER_ITER = "__iter__"
+PY_DUNDER_NEXT = "__next__"
+PY_DUNDER_AITER = "__aiter__"
+PY_DUNDER_ANEXT = "__anext__"
+# `a < b` calls `a.__lt__(b)`, else the reflection `b.__gt__(a)`.
+PY_COMPARISON_DUNDERS: dict[str, tuple[str, str]] = {
+    "<": ("__lt__", "__gt__"),
+    "<=": ("__le__", "__ge__"),
+    ">": ("__gt__", "__lt__"),
+    ">=": ("__ge__", "__le__"),
+    "==": ("__eq__", "__eq__"),
+    "!=": ("__ne__", "__ne__"),
+}
+PY_UNARY_OPERATOR_DUNDERS: dict[str, str] = {
+    "-": "__neg__",
+    "+": "__pos__",
+    "~": "__invert__",
+}
+# `a += b` is `+` spelled with this suffix; it tries `__iadd__` first.
+PY_AUGMENTED_OPERATOR_SUFFIX = "="
+PY_DUNDER_MARK = "__"
+PY_REFLECTED_DUNDER_PREFIX = "__r"
+PY_INPLACE_DUNDER_PREFIX = "__i"
 # Operands with these characters are not simple attribute/name chains (calls,
 # nested subscripts, whitespace), so the operator-dispatch synthesiser skips them.
 PY_OPERAND_REJECT_CHARS = "()[]{}\n\t "
@@ -368,6 +403,9 @@ PY_TUPLE_CONTAINERS = frozenset({"tuple", "Tuple"})
 PY_GENERATOR_ARG_LIMITS = {"Generator": 3, "AsyncGenerator": 2}
 PY_ELLIPSIS = "..."
 PY_OPTIONAL_PATTERN = r"^(?:typing\.)?Optional\[(?P<inner>.+)\]$"
+PY_UNION_PATTERN = r"^(?:typing\.)?Union\[(?P<inner>.+)\]$"
+# A forward reference is the annotation as a string literal (`"Repo"`).
+PY_ANNOTATION_QUOTES = "\"'"
 PY_LIST_TYPE_PREFIX = "list["
 PY_LIST_TYPE_FORMAT = "list[{element}]"
 
@@ -422,6 +460,36 @@ ABSTRACT_DECORATORS: frozenset[str] = frozenset({"abstractmethod", "abstractprop
 STATIC_DECORATORS: frozenset[str] = frozenset({"staticmethod"})
 # A class method binds `cls` even when called through its class.
 CLASSMETHOD_DECORATORS: frozenset[str] = frozenset({"classmethod"})
+# Methods Python binds to the class without a decorator.
+PY_IMPLICIT_CLASS_RECEIVERS: frozenset[str] = frozenset(
+    {"__new__", "__init_subclass__", "__class_getitem__"}
+)
+# contextlib's generator-based context manager factories: a `with` target
+# takes the generator's yield type, not the factory's return type (#3340).
+PY_CONTEXTLIB_MODULE = "contextlib"
+# Where generator annotations live: an aliased annotation base counts only
+# when the import map resolves it here (#3340).
+PY_GENERATOR_ANNOTATION_MODULES: frozenset[str] = frozenset(
+    {"typing", "typing_extensions", "collections.abc"}
+)
+CONTEXTMANAGER_DECORATORS: frozenset[str] = frozenset(
+    {"contextmanager", "asynccontextmanager"}
+)
+# The return annotations a contextmanager factory carries, each yielding
+# its first type argument.
+PY_GENERATOR_ANNOTATIONS: frozenset[str] = frozenset(
+    {"Iterator", "Generator", "AsyncIterator", "AsyncGenerator"}
+)
+# The fully qualified spellings, precomputed once: the decorator and
+# yield-type checks rebuilt these sets on every call (#3340).
+PY_CONTEXTMANAGER_DECORATOR_QNS: frozenset[str] = frozenset(
+    f"{PY_CONTEXTLIB_MODULE}.{name}" for name in CONTEXTMANAGER_DECORATORS
+)
+PY_GENERATOR_ANNOTATION_QNS: frozenset[str] = frozenset(
+    f"{module}.{name}"
+    for module in PY_GENERATOR_ANNOTATION_MODULES
+    for name in PY_GENERATOR_ANNOTATIONS
+)
 
 # Eager builtins that invoke a callable argument synchronously in the caller's
 # stack frame, so the trace attributes the call to the enclosing function (no
@@ -465,11 +533,12 @@ JAVA_MAX_INFERENCE_DEPTH = 64
 PY_DUNDER_ALL_BLOCK_PATTERN = r"__all__\s*(?::[^=]+)?=\s*[\[(]([^\])]*)[\])]"
 PY_DUNDER_ALL_ENTRY_PATTERN = r"""(['"])(?P<name>[A-Za-z_]\w*)\1"""
 # The module attribute `from module import *` reads, its two list methods a
-# module may grow it with, and the prefix that keeps a name out of a wildcard
-# import of a module without one.
+# module may grow it with, the builtin whose call makes a fresh list, and the
+# prefix that keeps a name out of a wildcard import of a module without one.
 PY_DUNDER_ALL = "__all__"
 PY_LIST_EXTEND = "extend"
 PY_LIST_APPEND = "append"
+PY_BUILTIN_LIST = "list"
 PY_PRIVATE_PREFIX = "_"
 
 # Forward references in an annotation (`n: "Node"`, issue #2837): the quotes
@@ -523,6 +592,21 @@ PY_COMPREHENSION_TYPES = frozenset(
         TS_PY_DICTIONARY_COMPREHENSION,
         TS_PY_GENERATOR_EXPRESSION,
     }
+)
+# Nodes whose parts may not be evaluated at all: the right operand of
+# `and` / `or`, either arm of `a if c else b`, a comprehension's body and
+# filters, an `elif` condition and a `case` pattern or guard. A binding
+# inside one may never run (#3340).
+PY_MAYBE_SKIPPED_TYPES = (
+    frozenset(
+        {
+            TS_PY_BOOLEAN_OPERATOR,
+            TS_PY_CONDITIONAL_EXPRESSION,
+            TS_PY_ELIF_CLAUSE,
+            TS_PY_CASE_CLAUSE,
+        }
+    )
+    | PY_COMPREHENSION_TYPES
 )
 # Trees whose scope walks stay cached (`ast_analyzer.scope_facts`). A cached
 # tree stays alive outside the AST cache's memory cap, so the cache holds a

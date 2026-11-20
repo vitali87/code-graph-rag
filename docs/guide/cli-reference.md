@@ -48,7 +48,8 @@ Every top-level command, from the CLI's own help registry:
 | `cgr graph` | Deterministic graph queries (resolve, definition, callers, callees, implementors, overrides, importers, tests-reaching) as JSON, no LLM. |
 | `cgr check` | Report the structural delta of the working tree against a git ref: dangling callers and importers, arity findings, new duplicates, new import cycles, tests reaching the edited symbols. |
 | `cgr rename` | Rename a definition everywhere the graph references it (definition, call and reference sites, imports, overrides, __all__); refuses on guessed sites, on occurrences the graph has no site for, and on a graph a stopped sync left partial. |
-| `cgr change-signature` | Change a Python definition's parameter list and rewrite every call site the graph knows; sites the mapping cannot complete are listed, not touched; refuses on a graph a stopped sync left partial. |
+| `cgr change-signature` | Change a Python or JavaScript definition's parameter list and rewrite every call site the graph knows; sites the mapping cannot complete are listed, not touched; refuses on a graph a stopped sync left partial. |
+| `cgr move` | Move a module-level definition to another module: importers rewritten, needed imports carried, refused when it would create an import cycle. |
 | `cgr context` | Print a graph-ranked context slice for a symbol, location or task within a token budget: source, caller lines, callee signatures, types, tests, docs. |
 | `cgr port` | Judge a port between languages: pair the functions of two implementations and compare their calls and arity, as JSON, no LLM. |
 | `cgr workspace` | Manage named groups of repositories |
@@ -244,7 +245,7 @@ cgr dead-code [OPTIONS]
 |------|-----------|
 | `--project`, `-p` | Project to scan (default: the one --repo-path was indexed as; outside any indexed checkout, the only indexed project). |
 | `--repo-path` | Repository whose project to scan when --project is not given (default: the current directory). |
-| `--entry-point`, `-e` | Mark symbols ending with this qualified-name suffix as entry points. Repeatable. |
+| `--entry-point`, `-e` | Mark symbols whose qualified name ends with these whole dotted segments (main, cli.run) as entry points. Repeatable. |
 | `--decorator-root` | Mark symbols with this decorator as entry points. Extends the built-in set. |
 | `--exclude` | Exclude symbols whose file path matches GLOB. The glob must cover the whole repo-relative path ('\*' spans directories) and be quoted ('tests/\*' for a root-level tests directory, '\*/tests/\*' for nested ones) so the shell cannot expand it first. Repeatable. |
 | `--include-tests` / `--no-include-tests` | Treat test code as reachable so exercised production code is not reported. [default: include-tests] |
@@ -253,7 +254,7 @@ cgr dead-code [OPTIONS]
 | `--output`, `-o` | Write the report to this file instead of stdout. |
 | `--fail-on-found` | Exit with status 1 when any candidate is found. Useful in CI. |
 | `--min-resolution` | Ignore call edges below this confidence when deciding liveness: heuristic &lt; overload &lt; exact &lt; trace_confirmed (dynamic counts as confirmed). |
-| `--endpoint-roots` / `--no-endpoint-roots` | Treat a decorator-routed handler (FastAPI, Flask) as reachable by its route decorator alone (default). With --no-endpoint-roots, such a handler is live only if some indexed call site resolves to its endpoint (RESOLVES_TO into it, or a direct READS_FROM/WRITES_TO for RPC and dispatch resources), so an endpoint nobody calls is reported. A handler registered by a call (Go HandleFunc, Express app.get) stays live through that call. [default: endpoint-roots] |
+| `--endpoint-roots` / `--no-endpoint-roots` | Treat a decorator-routed handler (FastAPI, Flask) as reachable by its route decorator alone (default). With --no-endpoint-roots, such a handler is live only if some indexed call site resolves to its endpoint (RESOLVES_TO into it, or a direct READS_FROM/WRITES_TO for RPC and dispatch resources), so an endpoint nobody calls is reported. A handler registered by a call (Go HandleFunc, Express app.get) stays live through that call. Endpoints are recorded only by the io capture group: index the project with --capture io first, or the command refuses. [default: endpoint-roots] |
 | `--public-roots` / `--no-public-roots` | Treat every public or exported symbol as a root (default), as suits a library whose API is called from outside the repository. With --no-public-roots, for an application or service, a symbol is a root only as an entry point, test, decorated handler or runtime hook, so unused public code is reported. Symbols in structural-tier languages stay roots, having no call graph. [default: public-roots] |
 <!-- /SECTION:cli_options_dead_code -->
 
@@ -362,9 +363,18 @@ Deterministic graph queries, printed as JSON, with no LLM in the path.
 
 ```bash
 cgr graph resolve helper
-cgr graph callers myrepo__1a2b3c4d.pkg.util.helper --depth 2
-cgr graph tests-reaching myrepo__1a2b3c4d.pkg.util.helper --project myrepo__1a2b3c4d
+cgr graph callers helper --depth 2
+cgr graph callees util.helper
+cgr graph tests-reaching pkg/util.py:12 --project myrepo__1a2b3c4d
+cgr graph callers myrepo__1a2b3c4d.pkg.util.helper
 ```
+
+`callers`, `callees`, `implementors`, `overrides`, `importers` and
+`tests-reaching` take a qualified name, or anything `resolve` takes that names
+exactly one definition: a bare name, a dotted suffix of a qualified name, or
+`path:line`, which names the innermost definition spanning that line. A dotted
+name has to end a qualified name: `util.helper` names `pkg.util.helper`, but
+`pkg.helper` does not, however unique `helper` is.
 
 The project is `--project`, or else the one `--repo-path` (default `.`) was
 indexed as. The exit status tells an empty answer apart from a question the
@@ -374,11 +384,19 @@ graph cannot answer, and a refusal prints nothing on stdout:
 |--------|---------|
 | `0` | The JSON answer. `[]` means the name is in the graph and nothing matches it. |
 | `3` | The project is not indexed, or, without `--project`, the directory was never indexed. The message on stderr names close matches. |
-| `4` | `callers`, `callees`, `implementors`, `overrides`, `importers` or `tests-reaching` was given a qualified name the graph does not hold, or a `path:line` target that names no indexed file or that two indexed files share. The message names close matches, or points at `cgr graph resolve`. |
+| `4` | `callers`, `callees`, `implementors`, `overrides`, `importers` or `tests-reaching` was given a name the graph does not hold, or a `path:line` target that names no indexed file or that two indexed files share. The message names close matches, or points at `cgr graph resolve`. |
+| `5` | One of those commands was given a name, dotted suffix or `path:line` that names several definitions. The message lists them; pass one of their qualified names. |
 
 `resolve` answers `[]` when no name matches, and `definition` answers
 `{"found": false, ...}` for a qualified name it does not find; neither exits
 with `4`.
+
+The `col` and `end_col` that `callers`, `callees` and `importers` print are
+0-based UTF-8 byte offsets into the line, as the graph stores them. Each row
+also carries `col_char` and `end_col_char`, the same positions in characters,
+when `--repo-path` is the checkout the project was indexed from and the file
+can be read there; a Java source of a Lombok build gets none (see
+[Edge-site properties](../architecture/graph-schema.md#edge-site-properties)).
 
 ### `cgr port`
 

@@ -92,6 +92,6 @@ jobs:
         run: uv run pytest -n auto -m "not integration" --tb=short --cov=codebase_rag --cov-report=xml
 
       - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@4d1dc0c91ee400dcf8a6dddf2f705ac36542e304 # v8.4.0
+        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

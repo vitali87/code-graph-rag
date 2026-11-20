@@ -1,6 +1,13 @@
-FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85 AS uv
 
-FROM python:3.15-slim@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913 AS builder
+# The crate the project depends on, cgr-graph-rs, is built from rust/ during
+# uv sync. Debian's cargo trails its locked dependencies (trixie ships rustc
+# 1.85; tree-sitter-language needs 1.90), so the toolchain comes from here,
+# no older than RUST_TOOLCHAIN in .clusterfuzzlite/Dockerfile, which the fuzz
+# build proves the crate with on every pull request.
+FROM rust:1.100.0-slim-trixie@sha256:e9d95b74296f7126a83ae3d041aeaba1ff4c478f13abc5cc034fcf7c131c3d4a AS rust
+
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS builder
 
 COPY --from=uv /uv /uvx /bin/
 COPY --chmod=755 scripts/distrust_ca_roots.sh /usr/local/sbin/
@@ -11,9 +18,13 @@ COPY --chmod=755 scripts/distrust_ca_roots.sh /usr/local/sbin/
 # still ships are then deselected. cargo fetches through this store.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ca-certificates cmake build-essential git libssl-dev zlib1g-dev libzstd-dev cargo && \
+        ca-certificates cmake build-essential git libssl-dev zlib1g-dev libzstd-dev && \
     rm -rf /var/lib/apt/lists/* && \
     distrust_ca_roots.sh
+
+COPY --from=rust /usr/local/rustup /usr/local/rustup
+COPY --from=rust /usr/local/cargo /usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/cargo/bin:$PATH
 
 WORKDIR /app
 
@@ -44,7 +55,7 @@ RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-inst
 COPY . .
 RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-binary-package pymgclient
 
-FROM python:3.15-slim@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 COPY --chmod=755 scripts/distrust_ca_roots.sh /usr/local/sbin/
 

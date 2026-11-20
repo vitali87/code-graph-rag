@@ -29,7 +29,9 @@ from collections.abc import Iterable
 from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
+    CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS,
     DEFINITION_NODE_LABELS,
+    GLOSS_UNATTACHED_STATES,
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
     KEY_ROW_INDEX,
@@ -53,8 +55,17 @@ CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 # `:IncompleteRun` is the CLI's own sync marker, unattached to any project
 # tree on purpose (see CYPHER_MARK_PROJECT_INCOMPLETE); doctor reports it as
 # an interrupted sync, not as an orphan (issue #2394).
+# A LOST or AMBIGUOUS gloss keeps its note with no edge by design (#1808),
+# so it is no orphan either (issue #2652). The state is coalesced: a gloss
+# with none would make the test null, and WHERE drops a null row before the
+# degree check (bot review on PR #2697).
+_UNATTACHED_GLOSS_STATES = ", ".join(
+    f"'{state}'" for state in sorted(GLOSS_UNATTACHED_STATES)
+)
 CYPHER_AUDIT_ORPHANS = (
     "MATCH (n) WHERE NOT n:Project AND NOT n:IncompleteRun "
+    "AND NOT (n:Gloss AND coalesce(n.anchor_state, '') "
+    f"IN [{_UNATTACHED_GLOSS_STATES}]) "
     "OPTIONAL MATCH (n)--(x) "
     "WITH n, count(x) AS degree "
     "WHERE degree = 0 "
@@ -327,14 +338,18 @@ _DEFINITION_RELS = (
 
 
 def _belongs_to_p(var: str) -> str:
+    return _name_belongs_to_p(f"{var}.qualified_name")
+
+
+def _name_belongs_to_p(name: str) -> str:
     # A qualified name is `p`'s when it is `p` or sits under `p.`, but not
     # under a longer registered name such as `p.v2` (issue #1985): the rule
     # CYPHER_DELETE_MODULE applies. `nested` is bound to those longer names.
     return (
-        f"({var}.qualified_name = p.name "
-        f"OR {var}.qualified_name STARTS WITH (p.name + '.')) "
-        f"AND NOT any(q IN nested WHERE {var}.qualified_name = q "
-        f"OR {var}.qualified_name STARTS WITH (q + '.'))"
+        f"({name} = p.name "
+        f"OR {name} STARTS WITH (p.name + '.')) "
+        f"AND NOT any(q IN nested WHERE {name} = q "
+        f"OR {name} STARTS WITH (q + '.'))"
     )
 
 
@@ -406,14 +421,17 @@ CYPHER_PROJECT_SYNC_TIMES = (
 # Module's qn the bare project name, so the prefix test alone would miss them
 # (review of PR 2497); the trailing dot of the prefix still keeps a project
 # whose name only starts with this one (`acme.webapp` beside `acme.web`).
-CYPHER_RETIRE_PROJECT = """
+CYPHER_RETIRE_PROJECT = (
+    """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
 WHERE container.qualified_name = $project_name
    OR container.qualified_name STARTS WITH $project_prefix
 OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
-DETACH DELETE p, container, defined
+WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
 """
+    + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
+)
 
 
 # Deletes what `p` claims, except a Folder or File another project claims
@@ -422,10 +440,24 @@ DETACH DELETE p, container, defined
 # large list is ever a grouping key, which cost seconds per thousand nodes.
 # Another project `q` claims a Folder/File it reaches through Folders and
 # Files from itself or from one of its own Packages, the same two walks as
-# _CYPHER_PROJECT_CLAIMS taken upward.
+# _CYPHER_PROJECT_CLAIMS taken upward. The resource-to-resource flows go
+# before any of that: both ends of one are shared Resource nodes, so no
+# detach of what `p` claims reaches it, and its `scope` names the function
+# or module that produced it, one of `p`'s qualified names (issue #2746).
+# Matching the scope by name rather than against `owned` takes a flow of a
+# unit cut off from `p` too, and keeps `owned` out of a grouping key. The
+# step follows `match_filter`, so prune's guarded variant removes no flow of
+# a project it leaves alone.
 def _delete_project(match_filter: str = "") -> str:
     return f"""
 MATCH (p:Project {{name: $project_name}}){match_filter}
+OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH (p.name + '.')
+WITH p, collect(longer.name) AS nested
+OPTIONAL MATCH (:Resource)-[rf:FLOWS_TO]->(:Resource)
+WHERE {_name_belongs_to_p("rf.scope")}
+WITH p, collect(rf) AS flows
+FOREACH (r IN flows | DELETE r)
+WITH p
 {_CYPHER_PROJECT_CLAIMS}
 WITH [c IN owned WHERE c:Folder OR c:File] AS shareable,
 [c IN owned WHERE NOT (c:Folder OR c:File)] AS named
@@ -1701,6 +1733,39 @@ CYPHER_GRAPH_IMPLEMENTORS = """MATCH (impl)-[r:INHERITS|IMPLEMENTS]->(base)
 WHERE base.qualified_name = $qn AND impl.qualified_name STARTS WITH $project_prefix
 RETURN labels(impl)[0] AS label, impl.qualified_name AS qualified_name,
        impl.path AS path, type(r) AS rel_type"""
+# What a rename must not silently break (issue #3226): whether a method
+# overrides something outside the project, the override markers it carries,
+# how many project methods it overrides, its class, and the supertypes outside
+# the project that class extends or implements, any of which may declare it
+# too. A library type is an ExternalModule even when its name starts like the
+# project's (`java.lang.Runnable` in a project named `java`).
+CYPHER_RENAME_OVERRIDE_FACTS = f"""MATCH (n)
+WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (n)-[:OVERRIDES]->(base)
+WITH n, count(base) AS bases
+OPTIONAL MATCH (owner)-[:DEFINES_METHOD]->(n)
+OPTIONAL MATCH (owner)-[:INHERITS|IMPLEMENTS]->(outside)
+WHERE outside:{NodeLabel.EXTERNAL_MODULE.value}
+   OR NOT outside.qualified_name STARTS WITH $project_prefix
+WITH n, bases, owner, collect(DISTINCT outside.qualified_name) AS outside_supertypes
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
+       n.name AS name, n.path AS path,
+       n.overrides_external AS overrides_external, n.decorators AS decorators,
+       n.modifiers AS modifiers, bases, outside_supertypes,
+       owner.qualified_name AS owner"""
+# The direct supertypes of project classes, a step of the rename's walk up a
+# class chain for contracts declared further up (`Task extends Bridge`, where
+# `Bridge implements Runnable`).
+CYPHER_RENAME_SUPERTYPES = """MATCH (c)-[:INHERITS|IMPLEMENTS]->(s)
+WHERE c.qualified_name IN $qns AND c.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT c.qualified_name AS qualified_name,
+       s.qualified_name AS supertype, labels(s) AS labels"""
+# The project classes that directly extend or implement any of `$qns`, a
+# step of the rename's walk down to the classes that inherit a renamed member
+# (`Task extends Base implements Runnable`, where only `Base` declares `run()`).
+CYPHER_RENAME_SUBTYPES = """MATCH (c)-[:INHERITS|IMPLEMENTS]->(s)
+WHERE s.qualified_name IN $qns AND c.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT c.qualified_name AS qualified_name"""
 CYPHER_GRAPH_OVERRIDES = """MATCH (a)-[r:OVERRIDES]-(b)
 WHERE b.qualified_name = $qn AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS label, a.qualified_name AS qualified_name, a.path AS path,
@@ -1855,7 +1920,7 @@ WHERE (n:Function OR n:Method) AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
        n.decorators AS decorators"""
-CYPHER_DELTA_MODULE_IMPORTS = """MATCH (m:Module)-[:IMPORTS]->(t:Module)
+CYPHER_DELTA_MODULE_IMPORTS = """MATCH (m:Module)-[r:IMPORTS]->(t:Module)
 WHERE m.qualified_name STARTS WITH $project_prefix
   AND t.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
@@ -1865,7 +1930,7 @@ WHERE m.qualified_name STARTS WITH $project_prefix
           WHERE t.qualified_name <> longer_project
             AND NOT t.qualified_name STARTS WITH (longer_project + '.'))
 RETURN DISTINCT m.qualified_name AS from_qn, m.path AS from_path,
-       t.qualified_name AS to_qn"""
+       t.qualified_name AS to_qn, r.imported_name AS imported_name"""
 # The import statements that bind a symbol BY NAME into or out of the
 # touched files (issue #2516), one row per bound name: an importer of a
 # touched module still naming a symbol the edit removed, and a touched
@@ -1894,6 +1959,14 @@ WHERE n.qualified_name STARTS WITH $project_prefix
             AND NOT n.qualified_name STARTS WITH (longer_project + '.'))
   AND n.path IN $paths
 RETURN n.qualified_name AS qualified_name, n.path AS path"""
+# The bases of the named classes, one level of a walk up from the classes
+# the snapshot's callers are written in: they decide what `this` or `self`
+# reaches there, and an edit can change them while every method keeps its
+# shape (bot reviews on PR #3632).
+CYPHER_DELTA_BASES = f"""MATCH (c)-[:INHERITS]->(b)
+WHERE {_any_label("c", _DELTA_DEFINITION_LABELS)} AND c.qualified_name IN $qns
+RETURN DISTINCT c.qualified_name AS from_qn,
+       coalesce(b.qualified_name, b.name) AS to_qn"""
 CYPHER_DELTA_MODULE_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(t:Module)
 WHERE m.qualified_name STARTS WITH $project_prefix
   AND t.qualified_name STARTS WITH $project_prefix
@@ -1929,6 +2002,12 @@ WITH DISTINCT doc
 MATCH (doc)-[:CONTAINS_SECTION]->(s:Section)
 RETURN doc.qualified_name AS from_qn, s.qualified_name AS qualified_name, s.name AS name,
        s.path AS path, s.start_line AS start_line, s.end_line AS end_line"""
+# What one module imports, with each statement's site (issue #1534).
+CYPHER_GRAPH_IMPORTS_OF = """MATCH (m:Module)-[r:IMPORTS]->(target)
+WHERE m.qualified_name = $qn AND m.qualified_name STARTS WITH $project_prefix
+RETURN target.qualified_name AS to_qn, r.line AS line, r.col AS col,
+       r.end_line AS end_line, r.end_col AS end_col, r.alias AS alias,
+       r.imported_name AS imported_name"""
 CYPHER_GRAPH_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(target)
 WHERE target.qualified_name = $qn AND m.qualified_name STARTS WITH $project_prefix
 RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,

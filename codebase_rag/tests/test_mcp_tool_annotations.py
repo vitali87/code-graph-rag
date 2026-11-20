@@ -38,12 +38,25 @@ WRITERS = frozenset(
         cs.MCPToolName.REINGEST,
         cs.MCPToolName.RENAME,
         cs.MCPToolName.CHANGE_SIGNATURE,
+        cs.MCPToolName.MOVE,
         cs.MCPToolName.SURGICAL_REPLACE_CODE,
         cs.MCPToolName.WRITE_FILE,
         cs.MCPToolName.STRUCTURAL_REPLACE,
         cs.MCPToolName.ANNOTATE,
     }
 )
+# The graph-driven edit operations, each called with arguments that would
+# rewrite the repository if the server ran it.
+EDIT_CALLS: list[tuple[cs.MCPToolName, dict[str, str | list[str]]]] = [
+    (
+        cs.MCPToolName.CHANGE_SIGNATURE,
+        {"qualified_name": "proj.lib.helper", "new_params": ["a", "b"]},
+    ),
+    (
+        cs.MCPToolName.MOVE,
+        {"qualified_name": "proj.lib.helper", "target_module": "proj.other"},
+    ),
+]
 
 
 @pytest.fixture
@@ -90,6 +103,14 @@ def _text(result: CallToolResult) -> str:
     return content.text
 
 
+def _files(root: Path) -> dict[str, str]:
+    return {
+        str(path.relative_to(root)): path.read_text(encoding="utf-8")
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
 def test_every_tool_is_classified() -> None:
     assert frozenset(cs.MCPToolName) - cs.MCP_READ_ONLY_TOOLS == WRITERS
     assert cs.MCP_DESTRUCTIVE_TOOLS <= WRITERS
@@ -120,6 +141,7 @@ async def test_the_destructive_tools_say_so(repo: Path, no_llm: None) -> None:
         cs.MCPToolName.WRITE_FILE,
         cs.MCPToolName.STRUCTURAL_REPLACE,
         cs.MCPToolName.CHANGE_SIGNATURE,
+        cs.MCPToolName.MOVE,
     ):
         annotations = tools[name].annotations
         assert annotations is not None
@@ -155,19 +177,23 @@ async def test_a_read_only_server_refuses_a_writer_called_by_name(
     assert not (repo / "new.py").exists()
 
 
-async def test_a_read_only_server_refuses_change_signature(
-    repo: Path, no_llm: None, read_only: None
+@pytest.mark.parametrize(
+    ("name", "arguments"), EDIT_CALLS, ids=[str(name) for name, _ in EDIT_CALLS]
+)
+async def test_a_read_only_server_refuses_an_edit_operation(
+    repo: Path,
+    no_llm: None,
+    read_only: None,
+    name: cs.MCPToolName,
+    arguments: dict[str, str | list[str]],
 ) -> None:
-    before = (repo / "lib.py").read_text(encoding="utf-8")
+    before = _files(repo)
 
-    result = await _call(
-        cs.MCPToolName.CHANGE_SIGNATURE,
-        {"qualified_name": "proj.lib.helper", "new_params": ["a", "b"]},
-    )
+    result = await _call(name, arguments)
 
     assert result.is_error is True
     assert "read-only" in _text(result)
-    assert (repo / "lib.py").read_text(encoding="utf-8") == before
+    assert _files(repo) == before
 
 
 async def test_a_read_only_server_still_reads(
