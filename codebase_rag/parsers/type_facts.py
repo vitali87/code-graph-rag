@@ -615,6 +615,7 @@ def emit_of_type_edges[F: tuple[str, str, str, str]](
     pending: list[F],
     resolver: TypeReferenceResolver,
     ingestor: IngestorProtocol,
+    requeued: Container[str] = frozenset(),
 ) -> int:
     """OF_TYPE edges for every queued Parameter, Field or Constant, after Pass 2.
 
@@ -623,15 +624,20 @@ def emit_of_type_edges[F: tuple[str, str, str, str]](
     annotated parameters carry 575 distinct annotation strings, so the memo
     is where the cost goes, not the dedup `_emit_accepts` does per function
     (which saves 13%); the same annotation also recurs across a class's fields.
+
+    A qn in `requeued` was read back from the graph for a file this run did
+    not parse, so its module's imports are loaded before its annotation
+    resolves, as a requeued RETURNS/ACCEPTS fact's are (#3007 review).
     """
-    memo: dict[tuple[str, str], list[str]] = {}
+    memo: dict[tuple[str, str, bool], list[str]] = {}
     emitted = 0
     for qn, module_qn, type_name, path in pending:
-        key = (type_name, module_qn)
+        was_requeued = qn in requeued
+        key = (type_name, module_qn, was_requeued)
         targets = memo.get(key)
         if targets is None:
             targets = memo[key] = resolver.resolve_annotation(
-                type_name, module_qn, path
+                type_name, module_qn, path, requeued=was_requeued
             )
         source = (label.value, cs.KEY_QUALIFIED_NAME, qn)
         for target_qn in targets:

@@ -4240,7 +4240,8 @@ class GraphUpdater:
         # never goes (CodeRabbit, PR #2135).
         if self._registry_unread:
             return
-        pending = self.factory.definition_processor.pending_constant_types
+        dp = self.factory.definition_processor
+        pending = dp.pending_constant_types
         for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             type_name = row.get(cs.KEY_TYPE_NAME)
@@ -4260,6 +4261,7 @@ class GraphUpdater:
             # resolves the annotation through the other file's scope.
             owner = qn.rpartition(cs.SEPARATOR_DOT)[0]
             pending.append(PendingConstantType(qn, owner, type_name, path))
+            dp.requeued_constant_qns.add(qn)
 
     def _graph_rows(self, query: str, params: PropertyParams | None) -> list[ResultRow]:
         # A write-only sink (the protobuf exporter) has no graph to read, and

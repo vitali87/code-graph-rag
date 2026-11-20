@@ -464,6 +464,9 @@ class DefinitionProcessor(
         self.pending_parameter_types: list[PendingParameterType] = []
         self.pending_field_types: list[PendingFieldType] = []
         self.pending_constant_types: list[PendingConstantType] = []
+        # The queued Constants read back from the graph rather than parsed:
+        # their annotations resolve through their file's restored imports.
+        self.requeued_constant_qns: set[str] = set()
         # Registered qns that are macro definitions (Rust macro_rules!):
         # macros register as Function nodes but live in a separate namespace,
         # so Pass-3 gates macro-invocation call sites to these targets and
@@ -623,8 +626,13 @@ class DefinitionProcessor(
             cs.NodeLabel.FIELD, self.pending_field_types, resolver, self.ingestor
         )
         emitted += emit_of_type_edges(
-            cs.NodeLabel.CONSTANT, self.pending_constant_types, resolver, self.ingestor
+            cs.NodeLabel.CONSTANT,
+            self.pending_constant_types,
+            resolver,
+            self.ingestor,
+            self.requeued_constant_qns,
         )
+        self.requeued_constant_qns.clear()
         return emitted
 
     def process_file(
