@@ -210,6 +210,26 @@ def test_a_folder_another_project_still_holds_stays(tmp_path: Path) -> None:
     assert _tree_folders(store, "demo") == {"src", "src/pkg"}
 
 
+def test_a_nested_projects_package_keeps_its_folder(tmp_path: Path) -> None:
+    # `demo.copy` sits under `demo.`, so its Package `demo.copy.pkg` passed
+    # the release's prefix test: excluding `pkg/data` from `demo` took that
+    # Package's edge too, and the claim check then found no other holder.
+    root = tmp_path / "proj"
+    for rel in ("pkg/__init__.py", "pkg/a.py", "pkg/data/x.py"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("def f():\n    return 1\n", encoding="utf-8")
+    store = _StatefulIngestor()
+    _sync(store, root, frozenset())
+    _sync(store, root, frozenset(), project="demo.copy")
+    held = _tree_folders(store, "demo.copy")
+    assert "pkg/data" in held, held
+
+    _sync(store, root, frozenset({"pkg/data"}))
+
+    assert _tree_folders(store, "demo.copy") == held
+    assert "pkg/data" not in _tree_folders(store, "demo")
+
+
 # `notes` only `demo` holds; `copy` holds the rest too, `data` through its own
 # Package.
 _SHARED_GRAPH = """
@@ -249,3 +269,32 @@ def test_the_release_runs_on_the_embedded_engine(tmp_path: Path) -> None:
         ("copy", "/w/tests"),
         ("copy.pkg", "/w/pkg/data"),
     ]
+
+
+_NESTED_GRAPH = """
+CREATE (demo:Project {name: 'demo'}), (nested:Project {name: 'demo.copy'}),
+       (demo_pkg:Package {qualified_name: 'demo.pkg'}),
+       (nested_pkg:Package {qualified_name: 'demo.copy.pkg'}),
+       (data:Folder {absolute_path: '/w/pkg/data'}),
+       (demo)-[:CONTAINS_PACKAGE]->(demo_pkg),
+       (nested)-[:CONTAINS_PACKAGE]->(nested_pkg),
+       (demo_pkg)-[:CONTAINS_FOLDER]->(data),
+       (nested_pkg)-[:CONTAINS_FOLDER]->(data)
+"""
+
+
+def test_the_release_leaves_a_nested_projects_package_on_the_engine(
+    tmp_path: Path,
+) -> None:
+    with EmbeddedConnection(str(tmp_path / "graph.sqlite")) as conn:
+        conn.run(_NESTED_GRAPH)
+        params = {
+            "path": "/w/pkg/data",
+            "project_name": "demo",
+            "project_prefix": "demo.",
+        }
+        conn.run(cq.CYPHER_RELEASE_FOLDER, params)
+        conn.run(cq.CYPHER_DELETE_UNCLAIMED_FOLDER, params)
+        edges = conn.run(_FOLDER_EDGES).rows
+
+    assert [tuple(row) for row in edges] == [("demo.copy.pkg", "/w/pkg/data")]

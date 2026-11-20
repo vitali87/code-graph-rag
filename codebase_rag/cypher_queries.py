@@ -565,14 +565,17 @@ def _sweep_detached() -> str:
 # project nested in another, shares the node, and DETACH DELETE took it out of
 # the other project's tree too. This project's own containment edges go first
 # (from its Project or one of its Packages), then the Folder, only when no
-# other project still claims it.
-CYPHER_RELEASE_FOLDER = (
-    "MATCH (holder)-[r:CONTAINS_FOLDER]->(:Folder {absolute_path: $path}) "
-    "WHERE (holder:Project AND holder.name = $project_name) "
-    "OR (holder:Package AND (holder.qualified_name = $project_name "
-    "OR holder.qualified_name STARTS WITH $project_prefix)) "
-    "DELETE r"
-)
+# other project still claims it. A Package under a longer registered name
+# (`demo.copy.pkg` beside `demo`) is that project's, so its edge stays: taken,
+# the claim check would find no other holder and delete the Folder from it.
+CYPHER_RELEASE_FOLDER = f"""
+OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH $project_prefix
+WITH collect(longer.name) AS nested
+MATCH (holder)-[r:CONTAINS_FOLDER]->(:Folder {{absolute_path: $path}})
+WHERE (holder:Project AND holder.name = $project_name)
+OR (holder:Package AND ({_belongs_to_named("holder")}))
+DELETE r
+"""
 CYPHER_DELETE_UNCLAIMED_FOLDER = (
     "MATCH (c:Folder {absolute_path: $path})\n" + _DELETE_UNLESS_CLAIMED_ELSEWHERE
 )

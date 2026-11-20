@@ -3285,16 +3285,24 @@ class _StatefulIngestor:
 
     def _release_folder(self, params: PropertyDict) -> None:
         # Mirrors CYPHER_RELEASE_FOLDER: only the project's own containment
-        # edges into the Folder go, from its Project or one of its Packages.
+        # edges into the Folder go, from its Project or one of its Packages,
+        # and not from a Package of a longer registered project name.
         name = _str(params.get(cs.KEY_PROJECT_NAME))
         prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        nested = {
+            _str(uid)
+            for label, uid in self.nodes
+            if label == _PROJECT_LABEL and _str(uid).startswith(prefix)
+        }
 
         def own(edge: _EdgeKey) -> bool:
             holder_label, holder_key = edge[0], _str(edge[1])
             if holder_label == _PROJECT_LABEL:
                 return holder_key == name
-            return holder_label == _PACKAGE_LABEL and (
-                holder_key == name or holder_key.startswith(prefix)
+            return (
+                holder_label == _PACKAGE_LABEL
+                and (holder_key == name or holder_key.startswith(prefix))
+                and not _shadowed_by_longer_owner(holder_key, nested)
             )
 
         folders = self._nodes_at_path(
