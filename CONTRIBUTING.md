@@ -98,6 +98,10 @@ A change that breaks existing setups (a new default, a removed option, a renamed
 
 The **Breaking Change Notes** check fails until the title, the label and the file agree.
 
+### Public surface
+
+`docs/reference/public-surface.json` records everything users and agents reach: commands and options, exit codes, MCP tools and their input schemas, settings, graph labels and relationships, the export's records, the protobuf index and the Python SDK. `test_public_surface.py` fails when the code and the file differ. A change you intend: run `uv run python scripts/public_surface.py` and commit the file, so the change shows in the pull request. A removed or renamed entry is a breaking change (above). The Rust rewrite ([RUST_REWRITE_PLAN.md](docs/reports/RUST_REWRITE_PLAN.md)) is held to this file.
+
 ### Continuous Integration
 
 All pull requests are automatically validated by our CI workflow, which runs in parallel for faster feedback:
