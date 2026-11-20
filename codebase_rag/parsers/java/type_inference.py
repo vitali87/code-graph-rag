@@ -65,6 +65,19 @@ def _declared_field_names(class_body: ASTNode) -> set[str]:
     }
 
 
+def _capture_base_name(site: ASTNode) -> str | None:
+    """The superclass the class created or declared at `site` names: `Base`
+    in `new Base() { ... }` or `class Local extends Base { ... }`."""
+    if site.type == cs.TS_OBJECT_CREATION_EXPRESSION:
+        type_node = site.child_by_field_name(cs.FIELD_TYPE)
+    elif (clause := site.child_by_field_name(cs.FIELD_SUPERCLASS)) is not None:
+        type_node = clause.named_child(0)
+    else:
+        return None
+    text = safe_decode_text(type_node) if type_node is not None else None
+    return text.split(cs.CHAR_ANGLE_OPEN, 1)[0] if text else None
+
+
 def _encloses(container: ASTNode, node: ASTNode) -> bool:
     return (
         container.start_byte <= node.start_byte and node.end_byte <= container.end_byte
@@ -277,9 +290,20 @@ class JavaTypeInferenceEngine(
         # capture (bot review on PR #2991). The class's field pass types it
         # where it can; a capture left in place would bind the wrong class.
         shadowed = _declared_field_names(body)
+        base = (
+            self._java_type_ref(base_name, module_qn)
+            if (base_name := _capture_base_name(site))
+            else None
+        )
         for name, type_name in self._captures_at(enclosing, site, module_qn).items():
-            if name not in shadowed:
-                types[name] = type_name
+            if name in shadowed:
+                continue
+            # A field inherited from the superclass hides it too, and is
+            # what the name reads (bot review on PR #2991).
+            inherited = (
+                self._lookup_java_field_type(base, name, module_qn) if base else None
+            )
+            types[name] = inherited or type_name
 
     def _captures_at(
         self, enclosing: ASTNode, site: ASTNode, module_qn: str
@@ -306,7 +330,35 @@ class JavaTypeInferenceEngine(
         for loop in _nodes_of_type(enclosing, cs.TS_ENHANCED_FOR_STATEMENT):
             if _encloses(loop, site):
                 self._process_enhanced_for_statement(loop, types, module_qn)
+        # A lambda around `site` binds its parameters nearer than the fields
+        # and the method's own names, outermost first so the innermost wins
+        # (bot review on PR #2991).
+        for lam in _nodes_of_type(enclosing, cs.TS_JAVA_LAMBDA_EXPRESSION):
+            if _encloses(lam, site):
+                self._bind_lambda_parameters(lam, types, module_qn)
         return types
+
+    def _bind_lambda_parameters(
+        self, lam: ASTNode, types: dict[str, str], module_qn: str
+    ) -> None:
+        params = lam.child_by_field_name(cs.FIELD_PARAMETERS)
+        if params is None:
+            return
+        # `x -> ...` and `(x, y) -> ...` leave the type to inference, which
+        # this pass cannot do: the name is unknown rather than a field's.
+        untyped = (
+            [params]
+            if params.type == cs.TS_IDENTIFIER
+            else [
+                child
+                for child in params.named_children
+                if child.type == cs.TS_IDENTIFIER
+            ]
+        )
+        for name_node in untyped:
+            if name := safe_decode_text(name_node):
+                types.pop(name, None)
+        self._analyze_java_parameters(lam, types, module_qn)
 
     def resolve_java_method_call(
         self,

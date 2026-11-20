@@ -173,14 +173,64 @@ public class Scoped {
 }
 """
 
+# Bot review on PR #2991: the nearest binding of a name wins. A lambda's
+# parameter between the method and the class hides the field of that name,
+# and a field the class inherits hides a captured local.
+BASE = """\
+package com.acme;
+
+public class Base {
+  protected Other codec = new Other();
+}
+"""
+
+NEAREST = """\
+package com.acme;
+
+import java.util.function.Function;
+
+public class Nearest {
+  private Codec codec = new Codec();
+
+  Function<Other, Handler> typedLambda() {
+    return (Other codec) -> {
+      class Local implements Handler {
+        @Override
+        public String handle(String in) {
+          return codec.encode(in); // lambda-parameter
+        }
+      }
+      return new Local();
+    };
+  }
+
+  static Base inherited(final Codec codec) {
+    class Local extends Base {
+      String run(String in) {
+        return codec.encode(in); // inherited-field
+      }
+    }
+    return new Local();
+  }
+
+  static Base anonymousInherited(final Codec codec) {
+    return new Base() {
+      String run(String in) {
+        return codec.encode(in); // anonymous-inherited-field
+      }
+    };
+  }
+}
+"""
+
 PREFIX = "src.main.java.com.acme"
 OTHER_ENCODE = "Other.Other.encode(String)"
 
 
-def _scoped_line(marker: str) -> int:
+def _scoped_line(marker: str, source: str = SCOPED) -> int:
     return next(
         number
-        for number, text in enumerate(SCOPED.splitlines(), start=1)
+        for number, text in enumerate(source.splitlines(), start=1)
         if marker in text
     )
 
@@ -197,6 +247,8 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     _write(root, f"{base}/Factory.java", FACTORY)
     _write(root, f"{base}/Other.java", OTHER)
     _write(root, f"{base}/Scoped.java", SCOPED)
+    _write(root, f"{base}/Base.java", BASE)
+    _write(root, f"{base}/Nearest.java", NEAREST)
     return _index(root, MagicMock())
 
 
@@ -255,6 +307,17 @@ def test_a_field_of_the_anonymous_class_shadows_the_captured_name(
 ) -> None:
     line = _scoped_line("anonymous-field")
     assert line not in _callers_of_encode(graph, source="Scoped")
+
+
+@pytest.mark.parametrize(
+    "marker", ["lambda-parameter", "inherited-field", "anonymous-inherited-field"]
+)
+def test_the_nearest_binding_of_the_name_types_the_receiver(
+    graph: RecordedGraph, marker: str
+) -> None:
+    line = _scoped_line(marker, NEAREST)
+    assert _callers_of_encode(graph, OTHER_ENCODE, "Nearest").get(line) == "exact"
+    assert line not in _callers_of_encode(graph, source="Nearest")
 
 
 # Negative: what must not change.
