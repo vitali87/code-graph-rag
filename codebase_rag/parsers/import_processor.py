@@ -1058,15 +1058,42 @@ def _python_import_from_binding(stmt: Node, name: str) -> str | None:
 
 
 def _python_assignment_binding(stmt: Node, name: str) -> str | None:
-    # `name = <value>` binds `=<value>`.
+    # `name = <value>` binds `=<value>`. An unpacking (`TYPE_CHECKING, DEBUG =
+    # True, False`) binds the value at the name's position, or the whole
+    # value when nothing pairs them (bot review on PR #2728).
     bound: str | None = _UNBOUND
     for child in stmt.named_children:
         if child.type != cs.TS_PY_ASSIGNMENT:
             continue
-        if safe_decode_text(child.child_by_field_name(cs.TS_FIELD_LEFT)) == name:
-            value = safe_decode_text(child.child_by_field_name(cs.TS_FIELD_RIGHT))
-            bound = f"={value}"
+        left = child.child_by_field_name(cs.TS_FIELD_LEFT)
+        right = child.child_by_field_name(cs.TS_FIELD_RIGHT)
+        if safe_decode_text(left) == name:
+            bound = f"={safe_decode_text(right)}"
+        elif left is not None and left.type in cs.PY_UNPACKING_TARGET_TYPES:
+            targets = left.named_children
+            at = [
+                i
+                for i, target in enumerate(targets)
+                if safe_decode_text(target) == name
+            ]
+            if not at:
+                continue
+            values = (
+                right.named_children
+                if right is not None and right.type in cs.PY_UNPACKING_VALUE_TYPES
+                else []
+            )
+            value = values[at[-1]] if len(values) == len(targets) else right
+            bound = f"={safe_decode_text(value)}"
     return bound
+
+
+def _same_module(full_name: str | None, other: str) -> bool:
+    # `app.db.save` and `app.db.User` are names of one module.
+    if full_name is None:
+        return False
+    module, sep, _name = full_name.rpartition(cs.SEPARATOR_DOT)
+    return bool(sep) and module == other.rpartition(cs.SEPARATOR_DOT)[0]
 
 
 def _rust_member_pattern(pattern: str) -> str:
@@ -4336,14 +4363,20 @@ class ImportProcessor:
                 site is None
                 or site is previous
                 or name not in before
-                or mapping.get(name) != before[name]
                 or previous.get(cs.KEY_IMPORT_SCOPE) is not None
                 or site.get(cs.KEY_IMPORT_SCOPE) is None
             ):
                 continue
-            self._python_displaced_eager_imports.setdefault(module_qn, []).append(
-                (before[name], previous)
-            )
+            if mapping.get(name) == before[name]:
+                self._python_displaced_eager_imports.setdefault(module_qn, []).append(
+                    (before[name], previous)
+                )
+            elif _same_module(mapping.get(name), before[name]):
+                # Another symbol of the same module: its edge is the module's
+                # only one to that module, and the import-time statement still
+                # loads that module, so the edge counts toward a cycle (bot
+                # review on PR #2728).
+                site.pop(cs.KEY_IMPORT_SCOPE, None)
 
     def _record_python_rebinds(self, module_qn: str, before: dict[str, str]) -> None:
         mapping = self.import_mapping[module_qn]

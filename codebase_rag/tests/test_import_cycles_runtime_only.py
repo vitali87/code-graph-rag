@@ -96,6 +96,17 @@ TRY_EITHER = (
     "    import typing_extensions as t\n\n"
     "if t.TYPE_CHECKING:\n    from app.db import save\n\n" + MODELS
 )
+# Bot review on PR #2728: a deferred import of another symbol of the same
+# module under an import-time name leaves the module loaded at import time,
+# and an unpacking rebinds a guard as a plain assignment does.
+EAGER_THEN_LAZY_OTHER = TOP_LEVEL + (
+    "\n    def persist(self):\n        from app.db import User as save\n"
+    "        return save(self)\n"
+)
+UNPACKED_TYPE_CHECKING = (
+    "from typing import TYPE_CHECKING\n\nTYPE_CHECKING, DEBUG = True, False\n\n"
+    "if TYPE_CHECKING:\n    from app.db import save\n\n" + MODELS
+)
 CLASS_BODY = "class User:\n    from app.db import save\n\n    def __init__(self, name):\n        self.name = name\n"
 
 
@@ -228,6 +239,14 @@ def test_an_import_that_runs_at_import_time_still_makes_a_cycle(
         pytest.param(TRUE_TYPE_CHECKING, {None}, id="a-module-true-type-checking"),
         pytest.param(CLASS_SHADOW, {None}, id="a-class-replaces-the-alias"),
         pytest.param(CONDITIONAL_REBIND, {None}, id="a-rebinding-that-may-not-run"),
+        pytest.param(
+            EAGER_THEN_LAZY_OTHER,
+            {None},
+            id="a-lazy-import-of-another-symbol-under-an-eager-name",
+        ),
+        pytest.param(
+            UNPACKED_TYPE_CHECKING, {None}, id="an-unpacking-rebinds-the-guard"
+        ),
     ],
 )
 def test_an_import_time_import_beside_a_deferred_look_alike_makes_a_cycle(
