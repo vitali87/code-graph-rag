@@ -2805,6 +2805,7 @@ E	IMPORTS	Module	"cjson.cJSON.h"	ExternalModule	"std.stddef.h"	{"alias":"stddef"
 E	IMPORTS	Module	"cjson.cJSON_Utils"	ExternalModule	"std.ctype.h"	{"alias":"ctype","col":0,"end_col":0,"end_line":38,"imported_name":"ctype.h","line":37}
 E	IMPORTS	Module	"cjson.cJSON_Utils"	ExternalModule	"std.float.h"	{"alias":"float","col":0,"end_col":0,"end_line":44,"imported_name":"float.h","line":43}
 E	IMPORTS	Module	"cjson.cJSON_Utils"	ExternalModule	"std.limits.h"	{"alias":"limits","col":0,"end_col":0,"end_line":42,"imported_name":"limits.h","line":41}
+E	IMPORTS	Module	"cjson.cJSON_Utils"	ExternalModule	"std.math.h"	{"alias":"math","col":0,"end_col":0,"end_line":43,"imported_name":"math.h","line":42}
 E	IMPORTS	Module	"cjson.cJSON_Utils"	ExternalModule	"std.math.h"	{"alias":"math","col":0,"end_col":0,"end_line":45,"imported_name":"math.h","line":44}
 E	IMPORTS	Module	"cjson.cJSON_Utils"	ExternalModule	"std.stdio.h"	{"alias":"stdio","col":0,"end_col":0,"end_line":41,"imported_name":"stdio.h","line":40}
 E	IMPORTS	Module	"cjson.cJSON_Utils"	ExternalModule	"std.stdlib.h"	{"alias":"stdlib","col":0,"end_col":0,"end_line":40,"imported_name":"stdlib.h","line":39}
@@ -3009,6 +3010,7 @@ E	IMPORTS	Module	"cjson.tests.unity.src.unity_internals"	ExternalModule	"std.lim
 E	IMPORTS	Module	"cjson.tests.unity.src.unity_internals"	ExternalModule	"std.math.h"	{"alias":"math","col":0,"end_col":0,"end_line":18,"imported_name":"math.h","line":17}
 E	IMPORTS	Module	"cjson.tests.unity.src.unity_internals"	ExternalModule	"std.setjmp.h"	{"alias":"setjmp","col":0,"end_col":0,"end_line":14,"imported_name":"setjmp.h","line":13}
 E	IMPORTS	Module	"cjson.tests.unity.src.unity_internals"	ExternalModule	"std.stdint.h"	{"alias":"stdint","col":0,"end_col":0,"end_line":27,"imported_name":"stdint.h","line":26}
+E	IMPORTS	Module	"cjson.tests.unity.src.unity_internals"	ExternalModule	"std.stdio.h"	{"alias":"stdio","col":0,"end_col":0,"end_line":244,"imported_name":"stdio.h","line":243}
 E	IMPORTS	Module	"cjson.tests.unity.src.unity_internals"	ExternalModule	"std.stdio.h"	{"alias":"stdio","col":0,"end_col":0,"end_line":256,"imported_name":"stdio.h","line":255}
 E	IMPORTS	Module	"cjson.tests.unity.src.unity_internals"	Module	"cjson.tests.unity.examples.unity_config"	{"alias":"unity_config","col":0,"end_col":0,"end_line":11,"imported_name":"../examples/unity_config.h","line":10}
 E	INSTANTIATES	Module	"cjson.tests.unity.auto.unity_test_summary"	Class	"cjson.tests.unity.auto.unity_test_summary.UnityTestSummary"	{"arg_count":0,"col":8,"end_col":26,"end_line":117,"kwarg_names":[],"line":117,"resolution":"exact"}
