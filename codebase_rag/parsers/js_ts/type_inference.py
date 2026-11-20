@@ -430,8 +430,8 @@ class JsTypeInferenceEngine:
         A binding keeps its type only while every plain write to it agrees:
         the nested function may run after `r = new Other()`, so a write of
         another or an unknown type leaves the declared annotation, if any
-        (Greptile on #3331). A write in a nested function counts unless that
-        function declares the name itself."""
+        (Greptile on #3331). A write in a nested function counts unless a
+        declaration of that function holds the name where the write is."""
         root = func_node
         while root.parent is not None:
             root = root.parent
@@ -448,13 +448,16 @@ class JsTypeInferenceEngine:
             whole = (func_node.start_byte, func_node.end_byte)
             scopes.setdefault(whole, {}).update(parameters)
             annotated.update(((whole, name), qn) for name, qn in parameters.items())
-        writes = self._walk_own_scope(func_node, scopes, annotated, module_qn, language)
+        writes = self._walk_own_scope(
+            func_node, root, scopes, annotated, module_qn, language
+        )
         self._apply_own_scope_writes(scopes, annotated, writes)
         return scopes
 
     def _walk_own_scope(
         self,
         func_node: ASTNode,
+        root: ASTNode,
         scopes: _OwnScopes,
         annotated: _OwnAnnotations,
         module_qn: str,
@@ -462,16 +465,16 @@ class JsTypeInferenceEngine:
     ) -> list[_PlainWrite]:
         # Records the function's own typed declarators and returns the plain
         # writes to names it may hold: its own, and its nested functions'
-        # writes to names they do not declare.
+        # writes to names no declaration of theirs holds at the write.
         writes: list[_PlainWrite] = []
         body = func_node.child_by_field_name(cs.FIELD_BODY)
-        # Each node with the names the nested functions around it declare,
-        # None while still in this function's own body.
-        stack: list[tuple[ASTNode, frozenset[str] | None]] = (
-            [(child, None) for child in reversed(body.children)] if body else []
+        # Each node with the nested functions around it, empty while still in
+        # this function's own body.
+        stack: list[tuple[ASTNode, tuple[ASTNode, ...]]] = (
+            [(child, ()) for child in reversed(body.children)] if body else []
         )
         while stack:
-            current, declared = stack.pop()
+            current, nested = stack.pop()
             # A class `static { ... }` block is a scope of its own, as a
             # function is: its `var r` is not the function's `r` (Greptile
             # on #3331).
@@ -479,16 +482,39 @@ class JsTypeInferenceEngine:
                 current.type in cs.JS_TS_FUNCTION_NODES
                 or current.type == cs.TS_CLASS_STATIC_BLOCK
             ):
-                own = ut.js_ts_own_scope_names(current, assigned=False)
-                declared = own if declared is None else declared | own
-            elif declared is None and current.type == cs.TS_VARIABLE_DECLARATOR:
+                nested = (*nested, current)
+            elif not nested and current.type == cs.TS_VARIABLE_DECLARATOR:
                 self._record_own_declarator(
                     current, func_node, scopes, annotated, module_qn, language
                 )
-            elif write := self._js_plain_write(current, declared, module_qn, language):
+            elif (
+                write := self._js_plain_write(current, module_qn, language)
+            ) and not self._js_written_in_own_scope(write, nested, root, language):
                 writes.append(write)
-            stack.extend((child, declared) for child in reversed(current.children))
+            stack.extend((child, nested) for child in reversed(current.children))
         return writes
+
+    def _js_written_in_own_scope(
+        self,
+        write: _PlainWrite,
+        nested: tuple[ASTNode, ...],
+        root: ASTNode,
+        language: cs.SupportedLanguage | None,
+    ) -> bool:
+        # Whether a nested function around the write binds the name where it
+        # is written: `{ let r; } r = v` writes the `r` around the function,
+        # the block's `r` holding in the block only (Greptile on #3331).
+        name, pos, _value_type = write
+        for scope in nested:
+            if (
+                scope.type in _JS_SELF_NAMED_EXPRESSIONS
+                and self._js_declared_name(scope) == name
+            ):
+                return True
+            spans = self._js_binding_index(scope, root, language).get(name, ())
+            if any(start <= pos < end for start, end in spans):
+                return True
+        return False
 
     @staticmethod
     def _apply_own_scope_writes(
@@ -534,12 +560,10 @@ class JsTypeInferenceEngine:
     def _js_plain_write(
         self,
         node: ASTNode,
-        declared: frozenset[str] | None,
         module_qn: str,
         language: cs.SupportedLanguage | None,
     ) -> _PlainWrite | None:
-        # `r = v` or `r ??= v`, unless a nested function around it declares
-        # `r`: the name written, where, and v's type.
+        # `r = v` or `r ??= v`: the name written, where, and v's type.
         if node.type not in (
             cs.TS_JS_ASSIGNMENT_EXPRESSION,
             cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
@@ -549,7 +573,7 @@ class JsTypeInferenceEngine:
         if left is None or left.type != cs.TS_IDENTIFIER:
             return None
         name = safe_decode_text(left)
-        if not name or (declared is not None and name in declared):
+        if not name:
             return None
         value = node.child_by_field_name(cs.TS_FIELD_RIGHT)
         value_type = (

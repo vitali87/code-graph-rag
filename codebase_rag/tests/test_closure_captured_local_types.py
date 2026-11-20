@@ -354,6 +354,26 @@ _HIDDEN = {
         "c.outer.cb",
         None,
     ),
+    "js-rewritten-past-an-inner-block-let-of-a-static-block": (
+        # The inner block's `let r` holds in that block only: the write after
+        # it is to `outer`'s `r` (Greptile on #3331).
+        "c.js",
+        _JS_CLASSES + "function outer() {\n  let r = new Range();\n"
+        "  class C { static { { let r; } r = new Other(); } }\n"
+        "  function inner() { return r.reset(); }\n  return [C, inner];\n}\n"
+        "module.exports = { outer };\n",
+        "c.outer.inner",
+        None,
+    ),
+    "js-rewritten-past-an-inner-block-let-of-a-sibling": (
+        "c.js",
+        _JS_CLASSES + "function outer() {\n  let r = new Range();\n"
+        "  function swap() { { let r; } r = new Other(); }\n"
+        "  function inner() { return r.reset(); }\n  return [swap, inner];\n}\n"
+        "module.exports = { outer };\n",
+        "c.outer.inner",
+        None,
+    ),
 }
 
 
