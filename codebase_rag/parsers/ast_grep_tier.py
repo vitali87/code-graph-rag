@@ -72,6 +72,7 @@ class _Rule:
     kind: str | None = None
     # for kind rules whose name lives on a non-standard child kind
     name_child: str | None = None
+    name_paths: tuple[str, ...] = ()
     # kind rules only: skip matches without a child of this kind. Needed when
     # one grammar node covers several concepts (a nix `binding` is a function
     # only when its value is a `function_expression`; without this every
@@ -111,6 +112,7 @@ def _require_selector_applies(
         ("name_head", pattern, "pattern"),
         ("has_child", kind, "kind"),
         ("name_child", kind, "kind"),
+        ("name_paths", kind, "kind"),
         ("receiver_child", kind, "kind"),
     ):
         if fields.get(field) and not needs:
@@ -132,10 +134,14 @@ def _parse_rule(raw: object, path_name: str, section: str) -> _Rule:
     name_child = fields.get("name_child")
     has_child = fields.get("has_child")
     receiver_child = fields.get("receiver_child")
+    name_paths = fields.get("name_paths")
+    if name_paths and not isinstance(name_paths, list):
+        raise ValueError(f"{path_name}: 'name_paths' must be a list")
     return _Rule(
         pattern=str(pattern) if pattern else None,
         kind=str(kind) if kind else None,
         name_child=str(name_child) if name_child else None,
+        name_paths=tuple(cast("list[str]", name_paths or [])),
         has_child=str(has_child) if has_child else None,
         name_head=bool(fields.get("name_head")),
         receiver_child=str(receiver_child) if receiver_child else None,
@@ -335,6 +341,7 @@ class AstGrepTier:
         "_configs",
         "_languages_without_extra",
         "_unparsed",
+        "module_qn_to_file_path",
     )
 
     def __init__(
@@ -349,6 +356,10 @@ class AstGrepTier:
         # as bare File nodes instead of warning before it has seen a file.
         self._languages_without_extra: dict[str, str] = {}
         self._unparsed: Counter[str] = Counter()
+        # Every Module this tier emitted, as the definition processor keeps
+        # its own: the findings pass visits only the modules it is handed, so
+        # without this the Ruby rule packs never ran (issue #2781).
+        self.module_qn_to_file_path: dict[str, Path] = {}
         try:
             configs = load_pattern_configs()
         except ImportError:
@@ -418,6 +429,7 @@ class AstGrepTier:
             return
 
         module_qn = self._emit_module(file_path, structural_elements)
+        self.module_qn_to_file_path[module_qn] = file_path
         relative_path = cached_relative_path(file_path, self._repo_path).as_posix()
         absolute_path = cached_resolve_posix(file_path)
 
@@ -500,6 +512,20 @@ class AstGrepTier:
             for child in node.children():
                 if child.kind() == rule.name_child:
                     return child.text()
+        if rule.name_paths:
+            for path in rule.name_paths:
+                candidates = [node]
+                for kind in path.split("/"):
+                    candidates = [
+                        child
+                        for candidate in candidates
+                        for child in candidate.children()
+                        if child.kind() == kind
+                    ]
+                if candidates:
+                    return candidates[0].text().replace(".", cs.CPP_TEMPLATE_ARG_DOT)
+            return None
+        if rule.name_child:
             return None
         field = node.field("name")
         if field is not None:
