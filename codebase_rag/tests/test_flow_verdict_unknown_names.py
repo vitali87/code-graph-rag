@@ -20,6 +20,7 @@ from codebase_rag.flow_verdict import (
     CYPHER_FLOW_COVERAGE_GAPS,
     CYPHER_FLOW_EDGES,
     CYPHER_FLOW_REMOTE_EDGES,
+    CYPHER_FLOW_WRITE_EDGES,
 )
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.types_defs import PropertyParams, ResultRow
@@ -70,7 +71,11 @@ def _fetch_all(query: str, params: PropertyParams | None = None) -> list[ResultR
         ]
     if query == CYPHER_FLOW_EDGES:
         return [{"source": s, "target": t} for s, t in EDGES]
-    if query in (CYPHER_FLOW_REMOTE_EDGES, CYPHER_FLOW_COVERAGE_GAPS):
+    if query in (
+        CYPHER_FLOW_REMOTE_EDGES,
+        CYPHER_FLOW_WRITE_EDGES,
+        CYPHER_FLOW_COVERAGE_GAPS,
+    ):
         return []
     raise AssertionError(query[:60])
 

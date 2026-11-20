@@ -14,12 +14,14 @@ from .extract import (
     definition_header_nodes,
     first_token_arg_string,
     head_is_genuine_module,
+    is_inline_callback,
     is_require_alias,
     iter_token_tree_calls,
     lean_binding_targets,
     lean_definition_header_nodes,
     literal_target,
     match_normalised,
+    mode_direction,
     normalise,
     positional_arg_node,
     python_locally_assigned_names,
@@ -33,6 +35,7 @@ from .extract import (
 )
 from .models import ArgHandleSink, HandleBinding, HandleConstructor, IOSink
 from .processor import IOAccessProcessor
+from .py_handles import python_stream_target
 from .registry import (
     FLOW_REGISTERED_LANGUAGES,
     IO_HANDLE_CONSTRUCTORS,
@@ -69,16 +72,19 @@ __all__ = [
     "first_token_arg_string",
     "lean_definition_header_nodes",
     "head_is_genuine_module",
+    "is_inline_callback",
     "is_require_alias",
     "iter_token_tree_calls",
     "lean_binding_targets",
     "literal_target",
+    "mode_direction",
     "match_normalised",
     "normalise",
     "positional_arg_node",
     "python_locally_assigned_names",
     "python_name_binding_sites",
     "python_name_shadowed_at",
+    "python_stream_target",
     "registry_match",
     "rust_unwrap_result",
     "scope_seed_nodes",

@@ -23,7 +23,7 @@ import os
 import shutil
 import tempfile
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,8 +33,10 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
+from .. import tool_errors as te
 from ..checkout_state import EditLock, state_file, write_history
 from ..config import load_ignore_patterns
+from ..sensitive_paths import is_git_internal
 from ..utils.path_utils import should_skip_path
 from ..utils.source_encoding import decode_source
 
@@ -82,11 +84,23 @@ class TransactionError(ValueError):
 
 
 @contextmanager
-def _repo_lock(root: Path) -> Iterator[EditLock]:
+def _repo_lock(root: Path) -> Generator[EditLock]:
     """Hold the checkout's edit lock (see `EditLock`) until the block ends."""
     with EditLock(root) as lock:
         lock.acquire()
         yield lock
+
+
+@contextmanager
+def repo_write_lock(root: Path) -> Generator[None]:
+    """Hold the tree's write lock: one read-modify-write in `root` at a time.
+
+    The lock edit transactions take, for any other writer of a repository
+    file that must not lose a concurrent writer's change (`.cgrignore` keeps
+    saved by two interactive setups, review of PR 2510).
+    """
+    with _repo_lock(root):
+        yield
 
 
 def _decode(data: bytes | None, path: str) -> list[str]:
@@ -238,6 +252,10 @@ class EditTransaction:
             raise TransactionError(
                 ls.FILE_OUTSIDE_ROOT.format(action=cs.FileAction.EDIT)
             ) from error
+        if is_git_internal(resolved, self.repo_root):
+            raise TransactionError(
+                te.GIT_INTERNAL_WRITE_REFUSED.format(path=inside.as_posix())
+            )
         return inside.as_posix()
 
     def _current(self, rel_path: str) -> bytes | None:
@@ -619,7 +637,7 @@ def _undo_newest(root: Path) -> TransactionOutcome | None:
 
 
 @contextmanager
-def transaction(repo_root: Path) -> Iterator[EditTransaction]:
+def transaction(repo_root: Path) -> Generator[EditTransaction]:
     """`with transaction(root) as tx: tx.stage(...)`; rolls back on exception."""
     tx = EditTransaction(repo_root)
     try:
