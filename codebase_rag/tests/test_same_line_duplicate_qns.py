@@ -125,6 +125,28 @@ def test_registering_one_definition_twice_keeps_one_name() -> None:
     assert registry.variants(natural) == [natural, first, twin]
 
 
+def test_same_position_definitions_from_other_files_get_their_own_names() -> None:
+    # A Go method each build file declares again (`syscall_linux.go`,
+    # `syscall_darwin.go`, `syscall_freebsd.go`) shares its receiver type's
+    # natural qn and often its line and column too. The `@line` variant
+    # alone named the second and third alike, and they merged into one node
+    # (#3148). The first file keeps the plain `@line`, as before.
+    registry = FunctionRegistryTrie()
+    natural = "p.ztypes_linux.Iovec.SetLen"
+    registry.insert(natural, NodeType.METHOD)
+    origins = ("syscall_darwin.go", "syscall_freebsd.go")
+    names: list[str] = []
+    for origin in origins:
+        name = registry.register_unique_qn(natural, 5, 0, origin=origin)
+        registry.insert(name, NodeType.METHOD)
+        names.append(name)
+    assert names[0] == f"{natural}{cs.DUP_QN_MARKER}5", names
+    assert len({natural, *names}) == 3, names
+    # Registering a file's definition again gives it the name it has.
+    for origin, name in zip(origins, names, strict=True):
+        assert registry.register_unique_qn(natural, 5, 0, origin=origin) == name
+
+
 def test_same_line_class_and_method_twins_stay_distinct(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
