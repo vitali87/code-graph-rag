@@ -59,8 +59,11 @@ async def test_list_projects_shows_the_workspaces_indexed_projects_only(
 ) -> None:
     ws = _workspace(tmp_path, ("a", ALPHA), ("b", BETA), ("g", GAMMA))
     result = await _registry(tmp_path, ws).list_projects()
-    # `other` is indexed but not served; `gamma` is served but not indexed.
-    assert result == {"projects": [ALPHA, BETA], "count": 2}
+    # `other` is indexed but not served; `gamma` is served but not indexed,
+    # so it is named apart from the listed projects (issue #2867).
+    assert result["projects"] == [ALPHA, BETA]
+    assert result["count"] == 2
+    assert result.get("not_indexed") == [GAMMA]
 
 
 @pytest.mark.anyio

@@ -1,0 +1,571 @@
+"""`rename` accepts the identifiers the target language accepts (issue #3225).
+
+The new name was checked against `[A-Za-z_]\\w*`: an ASCII-only first
+character refused `Ünit` and `数据` while `aünï` passed, `$` was refused
+though JS/TS, Java, Scala and Dart allow it, and a reserved word passed the
+check only to fail the post-rewrite parse, if that parse failed at all.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.editing.rename import RenameRefused, rename
+from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
+
+_JS = (
+    "function fetch(url) { return url; }\n"
+    "function $fetch(url) { return fetch(url) + $fetch.count; }\n"
+    "$fetch.count = 0;\n"
+    "module.exports = { fetch, $fetch };\n"
+)
+_PY = "def helper(a):\n    return a\n\n\ndef run():\n    return helper(1)\n"
+_GO = "package main\n\nfunc helper() int { return 1 }\n\nfunc main() { _ = helper() }\n"
+
+
+def _plan(root: Path, graph: RecordedGraph, member: str, new: str):
+    return rename(
+        root,
+        graph.fetch_all,
+        graph.project,
+        f"{graph.project}.{member}",
+        new,
+        dry_run=True,
+    )
+
+
+@pytest.fixture
+def js_graph(temp_repo: Path, mock_ingestor: MagicMock) -> RecordedGraph:
+    _write(temp_repo, "api.js", _JS)
+    return _index(temp_repo, mock_ingestor)
+
+
+@pytest.fixture
+def py_graph(temp_repo: Path, mock_ingestor: MagicMock) -> RecordedGraph:
+    _write(temp_repo, "pkg/util.py", _PY)
+    return _index(temp_repo, mock_ingestor)
+
+
+@pytest.mark.parametrize("new", ["Ünit", "数据", "$get", "get$"])
+def test_a_unicode_or_dollar_js_name_is_accepted(
+    temp_repo: Path, js_graph: RecordedGraph, new: str
+) -> None:
+    report = _plan(temp_repo, js_graph, "api.fetch", new)
+    assert f"function {new}(url)" in report.diff, report.message
+
+
+@pytest.mark.parametrize("new", ["Größe", "数据", "match"])
+def test_a_unicode_or_soft_keyword_python_name_is_accepted(
+    temp_repo: Path, py_graph: RecordedGraph, new: str
+) -> None:
+    report = _plan(temp_repo, py_graph, "pkg.util.helper", new)
+    assert f"def {new}(a):" in report.diff, report.message
+
+
+@pytest.mark.parametrize(
+    ("fixture", "member", "new", "language"),
+    [
+        ("py_graph", "pkg.util.helper", "class", "python"),
+        ("py_graph", "pkg.util.helper", "None", "python"),
+        ("js_graph", "api.fetch", "function", "javascript"),
+    ],
+    ids=["python-class", "python-None", "js-function"],
+)
+def test_a_reserved_word_is_refused_with_its_reason(
+    request: pytest.FixtureRequest,
+    temp_repo: Path,
+    fixture: str,
+    member: str,
+    new: str,
+    language: str,
+) -> None:
+    graph: RecordedGraph = request.getfixturevalue(fixture)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, member, new)
+    assert str(refused.value) == cs.RENAME_RESERVED_WORD.format(
+        name=new, language=language
+    )
+
+
+def test_a_go_keyword_is_refused(temp_repo: Path, mock_ingestor: MagicMock) -> None:
+    _write(temp_repo, "main.go", _GO)
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "main.helper", "func")
+    assert "reserved word in go" in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    ("fixture", "member", "new"),
+    [
+        ("py_graph", "pkg.util.helper", "1bad"),
+        ("py_graph", "pkg.util.helper", "$get"),
+        ("py_graph", "pkg.util.helper", "a-b"),
+        ("js_graph", "api.fetch", "get url"),
+    ],
+    ids=["leading-digit", "dollar-in-python", "hyphen", "space"],
+)
+def test_names_no_language_allows_are_still_refused(
+    request: pytest.FixtureRequest,
+    temp_repo: Path,
+    fixture: str,
+    member: str,
+    new: str,
+) -> None:
+    # Negatives: a leading digit, a `$` where the language has none, a
+    # hyphen and a space are no identifier anywhere.
+    graph: RecordedGraph = request.getfixturevalue(fixture)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, member, new)
+    assert str(refused.value) == cs.RENAME_BAD_NAME.format(name=new)
+
+
+_JS_CLASS = (
+    "class Store {\n  save(x) { return x; }\n  run() { return this.save(1); }\n}\n"
+    "module.exports = { Store };\n"
+)
+
+
+@pytest.mark.parametrize("new", ["delete", "new"])
+def test_a_js_method_may_take_a_reserved_word(
+    temp_repo: Path, mock_ingestor: MagicMock, new: str
+) -> None:
+    # A method's name is an IdentifierName, which a reserved word may be:
+    # `class Store { delete() {} }` and `this.delete()` are valid.
+    _write(temp_repo, "store.js", _JS_CLASS)
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "store.Store.save", new)
+    assert f"  {new}(x) {{" in report.diff, report.message
+
+
+@pytest.mark.parametrize("new", ["a·b", "Ⅻfoo", "á"])
+def test_a_name_go_does_not_allow_is_refused(
+    temp_repo: Path, mock_ingestor: MagicMock, new: str
+) -> None:
+    # Negative: Go identifiers are Unicode letters, `_` and decimal digits
+    # alone; Python's rule also admits the middle dot, a letter number (Ⅻ)
+    # and a combining mark.
+    _write(temp_repo, "main.go", _GO)
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "main.helper", new)
+    assert str(refused.value) == cs.RENAME_BAD_NAME.format(name=new)
+
+
+def test_a_unicode_letter_go_name_is_accepted(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    _write(temp_repo, "main.go", _GO)
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "main.helper", "数据2")
+    assert "func 数据2() int" in report.diff, report.message
+
+
+_LUA = (
+    "local function helper(a)\n  return a\nend\n\n"
+    "local function run()\n  return helper(1)\nend\n\n"
+    "return { run = run }\n"
+)
+
+
+@pytest.mark.parametrize("new", ["数据", "a数据", "Größe", "x٣"])
+def test_a_name_lua_does_not_allow_is_refused(
+    temp_repo: Path, mock_ingestor: MagicMock, new: str
+) -> None:
+    # Negative: a Lua name is ASCII letters, digits and `_` (Lua 5.4 manual
+    # section 3.1, digits being 0-9 alone); `isidentifier` and the Lua
+    # grammar admit the CJK, accented and Arabic-Indic digit names the Lua
+    # lexer refuses, so the rename was written as code Lua cannot load.
+    _write(temp_repo, "mod.lua", _LUA)
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "mod.helper", new)
+    assert str(refused.value) == cs.RENAME_BAD_NAME.format(name=new)
+
+
+def test_an_ascii_lua_name_is_accepted(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    _write(temp_repo, "mod.lua", _LUA)
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "mod.helper", "_fetch2")
+    assert "local function _fetch2(a)" in report.diff, report.message
+
+
+@pytest.mark.parametrize(
+    ("new", "normal"), [("K", "K"), ("ｆoo", "foo"), ("aﬁ", "afi")]
+)
+def test_a_python_name_python_reads_differently_is_refused(
+    temp_repo: Path, py_graph: RecordedGraph, new: str, normal: str
+) -> None:
+    # Python binds an identifier NFKC-normalised: `K` (the Kelvin sign) binds
+    # `K`, so an `__all__` or patch string kept in the typed spelling would
+    # name nothing.
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, py_graph, "pkg.util.helper", new)
+    assert str(refused.value) == cs.RENAME_PY_NORMALISED_NAME.format(
+        name=new, normal=normal
+    )
+
+
+@pytest.mark.parametrize("new", ["await", "let", "static", "yield", "interface"])
+def test_a_script_function_may_take_a_word_only_strict_code_reserves(
+    temp_repo: Path, js_graph: RecordedGraph, new: str
+) -> None:
+    # `api.js` is a CommonJS script: `function await(url) {}` and
+    # `function let(url) {}` load there.
+    report = _plan(temp_repo, js_graph, "api.fetch", new)
+    assert f"function {new}(url)" in report.diff, report.message
+
+
+@pytest.mark.parametrize(
+    ("rel", "source", "member", "new"),
+    [
+        (
+            "mod.js",
+            "export function fetch(url) { return url; }\n",
+            "mod.fetch",
+            "await",
+        ),
+        (
+            "mod.js",
+            "export function fetch(url) { return url; }\n",
+            "mod.fetch",
+            "let",
+        ),
+        (
+            "mod.mjs",
+            "function fetch(url) { return url; }\nfetch(1);\n",
+            "mod.fetch",
+            "await",
+        ),
+        (
+            "strict.js",
+            "'use strict';\nfunction fetch(url) { return url; }\n"
+            "module.exports = { fetch };\n",
+            "strict.fetch",
+            "static",
+        ),
+        (
+            "own.js",
+            "function fetch(url) { 'use strict'; return url; }\n"
+            "module.exports = { fetch };\n",
+            "own.fetch",
+            "yield",
+        ),
+        (
+            "nested.js",
+            "async function outer() {\n  function fetch(url) { return url; }\n"
+            "  return fetch(1);\n}\nmodule.exports = { outer };\n",
+            "nested.outer.fetch",
+            "await",
+        ),
+        (
+            "gen.js",
+            "function* outer() {\n  function fetch(url) { return url; }\n"
+            "  yield fetch(1);\n}\nmodule.exports = { outer };\n",
+            "gen.fetch",
+            "yield",
+        ),
+        (
+            "cls.js",
+            "class Store {}\nmodule.exports = { Store };\n",
+            "cls.Store",
+            "let",
+        ),
+        (
+            "api.ts",
+            "function fetch(url: string) { return url; }\nfetch('x');\n",
+            "api.fetch",
+            "let",
+        ),
+    ],
+    ids=[
+        "module-await",
+        "module-let",
+        "mjs-await",
+        "use-strict-file",
+        "use-strict-function",
+        "inside-async",
+        "inside-generator",
+        "class-name",
+        "typescript",
+    ],
+)
+def test_a_word_reserved_where_the_name_sits_is_refused(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    rel: str,
+    source: str,
+    member: str,
+    new: str,
+) -> None:
+    # Negatives: strict code (a module, a "use strict" prologue, a class,
+    # TypeScript) reserves `let`, `static` and `yield`; a module or an async
+    # body `await`; a generator body `yield`.
+    _write(temp_repo, rel, source)
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, member, new)
+    assert "is a reserved word in" in str(refused.value), str(refused.value)
+
+
+@pytest.mark.parametrize("new", ["await", "let"])
+def test_a_js_file_a_module_package_holds_is_a_module(
+    temp_repo: Path, mock_ingestor: MagicMock, new: str
+) -> None:
+    # `"type": "module"` makes api.js a module with no import or export of
+    # its own, and Node refuses `function await() {}` in it.
+    _write(temp_repo, "pkg/package.json", '{"type": "module"}\n')
+    _write(temp_repo, "pkg/api.js", "function fetch(url) { return url; }\nfetch(1);\n")
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "pkg.api.fetch", new)
+    assert "is a reserved word in" in str(refused.value), str(refused.value)
+
+
+def test_a_cjs_file_in_a_module_package_is_still_a_script(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `.cjs` is CommonJS whatever the package says.
+    _write(temp_repo, "pkg/package.json", '{"type": "module"}\n')
+    _write(
+        temp_repo,
+        "pkg/api.cjs",
+        "function fetch(url) { return url; }\nmodule.exports = { fetch };\n",
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "pkg.api.fetch", "await")
+    assert "function await(url)" in report.diff, report.message
+
+
+_JS_USES = (
+    "function fetch(x) { return x + 10; }\n"
+    "async function run() { return fetch(1); }\n"
+    "function* gen() { yield fetch(2); }\n"
+    "async function outer() {\n"
+    "  function inner() { return fetch(3); }\n"
+    "  return inner();\n"
+    "}\n"
+    "module.exports = { fetch, run, gen, outer };\n"
+)
+
+
+@pytest.mark.parametrize(("new", "line"), [("await", 2), ("yield", 3)])
+def test_a_word_reserved_where_a_use_sits_is_refused(
+    temp_repo: Path, mock_ingestor: MagicMock, new: str, line: int
+) -> None:
+    # `fetch(1)` in an async function would become `await(1)`, which parses
+    # and no longer calls the function; `yield fetch(2)` likewise.
+    _write(temp_repo, "uses.js", _JS_USES)
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "uses.fetch", new)
+    assert str(refused.value).startswith(
+        f"Not a valid identifier: {new} is a reserved word in javascript where"
+    ), str(refused.value)
+    assert f"uses.js:{line}" in str(refused.value), str(refused.value)
+
+
+def test_a_use_in_a_plain_function_inside_an_async_one_may_take_await(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `inner` is not async, so `await(3)` there is a call.
+    _write(
+        temp_repo,
+        "inner.js",
+        "function fetch(x) { return x + 10; }\n"
+        "async function outer() {\n"
+        "  function inner() { return fetch(3); }\n"
+        "  return inner();\n"
+        "}\n"
+        "module.exports = { fetch, outer };\n",
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "inner.fetch", "await")
+    assert "return await(3);" in report.diff, report.message
+
+
+@pytest.mark.parametrize(
+    ("rel", "source", "member", "new"),
+    [
+        (
+            "mod.js",
+            "export function fetch(url) { return url; }\n",
+            "mod.fetch",
+            "eval",
+        ),
+        (
+            "cli.cjs",
+            "#!/usr/bin/env node\n'use strict';\n"
+            "function fetch(url) { return url; }\nmodule.exports = { fetch };\n",
+            "cli.fetch",
+            "interface",
+        ),
+        (
+            "tla.js",
+            "function fetch(url) { return url; }\nawait Promise.resolve(fetch(1));\n",
+            "tla.fetch",
+            "await",
+        ),
+        (
+            "gen.js",
+            "function fetch(x) { return x; }\n"
+            "function* make() { return { fetch }; }\n"
+            "module.exports = { make };\n",
+            "gen.fetch",
+            "yield",
+        ),
+    ],
+    ids=[
+        "strict-eval",
+        "shebang-use-strict",
+        "top-level-await",
+        "shorthand-in-generator",
+    ],
+)
+def test_a_name_its_strict_or_module_or_generator_context_refuses(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    rel: str,
+    source: str,
+    member: str,
+    new: str,
+) -> None:
+    _write(temp_repo, rel, source)
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, member, new)
+    assert "is a reserved word in" in str(refused.value), str(refused.value)
+
+
+def test_a_script_function_may_still_be_named_eval(
+    temp_repo: Path, js_graph: RecordedGraph
+) -> None:
+    # Negative: sloppy code may bind `eval`.
+    report = _plan(temp_repo, js_graph, "api.fetch", "eval")
+    assert "function eval(url)" in report.diff, report.message
+
+
+def test_an_unaliased_import_of_the_new_name_is_refused(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # api.cjs is a script, so its own `function await() {}` would load, but
+    # `import { fetch }` in main.mjs would become `import { await }`.
+    _write(
+        temp_repo,
+        "api.cjs",
+        "function fetch(url) { return url; }\nmodule.exports = { fetch };\n",
+    )
+    # No use of `fetch` in main.mjs: only the import binds the new name.
+    _write(temp_repo, "main.mjs", 'import { fetch } from "./api.cjs";\n')
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "api.fetch", "await")
+    assert "main.mjs" in str(refused.value), str(refused.value)
+
+
+def test_a_js_name_with_a_zero_width_joiner_is_accepted(
+    temp_repo: Path, js_graph: RecordedGraph
+) -> None:
+    # ECMAScript lets ZWNJ (U+200C) follow a name's first character; Python's
+    # identifier rule does not.
+    report = _plan(temp_repo, js_graph, "api.fetch", "a\u200cb")
+    assert "function a\u200cb(url)" in report.diff, report.message
+
+
+_API_CJS = "function fetch(url) { return url; }\nmodule.exports = { fetch };\n"
+
+
+def test_a_re_export_binds_no_local_name_so_may_forward_a_reserved_word(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `export { await } from "./api.cjs"` forwards an export without binding
+    # a local name, so a reserved word is legal there (PR #3239 review).
+    _write(temp_repo, "api.cjs", _API_CJS)
+    _write(temp_repo, "main.mjs", 'export { fetch } from "./api.cjs";\n')
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "api.fetch", "await")
+    assert "function await(url)" in report.diff, report.message
+    assert 'export { await } from "./api.cjs";' in report.diff, report.diff
+
+
+def test_import_meta_in_a_function_makes_an_untyped_js_file_a_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Node loads an untyped `.js` file with `import.meta` anywhere in it as
+    # an ES module, which is strict and may not bind `eval`.
+    _write(
+        temp_repo,
+        "meta.js",
+        "function fetch() { return import.meta.url; }\nfetch();\n",
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "meta.fetch", "eval")
+    assert "is a reserved word in" in str(refused.value), str(refused.value)
+
+
+def test_import_meta_in_an_explicit_commonjs_file_keeps_it_a_script(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `.cjs` is CommonJS whatever syntax it holds.
+    _write(
+        temp_repo,
+        "meta.cjs",
+        "function fetch() { return import.meta.url; }\nmodule.exports = { fetch };\n",
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "meta.fetch", "eval")
+    assert "function eval()" in report.diff, report.message
+
+
+def test_a_js_name_with_an_id_but_not_xid_character_is_accepted(
+    temp_repo: Path, js_graph: RecordedGraph
+) -> None:
+    # U+037A is in ECMAScript's ID_Start and ID_Continue but not in the
+    # XID sets Python's `isidentifier` uses.
+    report = _plan(temp_repo, js_graph, "api.fetch", "a\u037a")
+    assert "function a\u037a(url)" in report.diff, report.message
+
+
+def test_a_python_name_with_an_id_but_not_xid_character_is_refused(
+    temp_repo: Path, py_graph: RecordedGraph
+) -> None:
+    # Negative: Python identifiers are XID, which excludes U+037A.
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, py_graph, "pkg.util.helper", "a\u037a")
+    assert str(refused.value) == cs.RENAME_BAD_NAME.format(name="a\u037a")
+
+
+def test_a_destructured_const_require_may_not_bind_let(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `const { let } = require(...)` is an early error even in sloppy code.
+    _write(temp_repo, "api.cjs", _API_CJS)
+    _write(temp_repo, "main.cjs", 'const { fetch } = require("./api.cjs");\n')
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "api.fetch", "let")
+    assert "main.cjs" in str(refused.value), str(refused.value)
+
+
+def test_an_aliased_destructured_require_may_take_let(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `const { let: run } = ...` binds `run`, and `let` as a key
+    # is an IdentifierName.
+    _write(temp_repo, "api.cjs", _API_CJS)
+    _write(
+        temp_repo,
+        "main.cjs",
+        'const { fetch: run } = require("./api.cjs");\nrun(1);\n',
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "api.fetch", "let")
+    assert "function let(url)" in report.diff, report.message
+    assert "const { let: run } = require" in report.diff, report.diff
