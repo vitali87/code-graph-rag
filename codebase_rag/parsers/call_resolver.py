@@ -352,6 +352,7 @@ class CallResolver:
         "go_package_names",
         "_php_class_namespaces",
         "_php_cased_index",
+        "_php_fqcn_bases_cache",
         "_js_return_class_cache",
     )
 
@@ -482,6 +483,9 @@ class CallResolver:
         # read off each file's declarations on first use (issue #2466).
         self._php_class_namespaces: dict[str, dict[str, PhpClassPath]] = {}
         self._php_cased_index: _PhpCasedIndex | None = None
+        # {PHP class qn: the dotted-FQCN bases in `_subclass_map` that name
+        # it}, built on first use.
+        self._php_fqcn_bases_cache: dict[str, list[str]] | None = None
         # {JS/TS callable qn: the class a call to it returns}, read off its
         # declaration on first use (issue #2468).
         self._js_return_class_cache: dict[tuple[str, bool], str | None] = {}
@@ -706,6 +710,7 @@ class CallResolver:
         # A re-parsed PHP file may have moved a class between namespaces.
         self._php_class_namespaces.clear()
         self._php_cased_index = None
+        self._php_fqcn_bases_cache = None
         # A re-parsed TS file may declare a different return.
         self._js_return_class_cache.clear()
         # The rel-path -> module qn inverse rebuilds only when its size
@@ -8003,6 +8008,41 @@ class CallResolver:
             found.add(current)
             stack.extend(subclass_map.get(current, ()))
         return found
+
+    def php_concrete_subclasses(self, class_qn: str) -> set[str]:
+        """`_concrete_subclasses` for a PHP class.
+
+        `class Child extends Base` under `use App\\Base` in another file can
+        keep its parent as the dotted FQCN the import recorded (`App.Base`),
+        which no class qn in `_subclass_map` matches, so `new static` and
+        `static::m()` left Child out (PR #3652 review). Such a base counts
+        for the one class the FQCN index names, as `parent::` reads it.
+        Other languages keep `_concrete_subclasses` as it is.
+        """
+        subclass_map = self._subclass_map()
+        fqcn_bases = self._php_fqcn_bases()
+        found: set[str] = set()
+        stack = [class_qn]
+        while stack:
+            current = stack.pop()
+            for base in (current, *fqcn_bases.get(current, ())):
+                for subclass_qn in subclass_map.get(base, ()):
+                    if subclass_qn not in found:
+                        found.add(subclass_qn)
+                        stack.append(subclass_qn)
+        return found
+
+    def _php_fqcn_bases(self) -> dict[str, list[str]]:
+        if self._php_fqcn_bases_cache is None:
+            # Deferred: the PHP module imports this one.
+            from .php.references import php_class_for_base
+
+            bases: dict[str, list[str]] = {}
+            for base in self._subclass_map():
+                if (named := php_class_for_base(self, base)) not in (None, base):
+                    bases.setdefault(named, []).append(base)
+            self._php_fqcn_bases_cache = bases
+        return self._php_fqcn_bases_cache
 
     def _binding_aware_mro(self, class_qn: str, member: str) -> list[str] | None:
         """class_qn's C3 MRO when a class body in it binds `member` by assignment.

@@ -20,6 +20,7 @@ _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
 _STRING_CALLABLE = re.compile(
     rf"^\\?(?P<class>{_IDENT}(?:\\{_IDENT})*)::(?P<method>{_IDENT})$"
 )
+_STRING_CLASS = re.compile(rf"^\\?(?P<class>{_IDENT}(?:\\{_IDENT})*)$")
 _METHOD_NAME = re.compile(rf"^{_IDENT}$")
 # PHP casts a string key to int only when the text is already the canonical
 # decimal form. "0" and "1" are indexes 0 and 1; "01" and "object" are not.
@@ -172,6 +173,21 @@ def string_callable(node: Node) -> tuple[str, str] | None:
         return None
     dotted = match.group("class").replace(cs.PHP_NAMESPACE_SEPARATOR, cs.SEPARATOR_DOT)
     return dotted, match.group("method")
+
+
+def string_class(node: Node) -> str | None:
+    """Dotted FQCN for the `'App\\\\Handler'` of `['App\\\\Handler', 'm']`.
+
+    PHP resolves it as it resolves a `Class::method` string: absolute, with
+    no `use` alias and no enclosing namespace applied.
+    """
+    text = php_literal_text(node)
+    if text is None:
+        return None
+    match = _STRING_CLASS.fullmatch(text)
+    if match is None:
+        return None
+    return match.group("class").replace(cs.PHP_NAMESPACE_SEPARATOR, cs.SEPARATOR_DOT)
 
 
 def class_const_scope(node: Node) -> Node | None:

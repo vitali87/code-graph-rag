@@ -158,6 +158,13 @@ def _receiver_methods(
         return _methods_on_classes(
             host, _classes_for_type(host, module_qn, type_node), method
         )
+    # A class named by a string is absolute, as in `'App\\Handler::m'`
+    # (PR #3652 review).
+    dotted = php_callables.string_class(receiver)
+    if dotted is not None:
+        return _methods_on_classes(
+            host, _classes_for_fqcn(host._resolver, dotted), method
+        )
     return []
 
 
@@ -183,7 +190,7 @@ def _scope_methods_of(
     methods = [found] if found else []
     if scope != cs.PhpRelativeScope.STATIC:
         return methods
-    for subclass in host._resolver._concrete_subclasses(class_context):
+    for subclass in host._resolver.php_concrete_subclasses(class_context):
         declared = _declared_method(host._resolver, subclass, method)
         if declared is not None:
             methods.append(declared)
@@ -204,7 +211,7 @@ def _relative_classes(
     # `new static` builds whichever subclass the method runs on, whether or
     # not that subclass declares a constructor: one that does not runs the
     # constructor it inherits, which `php_constructor` finds.
-    classes.extend(sorted(host._resolver._concrete_subclasses(class_context)))
+    classes.extend(sorted(host._resolver.php_concrete_subclasses(class_context)))
     return classes
 
 
@@ -280,15 +287,22 @@ def _classes_for_fqcn(resolver: CallResolver, dotted: str) -> list[str]:
 
 def _parent_class(resolver: CallResolver, class_qn: str) -> str | None:
     # PHP `extends` is one class. Interfaces are IMPLEMENTS, not this map.
-    # A same-file parent is stored as its class qn; a cross-file one can be
-    # the dotted FQCN the import map recorded, which the index understands.
     for parent in resolver.class_inheritance.get(class_qn, ()):
-        if resolver.function_registry.get(parent) == NodeType.CLASS:
-            return parent
-        found = _classes_for_fqcn(resolver, parent)
-        if len(found) == 1:
-            return found[0]
+        if (found := php_class_for_base(resolver, parent)) is not None:
+            return found
     return None
+
+
+def php_class_for_base(resolver: CallResolver, base: str) -> str | None:
+    """The class one `class_inheritance` entry of a PHP class names.
+
+    A same-file parent is stored as its class qn; a cross-file one can be
+    the dotted FQCN the import map recorded, which the index understands.
+    """
+    if resolver.function_registry.get(base) == NodeType.CLASS:
+        return base
+    found = _classes_for_fqcn(resolver, base)
+    return found[0] if len(found) == 1 else None
 
 
 def _method_qn(resolver: CallResolver, class_qn: str, method: str) -> str | None:

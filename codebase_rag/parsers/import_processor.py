@@ -2777,6 +2777,15 @@ class ImportProcessor:
         self.php_class_index.setdefault(_php_fold(dotted), set()).add(class_qn)
         self.php_class_module[class_qn] = module_qn
 
+    def _php_classes_of(self, module_qn: str) -> list[tuple[str, str]]:
+        """(index key, class qn) for each class `module_qn` registered."""
+        return [
+            (key, class_qn)
+            for key, class_qns in self.php_class_index.items()
+            for class_qn in class_qns
+            if self.php_class_module.get(class_qn) == module_qn
+        ]
+
     def drop_php_classes_for_module(self, module_qn: str) -> None:
         # Only this module's classes. The qualified names were copied out
         # first: updating a set while iterating it raises RuntimeError, and
@@ -3169,7 +3178,19 @@ class ImportProcessor:
         receiver fell to a name-only guess (issue #2559). The module's IMPORTS
         edges are still in the graph, so none are queued for the flush.
         """
+        # `parse_imports` drops the module's PHP classes for the class ingest
+        # that follows a re-parse. Only imports are read here, so the classes
+        # the run read back from the graph would stay dropped and a re-parsed
+        # file's `[Resolver::class, 'm']` would bind nothing (PR #3652 review).
+        php_classes = (
+            self._php_classes_of(module_qn)
+            if language == cs.SupportedLanguage.PHP
+            else []
+        )
         self.parse_imports(root_node, module_qn, language, queries, defer_edges=False)
+        for key, class_qn in php_classes:
+            self.php_class_index.setdefault(key, set()).add(class_qn)
+            self.php_class_module[class_qn] = module_qn
         if language == cs.SupportedLanguage.RUST:
             # The tail a parsed Rust file gets from the definition pass: body
             # `use`s key on their functions' registered qns, and inline-mod
@@ -8018,8 +8039,11 @@ class ImportProcessor:
             elif clause_is_const:
                 self.php_const_imports.setdefault(module_qn, set()).add(local_name)
             else:
+                # `use \Vendor\Widget` is the same class as `use Vendor\Widget`.
+                # The FQCN index keys have no leading dot (PR #3652 review).
+                # The shared map still keeps it, which is issue #3656.
                 self.php_class_imports.setdefault(module_qn, {})[local_name] = (
-                    imported_path
+                    imported_path.lstrip(cs.SEPARATOR_DOT)
                 )
 
     def _handle_php_include_require(self, node: Node, module_qn: str) -> None:

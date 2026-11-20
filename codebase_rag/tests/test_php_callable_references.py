@@ -6,9 +6,11 @@
 # something.
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.dead_code import (
     _node_props,
     dead_code_from_graph,
@@ -16,7 +18,7 @@ from codebase_rag.dead_code import (
 )
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _capture, _CapturingIngestor
+from evals.cgr_graph import _capture, _CapturingIngestor, _StatefulIngestor
 
 _PROJECT = "phpdc"
 
@@ -995,3 +997,212 @@ class Wiring
     assert (f"{wiring}.relative", local) in refs, sorted(refs)
     assert (f"{wiring}.global", global_shared) in refs, sorted(refs)
     assert (f"{wiring}.global", app_shared) not in refs, sorted(refs)
+
+
+def test_absolute_use_clause_names_the_class(tmp_path: Path) -> None:
+    # `use \Vendor\Widget as W;` is the same import as without the leading
+    # slash, and so is `use \Gadget;` for a global class (PR #3652 review).
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Widget.php": r"""<?php
+namespace Vendor;
+
+class Widget
+{
+    private static function run(): void {}
+}
+""",
+            "src/Gadget.php": r"""<?php
+class Gadget
+{
+    private static function go(): void {}
+}
+""",
+            "src/Main.php": r"""<?php
+namespace App;
+
+use \Vendor\Widget as W;
+use \Gadget;
+
+class Main
+{
+    public function wire(): array
+    {
+        return [[W::class, 'run'], [Gadget::class, 'go']];
+    }
+}
+""",
+        },
+    )
+    wire = f"{_PROJECT}.src.Main.Main.wire"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    assert (wire, f"{_PROJECT}.src.Widget.Widget.run") in refs, sorted(refs)
+    assert (wire, f"{_PROJECT}.src.Gadget.Gadget.go") in refs, sorted(refs)
+
+
+def test_class_name_string_receiver_is_an_absolute_class(tmp_path: Path) -> None:
+    # PHP reads `['App\\Handler', 'm']` as it reads `'App\\Handler::m'`: an
+    # absolute class name, never an alias or the enclosing namespace
+    # (PR #3652 review).
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Handler.php": r"""<?php
+namespace App;
+
+class Handler
+{
+    private static function handle(): void {}
+
+    private static function other(): void {}
+}
+""",
+            "src/Sub/Handler.php": r"""<?php
+namespace App\Sub;
+
+class Handler
+{
+    private static function handle(): void {}
+}
+""",
+            "src/Sub/Wiring.php": r"""<?php
+namespace App\Sub;
+
+class Wiring
+{
+    public function single(): array
+    {
+        return ['App\\Handler', 'handle'];
+    }
+
+    public function double(): array
+    {
+        return array("\\App\\Handler", 'other');
+    }
+}
+""",
+        },
+    )
+    wiring = f"{_PROJECT}.src.Sub.Wiring.Wiring"
+    handler = f"{_PROJECT}.src.Handler.Handler"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    assert (f"{wiring}.single", f"{handler}.handle") in refs, sorted(refs)
+    assert (f"{wiring}.double", f"{handler}.other") in refs, sorted(refs)
+    sub_handle = f"{_PROJECT}.src.Sub.Handler.Handler.handle"
+    assert (f"{wiring}.single", sub_handle) not in refs, sorted(refs)
+
+
+def test_new_static_reaches_a_subclass_extending_an_imported_base(
+    tmp_path: Path,
+) -> None:
+    # `class Child extends Base` under `use App\Base` keeps its parent as the
+    # FQCN the import recorded. `new static` and `static::hook()` in Base
+    # still reach Child (PR #3652 review).
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Base.php": r"""<?php
+namespace App;
+
+class Base
+{
+    public static function make(): static
+    {
+        static::hook();
+        return new static();
+    }
+
+    public static function hook(): void {}
+}
+""",
+            "src/Sub/Child.php": r"""<?php
+namespace App\Sub;
+
+use App\Base;
+
+class Child extends Base
+{
+    public function __construct() {}
+
+    public static function hook(): void {}
+}
+""",
+        },
+    )
+    make = f"{_PROJECT}.src.Base.Base.make"
+    child = f"{_PROJECT}.src.Sub.Child.Child"
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    instantiates = _edges(ingestor, cs.RelationshipType.INSTANTIATES.value)
+    assert (make, child) in instantiates, sorted(instantiates)
+    assert (make, f"{child}.__construct") in calls, sorted(calls)
+    assert (make, f"{child}.hook") in calls, sorted(calls)
+
+
+def _run_updater(store: _StatefulIngestor, root: Path, force: bool) -> None:
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=root.name,
+    ).run(force=force)
+
+
+def test_restoring_unchanged_imports_keeps_its_classes(tmp_path: Path) -> None:
+    # The project is named after its namespace, so `use App\Resolver` names
+    # the module `App.Resolver` and an incremental run restores that
+    # unchanged file's imports. That must not drop the class the run read
+    # back from the graph, or the edited caller's callables bind nothing
+    # (PR #3652 review).
+    root = tmp_path / "App"
+    files = {
+        "Resolver.php": r"""<?php
+namespace App;
+
+class Resolver
+{
+    private static function handle(): void {}
+}
+""",
+        "Main.php": r"""<?php
+namespace App;
+
+use App\Resolver;
+
+class Main
+{
+    public function run(): array
+    {
+        return [[Resolver::class, 'handle'], 'App\\Resolver::handle'];
+    }
+}
+""",
+    }
+    for rel, source in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(source, encoding="utf-8")
+    store = _StatefulIngestor()
+    _run_updater(store, root, force=True)
+    edge = ("App.Main.Main.run", "App.Resolver.Resolver.handle")
+
+    def refs() -> set[tuple[str, str]]:
+        return {
+            (str(key[1]), str(key[4]))
+            for key in store.edge_props
+            if key[2] == cs.RelationshipType.REFERENCES.value
+        }
+
+    assert edge in refs(), sorted(refs())
+
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    main = root / "Main.php"
+    main.write_text(
+        files["Main.php"].replace("        return", "        // edit\n        return"),
+        encoding="utf-8",
+    )
+    os.utime(main, (cache_mtime + 1, cache_mtime + 1))
+    _run_updater(store, root, force=False)
+
+    assert edge in refs(), sorted(refs())
