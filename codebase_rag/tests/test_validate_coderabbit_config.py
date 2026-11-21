@@ -170,10 +170,13 @@ class TestMalformedDocument:
 class TestSchemaAloneIsInsufficient:
     """The reason this script exists rather than a plain schema check.
 
-    `additionalProperties: false` is set on the ROOT object only, so an
-    unknown key nested under `reviews.auto_review` validates clean. These
-    pin that, so if the vendor ever tightens the schema the redundancy is
-    reported rather than assumed.
+    Until November 2026 the vendor set `additionalProperties: false` on the
+    ROOT object only, so an unknown key nested under `reviews.auto_review`
+    validated clean. The reduced fixture below keeps that shape: the key
+    checks must catch a misspelling without leaning on the schema. The live
+    schema now closes the nested sections too, but it still requires none
+    of the keys and checks no regex, so the presence and shape checks stay
+    load-bearing (`test_the_real_schema_shape_is_the_recorded_one`).
     """
 
     @staticmethod
@@ -182,10 +185,11 @@ class TestSchemaAloneIsInsufficient:
 
         Deliberately not the real 93KB document: vendoring it would freeze a
         copy that drifts silently, and fetching it would make the suite need
-        the network. What is reproduced here is the shape the script depends
-        on -- `additionalProperties: false` at the root and absent below it --
-        which is the property under test. `test_the_real_schema_is_still_root_only`
-        checks the live document when it is reachable.
+        the network. What is reproduced here is the weakest shape the vendor
+        has shipped -- `additionalProperties: false` at the root and absent
+        below it -- which the script must not depend on being stricter.
+        `test_the_real_schema_shape_is_the_recorded_one` checks the live
+        document when it is reachable.
 
         The root keys come from `VENDOR_ROOT_KEYS` rather than being listed
         again here. Spelling them out a second time let this copy drift from
@@ -234,11 +238,16 @@ class TestSchemaAloneIsInsufficient:
         assert "additionalProperties" not in auto_review
 
     @pytest.mark.slow
-    def test_the_real_schema_is_still_root_only(self) -> None:
-        """Guard the reduced fixture above against vendor drift.
+    def test_the_real_schema_shape_is_the_recorded_one(self) -> None:
+        """Report vendor drift rather than assume it.
 
-        Skipped without network. If this ever fails, the vendor has tightened
-        the schema and the key checks may have become redundant.
+        Skipped without network. In November 2026 the vendor closed the
+        nested sections (`additionalProperties: false` below the root), so a
+        misspelled `base_branchez` is now rejected by the schema too. What it
+        still does not do is what this script exists for: it requires none
+        of the keys, so a missing `base_branches` or `docstrings.mode`
+        validates, and it does not check that the branch patterns compile.
+        If this fails, the vendor changed again; revisit the key checks.
         """
         pytest.importorskip("jsonschema")
         urlopen = pytest.importorskip("urllib.request").urlopen
@@ -250,15 +259,26 @@ class TestSchemaAloneIsInsufficient:
             # captive portal returning HTML must skip, not redden the build.
             pytest.skip(f"vendor schema unreachable: {exc}")
         assert live.get("additionalProperties") is False
-        auto_review = live["properties"]["reviews"]["properties"]["auto_review"]
-        assert "additionalProperties" not in auto_review
+        reviews = live["properties"]["reviews"]
+        auto_review = reviews["properties"]["auto_review"]
+        docstrings = reviews["properties"]["pre_merge_checks"]["properties"][
+            "docstrings"
+        ]
+        assert auto_review.get("additionalProperties") is False
+        # Still nothing required, and the branches are plain strings: the
+        # presence and regex checks are not redundant.
+        assert not live.get("required")
+        assert not reviews.get("required")
+        assert not auto_review.get("required")
+        assert not docstrings.get("required")
+        assert auto_review["properties"]["base_branches"]["items"] == {"type": "string"}
         assert set(live["properties"]) == set(VENDOR_ROOT_KEYS), (
             "the vendor's root key set has changed; update VENDOR_ROOT_KEYS "
             "or the shipped check will reject a newly valid setting"
         )
 
     def test_the_typo_passes_the_vendor_schema(self) -> None:
-        """A schema check alone would report `base_branchez` as valid."""
+        """Under the root-only schema, `base_branchez` validated clean."""
         import yaml
         from jsonschema import Draft202012Validator
 
@@ -267,8 +287,8 @@ class TestSchemaAloneIsInsufficient:
         )
         errors = list(Draft202012Validator(self._schema()).iter_errors(broken))
         assert errors == [], (
-            "the vendor schema now rejects the typo; if that is permanent, "
-            "this script's key checks are redundant and should be revisited"
+            "the reduced root-only fixture rejects the typo; it no longer "
+            "models the weakest vendor shape the key checks must survive"
         )
 
     def test_the_validator_catches_what_the_schema_misses(self) -> None:
