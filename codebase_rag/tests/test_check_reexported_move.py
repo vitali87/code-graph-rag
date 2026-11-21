@@ -646,6 +646,26 @@ _DANGLES = [("page", "util")]
             [],
             id="an-alias-of-an-earlier-declarator",
         ),
+        # JavaScript initializes a function declaration before the module
+        # runs, so an alias taken above it holds it (Greptile, PR #3312).
+        pytest.param(
+            "const alias = impl;\nfunction impl(s: string): string {\n"
+            "  return s;\n}\nexport default alias;\n",
+            [],
+            id="an-alias-of-a-later-function",
+        ),
+        pytest.param(
+            "const alias = impl;\nexport function impl(s: string): string {\n"
+            "  return s;\n}\nexport default alias;\n",
+            [],
+            id="an-alias-of-a-later-exported-function",
+        ),
+        pytest.param(
+            "const alias = impl;\nfunction* impl(s: string) {\n"
+            "  yield s;\n}\nexport default alias;\n",
+            [],
+            id="an-alias-of-a-later-generator",
+        ),
         # Negative (Greptile, PR #3312): only a `const` holds its first value,
         # and a name the module declares after the alias holds nothing yet.
         pytest.param(
@@ -667,6 +687,21 @@ _DANGLES = [("page", "util")]
             "const alias = impl, impl = String;\nexport default alias;\n",
             _DANGLES,
             id="an-alias-of-a-later-declarator",
+        ),
+        pytest.param(
+            "const alias = impl;\nlet impl = String;\nexport default alias;\n",
+            _DANGLES,
+            id="an-alias-of-a-later-let",
+        ),
+        pytest.param(
+            "const alias = impl;\nvar impl = String;\nexport default alias;\n",
+            _DANGLES,
+            id="an-alias-of-a-later-var",
+        ),
+        pytest.param(
+            "const alias = impl;\nclass impl {}\nexport default alias;\n",
+            _DANGLES,
+            id="an-alias-of-a-later-class",
         ),
         # Negative: a declaration of the module shadows the global.
         pytest.param(

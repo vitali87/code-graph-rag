@@ -1796,12 +1796,15 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
     aliases: dict[str, str] = {}
     # Aliases taken before the module declared their name.
     early: set[str] = set()
+    # Names a function declaration binds before the module runs.
+    hoisted: set[str] = set()
     for statement in root.children:
         for alias, name, settled in _js_aliases(statement, declared):
             aliases[alias] = name
             if not settled:
                 early.add(alias)
         declared.update(_js_declared_names(statement))
+        hoisted.update(_js_hoisted_names(statement))
         if statement.type not in (cs.TS_EXPORT_STATEMENT, cs.TS_IMPORT_STATEMENT):
             continue
         at = (statement.start_point[0] + 1, statement.start_point[1])
@@ -1829,11 +1832,12 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
         declared=frozenset(declared),
         # One taken before a name the module declares later holds
         # `undefined`, or throws (Greptile review on PR #3312); a name it
-        # never declares is a global or an import, there from the start.
+        # never declares is a global or an import, and one a function
+        # declaration binds is hoisted, both there from the start.
         aliases={
             alias: name
             for alias, name in aliases.items()
-            if alias not in early or name not in declared
+            if alias not in early or name not in declared or name in hoisted
         },
     )
 
@@ -1846,6 +1850,10 @@ _JS_VALUE_DECLARATIONS = frozenset(
         cs.TS_GENERATOR_FUNCTION_DECLARATION,
         cs.TS_CLASS_DECLARATION,
     }
+)
+
+_JS_HOISTED_DECLARATIONS = frozenset(
+    {cs.TS_FUNCTION_DECLARATION, cs.TS_GENERATOR_FUNCTION_DECLARATION}
 )
 
 
@@ -1880,6 +1888,17 @@ def _js_aliases(statement: Node, declared: set[str]) -> Iterator[tuple[str, str,
             name = _node_text(value)
             yield _node_text(target), name, name in bound
         bound.add(_node_text(target))
+
+
+def _js_hoisted_names(statement: Node) -> Iterator[str]:
+    """The name a top-level function declaration binds, through `export`:
+    JavaScript initializes it before the module runs, unlike a `let`,
+    `const` or `class` name, which holds nothing until its statement runs,
+    or a `var`, which holds `undefined` (Greptile review on PR #3312)."""
+    if statement.type == cs.TS_EXPORT_STATEMENT:
+        statement = statement.child_by_field_name(cs.FIELD_DECLARATION) or statement
+    if statement.type in _JS_HOISTED_DECLARATIONS:
+        yield from _js_value_names(statement)
 
 
 def _js_declared_names(statement: Node) -> Iterator[str]:
