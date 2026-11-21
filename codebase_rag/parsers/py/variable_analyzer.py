@@ -24,9 +24,11 @@ from ..utils import get_cached_query, safe_decode_text, sorted_captures
 from .ast_analyzer import _homogeneous_element
 from .forward_refs import unquote_forward_refs
 from .utils import (
+    python_literal_type,
     reduce_optional_annotation,
     resolve_class_name,
     resolve_dotted_class,
+    unshadowed_literal_type,
 )
 
 # Deepest operand chain `_value_leaves` will walk. Each term of `a or b or c`
@@ -330,6 +332,66 @@ def _container_element_type(type_str: str | None) -> str | None:
     return None
 
 
+def _optional_member(annotation: ASTNode) -> ASTNode | None:
+    """The one type an optional annotation allows besides None (`X` of
+    `X | None`, `None | X`, `Optional[X]`), the annotation itself when it is
+    no union, or None for any other union."""
+    node = annotation
+    if node.type == cs.TS_PY_TYPE and node.named_children:
+        node = node.named_children[0]
+    if node.type == cs.TS_PY_BINARY_OPERATOR:
+        members = [
+            node.child_by_field_name(cs.TS_FIELD_LEFT),
+            node.child_by_field_name(cs.TS_FIELD_RIGHT),
+        ]
+        others = [m for m in members if m is not None and m.type != cs.TS_PY_NONE]
+        return others[0] if len(others) == 1 and None not in members else None
+    if node.type == cs.TS_PY_GENERIC_TYPE:
+        head = next(iter(node.named_children), None)
+        params = next(
+            (c for c in node.named_children if c.type == cs.TS_PY_TYPE_PARAMETER), None
+        )
+        if (
+            head is None
+            or safe_decode_text(head) != cs.PY_TYPING_OPTIONAL
+            or params is None
+        ):
+            return node
+        return params.named_children[0] if len(params.named_children) == 1 else None
+    return node
+
+
+def _builtin_annotation(annotation: ASTNode) -> str | None:
+    """The builtin an attribute annotation names (`dict`, `list[int]`, and
+    `dict | None` or `Optional[dict]`: the value is that builtin whenever it
+    is not None), or None for any other type."""
+    member = _optional_member(annotation)
+    if member is None:
+        return None
+    text = (safe_decode_text(member) or "").split(cs.PY_GENERIC_ARGS_OPEN, 1)[0]
+    name = text.strip()
+    return name if name in cs.PY_BUILTIN_VALUE_TYPES else None
+
+
+def _attributes_bound_to_non_literals(assignments: list[ASTNode]) -> set[str]:
+    """The `self.` attributes the assignments give anything but a literal
+    (`self.cache = Bag()`, `self.cache = load()`)."""
+    names: set[str] = set()
+    for assignment in assignments:
+        left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+        value = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
+        if (
+            left is not None
+            and left.type == cs.TS_PY_ATTRIBUTE
+            and value is not None
+            and python_literal_type(value) is None
+            and (name := safe_decode_text(left))
+            and name.startswith(cs.PY_SELF_PREFIX)
+        ):
+            names.add(name)
+    return names
+
+
 class PythonVariableAnalyzerMixin(_VarBase):
     __slots__ = ()
     import_processor: ImportProcessor
@@ -564,12 +626,21 @@ class PythonVariableAnalyzerMixin(_VarBase):
         local_var_types: dict[str, str],
         module_qn: str,
     ) -> None:
+        rebound = _attributes_bound_to_non_literals(assignments)
         for assignment in assignments:
-            self._process_self_assignment(assignment, local_var_types, module_qn)
+            self._process_self_assignment(
+                assignment, local_var_types, module_qn, rebound
+            )
 
     def _process_self_assignment(
-        self, assignment: ASTNode, local_var_types: dict[str, str], module_qn: str
+        self,
+        assignment: ASTNode,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        rebound: set[str] | None = None,
     ) -> None:
+        """`rebound`: the `self.` attributes some assignment among those read
+        gives a value other than a literal, which a literal does not type."""
         left_node = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
         right_node = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
         if not (
@@ -612,6 +683,11 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 )
             if assigned_type and self._get_project_class_qn(assigned_type, module_qn):
                 local_var_types[attr_name] = assigned_type
+            elif builtin := _builtin_annotation(annotation_node):
+                # `self.cache: dict = {}` is the builtin its annotation names,
+                # so `self.cache.get(k)` is `dict.get` (issue #2859, CodeRabbit
+                # on PR #2912).
+                local_var_types[attr_name] = builtin
             else:
                 local_var_types.pop(attr_name, None)
             return
@@ -629,6 +705,17 @@ class PythonVariableAnalyzerMixin(_VarBase):
             # (already-seeded) parameter or local, so flow it onto the attribute.
             ident = safe_decode_text(right_node)
             assigned_type = local_var_types.get(ident) if ident else None
+        if not assigned_type and (rebound is None or attr_name not in rebound):
+            # `self.cache = {}`: the builtin, so `self.cache.get(k)` is
+            # `dict.get` (issue #2859). An annotated assignment never gets
+            # here: its annotation decided the type above. As for a local, a
+            # literal types the attribute only when every assignment to it
+            # is one: the map is flat, so `self.cache = Bag()`, a call, then
+            # `self.cache = {}` must not let the literal decide that call
+            # (Greptile, PR #2912).
+            assigned_type = unshadowed_literal_type(
+                right_node, module_qn, self.import_processor, self.function_registry
+            )
         if not assigned_type:
             return
         local_var_types[attr_name] = assigned_type
@@ -644,19 +731,25 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 q = get_cached_query(py_lang_obj, cs.PY_ASSIGNMENT_QUERY)
                 cursor = QueryCursor(q)
                 captures = sorted_captures(cursor, node)
-                for assign_node in captures.get("assignment", []):
+                assignments = captures.get("assignment", [])
+                rebound = _attributes_bound_to_non_literals(assignments)
+                for assign_node in assignments:
                     self._process_self_assignment(
-                        assign_node, local_var_types, module_qn
+                        assign_node, local_var_types, module_qn, rebound
                     )
                 return
             except Exception:  # noqa: S110 - a failed query falls back to the walk below
                 pass
+        walked: list[ASTNode] = []
         stack: list[ASTNode] = [node]
         while stack:
             current = stack.pop()
             if current.type == cs.TS_PY_ASSIGNMENT:
-                self._process_self_assignment(current, local_var_types, module_qn)
+                walked.append(current)
             stack.extend(reversed(current.children))
+        rebound = _attributes_bound_to_non_literals(walked)
+        for current in walked:
+            self._process_self_assignment(current, local_var_types, module_qn, rebound)
 
     def _self_method_element_type(
         self, call_node: ASTNode, module_qn: str
@@ -1139,10 +1232,14 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_variable_element_type(
         self, var_name: str, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
+        if local_var_types.get(var_name) == cs.PY_TYPE_STR:
+            # A string iterates as one-character strings (CodeRabbit, PR #2912).
+            return cs.PY_TYPE_STR
         if (
             var_name in local_var_types
             and (var_type := local_var_types[var_name])
-            and var_type != cs.TYPE_INFERENCE_LIST
+            # A builtin value (`d = {}`) does not iterate as itself.
+            and var_type not in cs.PY_BUILTIN_VALUE_TYPES
         ):
             # A container-marked variable (`widgets = load_widgets()` with a
             # `-> list[Widget]` annotation) iterates as its element type.

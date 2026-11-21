@@ -22,7 +22,7 @@ from .. import native_trees
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import get_cached_query, safe_decode_text, sorted_captures
 from .definition_index import PythonDefinitionIndexes
-from .utils import call_head
+from .utils import call_head, python_literal_type, unshadowed_literal_type
 from .utils import split_top_level as _split_top_level
 from .with_analyzer import WithTarget
 
@@ -1513,7 +1513,18 @@ class PythonAstAnalyzerMixin(_AstBase):
         # simple pass first, the complex pass after the with targets, so
         # `(t := session.fork())` reads the entered type (#3340).
         binders = sorted((*assignments, *named_expressions), key=lambda n: n.start_byte)
-        self._type_binders_simple(binders, nested_walruses, local_var_types, module_qn)
+        # A literal types a name only when every binding of it is one: the
+        # type map is flat per function, so `x = Bag(); x.get(k); x = {}`,
+        # or a later `x = make_bag()` or `(x := make_bag())`, must not let
+        # the literal decide every call on `x` (bot review on PR #2912). A
+        # parameter is such a binding too: `def f(x: Bag)` then `x = {}`
+        # keeps the calls made through the argument (Greptile, PR #2912).
+        rebound = self._names_bound_to_non_literals(node, binders)
+        if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+            rebound.update(_parameter_names(node))
+        self._type_binders_simple(
+            binders, nested_walruses, local_var_types, module_qn, rebound
+        )
 
         # Between the two assignment passes: a with target types from its
         # manager, which the simple pass may have typed, and the complex pass
@@ -1562,17 +1573,22 @@ class PythonAstAnalyzerMixin(_AstBase):
         nested_walruses: set[int],
         local_var_types: dict[str, str],
         module_qn: str,
+        rebound: set[str] | None = None,
     ) -> None:
         """The simple pass over assignments and walruses, in document
         order. A walrus a nested def rebinds through `nonlocal` reads its
-        value in that def's scope, not this one."""
+        value in that def's scope, not this one. `rebound`: the names some
+        binding gives a value other than a literal, which a literal does
+        not type."""
         for binder in binders:
             if binder.type == cs.TS_PY_ASSIGNMENT:
-                self._process_assignment_simple(binder, local_var_types, module_qn)
+                self._process_assignment_simple(
+                    binder, local_var_types, module_qn, rebound
+                )
             elif binder.id in nested_walruses:
                 self._process_nonlocal_walrus(binder, local_var_types, module_qn)
             else:
-                self._process_walrus_simple(binder, local_var_types, module_qn)
+                self._process_walrus_simple(binder, local_var_types, module_qn, rebound)
 
     def _type_binders_complex(
         self,
@@ -1811,8 +1827,48 @@ class PythonAstAnalyzerMixin(_AstBase):
                 if name in scratch:
                     local_var_types[name] = scratch[name]
 
+    def _names_bound_to_non_literals(
+        self, scope: Node, binders: list[Node]
+    ) -> set[str]:
+        # The assignments and walruses (`(x := make_bag())`) that bind a
+        # name to anything but a literal, and, for a name a literal binds,
+        # every other form that binds it: an unpacking (`x, n = pair()`), a
+        # `for`, `with` or `except` target, an import (Greptile, PR #2912).
+        names: set[str] = set()
+        literal_binders: set[int] = set()
+        literal_names: set[str] = set()
+        for binder in binders:
+            if binder.type == cs.TS_PY_ASSIGNMENT:
+                left = binder.child_by_field_name(cs.TS_FIELD_LEFT)
+                value = binder.child_by_field_name(cs.TS_FIELD_RIGHT)
+                name = (
+                    self._extract_assignment_variable_name(left)
+                    if left is not None
+                    else None
+                )
+            else:
+                name, value = _walrus_parts(binder)
+            if not name or value is None:
+                continue
+            if python_literal_type(value) is None:
+                names.add(name)
+            else:
+                literal_binders.add(binder.id)
+                literal_names.add(name)
+        if literal_names - names:
+            for binder, identifier in _bindings_in(scope):
+                if binder.id not in literal_binders and (
+                    (name := safe_decode_text(identifier)) in literal_names
+                ):
+                    names.add(name)
+        return names
+
     def _process_assignment_simple(
-        self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
+        self,
+        assignment_node: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        rebound: set[str] | None = None,
     ) -> None:
         left_node = assignment_node.child_by_field_name(cs.TS_FIELD_LEFT)
         right_node = assignment_node.child_by_field_name(cs.TS_FIELD_RIGHT)
@@ -1826,9 +1882,26 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         if inferred_type := self._infer_type_from_expression_simple(
             right_node, module_qn
+        ) or (
+            None
+            if rebound is not None and var_name in rebound
+            else self._unannotated_literal_type(assignment_node, right_node, module_qn)
         ):
             local_var_types[var_name] = inferred_type
             logger.debug(lg.PY_TYPE_SIMPLE, var=var_name, type=inferred_type)
+
+    def _unannotated_literal_type(
+        self, assignment: Node, value: Node, module_qn: str
+    ) -> str | None:
+        """`d = {}`: the builtin the literal is, so `d.get(k)` is `dict.get` and
+        not a first-party `get` that shares the name (issue #2859). An annotated
+        assignment (`q: tuple[W, B] = (...)`) is left to its annotation, which
+        says more than the literal does."""
+        if assignment.child_by_field_name(cs.TS_FIELD_TYPE) is not None:
+            return None
+        return unshadowed_literal_type(
+            value, module_qn, self.import_processor, self.function_registry
+        )
 
     def _process_assignment_complex(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
@@ -1853,19 +1926,32 @@ class PythonAstAnalyzerMixin(_AstBase):
             logger.debug(lg.PY_TYPE_COMPLEX, var=var_name, type=inferred_type)
 
     def _process_walrus_simple(
-        self, walrus_node: Node, local_var_types: dict[str, str], module_qn: str
+        self,
+        walrus_node: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        rebound: set[str] | None = None,
     ) -> None:
         """Type a walrus target from its value, exactly as an assignment
         to the same value: `(t := Thing())` types `t` as `Thing()` does
-        for `t = Thing()` (#3340). A bare-name value reads the name's
-        type from the map built so far, the copy the alias pass makes
-        for plain assignments, which never sees a walrus."""
+        for `t = Thing()` (#3340), and `(d := {})` as `d = {}` does (issue
+        #2859). A bare-name value reads the name's type from the map built
+        so far, the copy the alias pass makes for plain assignments, which
+        never sees a walrus."""
         name, value_node = _walrus_parts(walrus_node)
         if not name or value_node is None:
             return
-        inferred_type = self._infer_type_from_expression_simple(
-            value_node, module_qn
-        ) or _identifier_type(value_node, local_var_types)
+        inferred_type = (
+            self._infer_type_from_expression_simple(value_node, module_qn)
+            or _identifier_type(value_node, local_var_types)
+            or (
+                None
+                if rebound is not None and name in rebound
+                else unshadowed_literal_type(
+                    value_node, module_qn, self.import_processor, self.function_registry
+                )
+            )
+        )
         if inferred_type:
             local_var_types[name] = inferred_type
             logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=inferred_type)
