@@ -132,6 +132,10 @@ _IDENTIFIER_TYPES = frozenset(
         cs.PATCH_TS_FIELD_IDENTIFIER,
         cs.PATCH_TS_NAMESPACE_IDENTIFIER,
         cs.PATCH_TS_STATEMENT_IDENTIFIER,
+        # tree-sitter-php spells every function, method, class and call name
+        # as a `name` node (issue #2768). No other loaded grammar has that
+        # node type; the `name` inside a `$var` stays out (`_identifier_at`).
+        cs.TS_PHP_NAME,
     }
 )
 
@@ -173,10 +177,22 @@ def _identifier_at(root: Node, start: int, end: int) -> Node | None:
     # tree-sitter's range end is inclusive; `end` here is exclusive.
     node = root.named_descendant_for_byte_range(start, max(start, end - 1))
     while node is not None and (node.start_byte, node.end_byte) == (start, end):
-        if node.type in _IDENTIFIER_TYPES:
+        if node.type in _IDENTIFIER_TYPES and not _is_php_variable(node):
             return node
         node = node.parent
     return None
+
+
+def _is_php_variable(node: Node) -> bool:
+    # PHP's `$helper` is a `variable_name` holding a `name` node `helper`;
+    # that names a variable, never the function `helper` (bot review on PR
+    # #2895).
+    parent = node.parent
+    return (
+        node.type == cs.TS_PHP_NAME
+        and parent is not None
+        and parent.type == cs.TS_PHP_VARIABLE_NAME
+    )
 
 
 # What passes its operand's value on unchanged: `({ pad })`, `{ pad } as T`.

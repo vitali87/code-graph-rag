@@ -5125,6 +5125,7 @@ class CallProcessor:
     def _span_bindings(
         self,
         caller_node: Node,
+        caller_qn: str,
         module_qn: str,
         class_context: str | None,
         language: cs.SupportedLanguage,
@@ -5135,7 +5136,7 @@ class CallProcessor:
         type_inference = self._resolver.type_inference
         if language == cs.SupportedLanguage.RUST:
             return type_inference.collect_rust_span_bindings(
-                caller_node, module_qn, class_context
+                caller_node, module_qn, class_context, caller_qn
             )
         if language == cs.SupportedLanguage.GO:
             # A `for k, v := range xs` variable is the loop's own, so it holds
@@ -6154,7 +6155,12 @@ class CallProcessor:
             # span-scoped bindings let each call resolve against the binding
             # containing it.
             span_bindings = self._span_bindings(
-                caller_node, module_qn, class_context, language, local_var_types
+                caller_node,
+                caller_qn,
+                module_qn,
+                class_context,
+                language,
+                local_var_types,
             )
         except Exception as e:
             # A walk that still fails on some shape costs this caller its local

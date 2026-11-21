@@ -12,11 +12,12 @@ Two settings in that file are load-bearing and both fail silently:
   stacked PRs go unreviewed -- 14 of 18 open PRs, when that was measured.
 
 Validating against the vendor schema is not sufficient on its own, which is
-the part worth recording. The schema sets `additionalProperties: false` at
-the ROOT object only, so an unknown key nested under `reviews.auto_review`
-validates clean: `base_branchez` is reported as valid. A schema check alone
-would therefore be a check that cannot fail in the direction it exists for,
-because both failure modes above leave everything looking green.
+the part worth recording. Until November 2026 the schema set
+`additionalProperties: false` at the ROOT object only, so an unknown key
+nested under `reviews.auto_review` validated clean: `base_branchez` was
+reported as valid. The schema now closes the nested sections too, but it
+still requires none of these keys and does not check that the branch
+patterns compile, so a missing block or a bad regex still looks green.
 
 So this asserts the keys it cares about are PRESENT and correctly SHAPED,
 and treats the schema as an additional check rather than the only one.
@@ -24,9 +25,8 @@ and treats the schema as an additional check rather than the only one.
 
 The root key set is reproduced here rather than vendored from the 77KB
 vendor document, which would drift silently against upstream. Only the
-root matters: that is the one level the vendor marks
-`additionalProperties: false`, so it is the only level where a schema
-check adds anything the key checks above do not already cover.
+root is kept here: the key checks above cover the nested keys this file
+depends on, whatever the vendor marks below the root.
 """
 
 from __future__ import annotations
