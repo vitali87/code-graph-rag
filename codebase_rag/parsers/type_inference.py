@@ -130,6 +130,11 @@ def _enclosing_function(
     while current is not None:
         if current.type in function_types:
             return current
+        # A JS class's `static { ... }` block runs its own statements, whose
+        # `var`s no function's map holds: a callback in it may read those, so
+        # nothing around the block is taken as captured (Greptile on #3331).
+        if current.type == cs.TS_CLASS_STATIC_BLOCK:
+            return None
         current = current.parent
     return None
 

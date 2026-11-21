@@ -228,6 +228,17 @@ def test_a_nested_function_types_a_captured_variable(
 
 
 _HIDDEN = {
+    "js-class-static-block": (
+        # The static block's own `var r` is what the callback reads
+        # (Greptile on #3331).
+        "a.js",
+        _JS_CLASSES
+        + "function outer() {\n  const r = new Range();\n  class C {\n    static {\n"
+        "      var r = new Other();\n      const cb = () => r.reset();\n"
+        "      this.cb = cb;\n    }\n  }\n  return C;\n}\n",
+        "a.outer.C.cb",
+        None,
+    ),
     "py-own-rebinding": (
         "a.py",
         _PY_CLASSES
