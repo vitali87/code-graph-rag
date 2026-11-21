@@ -3792,6 +3792,35 @@ class CallResolver:
         )
         return None if followed == imported_qn else followed
 
+    def _followed_js_namespace_member(
+        self,
+        call_name: str,
+        import_map: dict[str, str],
+        language: cs.SupportedLanguage | None,
+        local_var_types: dict[str, str] | None,
+    ) -> str | None:
+        # `math.add()` with `math` imported from a barrel that re-exports it
+        # as a namespace (`export * as math from "./math"`): the member is
+        # followed from the namespace's module (issue #3249), through each
+        # nested namespace of `math.util.add()` too. None when the name leads
+        # nowhere else.
+        if language not in cs.JS_TS_LANGUAGES or call_name in import_map:
+            return None
+        head, dot, member = call_name.partition(cs.SEPARATOR_DOT)
+        if not dot or head not in import_map:
+            return None
+        # A local of the same name (`const math = new Local()`) shadows the
+        # import, and the typed-receiver path answers for it.
+        if local_var_types and head in local_var_types:
+            return None
+        imported_qn = f"{import_map[head]}{cs.SEPARATOR_DOT}{member}"
+        followed = self.import_processor.follow_js_reexports(
+            imported_qn,
+            self.type_inference.module_qn_to_file_path,
+            self.function_registry,
+        )
+        return None if followed == imported_qn else followed
+
     def _js_reexport_led_nowhere(
         self, call_name: str, module_qn: str, language: cs.SupportedLanguage | None
     ) -> bool:
@@ -3858,6 +3887,17 @@ class CallResolver:
                 return result
         elif result := self._try_resolve_direct_import(
             call_name, import_map, language, module_qn
+        ):
+            return result
+
+        if (
+            followed := self._followed_js_namespace_member(
+                call_name, import_map, language, local_var_types
+            )
+        ) and (
+            result := self._try_resolve_direct_import(
+                call_name, {call_name: followed}, language, module_qn
+            )
         ):
             return result
 

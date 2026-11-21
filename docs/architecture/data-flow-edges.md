@@ -79,6 +79,17 @@ register `STDIN` sources, but other languages emit them (for example C
 - any other stream, such as a parameter, records no edge rather than claiming
   stdout.
 
+In JavaScript and TypeScript, `process.env.K` and `process.env["K"]` read
+`ENV::K`, and so do the binding forms of the same read:
+
+- `const { K } = process.env`, including a renamed or defaulted property
+  (`{ K: k }`, `{ K = "dev" }`);
+- a parameter that defaults to `process.env` (`function f({ K } = process.env)`);
+- an alias (`const env = process.env; env.K`).
+
+The bound local carries the value into `FLOWS_TO`. A `...rest` element reads
+`ENV::<dynamic>`.
+
 ## READS_FROM and WRITES_TO
 
 These connect a **callable to a resource** it touches. The direction is decided
