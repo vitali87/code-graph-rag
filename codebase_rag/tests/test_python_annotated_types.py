@@ -10,6 +10,7 @@ makes, though an annotation runs, if at all, when the `def` does.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -233,3 +234,40 @@ def test_the_def_time_evaluation_stays_with_the_enclosing_scope(
 
 def test_a_default_value_call_is_left_as_it_was(graph: RecordedGraph) -> None:
     assert "m.build" in _edges(graph, "m.User.with_default")
+
+
+WITH_ONLY = """from typing import Annotated
+
+
+class Doc:
+    def __init__(self, text):
+        self.text = text
+
+
+class Manager:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def use(m: Manager, x: Annotated[int, Doc("x")]):
+    with m:
+        pass
+"""
+
+
+def test_dropping_the_only_annotation_call_keeps_the_with_protocol(
+    tmp_path: Path,
+) -> None:
+    # The annotation's `Doc("x")` is the body's only call, and it is no
+    # longer the function's. The `with m:` still enters and exits the
+    # manager, so those edges must stay (PR #2955 review).
+    root = tmp_path / "ann"
+    _write(root, "w.py", WITH_ONLY)
+    graph = _index(root, MagicMock())
+    edges = _edges(graph, "w.use")
+    assert edges.get("w.Manager.__enter__") == "exact", edges
+    assert edges.get("w.Manager.__exit__") == "exact", edges
+    assert "w.Doc.__init__" not in edges, edges
