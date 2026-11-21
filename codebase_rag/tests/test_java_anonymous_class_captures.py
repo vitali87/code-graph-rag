@@ -313,6 +313,30 @@ public class Nearest {
       }
     };
   }
+
+  // Greptile, PR #2991: a local in the lambda reads its parameter, and
+  // `this` in a local class is that class's instance.
+  Function<Other, Handler> lambdaAlias() {
+    return (Other codec) -> {
+      var copy = codec;
+      class Local implements Handler {
+        @Override
+        public String handle(String in) {
+          return copy.encode(in); // lambda-alias
+        }
+      }
+      return new Local();
+    };
+  }
+
+  Base inheritedThis() {
+    class Local extends Base {
+      String run(String in) {
+        return this.codec.encode(in); // inherited-this-field
+      }
+    }
+    return new Local();
+  }
 }
 """
 
@@ -437,6 +461,7 @@ def test_a_field_of_the_anonymous_class_shadows_the_captured_name(
         "anonymous-inherited-field",
         "catch-parameter",
         "resource-variable",
+        "lambda-alias",
     ],
 )
 def test_the_nearest_binding_of_the_name_types_the_receiver(
@@ -444,6 +469,16 @@ def test_the_nearest_binding_of_the_name_types_the_receiver(
 ) -> None:
     line = _scoped_line(marker, NEAREST)
     assert _callers_of_encode(graph, OTHER_ENCODE, "Nearest").get(line) == "exact"
+    assert line not in _callers_of_encode(graph, source="Nearest")
+
+
+def test_the_enclosing_instances_field_does_not_type_the_classs_this(
+    graph: RecordedGraph,
+) -> None:
+    # `this` in the local class's method is the local class's instance, whose
+    # `codec` comes from `Base`; the enclosing `Nearest`'s `this.codec` must
+    # not bind `Codec.encode` (Greptile, PR #2991).
+    line = _scoped_line("inherited-this-field", NEAREST)
     assert line not in _callers_of_encode(graph, source="Nearest")
 
 

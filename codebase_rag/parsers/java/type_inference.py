@@ -31,6 +31,9 @@ if TYPE_CHECKING:
 # to emit no first-party edge at all.
 JAVA_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
+# How the type map keys an instance's field: `this.codec`.
+_THIS_PREFIX = f"{cs.JAVA_KEYWORD_THIS}{cs.SEPARATOR_DOT}"
+
 
 def _capture_site(scope_node: ASTNode) -> tuple[ASTNode, ASTNode, ASTNode] | None:
     """For a method of an anonymous or local class: the method whose locals
@@ -311,7 +314,10 @@ class JavaTypeInferenceEngine(
             else None
         )
         for name, type_name in self._captures_at(enclosing, site, module_qn).items():
-            if name in shadowed:
+            # `this.codec` there is the enclosing instance's field; `this` in
+            # the class's methods is the class's own instance, whose fields
+            # its own pass types (Greptile, PR #2991).
+            if name in shadowed or name.startswith(_THIS_PREFIX):
                 continue
             # A field inherited from the superclass hides it too, and is
             # what the name reads (bot review on PR #2991).
