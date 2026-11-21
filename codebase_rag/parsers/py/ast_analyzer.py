@@ -801,6 +801,55 @@ def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[
     return frozenset(names)
 
 
+def rebound_receivers(caller: Node) -> frozenset[str]:
+    """The receivers (`self`, `cls`) the caller's body, or an enclosing
+    def's, binds anew (`self = factory()`): a call through one may run on
+    the assigned value, not an instance of the enclosing class (CodeRabbit,
+    PR #2908). A class body ends the walk; its methods' receivers are
+    their own."""
+    names: set[str] = set()
+    scope: Node | None = caller
+    while scope is not None and scope.type != cs.TS_PY_CLASS_DEFINITION:
+        if scope.id == caller.id or scope.type == cs.TS_PY_FUNCTION_DEFINITION:
+            names.update(scope_facts(scope).bound & cs.PY_RECEIVER_NAMES)
+            names.update(_pattern_bound_receivers(scope))
+        scope = scope.parent
+    return frozenset(names)
+
+
+def _pattern_bound_receivers(scope: Node) -> set[str]:
+    # The receivers a `case` pattern of the scope's own body binds: an
+    # alias (`case _ as self:`), a capture (`case self:`) or a star
+    # (`case [*cls]:`), which the scope facts leave out (CodeRabbit, PR
+    # #2908). Only a body holding a `match` is walked.
+    body = scope.child_by_field_name(cs.FIELD_BODY)
+    if body is None or not body.text or cs.PY_MATCH_KEYWORD not in body.text:
+        return set()
+    clauses: list[Node] = []
+    stack = list(body.children)
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_CASE_CLAUSE:
+            clauses.append(node)
+        if node.type not in cs.PY_NESTED_SCOPE_TYPES:
+            stack.extend(node.children)
+    names: set[str] = set()
+    for _clause, pattern in _case_patterns(clauses):
+        for node in _pattern_nodes(pattern):
+            binders = (
+                node.named_children
+                if node.type == cs.TS_PY_SPLAT_PATTERN
+                else _pattern_binders(node)
+            )
+            names.update(
+                name
+                for identifier in binders
+                if identifier.type == cs.TS_PY_IDENTIFIER
+                and (name := safe_decode_text(identifier)) in cs.PY_RECEIVER_NAMES
+            )
+    return names
+
+
 def _inner_scope_bindings(scope: Node) -> set[str]:
     """The names a comprehension's `for` targets or a lambda's parameters
     bind."""
@@ -1344,6 +1393,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         """`local_names` under the caller's module's import map."""
         import_map = self.import_processor.import_mapping.get(module_qn) or {}
         return local_names(caller, import_map)
+
+    def rebound_receivers(self, caller: Node) -> frozenset[str]:
+        """`rebound_receivers` of the caller."""
+        return rebound_receivers(caller)
 
     def binder_names(self, node: Node) -> list[str]:
         """The names ONE statement or expression binds itself, by every

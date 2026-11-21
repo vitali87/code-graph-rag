@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
+from functools import cache
 from typing import TYPE_CHECKING
 
 from tree_sitter import QueryCursor
@@ -249,29 +250,46 @@ def external_stdlib_base_method_names(parent_qns: list[str]) -> frozenset[str]:
     # it as an external-override reachability root. Only stdlib modules are
     # imported (sys.stdlib_module_names gate): importing them is side-effect-safe
     # and requires no third-party environment.
+    names: set[str] = set()
+    for parent_qn in parent_qns:
+        if (base := _stdlib_class(parent_qn)) is not None:
+            names.update(dir(base))
+    return frozenset(names)
+
+
+@cache
+def external_class_members(qualified_name: str) -> frozenset[str] | None:
+    """Every attribute name an external class has, when this process can
+    know it: a builtin (`Exception`, `dict`) or a stdlib class. None for
+    any other class, a third-party one, whose members are unknown."""
+    import builtins
+
+    if SEPARATOR_DOT not in qualified_name:
+        base = getattr(builtins, qualified_name, None)
+    else:
+        base = _stdlib_class(qualified_name)
+    return frozenset(dir(base)) if isinstance(base, type) else None
+
+
+def _stdlib_class(qualified_name: str) -> type | None:
     import importlib
     import sys
 
-    names: set[str] = set()
-    for parent_qn in parent_qns:
-        module_path, _, class_name = parent_qn.rpartition(SEPARATOR_DOT)
-        if not module_path or not class_name:
-            continue
-        top_module = module_path.split(SEPARATOR_DOT, 1)[0]
-        if top_module not in sys.stdlib_module_names:
-            continue
-        try:
-            module = importlib.import_module(module_path)
-            base = getattr(module, class_name, None)
-        except Exception:  # noqa: S112
-            # Broad on purpose: importing a stdlib module executes its
-            # module-level code, which can raise arbitrary platform-specific
-            # errors; the parser must degrade to "no external base info"
-            # rather than crash the indexing run.
-            continue
-        if isinstance(base, type):
-            names.update(dir(base))
-    return frozenset(names)
+    module_path, _, class_name = qualified_name.rpartition(SEPARATOR_DOT)
+    if not module_path or not class_name:
+        return None
+    if module_path.split(SEPARATOR_DOT, 1)[0] not in sys.stdlib_module_names:
+        return None
+    try:
+        module = importlib.import_module(module_path)
+        base = getattr(module, class_name, None)
+    except Exception:
+        # Broad on purpose: importing a stdlib module executes its
+        # module-level code, which can raise arbitrary platform-specific
+        # errors; the parser must degrade to "no external base info"
+        # rather than crash the indexing run.
+        return None
+    return base if isinstance(base, type) else None
 
 
 def reduce_optional_annotation(text: str) -> str:
