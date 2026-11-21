@@ -73,7 +73,12 @@ from .js_ts.module_paths import (
     discover_js_workspace_packages,
     resolve_js_workspace_import,
 )
-from .js_ts.reexports import JsExport, follow_js_reexports, js_ts_module_qn
+from .js_ts.reexports import (
+    JsExport,
+    JsNamespaceExport,
+    follow_js_reexports,
+    js_ts_module_qn,
+)
 from .js_ts.utils import get_js_ts_language_obj
 from .lua import utils as lua_utils
 from .php.namespaces import declared_namespace
@@ -489,6 +494,14 @@ def _js_export_specifiers(statement: Node) -> Iterator[tuple[str, str]]:
                 yield local, name
 
 
+def _js_namespace_export_name(namespace_export: Node) -> str | None:
+    # The `ns` of `export * as ns from "./x"`.
+    identifier = next(
+        (c for c in namespace_export.children if c.type == cs.TS_IDENTIFIER), None
+    )
+    return safe_decode_text(identifier) if identifier is not None else None
+
+
 def _js_declared_export_names(statement: Node) -> Iterator[str]:
     # The names `export function f`, `export class C`, `export const f = ...`
     # (and TypeScript's `export declare function f`) declare and export.
@@ -862,6 +875,255 @@ def _is_conditional_import_node(import_node: Node) -> bool:
             return True
         current = current.parent
     return False
+
+
+def _python_import_scope(import_node: Node) -> cs.ImportScope | None:
+    """Why a Python import does not run when its module is imported, or None
+    when it does.
+
+    A function or lambda body runs when it is called, and an `if
+    TYPE_CHECKING:` body never runs; those imports are how two modules refer
+    to each other without a circular import (issue #2685). A class body, and
+    the `else` of a TYPE_CHECKING test, run at import time.
+    """
+    child = import_node
+    current = import_node.parent
+    while current is not None:
+        if current.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA):
+            return cs.ImportScope.FUNCTION
+        if (
+            current.type == cs.TS_PY_IF_STATEMENT
+            and child == current.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
+            and _is_type_checking_test(
+                current.child_by_field_name(cs.TS_FIELD_CONDITION)
+            )
+        ):
+            return cs.ImportScope.TYPE_CHECKING_BLOCK
+        child = current
+        current = current.parent
+    return None
+
+
+def _is_type_checking_test(condition: Node | None) -> bool:
+    # `TYPE_CHECKING`, or `typing`'s under any name the module imports it as
+    # (`typing.TYPE_CHECKING`, `t.TYPE_CHECKING` after `import typing as t`).
+    # Another module's `settings.TYPE_CHECKING` may be true at import time
+    # (bot review on PR #2728).
+    text = safe_decode_text(condition) if condition is not None else None
+    if text is None or condition is None:
+        return False
+    if text == cs.PY_TYPE_CHECKING:
+        # Only typing's, or a module's own `TYPE_CHECKING = False`: one set
+        # to True runs its imports at import time (bot review on PR #2728).
+        return _python_module_bound_at(condition, text) <= _PY_FALSE_TYPE_CHECKING
+    head, sep, attr = text.rpartition(cs.SEPARATOR_DOT)
+    if not sep or attr != cs.PY_TYPE_CHECKING:
+        return False
+    return _python_module_bound_at(condition, head) <= _PY_TYPING_MODULES
+
+
+_PY_TYPING_MODULES = frozenset({"typing", "typing_extensions"})
+# What a bare `TYPE_CHECKING` guard may be bound to and be false at import
+# time: typing's constant, `TYPE_CHECKING = False`, or no binding the walk
+# sees (taken at its word, as before).
+_PY_FALSE_TYPE_CHECKING = frozenset(
+    {
+        cs.PY_TYPE_CHECKING,
+        "=False",
+        *(
+            f"{module}{cs.SEPARATOR_DOT}{cs.PY_TYPE_CHECKING}"
+            for module in _PY_TYPING_MODULES
+        ),
+    }
+)
+
+
+_UNBOUND = "<unbound>"
+# Statements whose body may not run, so a binding inside one may not be the
+# active one at a later guard.
+_PY_BRANCHING = frozenset(
+    {
+        cs.TS_PY_IF_STATEMENT,
+        cs.TS_PY_FOR_STATEMENT,
+        cs.TS_PY_WHILE_STATEMENT,
+        cs.TS_PY_TRY_STATEMENT,
+        cs.TS_PY_MATCH_STATEMENT,
+    }
+)
+_PY_DEFINITIONS = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION})
+
+
+def _python_module_bound_at(node: Node, name: str) -> frozenset[str | None]:
+    # What `name` may name at `node`: the module an import bound it to
+    # (`import typing as t`, `import typing`), or None for a binding of
+    # anything else (`import settings as t`, `class t:`), for every binding
+    # that may be the active one there (bot review on PR #2728). The nearest
+    # namespace binding the name decides: the class body the guard runs in,
+    # then the module. A name nothing binds is taken at its word.
+    scope = node.parent
+    while scope is not None:
+        if scope.type == cs.TS_PY_CLASS_DEFINITION:
+            body = scope.child_by_field_name(cs.FIELD_BODY)
+        elif scope.parent is None:
+            body = scope
+        else:
+            body = None
+        if body is not None and (
+            bound := _python_active_bindings(body, name, node.start_byte)
+        ):
+            return bound
+        scope = scope.parent
+    return frozenset({name})
+
+
+def _python_active_bindings(
+    body: Node, name: str, before: int
+) -> frozenset[str | None]:
+    # The bindings of `name` in one namespace's body that may be active at
+    # `before`, in source order: an unconditional one replaces those before
+    # it, one under a branch (`if`, `try`, a loop) joins them.
+    active: set[str | None] = set()
+    for _start, branched, bound in sorted(
+        _python_bindings_before(body, name, before), key=lambda entry: entry[0]
+    ):
+        if not branched:
+            active.clear()
+        active.add(bound)
+    return frozenset(active)
+
+
+def _python_bindings_before(
+    body: Node, name: str, before: int
+) -> list[tuple[int, bool, str | None]]:
+    # Every binding of `name` in one namespace's body that starts before
+    # `before`: (start, whether a branch holds it, what it binds). A nested
+    # function or class binds its own name; its body is not read.
+    found: list[tuple[int, bool, str | None]] = []
+    stack = [(child, False) for child in body.named_children]
+    while stack:
+        stmt, branched = stack.pop()
+        if stmt.start_byte >= before:
+            continue
+        definition = _python_definition(stmt)
+        if definition is not None:
+            if (
+                safe_decode_text(definition.child_by_field_name(cs.TS_FIELD_NAME))
+                == name
+            ):
+                found.append((stmt.start_byte, branched, None))
+            continue
+        bound = _python_statement_binding(stmt, name)
+        if bound != _UNBOUND:
+            found.append((stmt.start_byte, branched, bound))
+        inner = branched or stmt.type in _PY_BRANCHING
+        stack.extend((child, inner) for child in stmt.named_children)
+    return found
+
+
+def _python_definition(stmt: Node) -> Node | None:
+    # The function or class a statement defines, through its decorators;
+    # None for any other statement.
+    definition = stmt
+    if stmt.type == cs.TS_PY_DECORATED_DEFINITION:
+        definition = stmt.child_by_field_name(cs.FIELD_DEFINITION) or stmt
+    return definition if definition.type in _PY_DEFINITIONS else None
+
+
+def _python_statement_binding(stmt: Node, name: str) -> str | None:
+    # What a statement binds `name` to: the module an `import` names, the
+    # `module.member` a `from module import member` takes, `=<value>` for an
+    # assignment; `_UNBOUND` when the statement does not bind `name`.
+    if stmt.type == cs.TS_PY_IMPORT_STATEMENT:
+        return _python_import_binding(stmt, name)
+    if stmt.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
+        return _python_import_from_binding(stmt, name)
+    if stmt.type == cs.TS_PY_EXPRESSION_STATEMENT:
+        return _python_assignment_binding(stmt, name)
+    return _UNBOUND
+
+
+def _python_import_binding(stmt: Node, name: str) -> str | None:
+    # `import module as name` binds the module; `import name.sub` binds
+    # `name` itself.
+    bound: str | None = _UNBOUND
+    for child in stmt.named_children:
+        if child.type == cs.TS_ALIASED_IMPORT:
+            alias = safe_decode_text(child.child_by_field_name(cs.FIELD_ALIAS))
+            if alias == name:
+                bound = safe_decode_text(child.child_by_field_name(cs.TS_FIELD_NAME))
+        elif child.type == cs.TS_DOTTED_NAME:
+            module = safe_decode_text(child)
+            if module and module.split(cs.SEPARATOR_DOT, 1)[0] == name:
+                bound = name
+    return bound
+
+
+def _python_import_from_binding(stmt: Node, name: str) -> str | None:
+    # `from module import member [as name]` binds `module.member`.
+    module = safe_decode_text(stmt.child_by_field_name(cs.FIELD_MODULE_NAME))
+    bound: str | None = _UNBOUND
+    for child in stmt.children_by_field_name(cs.TS_FIELD_NAME):
+        member = child.child_by_field_name(cs.TS_FIELD_NAME) or child
+        target = child.child_by_field_name(cs.FIELD_ALIAS) or child
+        if safe_decode_text(target) == name:
+            bound = f"{module}{cs.SEPARATOR_DOT}{safe_decode_text(member)}"
+    return bound
+
+
+def _python_assignment_binding(stmt: Node, name: str) -> str | None:
+    # `name = <value>` binds `=<value>`; the last assignment to `name` wins.
+    bound: str | None = _UNBOUND
+    for child in stmt.named_children:
+        if child.type == cs.TS_PY_ASSIGNMENT and (
+            (written := _python_assigned_value(child, name)) != _UNBOUND
+        ):
+            bound = written
+    return bound
+
+
+def _python_assigned_value(assignment: Node, name: str) -> str:
+    # `=<value>` for what one assignment writes to `name`, `_UNBOUND` when it
+    # writes none. An unpacking (`TYPE_CHECKING, DEBUG = True, False`) writes
+    # the value at the name's position, or the whole value when nothing
+    # pairs them (bot review on PR #2728).
+    left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+    right = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
+    if safe_decode_text(left) == name:
+        return f"={safe_decode_text(right)}"
+    if left is None or left.type not in cs.PY_UNPACKING_TARGET_TYPES:
+        return _UNBOUND
+    targets = left.named_children
+    at = [i for i, target in enumerate(targets) if safe_decode_text(target) == name]
+    if not at:
+        return _UNBOUND
+    values = (
+        right.named_children
+        if right is not None and right.type in cs.PY_UNPACKING_VALUE_TYPES
+        else []
+    )
+    value = values[at[-1]] if len(values) == len(targets) else right
+    return f"={safe_decode_text(value)}"
+
+
+def _same_module(
+    full_name: str | None, site: PropertyDict, other: str, other_site: PropertyDict
+) -> bool:
+    # `from app.db import save` and `from app.db import User` (or `import
+    # app.db`) load one module; `import app.other` and `import app.db` share
+    # only a parent (bot review on PR #2728).
+    return full_name is not None and _imported_module(full_name, site) == (
+        _imported_module(other, other_site)
+    )
+
+
+def _imported_module(full_name: str, site: PropertyDict) -> str:
+    # The module a Python import loads: the binding's own target for a
+    # whole-module import, the module it takes the name from otherwise.
+    member = site.get(cs.KEY_IMPORTED_NAME)
+    suffix = f"{cs.SEPARATOR_DOT}{member}"
+    if isinstance(member, str) and full_name.endswith(suffix):
+        return full_name[: -len(suffix)]
+    return full_name
 
 
 def _rust_member_pattern(pattern: str) -> str:
@@ -1898,6 +2160,7 @@ class ImportProcessor:
         "unresolved_specifiers",
         "unresolved_references",
         "js_export_bindings",
+        "_js_missing_file_modules",
         "_import_sites",
         "_import_site_owners",
         "_import_site_writers",
@@ -1907,6 +2170,7 @@ class ImportProcessor:
         "_cpp_declaration_mappings",
         "_cpp_include_targets",
         "_cpp_shadowed_include_targets",
+        "_python_displaced_eager_imports",
         "_cpp_shadowed_include_sites",
         "_js_side_effect_imports",
         "_dart_packages",
@@ -2063,6 +2327,10 @@ class ImportProcessor:
         # only through it, since a module's own imports are not its exports
         # (issue #2464).
         self.js_export_bindings: dict[str, dict[str, JsExport]] = {}
+        # Module qns an explicit-extension specifier (`./fmt.js`) names where
+        # no such file exists, only a `fmt/` directory: they name no module,
+        # so the export walk must not read them as the directory's index.
+        self._js_missing_file_modules: set[str] = set()
         # Per scope qn: the site props of each bound import name (#1522),
         # attached to the IMPORTS edge when the deferred edge flushes.
         self._import_sites: dict[str, dict[str, PropertyDict]] = {}
@@ -2301,6 +2569,12 @@ class ImportProcessor:
         # survived (issue #1758). The binding can hold one name, but the file
         # really does include both headers, so the edge is kept here.
         self._cpp_shadowed_include_targets: set[tuple[str, str]] = set()
+        # Python import-time imports whose name a deferred import of the same
+        # module rebound: (target, site) pairs that keep their own IMPORTS
+        # edge (bot review on PR #2728).
+        self._python_displaced_eager_imports: dict[
+            str, list[tuple[str, PropertyDict]]
+        ] = {}
         # The site of each directive that lost its name, so its edge is
         # located as tree-sitter would place it and libclang's edge for the
         # same `#include` merges into it (issue #2944). One per directive: a
@@ -2623,6 +2897,15 @@ class ImportProcessor:
                         site=sites.get(local_name),
                     )
                 )
+        for full_name, site in self._python_displaced_eager_imports.pop(module_qn, ()):
+            self._deferred_import_edges.append(
+                DeferredImportEdge(
+                    module_qn=module_qn,
+                    full_name=full_name,
+                    language=language,
+                    site=site,
+                )
+            )
         # Side-effect imports bind no name, so the map above never lists them.
         for target, site in self._js_side_effect_imports.get(module_qn, ()):
             self._deferred_import_edges.append(
@@ -4052,8 +4335,10 @@ class ImportProcessor:
         all_imports = captures.get(cs.CAPTURE_IMPORT, []) + captures.get(
             cs.CAPTURE_IMPORT_FROM, []
         )
+        self._python_displaced_eager_imports.pop(module_qn, None)
         for import_node in all_imports:
             before = dict(self.import_mapping[module_qn])
+            sites_before = dict(self._import_sites.get(module_qn, {}))
             if import_node.type == cs.TS_PY_IMPORT_STATEMENT:
                 self._handle_python_import_statement(import_node, module_qn)
             elif import_node.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
@@ -4064,6 +4349,8 @@ class ImportProcessor:
                     self.conditional_imports.setdefault(module_qn, set()).update(
                         new_names
                     )
+            self._mark_import_scope(import_node, module_qn)
+            self._keep_displaced_eager_import(module_qn, before, sites_before)
             self._record_python_rebinds(module_qn, before)
         self._record_python_binding_order(module_qn)
 
@@ -4078,6 +4365,53 @@ class ImportProcessor:
     @property
     def python_star_rules(self) -> PythonStarRules:
         return PythonStarRules(self.python_module_all, self.python_binding_order)
+
+    def _mark_import_scope(self, import_node: Node, module_qn: str) -> None:
+        """Tag the sites this statement recorded with why it does not run at
+        import time, so the IMPORTS edges they become say so too."""
+        scope = _python_import_scope(import_node)
+        if scope is None:
+            return
+        start = (import_node.start_point[0] + 1, import_node.start_point[1])
+        for site in self._import_sites.get(module_qn, {}).values():
+            if (site.get(cs.KEY_LINE), site.get(cs.KEY_COL)) == start:
+                site[cs.KEY_IMPORT_SCOPE] = scope.value
+
+    def _keep_displaced_eager_import(
+        self,
+        module_qn: str,
+        before: dict[str, str],
+        sites_before: dict[str, PropertyDict],
+    ) -> None:
+        # A deferred import (in a function, under TYPE_CHECKING) of a name an
+        # import-time import bound takes the name's site, and the module's
+        # IMPORTS edge is the final binding's. The import-time statement still
+        # runs, so it keeps an edge of its own (bot review on PR #2728), but
+        # only when both bind the same symbol: the module's uses of the name
+        # resolve to the final binding, so an edge for another symbol's
+        # import would let rename rewrite that import and leave its uses.
+        sites = self._import_sites.get(module_qn, {})
+        mapping = self.import_mapping.get(module_qn, {})
+        for name, previous in sites_before.items():
+            site = sites.get(name)
+            if (
+                site is None
+                or site is previous
+                or name not in before
+                or previous.get(cs.KEY_IMPORT_SCOPE) is not None
+                or site.get(cs.KEY_IMPORT_SCOPE) is None
+            ):
+                continue
+            if mapping.get(name) == before[name]:
+                self._python_displaced_eager_imports.setdefault(module_qn, []).append(
+                    (before[name], previous)
+                )
+            elif _same_module(mapping.get(name), site, before[name], previous):
+                # Another symbol of the same module: its edge is the module's
+                # only one to that module, and the import-time statement still
+                # loads that module, so the edge counts toward a cycle (bot
+                # review on PR #2728).
+                site.pop(cs.KEY_IMPORT_SCOPE, None)
 
     def _record_python_rebinds(self, module_qn: str, before: dict[str, str]) -> None:
         mapping = self.import_mapping[module_qn]
@@ -6225,12 +6559,45 @@ class ImportProcessor:
             return self._resolve_js_bare_import_target(
                 import_path, current_module, require
             )
-        return JsImportTarget(
-            cs.SEPARATOR_DOT.join(
-                self._js_relative_target_parts(import_path, current_module)
-            ),
-            False,
-        )
+        parts = self._js_relative_target_parts(import_path, current_module)
+        # An explicit extension (`./fmt.js`) names a file, never a directory.
+        if self._strip_js_extension(import_path) == import_path:
+            return JsImportTarget(self._js_directory_index_qn(parts), False)
+        module_qn = cs.SEPARATOR_DOT.join(parts)
+        if self._js_names_directory_only(parts):
+            self._js_missing_file_modules.add(module_qn)
+        else:
+            # The file exists now: a watcher run read it again.
+            self._js_missing_file_modules.discard(module_qn)
+        return JsImportTarget(module_qn, False)
+
+    def _js_names_directory_only(self, parts: list[str]) -> bool:
+        # Whether the project path `parts` spells has no module file of its
+        # own, only a directory's `index`.
+        if len(parts) < 2 or parts[0] != self.project_name:
+            return False
+        rel = cs.SEPARATOR_SLASH.join(parts[1:])
+        on_disk = self._js_module_rel_on_disk(rel)
+        return on_disk is not None and on_disk != rel
+
+    def _js_directory_index_qn(self, parts: list[str]) -> str:
+        """`./fmt` as Node and TypeScript resolve it: `fmt.ts`/`fmt.js` when
+        one exists, else the directory's `fmt/index.*` (issue #3249).
+
+        Without the `index` leaf a named import was recorded under
+        `<dir>.fmt.pad`, a qn no definition has, so every call through it
+        bound by name while the explicit `./fmt/index` bound exactly.
+        """
+        module_qn = cs.SEPARATOR_DOT.join(parts)
+        if len(parts) < 2 or parts[0] != self.project_name:
+            return module_qn
+        # Joined from the path segments, not re-split from the dotted qn:
+        # `users.service` is one file name, not a `users/` directory.
+        rel = cs.SEPARATOR_SLASH.join(parts[1:])
+        on_disk = self._js_module_rel_on_disk(rel)
+        if on_disk is None or on_disk == rel:
+            return module_qn
+        return f"{module_qn}{cs.SEPARATOR_DOT}{cs.JS_INDEX_STEM}"
 
     def _parse_js_import_clause(
         self,
@@ -6461,6 +6828,38 @@ class ImportProcessor:
                         self._record_js_reexport_specifier(
                             grandchild, export_node, current_module, source_module
                         )
+            elif child.type == cs.TS_NAMESPACE_EXPORT:
+                self._record_js_namespace_reexport(
+                    child, export_node, current_module, source_module
+                )
+
+    def _record_js_namespace_reexport(
+        self,
+        namespace_export: Node,
+        export_node: Node,
+        current_module: str,
+        source_module: str,
+    ) -> None:
+        namespace = _js_namespace_export_name(namespace_export)
+        if not namespace:
+            return
+        # `export * as math from "./math"` publishes the whole module
+        # as `math`. Only the coincidence of `lib` + `math` spelling
+        # the `lib/math` directory made `math.add()` resolve before
+        # (issue #3249).
+        self.js_export_bindings.setdefault(current_module, {})[namespace] = (
+            JsNamespaceExport(source_module, local=False)
+        )
+        # It binds no local `math`, so the map entry only carries the
+        # IMPORTS edge and never displaces an import of that name.
+        if namespace not in self.import_mapping[current_module]:
+            self.import_mapping[current_module][namespace] = source_module
+            self._record_import_site(
+                current_module,
+                namespace,
+                export_node,
+                cs.IMPORTED_NAME_WILDCARD,
+            )
 
     def _record_js_reexport_specifier(
         self,
@@ -6519,6 +6918,12 @@ class ImportProcessor:
     ) -> str:
         """Where a JS/TS import of `qn` leads through the barrels re-exporting
         it; see `js_ts.reexports.follow_js_reexports`."""
+        module_qn = qn.rpartition(cs.SEPARATOR_DOT)[0]
+        if module_qn in self._js_missing_file_modules and module_qn not in module_paths:
+            # `import { trim } from "./fmt.js"` beside only `fmt/index.js`:
+            # Node and TypeScript never resolve it to the index (bot review
+            # on PR #3282), so neither does the walk.
+            return qn
         return follow_js_reexports(
             qn,
             self.import_mapping,
