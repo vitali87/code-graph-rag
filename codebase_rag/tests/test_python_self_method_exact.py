@@ -111,6 +111,27 @@ FILES = {
         "            self.m()\n"
         "            self = pick()\n"
     ),
+    # Greptile, PR #2951: every other way Python binds the receiver's name.
+    "rebind_other.py": (
+        "class Host4:\n    def m(self):\n        return 1\n\n"
+        "    def looped(self, items):\n"
+        "        for self in items:\n"
+        "            self.m()\n\n"
+        "    def unpacked(self, pair):\n"
+        "        self, _ = pair\n"
+        "        return self.m()\n\n"
+        "    def walrus(self, x):\n"
+        "        if self := x:\n"
+        "            return self.m()\n"
+        "        return None\n\n"
+        "    def managed(self, cm):\n"
+        "        with cm as self:\n"
+        "            return self.m()\n\n"
+        "    def comprehension(self, items):\n"
+        "        return [self.m() for self in items]\n\n"
+        "    def plain(self):\n"
+        "        return self.m()\n"
+    ),
 }
 
 
@@ -294,3 +315,29 @@ def test_a_receiver_the_method_binds_stays_exact(
     graph: RecordedGraph, caller: str, line: int
 ) -> None:
     assert _calls_at(graph, caller, line) == {"unbound.Host3.m": "exact"}
+
+
+@pytest.mark.parametrize(
+    ("caller", "line"),
+    [
+        ("rebind_other.Host4.looped", 7),
+        ("rebind_other.Host4.unpacked", 11),
+        ("rebind_other.Host4.walrus", 15),
+        ("rebind_other.Host4.managed", 20),
+        ("rebind_other.Host4.comprehension", 23),
+    ],
+    ids=["for-target", "unpacking", "walrus", "with-target", "comprehension"],
+)
+def test_a_receiver_another_binding_rebinds_is_not_exact(
+    graph: RecordedGraph, caller: str, line: int
+) -> None:
+    # `for self in items: self.m()` runs each item's `m`, which the type map
+    # cannot name: the enclosing class's method is only a guess (Greptile,
+    # PR #2951).
+    assert _calls_at(graph, caller, line).get("rebind_other.Host4.m") != "exact"
+
+
+def test_a_receiver_no_binding_touches_stays_exact(graph: RecordedGraph) -> None:
+    assert _calls_at(graph, "rebind_other.Host4.plain", 26) == {
+        "rebind_other.Host4.m": "exact"
+    }

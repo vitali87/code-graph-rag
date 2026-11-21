@@ -20,6 +20,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
+from .ast_analyzer import _bindings_in, _identifiers_in
 from .forward_refs import unquote_forward_refs
 
 # Scopes whose assignments bind their own locals, not the method's receiver.
@@ -49,13 +50,34 @@ def receiver_rebinding(call: Node, receiver: str) -> ReceiverRebinding:
 
 
 def rebound_receivers(function: Node) -> frozenset[str]:
-    """The receivers (`self`, `cls`) a `self = Other()` in the def's own body
-    rebinds: only a call through one of them needs `receiver_rebinding`."""
+    """The receivers (`self`, `cls`) the def's own body rebinds, by a
+    `self = Other()` or any other binding: only a call through one of them
+    needs `receiver_bound_otherwise` and `receiver_rebinding`."""
+    bound = {safe_decode_text(name) for _binder, name in _bindings_in(function)}
     return frozenset(
         receiver
         for receiver in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
-        if _assignments_to(function, receiver)
+        if receiver in bound
     )
+
+
+def receiver_bound_otherwise(function: Node, receiver: str) -> bool:
+    """Whether the def's own body binds `receiver` other than by a plain
+    `self = value`: a `for` or `with` target, an unpacking, a walrus, an
+    `except` alias, an import, a `case` capture. `receiver_rebinding` orders
+    only plain assignments against a call, so the receiver may then hold
+    anything at any call (Greptile review on PR #2951)."""
+    for binder, name in _bindings_in(function):
+        if safe_decode_text(name) != receiver:
+            continue
+        left = (
+            binder.child_by_field_name(cs.TS_FIELD_LEFT)
+            if binder.type == cs.TS_PY_ASSIGNMENT
+            else None
+        )
+        if left is None or left.id != name.id:
+            return True
+    return False
 
 
 def receiver_annotation(call: Node, receiver: str) -> str | None:
@@ -100,6 +122,12 @@ def receiver_is_bound(call: Node, receiver: str) -> bool:
     """
     current = call.parent
     while current is not None and current.type != cs.TS_PY_CLASS_DEFINITION:
+        # `[self.m() for self in items]`: the comprehension's own variable.
+        if (
+            current.type in cs.PY_COMPREHENSION_TYPES
+            and receiver in _comprehension_names(current)
+        ):
+            return False
         if current.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA):
             names = _parameter_names(current)
             if _is_method(current):
@@ -108,6 +136,16 @@ def receiver_is_bound(call: Node, receiver: str) -> bool:
                 return False
         current = current.parent
     return False
+
+
+def _comprehension_names(comprehension: Node) -> set[str | None]:
+    return {
+        safe_decode_text(name)
+        for clause in comprehension.named_children
+        if clause.type == cs.TS_PY_FOR_IN_CLAUSE
+        and (left := clause.child_by_field_name(cs.TS_FIELD_LEFT)) is not None
+        for name in _identifiers_in(left)
+    }
 
 
 def _parameter_names(function: Node) -> list[str]:

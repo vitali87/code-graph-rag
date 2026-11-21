@@ -76,6 +76,7 @@ from .py.receiver_rebinding import (
     ReceiverRebinding,
     rebound_receivers,
     receiver_annotation,
+    receiver_bound_otherwise,
     receiver_is_bound,
     receiver_rebinding,
 )
@@ -8417,9 +8418,9 @@ class CallProcessor:
         # (CodeRabbit, PR #2951).
         if ctx.rebound_receivers is None:
             ctx.rebound_receivers = rebound_receivers(ctx.caller_node)
-        return (
-            receiver in ctx.rebound_receivers
-            and receiver_rebinding(call_node, receiver).sometimes
+        return receiver in ctx.rebound_receivers and (
+            receiver_bound_otherwise(ctx.caller_node, receiver)
+            or receiver_rebinding(call_node, receiver).sometimes
         )
 
     def _resolve_go_callee(
