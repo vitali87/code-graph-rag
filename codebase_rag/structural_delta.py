@@ -64,6 +64,12 @@ class Definition(NamedTuple):
     decorators: tuple[str, ...] | None = None
     modifiers: tuple[str, ...] | None = None
 
+    @property
+    def is_async(self) -> bool:
+        # The shape fingerprint drops the keyword, so a `def` <-> `async def`
+        # flip is told apart by the modifiers alone (issue #2860).
+        return cs.TS_PY_ASYNC in (self.modifiers or ())
+
 
 class CallSite(NamedTuple):
     caller: str
@@ -182,6 +188,10 @@ class ArityAtSite(TypedDict):
     kwarg_names: list[str]
     declared_count: int
     verdict: str
+    # The definition the site was judged against and how its edge was bound
+    # (issue #2639): a finding against a guess can be told from a real one.
+    callee: str
+    resolution: str
 
 
 class RemoteCaller(TypedDict):
@@ -200,6 +210,9 @@ class SignatureChange(TypedDict):
     before: list[str] | None
     after: list[str] | None
     sites: list[ArityAtSite]
+    # `added` or `removed` when the definition turned `async` or back
+    # (issue #2860), else None.
+    async_change: str | None
     # Call sites across the network that reach this definition's endpoint
     # (issue #1603): a signature change on a handler is a contract change
     # for them, and no CALLS edge would ever list them.
@@ -2482,6 +2495,12 @@ def _site_finding(
     site: CallSite, definition: Definition, repo_root: Path | None
 ) -> ArityAtSite:
     declared_count, verdict = _arity_verdict(site, definition, repo_root)
+    if site.resolution in cs.DELTA_GUESSED_RESOLUTIONS and verdict != cs.DELTA_ARITY_OK:
+        # The callee is a guess from the name alone, or one of several
+        # same-named candidates: the site may not call it at all, so a
+        # failure against it says nothing certain (issue #2639). A count
+        # that fits stays `ok`, as the declared-arity path answers it.
+        verdict = cs.DELTA_ARITY_UNKNOWN
     return ArityAtSite(
         caller=site.caller,
         path=site.caller_path,
@@ -2491,6 +2510,8 @@ def _site_finding(
         kwarg_names=list(site.kwarg_names),
         declared_count=declared_count,
         verdict=verdict,
+        callee=site.callee,
+        resolution=site.resolution or cs.EdgeResolution.EXACT.value,
     )
 
 
@@ -2576,16 +2597,35 @@ def _signature_changes(
         qn
         for qn in symbols["changed"]
         if _params_moved(before.definitions[qn], after.definitions[qn])
+        or _async_change(before.definitions[qn], after.definitions[qn]) is not None
     ]
+    # A handler that only turned `async` or back serves the same route with
+    # the same parameters, so its remote callers are not broken by the flip
+    # (Greptile, PR #2951); only a parameter change is looked up for them.
     remote = (
-        _remote_callers(fetch_all, project_name, changed)
+        _remote_callers(
+            fetch_all,
+            project_name,
+            [
+                qn
+                for qn in changed
+                if _params_moved(before.definitions[qn], after.definitions[qn])
+            ],
+        )
         if fetch_all is not None
         else {}
     )
     for qn in changed:
         old, new = before.definitions[qn], after.definitions[qn]
+        async_change = _async_change(old, new)
+        judged = _judged_flip(old, new, async_change, repo_root)
         sites = [
-            _site_finding(site, new, repo_root)
+            _flipped_site(
+                _site_finding(site, new, repo_root),
+                new,
+                judged,
+                _site_call(site, repo_root),
+            )
             for site in after.sites
             if site.callee == qn and site.rel == cs.RelationshipType.CALLS.value
         ]
@@ -2596,10 +2636,218 @@ def _signature_changes(
                 before=list(old.positional_params) if old.positional_params else None,
                 after=list(new.positional_params) if new.positional_params else None,
                 sites=sorted(sites, key=_site_order),
+                async_change=async_change,
                 remote_callers=remote.get(qn, []),
             )
         )
     return out
+
+
+# Nodes that use a call's value where it stands, so a coroutine there is
+# never run (issue #2860); an attribute or subscript reads its object, and a
+# `for` loop or clause iterates its iterable (CodeRabbit, PR #2951).
+_PY_SYNC_VALUE_READERS = frozenset(
+    {
+        cs.TS_PY_EXPRESSION_STATEMENT,
+        cs.TS_PY_BINARY_OPERATOR,
+        cs.TS_PY_COMPARISON_OPERATOR,
+        cs.TS_PY_BOOLEAN_OPERATOR,
+        cs.TS_PY_NOT_OPERATOR,
+        cs.TS_PY_UNARY_OPERATOR,
+    }
+)
+_PY_READ_OBJECT_FIELDS = {
+    cs.TS_PY_ATTRIBUTE: cs.TS_FIELD_OBJECT,
+    cs.TS_PY_SUBSCRIPT: cs.FIELD_VALUE,
+    cs.TS_PY_FOR_STATEMENT: cs.TS_FIELD_RIGHT,
+    cs.TS_PY_FOR_IN_CLAUSE: cs.TS_FIELD_RIGHT,
+}
+
+
+def _wrapped(definition: Definition) -> bool:
+    """Whether a decorator other than the signature-preserving ones wraps a
+    def. A sync/async adapter there decides how a call runs, whatever the
+    def's own keyword, so a flip under one is listed, not judged (Greptile
+    review on PR #2951), as `_python_signature` leaves such a header unread.
+    """
+    return any(
+        decorator.lstrip(cs.DECORATOR_AT).strip()
+        not in cs.PY_SIGNATURE_PRESERVING_DECORATORS
+        for decorator in definition.decorators or ()
+    )
+
+
+def _judged_flip(
+    old: Definition,
+    new: Definition,
+    async_change: str | None,
+    repo_root: Path | None,
+) -> str | None:
+    """The flip a def's calls are judged by, or None where it is listed
+    (`async_change`) but not judged: under a wrapper, or where a def that
+    stopped being `async` may still return an awaitable. `def fetch():
+    return inner()` keeps `await fetch()` working when `inner` is async
+    (Greptile, PR #2951)."""
+    if async_change is None or _wrapped(old) or _wrapped(new):
+        return None
+    if async_change == cs.DELTA_ASYNC_REMOVED and not _returns_plain_values(
+        new, repo_root
+    ):
+        return None
+    return async_change
+
+
+# Values no `await` can take: a now-sync def returning only these makes
+# `await fetch()` fail.
+_PY_PLAIN_VALUES = frozenset(
+    {
+        cs.TS_PY_NONE,
+        cs.TS_PY_TRUE,
+        cs.TS_PY_FALSE,
+        cs.TS_PY_INTEGER,
+        cs.TS_PY_FLOAT,
+        cs.TS_PY_STRING,
+        cs.TS_PY_CONCATENATED_STRING,
+        cs.TS_PY_LIST,
+        cs.TS_PY_TUPLE,
+        cs.TS_PY_DICTIONARY,
+        cs.TS_PY_SET,
+    }
+)
+# Scopes whose `return` is not the def's own.
+_PY_NESTED_SCOPES = frozenset(
+    {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA, cs.TS_PY_CLASS_DEFINITION}
+)
+
+
+def _returns_plain_values(definition: Definition, repo_root: Path | None) -> bool:
+    """Whether every `return` of a def gives nothing or a literal, read back
+    from its source; False where it cannot be read."""
+    function = (
+        _definition_node(definition, repo_root) if repo_root is not None else None
+    )
+    body = function.child_by_field_name(cs.FIELD_BODY) if function else None
+    if body is None:
+        return False
+    stack = list(body.named_children)
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_RETURN_STATEMENT:
+            value = node.named_children[0] if node.named_children else None
+            if value is not None and value.type not in _PY_PLAIN_VALUES:
+                return False
+        elif node.type not in _PY_NESTED_SCOPES:
+            stack.extend(node.named_children)
+    return True
+
+
+def _async_change(old: Definition, new: Definition) -> str | None:
+    # A side that recorded no modifiers is not compared, as for
+    # `_attributes_moved`.
+    if old.modifiers is None or new.modifiers is None or old.is_async == new.is_async:
+        return None
+    return cs.DELTA_ASYNC_ADDED if new.is_async else cs.DELTA_ASYNC_REMOVED
+
+
+def _flipped_site(
+    finding: ArityAtSite,
+    definition: Definition,
+    async_change: str | None,
+    call: Node | None,
+) -> ArityAtSite:
+    # A call written for the old kind of a Python def fails (issue #2860):
+    # its value read synchronously once the def turned `async` (a coroutine
+    # whose body never runs), or awaited once it stopped being so. How the
+    # call is written decides it, so a caller already migrated is fine and
+    # one handing the value on (returned, assigned, `asyncio.run(...)`) is
+    # left to the change's `async_change` hint (Greptile, PR #2951). An
+    # arity verdict that already fails is the more precise word. Elsewhere
+    # (a JS Promise still runs) the flip is listed, not judged.
+    if (
+        async_change is None
+        or call is None
+        or Path(definition.path).suffix != cs.EXT_PY
+        or finding["verdict"] in cs.DELTA_ARITY_DEFINITE
+        or finding["resolution"] in cs.DELTA_GUESSED_RESOLUTIONS
+    ):
+        return finding
+    if async_change == cs.DELTA_ASYNC_ADDED:
+        parent, child = _value_receiver(call)
+        breaks = not _awaits(parent) and _read_synchronously(parent, child)
+    else:
+        breaks = _awaits(_value_parent(call)[0])
+    if not breaks:
+        return finding
+    flipped = finding.copy()
+    flipped["verdict"] = cs.DELTA_ARITY_ASYNC_CHANGED
+    return flipped
+
+
+def _site_call(site: CallSite, repo_root: Path | None) -> Node | None:
+    """The call a Python site records, read back from its source, or None."""
+    if (
+        repo_root is None
+        or site.line is None
+        or site.col is None
+        or Path(site.caller_path).suffix != cs.EXT_PY
+    ):
+        return None
+    tree = _python_source_tree(repo_root / site.caller_path)
+    if tree is None:
+        return None
+    return _call_starting_at(tree.root_node, site.line - 1, site.col)
+
+
+def _value_parent(call: Node) -> tuple[Node | None, Node]:
+    """The node that receives a call's value, past any parentheses, and the
+    child of it the value arrives through."""
+    child = call
+    parent = call.parent
+    while parent is not None and parent.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
+        child, parent = parent, parent.parent
+    return parent, child
+
+
+def _value_receiver(call: Node) -> tuple[Node | None, Node]:
+    """Where a call's value is used: past parentheses, and past a boolean
+    operator that gives it as its own value. A coroutine is always true, so
+    `fetch() or x`, `x or fetch()` and `x and fetch()` hand it on, while
+    `fetch() and x` tests it and gives `x` (Greptile, PR #2951)."""
+    parent, child = _value_parent(call)
+    while parent is not None and parent.type == cs.TS_PY_BOOLEAN_OPERATOR:
+        operator = parent.child_by_field_name(cs.FIELD_OPERATOR)
+        left = parent.child_by_field_name(cs.TS_FIELD_LEFT)
+        if (
+            operator is not None
+            and _node_text(operator) == cs.PY_OP_AND
+            and left is not None
+            and left.id == child.id
+        ):
+            break
+        parent, child = _value_parent(parent)
+    return parent, child
+
+
+def _awaits(parent: Node | None) -> bool:
+    return parent is not None and parent.type == cs.TS_PY_AWAIT
+
+
+def _read_synchronously(parent: Node | None, child: Node) -> bool:
+    """Whether the value is used on the spot: discarded as a statement, an
+    operand, the object of an attribute or subscript read, or the iterable
+    of a `for`. An `async for` takes an async iterable, which an async
+    generator gives, so it is left to the hint."""
+    if parent is None:
+        return False
+    if parent.type in _PY_SYNC_VALUE_READERS:
+        return True
+    field = _PY_READ_OBJECT_FIELDS.get(parent.type)
+    target = parent.child_by_field_name(field) if field else None
+    return (
+        target is not None
+        and target.id == child.id
+        and not any(c.type == cs.TS_PY_ASYNC for c in parent.children)
+    )
 
 
 # --- calling conventions ------------------------------------------------------
