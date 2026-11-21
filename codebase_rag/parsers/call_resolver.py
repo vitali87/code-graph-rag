@@ -28,6 +28,12 @@ from .parameter_nodes import c_family_parameter_list
 from .php import class_names as php_class_names
 from .php.class_names import ClassPath as PhpClassPath
 from .php.class_names import ascii_fold as _php_fold
+from .php.utils import (
+    PhpTraitAlias,
+    PhpTraitComposition,
+    anonymous_class_qn,
+    php_trait_composition,
+)
 from .py import resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
@@ -99,6 +105,36 @@ _RS_OWNER_NODE_TYPES = frozenset(
     {NodeType.CLASS, NodeType.ENUM, NodeType.UNION, NodeType.INTERFACE}
 )
 _PY_SELF_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
+# Languages whose `label()` / `this->label()` / `$this->label()` inside a method
+# reach the resolver as a bare name with the class as context (issue #3169).
+# Scala's calls reach it the same way, but are left as on main: nothing reads
+# which names a Scala parameter or local binds where a call sits, so a call a
+# parameter hides would bind the inherited method exactly (PR #3240, #3663).
+_INHERITED_BARE_CALL_LANGUAGES = frozenset(
+    {
+        cs.SupportedLanguage.CPP,
+        cs.SupportedLanguage.DART,
+        cs.SupportedLanguage.PHP,
+    }
+)
+# Of those, the ones where a top-level function the module can see wins over
+# an inherited member: Dart looks a bare name up lexically first. A PHP bare
+# `label()` is a function call, never a method, and is kept out altogether.
+_LEXICAL_FIRST_LANGUAGES = frozenset({cs.SupportedLanguage.DART})
+# And the ones whose mixin overrides the superclass: Dart looks the last
+# `with` type up first, while its bases are recorded superclass first. A PHP
+# class composes its traits on its own instead.
+_LINEARIZED_LANGUAGES = frozenset({cs.SupportedLanguage.DART})
+# The PHP declarations a trait `use` can sit in.
+_PHP_TYPE_DECLARATIONS = frozenset(cs.SPEC_PHP_CLASS_TYPES)
+# A PHP trait alias of the name whose trait method could not be found: the
+# alias still hides the parent's method, so no inherited method answers.
+_PHP_ALIAS_UNRESOLVED: tuple[str, str] = ("", "")
+
+
+def _php_simple(qualified_name: str) -> str:
+    # A PHP type's simple name, folded as PHP compares names.
+    return _php_fold(qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1])
 
 
 # Languages whose `recv.name()` member syntax reaches only methods, so the
@@ -130,6 +166,10 @@ class _CallSite(NamedTuple):
     language: cs.SupportedLanguage | None
     call_point: int | None
     constructing: bool
+    # The call is on the caller's own object (`label()`, `this->label()`,
+    # `$this->label()`), not on another receiver its bare name hides. For a
+    # chain (`make()->label()`), the chain's first call is.
+    implicit_receiver: bool = False
 
 
 def _rust_assoc_path(call: _CallSite) -> tuple[list[str], str] | None:
@@ -351,6 +391,7 @@ class CallResolver:
         "cpp_callable_fields",
         "go_package_names",
         "_php_class_namespaces",
+        "_php_composition_memo",
         "_php_cased_index",
         "_js_return_class_cache",
     )
@@ -481,6 +522,10 @@ class CallResolver:
         # {PHP module qn: {class qn: folded namespace it is declared in}},
         # read off each file's declarations on first use (issue #2466).
         self._php_class_namespaces: dict[str, dict[str, PhpClassPath]] = {}
+        # PHP class qn -> the traits its `use` declarations compose and the
+        # methods their `insteadof` clauses exclude, read from its file once
+        # per pass.
+        self._php_composition_memo: dict[str, PhpTraitComposition] = {}
         self._php_cased_index: _PhpCasedIndex | None = None
         # {JS/TS callable qn: the class a call to it returns}, read off its
         # declaration on first use (issue #2468).
@@ -705,6 +750,8 @@ class CallResolver:
         self._c_unit_reach_cache.clear()
         # A re-parsed PHP file may have moved a class between namespaces.
         self._php_class_namespaces.clear()
+        # Or changed which traits it uses and which methods it takes.
+        self._php_composition_memo.clear()
         self._php_cased_index = None
         # A re-parsed TS file may declare a different return.
         self._js_return_class_cache.clear()
@@ -736,10 +783,15 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
+        implicit_receiver: bool = False,
     ) -> tuple[str, str] | None:
         """`constructing`: the call is a Java/C# `new X(...)`, so `call_name`
         names a TYPE and the simple-name fallback must not offer a method or
-        function that merely shares the name."""
+        function that merely shares the name. `implicit_receiver`: the call is
+        on the caller's own object, so it may reach a method its class
+        inherits; a PHP function call or a call on another receiver never
+        does, though its name can be just as bare. For a chain
+        (`make().label()`) it says the same of the chain's first call."""
         self.last_resolution = cs.EdgeResolution.EXACT
         result = self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
@@ -752,6 +804,7 @@ class CallResolver:
                     language,
                     call_point,
                     constructing,
+                    implicit_receiver,
                 )
             ),
             call_name,
@@ -2064,6 +2117,7 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
+        implicit_receiver: bool = False,
     ) -> tuple[str, str] | None:
         call = _CallSite(
             call_name,
@@ -2076,6 +2130,7 @@ class CallResolver:
             language,
             call_point,
             constructing,
+            implicit_receiver,
         )
         handled, result = self._resolve_caller_scoped_stages(call)
         if handled:
@@ -2405,6 +2460,8 @@ class CallResolver:
             )
         ) and (not call.constructing or result[0] == cs.NodeLabel.CLASS.value):
             return True, result
+        if result := self._resolve_inherited_bare_call(call):
+            return True, result
 
         # `this.m()` inside a prototype-assigned function dispatches to a sibling
         # method of the same prototype target (Date.prototype.strftime calling
@@ -2426,6 +2483,142 @@ class CallResolver:
                 call.call_name, call.module_qn, call.language, call.call_point
             )
         return False, None
+
+    def _resolve_inherited_bare_call(self, call: _CallSite) -> tuple[str, str] | None:
+        # A method calling one its class inherits (`label()`, `this->label()`)
+        # names its own class's member first; only the class itself was
+        # searched, so the name-only fallback bound a same-named method of an
+        # unrelated class (aria2: 713 of 1,693 such calls; every bloc
+        # `Cubit.emit` -> `Bloc.emit`). Walk the class's bases before it.
+        name, class_qn = call.call_name, call.class_context
+        if (
+            call.language not in _INHERITED_BARE_CALL_LANGUAGES
+            or not class_qn
+            or call.constructing
+            or not call.implicit_receiver
+            or cs.SEPARATOR_DOT in name
+            or f"{class_qn}{cs.SEPARATOR_DOT}{name}" in self.function_registry
+        ):
+            return None
+        if call.language in _LEXICAL_FIRST_LANGUAGES and self._dart_bare_name_visible(
+            name, call.module_qn
+        ):
+            return None
+        if call.language == cs.SupportedLanguage.PHP:
+            hit = self._php_member(class_qn, name, frozenset({class_qn}))
+        elif call.language in _LINEARIZED_LANGUAGES:
+            hit = self._linearized_method(class_qn, name)
+        else:
+            hit = self._resolve_inherited_method(class_qn, name)
+        if hit is None or hit[0] != cs.NodeLabel.METHOD.value:
+            return None
+        return hit
+
+    def _linearized_method(self, class_qn: str, name: str) -> tuple[str, str] | None:
+        # The first of the class's linearized bases defining `name`.
+        for base in self._linearized_bases(class_qn, frozenset({class_qn}), {}):
+            qn = f"{base}{cs.SEPARATOR_DOT}{name}"
+            if qn in self.function_registry:
+                return self.function_registry[qn], qn
+        return None
+
+    def _php_member(
+        self, class_qn: str, name: str, seen: frozenset[str]
+    ) -> tuple[str, str] | None:
+        # PHP composes each class on its own: its methods, else those of the
+        # traits it uses, less what its `insteadof` clauses exclude, else
+        # its parent's, found the same way. So a child's `use T` overrides a
+        # parent's own `label` even when the parent uses T too, and a
+        # parent's `insteadof` never reaches the child's `use` (CodeRabbit,
+        # Greptile on PR #3240). Names are case-insensitive: a child's
+        # `LABEL()` overrides a base's `label()`.
+        folded = _php_fold(name)
+        if own := self._php_declared_method(class_qn, name, folded):
+            return cs.NodeLabel.METHOD.value, own
+        composition = self._php_composition(class_qn)
+        bases = [
+            base
+            for base in self.class_inheritance.get(class_qn, [])
+            if base not in seen
+        ]
+        traits = [base for base in bases if _php_simple(base) in composition.traits]
+        # `use T { T::original as label; }` gives the class a `label` that
+        # runs T's `original`, ahead of a parent's own `label`; it reaches a
+        # method an `insteadof` excluded too (Greptile on PR #3240).
+        for alias in composition.aliases:
+            if alias.alias != folded:
+                continue
+            for base in traits:
+                if alias.trait and _php_simple(base) != alias.trait:
+                    continue
+                if hit := self._php_member(base, alias.method, seen | {base}):
+                    return hit
+            return _PHP_ALIAS_UNRESOLVED
+        for base in [*traits, *(base for base in bases if base not in traits)]:
+            if base in traits and (folded, _php_simple(base)) in composition.exclusions:
+                continue
+            if hit := self._php_member(base, name, seen | {base}):
+                return hit
+        return None
+
+    def _php_composition(self, class_qn: str) -> PhpTraitComposition:
+        # Read from the class's declaration in its file, which the AST cache
+        # re-parses when it was evicted or this is an incremental pass. A
+        # class whose file is not read composes nothing known, so its bases
+        # are walked in their recorded order.
+        if (known := self._php_composition_memo.get(class_qn)) is not None:
+            return known
+        module_qn = module_qn_for_entity(
+            class_qn, self.type_inference.module_qn_to_file_path
+        )
+        root = self._cached_module_root(module_qn) if module_qn else None
+        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        traits: set[str] = set()
+        exclusions: set[tuple[str, str]] = set()
+        aliases: list[PhpTraitAlias] = []
+        stack = [root] if root is not None else []
+        while stack:
+            node = stack.pop()
+            # An anonymous class has no name: it is matched by the qn the
+            # definition pass registers it under (Greptile on PR #3240).
+            if node.type in _PHP_TYPE_DECLARATIONS and (
+                safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)) == simple
+                or (
+                    module_qn is not None
+                    and anonymous_class_qn(node, module_qn) == class_qn
+                )
+            ):
+                found = php_trait_composition(node)
+                traits |= found.traits
+                exclusions |= found.exclusions
+                aliases.extend(found.aliases)
+            stack.extend(node.children)
+        composition = PhpTraitComposition(
+            frozenset(traits), frozenset(exclusions), tuple(aliases)
+        )
+        self._php_composition_memo[class_qn] = composition
+        return composition
+
+    def _linearized_bases(
+        self, class_qn: str, seen: frozenset[str], memo: dict[str, list[str]]
+    ) -> list[str]:
+        # Scala's linearization, which Dart mixin application matches: the
+        # last recorded base first, each followed by its own bases, and a
+        # base two of them share kept only at its last place.
+        # `memo` keeps a diamond-heavy hierarchy from being walked once per
+        # path to each base.
+        if (known := memo.get(class_qn)) is not None:
+            return known
+        order: list[str] = []
+        for base in reversed(self.class_inheritance.get(class_qn, [])):
+            if base in seen:
+                continue
+            order.extend((base, *self._linearized_bases(base, seen | {base}, memo)))
+        last = {base: index for index, base in enumerate(order)}
+        memo[class_qn] = [
+            base for index, base in enumerate(order) if last[base] == index
+        ]
+        return memo[class_qn]
 
     def _go_local_in_scope(self, call: _CallSite) -> bool:
         # Only where the local is in scope: a `helper()` before an inner
@@ -2520,6 +2713,7 @@ class CallResolver:
                 call.caller_qn,
                 call.language,
                 call.call_point,
+                call.implicit_receiver,
             )
 
         # A Rust caller INSIDE an inline `mod` block sees that module's own
@@ -6726,6 +6920,7 @@ class CallResolver:
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
+        implicit_receiver: bool = False,
     ) -> str | None:
         # Type of a chained receiver expression like `c.Root()` using the shared
         # method_return_types map: the base is a typed local (`c` -> Command), and
@@ -6757,6 +6952,7 @@ class CallResolver:
                 caller_qn,
                 language,
                 call_point,
+                implicit_receiver,
             )
         elif (
             folded := self._fold_import_prefix_hop(
@@ -7218,6 +7414,42 @@ class CallResolver:
             imported.update(libraries)
         return self._dart_with_exposed({module_qn, *imported}, list(imported))
 
+    def _dart_bare_name_visible(self, name: str, module_qn: str) -> bool:
+        # A top-level `name` a bare identifier in `module_qn` finds lexically:
+        # its library's own, in any of the library's files, or one the
+        # library's plain imports bring in, with what those hand on through
+        # `export` / `part` (#3286). A prefix-only import's names are
+        # reachable as `p.name` alone, so it is left out.
+        library = self.import_processor.dart_part_of.get(module_qn, module_qn)
+        libraries = {
+            *self._dart_library_units(library),
+            *self._dart_bare_visible_libraries(library, name),
+        }
+        if any(
+            f"{visible}{cs.SEPARATOR_DOT}{name}" in self.function_registry
+            for visible in libraries
+        ):
+            return True
+        # A `dart:` URI, or a `package:` one no pubspec here maps, is kept as
+        # written, so the guard cannot read what such an import brings in.
+        # Where the project declares a top-level `name`, that import may
+        # bring it in, and the name search that runs instead can find it;
+        # where it declares none, no first-party function can be the target,
+        # so the inherited member stands.
+        modules = self.type_inference.module_qn_to_file_path
+        return any(
+            visible not in modules for visible in libraries
+        ) and self._dart_declares_top_level(name)
+
+    def _dart_declares_top_level(self, name: str) -> bool:
+        # Whether any Dart library of the project declares `name` at its top.
+        modules = self.type_inference.module_qn_to_file_path
+        return any(
+            (path := modules.get(self._parent_qn(qn))) is not None
+            and _file_language(path.suffix) == cs.SupportedLanguage.DART
+            for qn in self.function_registry.find_ending_with(name)
+        )
+
     def _dart_bare_visible_libraries(self, module_qn: str, name: str) -> set[str]:
         """The libraries whose `name` `module_qn` can write bare: those its
         plain `import` and `part` directives bring in, unless a `show` /
@@ -7567,6 +7799,7 @@ class CallResolver:
         caller_qn: str | None,
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
+        implicit_receiver: bool = False,
     ) -> str | None:
         # `parser(ia, cb).parse()`: the receiver is a bare-identifier factory call.
         # Resolve the callee to its function/method qn and return its recorded
@@ -7604,6 +7837,10 @@ class CallResolver:
             caller_qn,
             language,
             call_point,
+            # `make()` in `make().m()` has no receiver of its own; whether a
+            # parameter or local `make` hides an inherited one is the call
+            # site's to say (Greptile on PR #3240).
+            implicit_receiver=implicit_receiver,
         )
         if resolved is not None:
             return_type = self._callee_return_type(resolved[1], language)
@@ -7746,7 +7983,11 @@ class CallResolver:
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
+        implicit_receiver: bool = False,
     ) -> tuple[str, str] | None:
+        """`implicit_receiver`: the chain's first call is on the caller's own
+        object, with no parameter or local of its name in scope, so it may
+        reach a method the class inherits."""
         match = _CHAINED_METHOD_PATTERN.search(call_name)
         if not match:
             return None
@@ -7767,6 +8008,7 @@ class CallResolver:
                 caller_qn,
                 language,
                 call_point,
+                implicit_receiver,
             )
         )
         if object_type and (class_value := _class_value_of(object_type)):

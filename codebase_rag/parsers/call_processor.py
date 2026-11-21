@@ -554,6 +554,94 @@ def _is_cpp_dereference(operand: Node) -> bool:
     )
 
 
+def _calls_own_member(language: cs.SupportedLanguage | None, call_node: Node) -> bool:
+    """Whether the call reaches a member of the caller's own object: with no
+    receiver (`label()`) or through `this` (`this->label()`, `$this->label()`).
+
+    PHP and C++ name a call on any other receiver by its bare method too
+    (`$other->label()`, `a.b.label()`), so only the call's shape tells the
+    resolver which ones may reach an inherited method. Scala is left as on
+    main: nothing reads which names its parameters and locals bind where a
+    call sits, so a hidden bare call cannot be told apart (PR #3240).
+    """
+    match language:
+        case cs.SupportedLanguage.DART:
+            # dart_call_name keeps every receiver but `this` / `super`.
+            return True
+        case cs.SupportedLanguage.PHP:
+            # A bare PHP `label()` is a function call, never a method.
+            receiver = call_node.child_by_field_name(cs.FIELD_OBJECT)
+            return (
+                call_node.type in cs.PHP_MEMBER_CALL_TYPES
+                and receiver is not None
+                and receiver.type == cs.TS_PHP_VARIABLE_NAME
+                and safe_decode_text(receiver) == cs.PHP_THIS_VARIABLE
+            )
+        case cs.SupportedLanguage.CPP:
+            callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+            return callee is not None and (
+                callee.type == cs.TS_IDENTIFIER
+                or (
+                    callee.type == cs.TS_CPP_FIELD_EXPRESSION
+                    and _is_this_receiver(callee)
+                )
+            )
+    return False
+
+
+def _dart_through_this(call_node: Node) -> bool:
+    # Whether a Dart call selector's chain starts at `this` (`this.label()`):
+    # the call's name drops the receiver, but a local of the name cannot
+    # hide a member reached through it (Greptile on PR #3240).
+    start = _dart_chain_start(call_node)
+    return start is not None and start.type == cs.TS_DART_THIS
+
+
+def _dart_chain_start(call_node: Node) -> Node | None:
+    # What a Dart call selector's chain starts at: the node before its
+    # selectors (`make` in `make().label()`, `this` in `this.label()`).
+    prev = call_node.prev_named_sibling
+    while prev is not None and prev.type == cs.TS_DART_SELECTOR:
+        prev = prev.prev_named_sibling
+    return prev
+
+
+def _chain_root_call(
+    language: cs.SupportedLanguage | None, call_node: Node
+) -> tuple[Node, str] | None:
+    """The first call of the receiver chain `call_node` ends, and the name
+    it calls: `make()` in `make()->label()`. In Dart that is the selector
+    right after the chain's first name; in C++ the innermost call of the
+    call's own type down its left spine."""
+    if language == cs.SupportedLanguage.DART:
+        start = _dart_chain_start(call_node)
+        root = start.next_named_sibling if start is not None else None
+        if root is None or root.type != cs.TS_DART_SELECTOR:
+            return None
+        return root, safe_decode_text(start) or ""
+    root = None
+    node = call_node
+    for _ in range(_CHAIN_SPINE_WALK_LIMIT):
+        # `child(0)` raises on a leaf rather than returning None.
+        if node.child_count == 0 or (node := node.child(0)) is None:
+            break
+        if node.type == call_node.type:
+            root = node
+    if root is None:
+        return None
+    return root, safe_decode_text(root.child_by_field_name(cs.TS_FIELD_FUNCTION)) or ""
+
+
+def _is_this_receiver(member: Node) -> bool:
+    """Whether a C++ member access is `this->m` or `(*this).m`."""
+    receiver = _cpp_without_parentheses(
+        member.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+    )
+    if receiver is not None and _is_cpp_dereference(receiver):
+        receiver = receiver.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+    return receiver is not None and receiver.type == cs.CppNodeType.THIS
+
+
 def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
     """Whether `call_node` ends a receiver chain of too many calls (#2262).
 
@@ -7425,8 +7513,60 @@ class CallProcessor:
             # A Java/C#/Scala `new X(...)` names a type, never a method.
             constructing=ctx.language in _NEW_CONSTRUCTS_LANGUAGES
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
+            # `$this->label()` and `$other->label()` reach the resolver alike.
+            implicit_receiver=self._calls_unhidden_own_member(
+                ctx, call_node, call_name
+            ),
         )
         return self._judge_resolved_callee(ctx, call_node, call_name, callee_info)
+
+    @staticmethod
+    def _calls_unhidden_own_member(
+        ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> bool:
+        # A chain (`make()->label()`) is typed from its first call's callee,
+        # which may be an inherited method only where that call alone may
+        # be: `int run(Z* (*make)()) { return make()->label(); }` starts at
+        # the parameter, not at an inherited `make` (Greptile on PR #3240).
+        if cs.CHAR_PAREN_OPEN in call_name and cs.SEPARATOR_DOT in call_name:
+            root = _chain_root_call(ctx.language, call_node)
+            return root is not None and CallProcessor._unhidden_own_call(ctx, *root)
+        return CallProcessor._unhidden_own_call(ctx, call_node, call_name)
+
+    @staticmethod
+    def _unhidden_own_call(
+        ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> bool:
+        # On the caller's own object, and with no parameter or local of the
+        # name in scope there: `int run(int (*label)()) { return label(); }`
+        # calls the parameter, not an inherited `label` (Greptile and
+        # CodeRabbit on PR #3240). Only a bare name can be hidden: a Dart
+        # call names `this.label()` bare too, so its source decides.
+        if not _calls_own_member(ctx.language, call_node):
+            return False
+        if cs.SEPARATOR_DOT in call_name:
+            return True
+        point = call_node.start_byte
+        if ctx.language == cs.SupportedLanguage.CPP:
+            callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+            if callee is None or callee.type != cs.TS_IDENTIFIER:
+                return True
+            return not any(
+                name == call_name and start <= point < end
+                for start, end, name, _ in CppTypeInferenceEngine().declaration_scopes(
+                    ctx.caller_node
+                )
+            )
+        if ctx.language == cs.SupportedLanguage.DART:
+            if _dart_through_this(call_node):
+                return True
+            spans = dart_utils.dart_binding_spans(
+                ctx.caller_node, frozenset({call_name})
+            )
+            return not any(
+                start <= point < end for start, end in spans.get(call_name, ())
+            )
+        return True
 
     def _judge_resolved_callee(
         self,

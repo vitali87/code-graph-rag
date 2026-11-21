@@ -45,7 +45,16 @@ TS_PHP_PROPERTY_DECLARATION = "property_declaration"
 TS_PHP_PROPERTY_ELEMENT = "property_element"
 TS_PHP_DECLARATION_LIST = "declaration_list"
 TS_PHP_VARIABLE_NAME = "variable_name"
+# The receiver of `$this->m()`, as its `variable_name` node spells it.
+PHP_THIS_VARIABLE = "$this"
 TS_PHP_USE_DECLARATION = "use_declaration"
+# `use A, B { A::label insteadof B; }`: the braces of a trait use, and the
+# clause in them that picks one trait's method over another's.
+TS_PHP_USE_LIST = "use_list"
+TS_PHP_USE_INSTEAD_OF_CLAUSE = "use_instead_of_clause"
+# `use T { T::original as label; }`: the clause that copies a trait's method
+# under another name (or, with no new name, only changes its visibility).
+TS_PHP_USE_AS_CLAUSE = "use_as_clause"
 
 # FLOWS_TO lean-walk node types (issue #1174). PHP variables carry a `$` prefix
 # (`variable_name` -> `.text == "$s"`), so a local can never shadow a builtin sink.

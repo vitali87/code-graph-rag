@@ -824,6 +824,9 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     # An `export` / `part` the file no longer has must stop exposing its
     # target to importers too (issue #2482).
     processor.dart_exposed_libraries = {"m": ["m.lib"]}
+    # So must an unprefixed import it no longer has stop putting the
+    # target's names in scope for bare calls (issue #3169).
+    processor.dart_bare_imports = {"m": ["m.lib"]}
     processor._cpp_shadowed_include_targets = set()
     processor._cpp_shadowed_include_sites = {}
     processor._cpp_declaration_mappings = set()
@@ -850,6 +853,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     assert processor.dart_exports.get("m") is None
     assert processor.dart_part_of == {"m": "other"}
     assert processor.dart_exposed_libraries.get("m") is None
+    assert processor.dart_bare_imports.get("m") is None
     assert processor._julia_scope_map_keys.get("m") is None
     assert processor._cpp_include_targets == {("other", "other.foo")}
     # The control: the mapping it sits beside is emptied, not dropped, so

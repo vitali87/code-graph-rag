@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from typing import NamedTuple
+
 from tree_sitter import Node
 
 from ... import constants as cs
 from ...language_spec import LANGUAGE_FQN_SPECS
 from ...utils.fqn_resolver import scoped_name_parts
 from ..utils import safe_decode_text
+from .class_names import ascii_fold
 
 # Where an anonymous class's anchor stops: the nearest type or namespace,
 # which the FQN scope walk names on its own.
@@ -13,6 +17,90 @@ _ANCHOR_STOP_TYPES = frozenset(cs.FQN_PHP_SCOPE_TYPES) | frozenset(
     cs.SPEC_PHP_CLASS_TYPES
 )
 _CALLABLE_TYPES = frozenset(cs.FQN_PHP_FUNCTION_TYPES)
+
+
+class PhpTraitAlias(NamedTuple):
+    """`use T { T::original as label; }`, PHP names folded: the name the
+    class gains, the trait it names (empty for a bare `original as label`)
+    and that trait's method the name runs."""
+
+    alias: str
+    trait: str
+    method: str
+
+
+class PhpTraitComposition(NamedTuple):
+    """What a class's own `use` declarations compose, PHP names folded:
+    the traits it uses, the (method, trait) pairs its `insteadof`
+    clauses exclude (`use A, B { A::label insteadof B; }` excludes
+    ("label", "b")), and the aliases its `as` clauses add, in source
+    order. Each class composes its own traits; a parent's adaptations
+    never reach a child's `use` (CodeRabbit, PR #3240)."""
+
+    traits: frozenset[str]
+    exclusions: frozenset[tuple[str, str]]
+    aliases: tuple[PhpTraitAlias, ...]
+
+
+def php_trait_composition(type_node: Node) -> PhpTraitComposition:
+    traits: set[str] = set()
+    exclusions: set[tuple[str, str]] = set()
+    aliases: list[PhpTraitAlias] = []
+    for body in type_node.children:
+        if body.type != cs.TS_PHP_DECLARATION_LIST:
+            continue
+        for use in body.children:
+            if use.type != cs.TS_PHP_USE_DECLARATION:
+                continue
+            for listed in use.children:
+                if listed.type == cs.TS_PHP_USE_LIST:
+                    exclusions.update(_insteadof_pairs(listed))
+                    aliases.extend(_as_aliases(listed))
+                elif simple := _simple_name(listed):
+                    traits.add(ascii_fold(simple))
+    return PhpTraitComposition(frozenset(traits), frozenset(exclusions), tuple(aliases))
+
+
+def _simple_name(node: Node) -> str | None:
+    # A `name`, or the trailing `name` of a `qualified_name`.
+    if node.type == cs.TS_PHP_NAME:
+        return safe_decode_text(node)
+    if node.type == cs.TS_PHP_QUALIFIED_NAME and node.named_children:
+        return safe_decode_text(node.named_children[-1])
+    return None
+
+
+def _insteadof_pairs(use_list: Node) -> Iterator[tuple[str, str]]:
+    for clause in use_list.named_children:
+        if clause.type != cs.TS_PHP_USE_INSTEAD_OF_CLAUSE or not clause.named_children:
+            continue
+        # `A::label` then each excluded trait, a `name` or a `qualified_name`.
+        access, *excluded = clause.named_children
+        method = access.named_children[-1] if access.named_children else None
+        if not (method_name := safe_decode_text(method)):
+            continue
+        for trait in excluded:
+            if simple := _simple_name(trait):
+                yield ascii_fold(method_name), ascii_fold(simple)
+
+
+def _as_aliases(use_list: Node) -> Iterator[PhpTraitAlias]:
+    for clause in use_list.named_children:
+        if clause.type != cs.TS_PHP_USE_AS_CLAUSE or not clause.named_children:
+            continue
+        # `T::original` or a bare `original`, then an optional visibility,
+        # then the new name. `original as protected` names nothing new.
+        source, *rest = clause.named_children
+        if not rest or rest[-1].type != cs.TS_PHP_NAME:
+            continue
+        alias = safe_decode_text(rest[-1])
+        parts = source.named_children if source.type != cs.TS_PHP_NAME else []
+        trait = _simple_name(parts[0]) if len(parts) > 1 else None
+        method = safe_decode_text(parts[-1] if parts else source)
+        if alias and method:
+            yield PhpTraitAlias(
+                ascii_fold(alias), ascii_fold(trait or ""), ascii_fold(method)
+            )
 
 
 def _positional_name(node: Node) -> str:
