@@ -30,7 +30,7 @@ _PLAN_OPERATOR = re.compile(cs.CYPHER_PLAN_OPERATOR_PATTERN)
 _PLAN_PROCEDURE = re.compile(cs.CYPHER_PLAN_PROCEDURE_PATTERN)
 
 
-def mask_literals_and_comments(query: str) -> str:
+def mask_literals_and_comments(query: str, *, unquote_identifiers: bool = True) -> str:
     """Blank string literals, drop comments and unquote backtick identifiers.
 
     The result is for inspection only, never for execution. A literal
@@ -40,11 +40,16 @@ def mask_literals_and_comments(query: str) -> str:
     reads as `CALL mg.x()`. An unterminated literal or comment is left
     as-is: the engine rejects it anyway, and masking it could hide a real
     keyword from the checks.
+
+    With `unquote_identifiers` off, a backtick identifier becomes a bare
+    placeholder instead, for a check that reads the query's structure: a
+    name holding `]` or `*` would otherwise read as syntax, so
+    ``-[`r]x`*]->`` would hide its range and ``-[`*`]->`` invent one.
     """
     out: list[str] = []
     i = 0
     while i < len(query):
-        masked, end = _mask_token(query, i)
+        masked, end = _mask_token(query, i, unquote_identifiers)
         if end == -1:
             out.append(query[i:])
             break
@@ -53,7 +58,7 @@ def mask_literals_and_comments(query: str) -> str:
     return "".join(out)
 
 
-def _mask_token(query: str, start: int) -> tuple[str, int]:
+def _mask_token(query: str, start: int, unquote_identifiers: bool) -> tuple[str, int]:
     """Masked text of the token at `start` and the index after it.
 
     The index is -1 when the token is an unterminated literal or comment.
@@ -73,6 +78,8 @@ def _mask_token(query: str, start: int) -> tuple[str, int]:
         return cs.CYPHER_MASKED_LITERAL, -1 if end == -1 else end + 1
     if query[start] == _BACKTICK:
         end, name = _backtick_identifier(query, start)
+        if not unquote_identifiers:
+            name = cs.CYPHER_MASKED_IDENTIFIER
         return name, -1 if end == -1 else end + 1
     return query[start], start + 1
 
