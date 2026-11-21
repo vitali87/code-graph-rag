@@ -236,6 +236,7 @@ class TestPruneOrphanNodes:
     def test_prune_multiple_orphans_across_types(
         self, py_project: Path, mock_ingestor: MagicMock
     ) -> None:
+        (py_project / "notes").mkdir()
         parsers, queries = load_parsers()
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -264,10 +265,13 @@ class TestPruneOrphanNodes:
                 ],
                 cs.CYPHER_REPO_FOLDER_PATHS: [
                     {"path": "old_dir", "absolute_path": f"{repo_abs}/old_dir"},
-                    {"path": "subpkg", "absolute_path": f"{repo_abs}/subpkg"},
+                    {"path": "notes", "absolute_path": f"{repo_abs}/notes"},
                 ],
             }
         )
+        # A run prunes after Pass 1, which derives this run's directories:
+        # a Folder is judged against them (issues #1570, #2884).
+        updater.factory.structure_processor.identify_structure(emit=False)
         updater._prune_orphan_nodes()
 
         path_deletes = [

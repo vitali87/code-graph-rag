@@ -1,8 +1,15 @@
 # ClusterFuzzLite batch fuzzing.
 #
-# The PR workflow gives each harness a short budget against one change. This
+# The PR workflow gives the targets a short budget against one change. This
 # one runs them for far longer on a schedule, which is where anything needing
-# more than a few hundred seconds of exploration actually turns up.
+# more than a few hundred seconds of exploration actually turns up, and grows
+# the corpora the PR job starts from.
+#
+# Every harness in fuzz/ gets a job, a runner and a budget of its own, fuzzing
+# on every core. In one shared job the budget was split five ways and the
+# report described whichever target happened to run last. The cargo-fuzz
+# targets in rust/cgr_graph_rs/fuzz keep one job between them (see
+# .clusterfuzzlite/build.sh for why a job builds one language).
 
 name: ClusterFuzzLite Batch
 
@@ -11,6 +18,11 @@ on:
     # 03:17 daily, off the hour to avoid the scheduler's peak.
     - cron: '17 3 * * *'
   workflow_dispatch:
+    inputs:
+      fuzz-seconds:
+        description: 'Seconds of fuzzing per harness in fuzz/'
+        type: number
+        default: 7200
 
 permissions: read-all
 
@@ -20,26 +32,58 @@ concurrency:
 
 jobs:
   batch-fuzzing:
-    name: Batch fuzz (${{ matrix.language }}, ${{ matrix.sanitizer }})
+    name: Batch fuzz ${{ matrix.target }} (python, ${{ matrix.sanitizer }})
     runs-on: ubuntu-latest
+    # The budget plus the build, the corpus round trip and the crash
+    # reproduction, with room to spare.
+    timeout-minutes: 150
+    permissions:
+      security-events: write
     strategy:
       fail-fast: false
       matrix:
-        # One job per language: see .clusterfuzzlite/build.sh.
-        language: [python, rust]
         sanitizer: [address]
+        target:
+          - fuzz_cypher_guard
+          - fuzz_dependency_manifest
+          - fuzz_incremental_update
+          - fuzz_parse_source
+          - fuzz_shell_command
     steps:
-      - name: Build fuzzers (${{ matrix.language }}, ${{ matrix.sanitizer }})
+      - name: Build fuzzers (python, ${{ matrix.sanitizer }})
         uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           sanitizer: ${{ matrix.sanitizer }}
-          language: ${{ matrix.language }}
+          language: python
 
-      - name: Run fuzzers (${{ matrix.language }}, ${{ matrix.sanitizer }})
+      # The run action fuzzes every target it finds in build-out, so leave
+      # it only this job's. The build runs as root in a container, hence
+      # sudo. A target missing from the build fails the job rather than
+      # leaving it to fuzz nothing.
+      - name: Keep only ${{ matrix.target }}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          cd build-out
+          if [ ! -x "$TARGET" ]; then
+            echo "::error::$TARGET is not in the fuzz build" >&2
+            exit 1
+          fi
+          for file in *; do
+            stem="${file%%.*}"
+            stem="${stem%_seed_corpus}"
+            if [ "$stem" != "$TARGET" ] && [ "$file" != llvm-symbolizer ]; then
+              sudo rm -rf -- "$file"
+            fi
+          done
+          ls -la
+
+      - name: Run ${{ matrix.target }} (python, ${{ matrix.sanitizer }})
         uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          fuzz-seconds: 3600
+          # A schedule event has no inputs, so it takes the default.
+          fuzz-seconds: ${{ inputs.fuzz-seconds || 7200 }}
           mode: 'batch'
           sanitizer: ${{ matrix.sanitizer }}
           # `language` is a run_fuzzers input too, not only a build_fuzzers
@@ -48,4 +92,48 @@ jobs:
           # 30s default). A PyInstaller-frozen Python target is slow to start,
           # so dropping this risks real crashes being written off as
           # unreproducible.
-          language: ${{ matrix.language }}
+          language: python
+          parallel-fuzzing: true
+          output-sarif: true
+
+      # The report is written on every run, empty when nothing crashed, so
+      # an alert closes on the first night the crash is gone.
+      - name: Upload SARIF
+        if: always() && hashFiles('cifuzz-sarif/results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: cifuzz-sarif/results.sarif
+          checkout_path: cifuzz-sarif
+          category: clusterfuzzlite-${{ matrix.target }}
+
+  batch-fuzzing-rust:
+    name: Batch fuzz (rust, ${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    # The hour of fuzzing plus the build and the crash reproduction.
+    timeout-minutes: 90
+    # Reading the corpora, builds and coverage the earlier runs uploaded is
+    # all the token does here; the action uploads with the runner's own
+    # credentials.
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address]
+    steps:
+      - name: Build fuzzers (rust, ${{ matrix.sanitizer }})
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          sanitizer: ${{ matrix.sanitizer }}
+          language: rust
+
+      - name: Run fuzzers (rust, ${{ matrix.sanitizer }})
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 3600
+          mode: 'batch'
+          sanitizer: ${{ matrix.sanitizer }}
+          # As above: cifuzz picks the reproduce timeout from `language`.
+          language: rust
