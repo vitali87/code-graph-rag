@@ -204,6 +204,25 @@ class Swapper:
 
     def save(self):
         self.f.write(os.getenv("SWAP_TOKEN"))
+
+
+def returned_read():
+    conn = sqlite3.connect("/var/returned.db")
+    return conn.execute("SELECT secret FROM t").fetchall()
+
+
+def show_returned():
+    print(returned_read())
+
+
+def comprehension_write(buffers):
+    f = open("/tmp/comp.txt", "w")
+    [f.write(os.getenv("COMP_TOKEN")) for f in buffers]
+
+
+def comprehension_read(files):
+    f = open("/etc/compread.txt")
+    print([f.read() for f in files])
 """
 
 
@@ -266,8 +285,14 @@ def test_a_handle_read_or_write_is_a_flow_end(
         ("resource::DATABASE::/var/reread.db", STDOUT),
         ("resource::ENV::EITHER_TOKEN", "resource::FILE::/tmp/a.txt"),
         ("resource::ENV::EITHER_TOKEN", "resource::FILE::/tmp/b.txt"),
+        ("resource::DATABASE::/var/returned.db", STDOUT),
     ],
-    ids=["read-on-the-right-of-its-rebinding", "if-branch", "else-branch"],
+    ids=[
+        "read-on-the-right-of-its-rebinding",
+        "if-branch",
+        "else-branch",
+        "returned-read",
+    ],
 )
 def test_a_handle_the_path_may_hold_is_a_flow_end(
     review_flows: set[tuple[str, str]], source: str, sink: str
@@ -283,6 +308,8 @@ def test_a_handle_the_path_may_hold_is_a_flow_end(
         ("resource::ENV::INNER_TOKEN", "resource::FILE::/tmp/out.txt"),
         ("resource::ENV::UNPACK_TOKEN", "resource::FILE::/tmp/unpacked.txt"),
         ("resource::ENV::CHAIN_TOKEN", "resource::FILE::/tmp/chained.txt"),
+        ("resource::ENV::COMP_TOKEN", "resource::FILE::/tmp/comp.txt"),
+        ("resource::FILE::/etc/compread.txt", STDOUT),
     ],
     ids=[
         "with-alias",
@@ -290,6 +317,8 @@ def test_a_handle_the_path_may_hold_is_a_flow_end(
         "nearer-scope-rebinding",
         "unpacking-rebinding",
         "chained-rebinding",
+        "comprehension-write",
+        "comprehension-read",
     ],
 )
 def test_a_handle_the_name_no_longer_holds_is_no_flow_end(

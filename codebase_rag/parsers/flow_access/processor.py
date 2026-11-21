@@ -4107,10 +4107,23 @@ class FlowProcessor:
         # A comprehension runs its clauses before its body, which reads what
         # they bound (`[t for c in s if (t := c)]`).
         body = node.child_by_field_name(cs.FIELD_BODY)
+        # Its `for f in buffers` hides the handle an outer `f` holds from
+        # what runs after that clause (Greptile, PR #2770).
+        hidden: _TaintMap = {}
         for child in node.children:
             if body is None or child.id != body.id:
                 state = self._walk_stmt(child, state, ctx)
-        return self._walk_stmt(body, state, ctx) if body is not None else state
+            if child.type == cs.TS_PY_FOR_IN_CLAUSE:
+                for name in _py_target_names(
+                    child.child_by_field_name(cs.TS_FIELD_LEFT)
+                ):
+                    key = _py_handle_key(name)
+                    if (held := state.pop(key, None)) is not None:
+                        hidden.setdefault(key, held)
+        if body is not None:
+            state = self._walk_stmt(body, state, ctx)
+        state.update(hidden)
+        return state
 
     def _py_read(self, node: Node, name: str, tainted: _TaintMap) -> Taint | None:
         # What the identifier `node` holds where Python reads it: what the
@@ -4525,6 +4538,9 @@ class FlowProcessor:
                     scope.pop(name, None)
                 else:
                     scope[name] = taint
+                # The loop variable is not the handle an outer `f` holds
+                # (Greptile, PR #2770).
+                scope.pop(_py_handle_key(name), None)
             local |= frozenset(names)
         return local
 
