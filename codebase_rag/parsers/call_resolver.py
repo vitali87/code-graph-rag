@@ -29,6 +29,7 @@ from .php import class_names as php_class_names
 from .php.class_names import ClassPath as PhpClassPath
 from .php.class_names import ascii_fold as _php_fold
 from .php.utils import (
+    PhpTraitAlias,
     PhpTraitComposition,
     anonymous_class_qn,
     php_trait_composition,
@@ -126,6 +127,9 @@ _LINEARIZED_LANGUAGES = frozenset(
 )
 # The PHP declarations a trait `use` can sit in.
 _PHP_TYPE_DECLARATIONS = frozenset(cs.SPEC_PHP_CLASS_TYPES)
+# A PHP trait alias of the name whose trait method could not be found: the
+# alias still hides the parent's method, so no inherited method answers.
+_PHP_ALIAS_UNRESOLVED: tuple[str, str] = ("", "")
 
 
 def _php_simple(qualified_name: str) -> str:
@@ -163,7 +167,8 @@ class _CallSite(NamedTuple):
     call_point: int | None
     constructing: bool
     # The call is on the caller's own object (`label()`, `this->label()`,
-    # `$this->label()`), not on another receiver its bare name hides.
+    # `$this->label()`), not on another receiver its bare name hides. For a
+    # chain (`make()->label()`), the chain's first call is.
     implicit_receiver: bool = False
 
 
@@ -785,7 +790,8 @@ class CallResolver:
         function that merely shares the name. `implicit_receiver`: the call is
         on the caller's own object, so it may reach a method its class
         inherits; a PHP function call or a call on another receiver never
-        does, though its name can be just as bare."""
+        does, though its name can be just as bare. For a chain
+        (`make().label()`) it says the same of the chain's first call."""
         self.last_resolution = cs.EdgeResolution.EXACT
         result = self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
@@ -2536,6 +2542,18 @@ class CallResolver:
             if base not in seen
         ]
         traits = [base for base in bases if _php_simple(base) in composition.traits]
+        # `use T { T::original as label; }` gives the class a `label` that
+        # runs T's `original`, ahead of a parent's own `label`; it reaches a
+        # method an `insteadof` excluded too (Greptile on PR #3240).
+        for alias in composition.aliases:
+            if alias.alias != folded:
+                continue
+            for base in traits:
+                if alias.trait and _php_simple(base) != alias.trait:
+                    continue
+                if hit := self._php_member(base, alias.method, seen | {base}):
+                    return hit
+            return _PHP_ALIAS_UNRESOLVED
         for base in [*traits, *(base for base in bases if base not in traits)]:
             if base in traits and (folded, _php_simple(base)) in composition.exclusions:
                 continue
@@ -2557,6 +2575,7 @@ class CallResolver:
         simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         traits: set[str] = set()
         exclusions: set[tuple[str, str]] = set()
+        aliases: list[PhpTraitAlias] = []
         stack = [root] if root is not None else []
         while stack:
             node = stack.pop()
@@ -2572,8 +2591,11 @@ class CallResolver:
                 found = php_trait_composition(node)
                 traits |= found.traits
                 exclusions |= found.exclusions
+                aliases.extend(found.aliases)
             stack.extend(node.children)
-        composition = PhpTraitComposition(frozenset(traits), frozenset(exclusions))
+        composition = PhpTraitComposition(
+            frozenset(traits), frozenset(exclusions), tuple(aliases)
+        )
         self._php_composition_memo[class_qn] = composition
         return composition
 
@@ -2691,6 +2713,7 @@ class CallResolver:
                 call.caller_qn,
                 call.language,
                 call.call_point,
+                call.implicit_receiver,
             )
 
         # A Rust caller INSIDE an inline `mod` block sees that module's own
@@ -6857,6 +6880,7 @@ class CallResolver:
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
+        implicit_receiver: bool = False,
     ) -> str | None:
         # Type of a chained receiver expression like `c.Root()` using the shared
         # method_return_types map: the base is a typed local (`c` -> Command), and
@@ -6888,6 +6912,7 @@ class CallResolver:
                 caller_qn,
                 language,
                 call_point,
+                implicit_receiver,
             )
         elif (
             folded := self._fold_import_prefix_hop(
@@ -7734,6 +7759,7 @@ class CallResolver:
         caller_qn: str | None,
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
+        implicit_receiver: bool = False,
     ) -> str | None:
         # `parser(ia, cb).parse()`: the receiver is a bare-identifier factory call.
         # Resolve the callee to its function/method qn and return its recorded
@@ -7771,8 +7797,10 @@ class CallResolver:
             caller_qn,
             language,
             call_point,
-            # `make()` in `make().m()` has no receiver of its own.
-            implicit_receiver=True,
+            # `make()` in `make().m()` has no receiver of its own; whether a
+            # parameter or local `make` hides an inherited one is the call
+            # site's to say (Greptile on PR #3240).
+            implicit_receiver=implicit_receiver,
         )
         if resolved is not None:
             return_type = self._callee_return_type(resolved[1], language)
@@ -7915,7 +7943,11 @@ class CallResolver:
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
+        implicit_receiver: bool = False,
     ) -> tuple[str, str] | None:
+        """`implicit_receiver`: the chain's first call is on the caller's own
+        object, with no parameter or local of its name in scope, so it may
+        reach a method the class inherits."""
         match = _CHAINED_METHOD_PATTERN.search(call_name)
         if not match:
             return None
@@ -7936,6 +7968,7 @@ class CallResolver:
                 caller_qn,
                 language,
                 call_point,
+                implicit_receiver,
             )
         )
         if object_type and (class_value := _class_value_of(object_type)):

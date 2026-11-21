@@ -52,6 +52,9 @@ TS_PHP_USE_DECLARATION = "use_declaration"
 # clause in them that picks one trait's method over another's.
 TS_PHP_USE_LIST = "use_list"
 TS_PHP_USE_INSTEAD_OF_CLAUSE = "use_instead_of_clause"
+# `use T { T::original as label; }`: the clause that copies a trait's method
+# under another name (or, with no new name, only changes its visibility).
+TS_PHP_USE_AS_CLAUSE = "use_as_clause"
 
 # FLOWS_TO lean-walk node types (issue #1174). PHP variables carry a `$` prefix
 # (`variable_name` -> `.text == "$s"`), so a local can never shadow a builtin sink.

@@ -668,3 +668,139 @@ def test_an_anonymous_php_class_composes_its_traits(
         if src.startswith("compose.make.") and src.endswith(".call")
     }
     assert anon == {"compose.T.label": "exact"}, calls
+
+
+# Third review round (Greptile, PR #3240). A PHP trait alias
+# (`use T { T::original as label; }`) names the trait method `$this->label()`
+# runs, ahead of a parent's own `label`. And a chain's first call
+# (`make()->label()`) reaches an inherited method only as the call alone
+# would: a parameter or local `make` is the callable the chain starts from.
+_ROUND3 = {
+    "php": {
+        "alias.php": """\
+<?php
+trait T { public function original(): string { return "t"; } }
+trait First { public function label(): string { return "1"; } }
+trait Second { public function label(): string { return "2"; } }
+class Base {
+    public function label(): string { return "b"; }
+    public function quiet(): string { return "b"; }
+    public function picked(): string { return "b"; }
+}
+class Named extends Base {
+    use T { T::original as label; }
+    public function call(): string { return $this->label(); }
+}
+class Bare extends Base {
+    use T { original as protected quiet; }
+    public function call(): string { return $this->quiet(); }
+}
+class Excluded extends Base {
+    use First, Second { First::label insteadof Second; Second::label as picked; }
+    public function call(): string { return $this->picked(); }
+}
+class Inherits extends Named {
+    public function call(): string { return $this->label(); }
+}
+class Visibility extends Base {
+    use T { original as protected; }
+    public function call(): string { return $this->label(); }
+}
+""",
+    },
+    "cpp": {
+        "chain.cpp": """\
+class A { public: int label() { return 1; } };
+class Z { public: int label() { return 2; } };
+class Base { public: A* make() { return nullptr; } };
+class Kid : public Base {
+ public:
+  int run(Z* (*make)()) { return make()->label(); }
+  int local() { auto make = []() -> Z* { return nullptr; }; return make()->label(); }
+  int plain() { return make()->label(); }
+};
+""",
+    },
+    "dart": {
+        "pubspec.yaml": 'name: shapes\nenvironment:\n  sdk: ">=3.0.0 <4.0.0"\n',
+        "lib/chain.dart": """\
+class A { String label() => "a"; }
+class Z { String label() => "z"; }
+class Base { A make() => A(); }
+class Kid extends Base {
+  String run(Z Function() make) => make().label();
+  String explicit(Z Function() make) => this.make().label();
+  String plain() => make().label();
+}
+""",
+    },
+}
+
+
+@pytest.fixture(scope="module")
+def round3(tmp_path_factory: pytest.TempPathFactory) -> dict[str, _Calls]:
+    return {
+        grammar: _calls(
+            tmp_path_factory.mktemp(f"{grammar}3240r3") / "r3", files, grammar
+        )
+        for grammar, files in _ROUND3.items()
+    }
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("alias.Named.call", "alias.T.original"),
+        ("alias.Bare.call", "alias.T.original"),
+        ("alias.Excluded.call", "alias.Second.label"),
+        ("alias.Inherits.call", "alias.T.original"),
+        ("alias.Visibility.call", "alias.Base.label"),
+    ],
+    ids=[
+        "php-alias",
+        "php-unqualified-alias",
+        "php-alias-of-excluded",
+        "php-parent-alias",
+        "php-visibility-only",
+    ],
+)
+def test_a_php_trait_alias_names_the_trait_method(
+    round3: dict[str, _Calls], caller: str, callee: str
+) -> None:
+    # The alias, not the parent's same-named method, answers the call; an
+    # `as` that only changes visibility renames nothing.
+    assert _callees(round3["php"], caller) == {callee: "exact"}, round3["php"]
+
+
+@pytest.mark.parametrize(
+    ("grammar", "caller", "method"),
+    [
+        ("cpp", "chain.Kid.run", "chain.A.label"),
+        ("cpp", "chain.Kid.local", "chain.A.label"),
+        ("dart", "lib.chain.Kid.run", "lib.chain.A.label"),
+    ],
+    ids=["cpp-parameter-chain", "cpp-local-chain", "dart-parameter-chain"],
+)
+def test_a_parameter_or_local_hides_an_inherited_chain_root(
+    round3: dict[str, _Calls], grammar: str, caller: str, method: str
+) -> None:
+    # `make` here is the parameter or local, which returns a `Z`: the
+    # inherited `Base.make` returning an `A` cannot type the chain exactly.
+    assert _callees(round3[grammar], caller).get(method) != "exact", round3[grammar]
+
+
+@pytest.mark.parametrize(
+    ("grammar", "caller", "callee"),
+    [
+        ("cpp", "chain.Kid.plain", "chain.A.label"),
+        ("dart", "lib.chain.Kid.plain", "lib.chain.A.label"),
+        ("dart", "lib.chain.Kid.explicit", "lib.chain.A.label"),
+    ],
+    ids=["cpp-unhidden-chain", "dart-unhidden-chain", "dart-this-chain"],
+)
+def test_an_unhidden_inherited_chain_root_still_types_the_chain(
+    round3: dict[str, _Calls], grammar: str, caller: str, callee: str
+) -> None:
+    # Controls: with no parameter or local of the name, or through `this`,
+    # the chain starts at the inherited `Base.make`.
+    assert _callees(round3[grammar], caller).get(callee) == "exact", round3[grammar]

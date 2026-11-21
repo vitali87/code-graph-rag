@@ -592,10 +592,43 @@ def _dart_through_this(call_node: Node) -> bool:
     # Whether a Dart call selector's chain starts at `this` (`this.label()`):
     # the call's name drops the receiver, but a local of the name cannot
     # hide a member reached through it (Greptile on PR #3240).
+    start = _dart_chain_start(call_node)
+    return start is not None and start.type == cs.TS_DART_THIS
+
+
+def _dart_chain_start(call_node: Node) -> Node | None:
+    # What a Dart call selector's chain starts at: the node before its
+    # selectors (`make` in `make().label()`, `this` in `this.label()`).
     prev = call_node.prev_named_sibling
     while prev is not None and prev.type == cs.TS_DART_SELECTOR:
         prev = prev.prev_named_sibling
-    return prev is not None and prev.type == cs.TS_DART_THIS
+    return prev
+
+
+def _chain_root_call(
+    language: cs.SupportedLanguage | None, call_node: Node
+) -> tuple[Node, str] | None:
+    """The first call of the receiver chain `call_node` ends, and the name
+    it calls: `make()` in `make()->label()`. In Dart that is the selector
+    right after the chain's first name; elsewhere the innermost call of the
+    call's own type down its left spine."""
+    if language == cs.SupportedLanguage.DART:
+        start = _dart_chain_start(call_node)
+        root = start.next_named_sibling if start is not None else None
+        if root is None or root.type != cs.TS_DART_SELECTOR:
+            return None
+        return root, safe_decode_text(start) or ""
+    root = None
+    node = call_node
+    for _ in range(_CHAIN_SPINE_WALK_LIMIT):
+        # `child(0)` raises on a leaf rather than returning None.
+        if node.child_count == 0 or (node := node.child(0)) is None:
+            break
+        if node.type == call_node.type:
+            root = node
+    if root is None:
+        return None
+    return root, safe_decode_text(root.child_by_field_name(cs.TS_FIELD_FUNCTION)) or ""
 
 
 def _is_this_receiver(language: cs.SupportedLanguage, member: Node) -> bool:
@@ -7473,6 +7506,19 @@ class CallProcessor:
 
     @staticmethod
     def _calls_unhidden_own_member(
+        ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> bool:
+        # A chain (`make()->label()`) is typed from its first call's callee,
+        # which may be an inherited method only where that call alone may
+        # be: `int run(Z* (*make)()) { return make()->label(); }` starts at
+        # the parameter, not at an inherited `make` (Greptile on PR #3240).
+        if cs.CHAR_PAREN_OPEN in call_name and cs.SEPARATOR_DOT in call_name:
+            root = _chain_root_call(ctx.language, call_node)
+            return root is not None and CallProcessor._unhidden_own_call(ctx, *root)
+        return CallProcessor._unhidden_own_call(ctx, call_node, call_name)
+
+    @staticmethod
+    def _unhidden_own_call(
         ctx: _CallScanContext, call_node: Node, call_name: str
     ) -> bool:
         # On the caller's own object, and with no parameter or local of the
