@@ -61,8 +61,11 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Security Fix**: Addressed a potential issue with parameter defaults.
-- **Stack Handling**: Improved stack management for Qdrant and Memgraph.
+- **Improved I/O Handling**: Enhanced how the toolchain interacts with input and output streams, including inline reads, standard stream writes, and environment variable management.
+- **Credential Management**: Introduced a dedicated credential word list for each hardcoded secret within a pack, improving security.
+- **Enhanced Code Analysis**: Improved the accuracy of code analysis by considering binding contexts, structural tiers, and the order of query captures.
+- **Refined Error Reporting**: Improved the clarity and detail of error messages, particularly for dead code, duplicates, and missing dependencies.
+- **Surface and Renaming Improvements**: Enhanced the recording and management of public surfaces and improved the handling of renaming operations.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.

@@ -440,7 +440,7 @@ _TS_LANGUAGES = frozenset({cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX})
 class RenameSite(NamedTuple):
     """One place the old name is written and must become the new one."""
 
-    kind: str  # definition | call | reference | import
+    kind: str  # definition | decorator | call | reference | import
     path: str
     line: int
     col: int
@@ -500,10 +500,121 @@ def renamed_qualified_name(member: str, new_name: str) -> str:
     # and a type may be dotted itself (`put(Map.Entry)`). Only the name before
     # the signature changes; dropping the signature made the contract expect a
     # name the graph never has, so every such rename was undone.
-    start = _signature_start(member)
-    head, signature = (member[:start], member[start:]) if start >= 0 else (member, "")
+    # A property's setter is registered as `balance@10`, after its getter.
+    # The rename moves no line, so the marker stays: dropping it made the
+    # contract expect the getter's name for the setter (issue #2667).
+    natural = qn_markers.strip_dup_marker(member)
+    marker = member[len(natural) :]
+    start = _signature_start(natural)
+    head, signature = (
+        (natural[:start], natural[start:]) if start >= 0 else (natural, "")
+    )
     owner = head.rsplit(cs.SEPARATOR_DOT, 1)[0]
-    return f"{owner}{cs.SEPARATOR_DOT}{new_name}{signature}"
+    return f"{owner}{cs.SEPARATOR_DOT}{new_name}{signature}{marker}"
+
+
+def _marker_order(qn: str) -> tuple[int, int]:
+    # Registration order of same-named definitions: the unmarked one came
+    # first, the others by the line their `@line` marker names.
+    marker = qn[len(qn_markers.strip_dup_marker(qn)) :]
+    line = marker[len(cs.DUP_QN_MARKER) :].split(cs.DUP_QN_COLUMN_MARKER, 1)[0]
+    return (1, int(line)) if line.isdigit() else (0, 0)
+
+
+def reindexed_names(
+    members: Iterable[str], new_name: str | None = None
+) -> list[tuple[str, str]]:
+    """Each member with the name a re-index gives it once its group of
+    same-named definitions of one owner is all that holds the name: the
+    first takes the plain name, the others keep their markers.
+
+    A plain `def` before a property's accessors held the plain name, so the
+    renamed getter loses its marker; one that keeps the old name after the
+    accessors are renamed away takes the plain name back (bot review on PR
+    #2725). `new_name` None keeps each member's own name.
+    """
+    groups: dict[str, list[str]] = {}
+    for member in members:
+        groups.setdefault(qn_markers.natural_qn(member), []).append(member)
+
+    def renamed(member: str) -> str:
+        return member if new_name is None else renamed_qualified_name(member, new_name)
+
+    out: list[tuple[str, str]] = []
+    for natural, group in groups.items():
+        ordered = sorted(group, key=_marker_order)
+        out.append((ordered[0], renamed(natural)))
+        out += [(member, renamed(member)) for member in ordered[1:]]
+    return out
+
+
+def _text_or_none(node: Node | None) -> str | None:
+    if node is None or node.text is None:
+        return None
+    return node.text.decode(cs.ENCODING_UTF8, errors="replace")
+
+
+def _python_root(source: bytes) -> Node | None:
+    parser = load_parsers()[0].get(cs.SupportedLanguage.PYTHON)
+    return None if parser is None else parser.parse(source).root_node
+
+
+def _def_line(definition: graph_query.DefinitionRow) -> int:
+    """The line of a definition's own `def`.
+
+    `start_line` opens at the first decorator, as `inspect.getsource` does,
+    wherever the graph records one; `_decorators` finds the `def` by its
+    own line, so a decorated getter read from `start_line` found none and
+    its setter was left out of the rename.
+    """
+    return definition["name_line"] or definition["start_line"] or 1
+
+
+def _decorators(root: Node | None, start_line: int, name: str) -> list[Node]:
+    """The decorator expressions of the Python `def name` on `start_line`."""
+    stack: list[Node] = [root] if root is not None else []
+    while stack:
+        node = stack.pop()
+        if not node.start_point[0] < start_line <= node.end_point[0] + 1:
+            continue
+        if (
+            node.type == cs.TS_PY_FUNCTION_DEFINITION
+            and node.start_point[0] + 1 == start_line
+            and _text_or_none(node.child_by_field_name(cs.FIELD_NAME)) == name
+        ):
+            decorated = node.parent
+            if decorated is None or decorated.type != cs.TS_PY_DECORATED_DEFINITION:
+                return []
+            return [
+                decorator.named_children[0]
+                for decorator in decorated.children
+                if decorator.type == cs.TS_PY_DECORATOR and decorator.named_children
+            ]
+        stack.extend(node.children)
+    return []
+
+
+def _accessor_tokens(decorators: list[Node], name: str) -> list[tuple[int, int]]:
+    """(line, col) of `name` in each `@name.setter`, `@name.getter` or
+    `@name.deleter` among `decorators`.
+
+    The decorator names the property the `def` adds an accessor to, so it is
+    as much a site of the name as the `def` itself.
+    """
+    tokens: list[tuple[int, int]] = []
+    for expression in decorators:
+        if expression.type != cs.TS_PY_ATTRIBUTE:
+            continue
+        owner = expression.child_by_field_name(cs.FIELD_OBJECT)
+        accessor = expression.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+        if (
+            owner is not None
+            and owner.type == cs.TS_PY_IDENTIFIER
+            and _text_or_none(owner) == name
+            and _text_or_none(accessor) in cs.PY_PROPERTY_ACCESSOR_ATTRS
+        ):
+            tokens.append((owner.start_point[0] + 1, owner.start_point[1]))
+    return tokens
 
 
 def _signature_start(member: str) -> int:
@@ -529,20 +640,28 @@ def _signature_start(member: str) -> int:
 
 
 def _hierarchy(
-    fetch_all: QueryFn, project: str, qn: str, repo_root: Path | None = None
+    fetch_all: QueryFn,
+    project: str,
+    qn: str,
+    repo_root: Path | None = None,
+    linked: Callable[[str], list[str]] | None = None,
 ) -> Hierarchy:
     """`qn`, every other part of the C# partial type `qn` is a part of, and
     every method `qn` overrides or is overridden by, transitively, with the
-    members only a guessed OVERRIDES edge reaches."""
+    members only a guessed OVERRIDES edge reaches. `linked` names the members
+    each one certainly joins besides (a Python property's other accessors)."""
     parts = _csharp_partial_parts(fetch_all, project, qn)
     found = hierarchy(
         fetch_all,
         project,
         qn,
         lambda member: (
-            _go_build_variants(fetch_all, project, member, repo_root)
-            if repo_root is not None
-            else []
+            (
+                _go_build_variants(fetch_all, project, member, repo_root)
+                if repo_root is not None
+                else []
+            )
+            + (linked(member) if linked is not None else [])
         ),
     )
     members = list(dict.fromkeys([qn, *parts, *found.members]))
@@ -711,35 +830,193 @@ def _generic_arity(row: ResultRow) -> int:
     return arity if isinstance(arity, int) else 0
 
 
+def _nodes_in_span(root: Node, start_line: int, end_line: int) -> Iterator[Node]:
+    stack: list[Node] = [root]
+    while stack:
+        node = stack.pop()
+        if node.end_point[0] + 1 < start_line or node.start_point[0] + 1 > end_line:
+            continue
+        yield node
+        stack.extend(node.children)
+
+
+def _spelling(node: Node | None, name: str, start_line: int) -> Node | None:
+    """`node` when it spells `name` and starts inside the span, else None."""
+    if (
+        node is not None
+        and node.text is not None
+        and node.text.decode(cs.ENCODING_UTF8, errors="replace") == name
+        and node.start_point[0] + 1 >= start_line
+    ):
+        return node
+    return None
+
+
+def _declared_name(node: Node) -> Node | None:
+    """The name token of a definition that has no `name` field (issue #2768).
+
+    C and C++ name a function as the `declarator` of its `function_declarator`
+    (under any pointer or reference wrapper), a Lua `function M.f` names it as
+    the last `field` of an index expression whose whole text is `M.f`, and a
+    JS/TS object literal names a function value with the pair's `key`.
+    """
+    match node.type:
+        case cs.TS_CPP_FUNCTION_DECLARATOR:
+            return node.child_by_field_name(cs.FIELD_DECLARATOR)
+        case cs.TS_PAIR:
+            value = node.child_by_field_name(cs.FIELD_VALUE)
+            if value is not None and value.type in cs.JS_PAIR_FUNCTION_VALUE_TYPES:
+                return node.child_by_field_name(cs.FIELD_KEY)
+            return None
+    named = node.child_by_field_name(cs.FIELD_NAME)
+    if named is not None and named.type == cs.TS_DOT_INDEX_EXPRESSION:
+        return named.child_by_field_name(cs.FIELD_FIELD)
+    return None
+
+
+def _pair_key_of(
+    nodes: list[Node], start_line: int, end_line: int, name: str
+) -> Node | None:
+    """The key of the object pair whose function value is the definition
+    spanning exactly `start_line`..`end_line`, when it spells `name`."""
+    for node in nodes:
+        parent = node.parent
+        if (
+            node.type in cs.JS_PAIR_FUNCTION_VALUE_TYPES
+            and node.start_point[0] + 1 == start_line
+            and node.end_point[0] + 1 == end_line
+            and parent is not None
+            and parent.type == cs.TS_PAIR
+            and parent.child_by_field_name(cs.FIELD_VALUE) == node
+        ):
+            key = parent.child_by_field_name(cs.FIELD_KEY)
+            if (
+                key is not None
+                and key.text is not None
+                and key.text.decode(cs.ENCODING_UTF8, errors="replace") == name
+            ):
+                return key
+    return None
+
+
+def _definition_name_node(
+    nodes: list[Node], start_line: int, end_line: int, name: str
+) -> Node | None:
+    """The name token among `nodes` that a definition spells: an object
+    pair's key, else a `name` field."""
+    if (key := _pair_key_of(nodes, start_line, end_line, name)) is not None:
+        return key
+    for node in nodes:
+        if (
+            named := _spelling(
+                node.child_by_field_name(cs.FIELD_NAME), name, start_line
+            )
+        ) is not None:
+            return named
+    return None
+
+
+def _anchored_declarator_name(
+    anchored: list[Node], name: str, start_line: int
+) -> Node | None:
+    """The name token in the declarator of a definition starting exactly
+    where the graph says it does, through any pointer or reference wrapper:
+    a `name` field (`Widget::size`) or a function declarator's own name."""
+    for definition in anchored:
+        declarator = definition.child_by_field_name(cs.FIELD_DECLARATOR)
+        if declarator is None:
+            continue
+        header = list(
+            _nodes_in_span(declarator, start_line, declarator.end_point[0] + 1)
+        )
+        tokens = [
+            token
+            for node in header
+            if (
+                token := _spelling(
+                    node.child_by_field_name(cs.FIELD_NAME), name, start_line
+                )
+                or _spelling(_declared_name(node), name, start_line)
+            )
+            is not None
+        ]
+        if tokens:
+            return min(tokens, key=lambda token: token.start_byte)
+    return None
+
+
+def _tree_name_token(
+    root: Node,
+    start_line: int,
+    end_line: int,
+    name: str,
+    start_col: int | None,
+) -> Node | None:
+    """The definition's own name token in the parsed tree, inside its span."""
+    in_span = list(_nodes_in_span(root, start_line, end_line))
+    anchored = [
+        node
+        for node in in_span
+        if start_col is not None and node.start_point == (start_line - 1, start_col)
+    ]
+    if anchored and (
+        token := _definition_name_node(anchored, start_line, end_line, name)
+    ):
+        return token
+    # A C/C++ definition names itself in its declarator: read the anchored
+    # one's before the rest of the line, where a prototype or another
+    # namespace's definition can spell the name first (bot reviews on PR
+    # #2895).
+    if (token := _anchored_declarator_name(anchored, name, start_line)) is not None:
+        return token
+    # A function that is a JS/TS object pair's value is the property its
+    # key names: the key comes first, though the value may start on the
+    # next line (outside the span) or spell the name itself, or declare
+    # a same-named function inside (bot review on PR #2895).
+    if (key := _pair_key_of(in_span, start_line, end_line, name)) is not None:
+        return key
+    for node in in_span:
+        named = _spelling(node.child_by_field_name(cs.FIELD_NAME), name, start_line)
+        if named is not None:
+            return named
+    # Only when no `name` field spells it, so every shape located before
+    # is located exactly as before. Earliest in the source, because the
+    # header comes before anything in the body that could spell it too.
+    declared = [
+        token
+        for node in in_span
+        if (token := _spelling(_declared_name(node), name, start_line)) is not None
+    ]
+    if declared:
+        return min(declared, key=lambda token: token.start_byte)
+    return None
+
+
 def _name_token(
     source: bytes,
     language: cs.SupportedLanguage | None,
     start_line: int,
     end_line: int,
     name: str,
+    start_col: int | None = None,
 ) -> tuple[int, int] | None:
-    """(line, col) of the definition's own name identifier inside its span."""
+    """(line, col) of the definition's own name identifier inside its span.
+
+    `start_col` is where the definition starts on `start_line`: two can share
+    a line span (`function foo() {}` and `{ foo: () => 1 }` on one line), so
+    the nodes starting exactly there are asked first (bot review on PR
+    #2895)."""
     parser = None
     if language is not None:
         parsers, _queries = load_parsers()
         parser = parsers.get(language)
     if parser is not None:
-        root = parser.parse(source).root_node
-        stack: list[Node] = [root]
-        while stack:
-            node = stack.pop()
-            if node.end_point[0] + 1 < start_line or node.start_point[0] + 1 > end_line:
-                continue
-            named = node.child_by_field_name(cs.FIELD_NAME)
-            if (
-                named is not None
-                and named.text is not None
-                and named.text.decode(cs.ENCODING_UTF8, errors="replace") == name
-                and named.start_point[0] + 1 >= start_line
-            ):
-                return named.start_point[0] + 1, named.start_point[1]
-            stack.extend(node.children)
-        return None
+        token = _tree_name_token(
+            parser.parse(source).root_node, start_line, end_line, name, start_col
+        )
+        if token is None:
+            return None
+        return token.start_point[0] + 1, token.start_point[1]
     # No grammar: the first whole-word occurrence inside the span.
     text = source.decode(cs.ENCODING_UTF8, errors="replace")
     lines = text.split("\n")
@@ -981,6 +1258,42 @@ def _names_something(
     return re.search(_ANY_IDENTIFIER_RE, callee) is not None
 
 
+def _is_inline_pair_value(
+    source: bytes,
+    language: cs.SupportedLanguage | None,
+    span: tuple[int, int, int | None, int | None],
+) -> bool:
+    """Whether a site's span is exactly a JS/TS object pair's function value.
+
+    The scope holding `{ onSuccess: () => {} }` references that value where
+    it is written, so the site spells no name: the pair's key does, and the
+    key is the definition's own site when the value is the one renamed. The
+    site is neither an alias nor a mislocated use, and nothing in it is
+    rewritten (issue #2768).
+    """
+    line, col, end_line, end_col = span
+    if language not in cs.JS_TS_LANGUAGES or end_line is None or end_col is None:
+        return False
+    parser = load_parsers()[0].get(language)
+    if parser is None:
+        return False
+    try:
+        start = line_col_to_byte(source, line, col)
+        end = line_col_to_byte(source, end_line, end_col)
+    except PatcherError:
+        return False
+    node = parser.parse(source).root_node.descendant_for_byte_range(start, end)
+    parent = node.parent if node is not None else None
+    return (
+        node is not None
+        and parent is not None
+        and node.type in cs.JS_PAIR_FUNCTION_VALUE_TYPES
+        and (node.start_byte, node.end_byte) == (start, end)
+        and parent.type == cs.TS_PAIR
+        and parent.child_by_field_name(cs.FIELD_VALUE) == node
+    )
+
+
 def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) else None
 
@@ -1169,6 +1482,23 @@ class Renamer:
         # The members of the hierarchy being planned that only a guessed
         # OVERRIDES edge reaches: their declarations are guessed sites.
         self._guessed_members: frozenset[str] = frozenset()
+        # Read once per rename: planning asks per property accessor and the
+        # contract once more (Copilot review on PR #2725).
+        self._longer_prefixes: tuple[str, ...] | None = None
+        # One parse per Python source, however many `def`s it is asked about.
+        self._python_roots: dict[bytes, Node | None] = {}
+
+    def _project_prefixes(self) -> tuple[str, ...]:
+        if self._longer_prefixes is None:
+            self._longer_prefixes = graph_query._longer_project_prefixes(
+                self.fetch_all, self.project
+            )
+        return self._longer_prefixes
+
+    def _parsed(self, source: bytes) -> Node | None:
+        if source not in self._python_roots:
+            self._python_roots[source] = _python_root(source)
+        return self._python_roots[source]
 
     def _module_of(self, qn: str) -> tuple[str, str | None]:
         # The defining module's qn and path, from the definition's own path:
@@ -1179,6 +1509,103 @@ class Renamer:
         if not path:
             return qn.rsplit(cs.SEPARATOR_DOT, 1)[0], None
         return base_module_qn(Path(path), self.project), path
+
+    def _rename_set(self, qn: str) -> Hierarchy:
+        """`qn`, its override hierarchy, and the other accessors of any
+        Python property among them, with their hierarchies in turn."""
+        return _hierarchy(
+            self.fetch_all, self.project, qn, self.repo_root, self._property_accessors
+        )
+
+    def _property_accessors(self, qn: str) -> list[str]:
+        """The other accessors of the Python property `qn` is one of.
+
+        A property with a setter or deleter is several methods sharing one
+        name (`balance`, `balance@10`) that no OVERRIDES edge links. Renaming
+        one alone leaves `@balance.setter` naming a property that is gone, or
+        makes a second property beside it (issue #2667).
+        """
+        definition = graph_query.definition(self.fetch_all, self.project, qn, None)
+        path, name = definition["path"], definition["name"]
+        if (
+            not path
+            or not name
+            or definition["label"] != cs.NodeLabel.METHOD.value
+            or get_language_for_extension(Path(path).suffix)
+            != cs.SupportedLanguage.PYTHON
+        ):
+            return []
+        try:
+            source = Patcher(self.repo_root).source(path)
+        except PatcherError:
+            return []
+        root = self._parsed(source)
+        own = _decorators(root, _def_line(definition), name)
+        # Only a `def` that is part of a property can have accessor twins;
+        # every other method skips the graph read below.
+        if not _accessor_tokens(own, name) and not any(
+            _text_or_none(expression) in cs.PY_PROPERTY_DECORATORS for expression in own
+        ):
+            return []
+        natural = qn_markers.natural_qn(qn)
+        twins = self._same_named_methods(path, natural)
+        if len(twins) < 2:
+            return []
+        decorators = {
+            other: _decorators(root, line, name) for other, line in twins.items()
+        }
+        # Same-named methods are one property only when one of them adds an
+        # accessor to it; a getter redefined as a plain method is not, and a
+        # plain `def` beside the accessors is no accessor either (bot review
+        # on PR #2725).
+        if not any(_accessor_tokens(found, name) for found in decorators.values()):
+            return []
+        accessors = sorted(
+            other
+            for other, found in decorators.items()
+            if other != qn
+            and (
+                _accessor_tokens(found, name)
+                or any(
+                    _text_or_none(expression) in cs.PY_PROPERTY_DECORATORS
+                    for expression in found
+                )
+            )
+        )
+        plain = sorted(
+            (line, other)
+            for other, line in twins.items()
+            if other != qn and other not in accessors
+        )
+        if plain and natural in (qn, *accessors):
+            raise RenameRefused(
+                cs.RENAME_PROPERTY_REDEFINED.format(qn=natural, line=plain[0][0]),
+                [],
+                [],
+            )
+        return accessors
+
+    def _same_named_methods(self, path: str, natural: str) -> dict[str, int]:
+        """Each method in `path` whose natural qn is `natural`, by start line."""
+        twins: dict[str, int] = {}
+        for row in self.fetch_all(
+            cq.CYPHER_DELTA_DEFINITIONS,
+            {
+                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(self._project_prefixes()),
+                cs.CYPHER_PARAM_PATHS: [path],
+            },
+        ):
+            other = row.get(cs.KEY_QUALIFIED_NAME)
+            line = row.get(cs.KEY_START_LINE)
+            if (
+                row.get(cs.KEY_LABEL) == cs.NodeLabel.METHOD.value
+                and isinstance(other, str)
+                and isinstance(line, int)
+                and qn_markers.natural_qn(other) == natural
+            ):
+                twins[other] = line
+        return twins
 
     def _collect(self, qn: str) -> tuple[list[RenameSite], list[str], str, str | None]:
         definition = graph_query.definition(
@@ -1194,6 +1621,18 @@ class Renamer:
             self._definition_site(qn, definition, path, old_name, patcher)
         ]
         sites.extend(_overload_stub_sites(sites[0], patcher))
+        if get_language_for_extension(Path(path).suffix) == cs.SupportedLanguage.PYTHON:
+            sites.extend(
+                RenameSite("decorator", path, line, col, qn, cs.EdgeResolution.EXACT)
+                for line, col in _accessor_tokens(
+                    _decorators(
+                        self._parsed(patcher.source(path)),
+                        _def_line(definition),
+                        old_name,
+                    ),
+                    old_name,
+                )
+            )
         # Calls, references and constructions.
         for row in graph_query.callers(self.fetch_all, self.project, qn):
             self._add_site(sites, unlocatable, "call", row, old_name, patcher)
@@ -1395,7 +1834,12 @@ class Renamer:
         start = definition["name_line"] or definition["start_line"] or 1
         end = definition["end_line"] or start
         token = _name_token(
-            source, get_language_for_extension(Path(path).suffix), start, end, old_name
+            source,
+            get_language_for_extension(Path(path).suffix),
+            start,
+            end,
+            old_name,
+            definition.get("start_col"),
         )
         if token is None:
             raise RenameRefused(
@@ -1485,6 +1929,12 @@ class Renamer:
             # The site spells the symbol under an alias (`h(1, 2)` for
             # `import helper as h`); the alias keeps binding, so nothing
             # to rewrite here.
+            return
+        if _is_inline_pair_value(
+            source,
+            get_language_for_extension(Path(path).suffix),
+            (line, col, end_line, end_col),
+        ):
             return
         # A span with no name in it at all is a mislocated site, not an
         # alias: dropping it would leave the caller under the old name
@@ -1856,7 +2306,7 @@ class Renamer:
         """Collect everything a rename touches; refuse on ambiguity."""
         if (refusal := self._identifier_refusal(qn, new_name)) is not None:
             raise RenameRefused(refusal, [], [])
-        found = _hierarchy(self.fetch_all, self.project, qn, self.repo_root)
+        found = self._rename_set(qn)
         members = found.members
         self._guessed_members = found.guessed
         self._refuse_go_implementers_unknown(qn, members)
@@ -3180,28 +3630,32 @@ class Renamer:
     def _declared_renames(
         self, report: RenameReport, new_name: str
     ) -> list[tuple[str, str]]:
-        parents = [
-            (member, renamed_qualified_name(member, new_name))
-            for member in (*report.hierarchy, *report.companions)
-        ]
+        parents = reindexed_names((*report.hierarchy, *report.companions), new_name)
         pairs = list(parents)
-        longer_project_prefixes = graph_query._longer_project_prefixes(
-            self.fetch_all, self.project
-        )
-        for row in self.fetch_all(
+        rows = self.fetch_all(
             cq.CYPHER_DELTA_DEFINITIONS,
             {
                 cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
-                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(self._project_prefixes()),
                 cs.CYPHER_PARAM_PATHS: list(report.files),
             },
-        ):
+        )
+        renamed = set(report.hierarchy)
+        groups = {qn_markers.natural_qn(member) for member in renamed}
+        left_behind: list[str] = []
+        for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
-            if not isinstance(qn, str) or row.get(cs.KEY_AST_FINGERPRINT):
+            if not isinstance(qn, str):
+                continue
+            if qn not in renamed and qn_markers.natural_qn(qn) in groups:
+                # A plain `def` of the old name the rename left alone.
+                left_behind.append(qn)
+            if row.get(cs.KEY_AST_FINGERPRINT):
                 continue
             for old, new in parents:
                 if qn.startswith(old + cs.SEPARATOR_DOT):
                     pairs.append((qn, new + qn[len(old) :]))
+        pairs += [(old, new) for old, new in reindexed_names(left_behind) if old != new]
         return pairs
 
     def _enforce_contract(
