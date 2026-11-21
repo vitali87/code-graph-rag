@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from tree_sitter import Language, Node, QueryCursor
 
@@ -7,7 +7,11 @@ from ... import constants as cs
 from ..utils import get_cached_query, safe_decode_text, sorted_captures
 
 if TYPE_CHECKING:
-    from ...types_defs import LanguageQueries
+    from ...types_defs import (
+        FunctionRegistryTrieProtocol,
+        LanguageQueries,
+        PropertyDict,
+    )
 
 
 def get_js_ts_language_obj(
@@ -624,6 +628,216 @@ def is_object_literal_method(func_node: Node) -> bool:
         and parent is not None
         and parent.type == cs.TS_OBJECT
     )
+
+
+# Wrappers a TS object literal can sit in without changing which binding holds
+# it: `const api = { ... } as const`, `satisfies Api`, `({ ... })`.
+_OBJECT_LITERAL_WRAPPERS = frozenset(
+    {cs.TS_AS_EXPRESSION, cs.TS_SATISFIES_EXPRESSION, cs.TS_PARENTHESIZED_EXPRESSION}
+)
+
+
+class JsLocalIntro(NamedTuple):
+    """One introduction of a name by a function: the byte span it governs,
+    whether the name is bound to an object literal there (issue #2763), and
+    where the function owning it starts (its literals share one binding)."""
+
+    start: int
+    end: int
+    object_literal: bool
+    owner: int = -1
+
+
+# A caller's introductions, its own and those of every function around it, by
+# name.
+JsLocalIntros = dict[str, tuple[JsLocalIntro, ...]]
+
+
+def is_object_literal(value: Node | None) -> bool:
+    # `{ ... }`, also under `as const`, `satisfies T` or parentheses.
+    while value is not None and value.type in _OBJECT_LITERAL_WRAPPERS:
+        value = value.named_child(0)
+    return value is not None and value.type == cs.TS_OBJECT
+
+
+def object_literal_binding(func_node: Node) -> str | None:
+    """The name an object literal holding this function is bound to.
+
+    `const api = { fetchUser() {} }` and `{ build: () => 2 }` assigned to
+    `tools` give `api` and `tools`; `export default { run() {} }` gives
+    `default` (issue #2763). A nested object, or one that is passed,
+    returned or assigned to a property, has no name of its own: None.
+    """
+    member = func_node
+    obj = func_node.parent
+    if obj is not None and obj.type == cs.TS_PAIR:
+        value = obj.child_by_field_name(cs.FIELD_VALUE)
+        if value is None or value.id != func_node.id:
+            return None
+        member = obj
+        obj = obj.parent
+    if obj is None or obj.type != cs.TS_OBJECT:
+        return None
+    if _overridden_later(obj, member):
+        return None
+    return _object_holder_name(obj)
+
+
+def _member_key(member: Node) -> str | None:
+    # The key a `pair`, a method or a shorthand (`{ run }`) of an object
+    # literal names; a quoted key (`"run": ...`) names what it spells.
+    if member.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER:
+        return safe_decode_text(member)
+    field = cs.FIELD_KEY if member.type == cs.TS_PAIR else cs.FIELD_NAME
+    key = member.child_by_field_name(field)
+    if key is not None and key.type == cs.TS_STRING:
+        key = next(
+            (c for c in key.named_children if c.type == cs.TS_STRING_FRAGMENT), key
+        )
+    return safe_decode_text(key)
+
+
+def _overridden_later(obj: Node, member: Node) -> bool:
+    # Whether a later spread (`...base`), a later member with the same key,
+    # or a later computed key (`[k]: ...`) may replace this member's value:
+    # the binding's key then holds what is not known here (bot review on
+    # PR #3118).
+    key = _member_key(member)
+    later = False
+    for child in obj.named_children:
+        if child.id == member.id:
+            later = True
+        elif later and (
+            child.type == cs.TS_SPREAD_ELEMENT
+            or (key is not None and _member_key(child) == key)
+            or _computed_key(child)
+        ):
+            return True
+    return False
+
+
+def _computed_key(member: Node) -> bool:
+    field = cs.FIELD_KEY if member.type == cs.TS_PAIR else cs.FIELD_NAME
+    key = member.child_by_field_name(field)
+    return key is not None and key.type == cs.TS_JS_COMPUTED_PROPERTY_NAME
+
+
+def _object_holder_name(obj: Node) -> str | None:
+    # The name the declarator or default export holding an object literal
+    # (through any TS wrapper) binds it to; None for any other holder.
+    holder = obj.parent
+    while holder is not None and holder.type in _OBJECT_LITERAL_WRAPPERS:
+        holder = holder.parent
+    if holder is None:
+        return None
+    if holder.type == cs.TS_VARIABLE_DECLARATOR:
+        name = holder.child_by_field_name(cs.TS_FIELD_NAME)
+        if (
+            name is not None
+            and name.type == cs.TS_IDENTIFIER
+            and (text := safe_decode_text(name))
+            and not _written_again(holder, text)
+        ):
+            return text
+        return None
+    if holder.type == cs.TS_EXPORT_STATEMENT and any(
+        child.type == cs.TS_EXPORT_DEFAULT for child in holder.children
+    ):
+        return cs.TS_EXPORT_DEFAULT
+    return None
+
+
+_WRITES = frozenset(
+    {cs.TS_JS_ASSIGNMENT_EXPRESSION, cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION}
+)
+_WRITE_PATTERNS = frozenset(
+    {
+        cs.TS_OBJECT_PATTERN,
+        cs.TS_ARRAY_PATTERN,
+        cs.TS_PAIR_PATTERN,
+        cs.TS_REST_PATTERN,
+        cs.TS_ASSIGNMENT_PATTERN,
+        cs.TS_OBJECT_ASSIGNMENT_PATTERN,
+        cs.TS_PARENTHESIZED_EXPRESSION,
+    }
+)
+
+
+def _written_again(declarator: Node, name: str) -> bool:
+    # Whether the `let` or `var` the declarator binds is written anywhere in
+    # its file (`api = other`, `api += x`, `[api] = xs`, `api++`,
+    # `for (api in o)`): a call through the name may then reach another
+    # object (Greptile, PR #3118). A `const` is never written; a write to a
+    # local of the same name elsewhere only costs the binding.
+    declaration = declarator.parent
+    kind = (
+        declaration.child_by_field_name(cs.FIELD_KIND)
+        if declaration is not None
+        else None
+    )
+    if kind is not None and kind.type == cs.JS_CONST_KEYWORD:
+        return False
+    root = declarator
+    while root.parent is not None:
+        root = root.parent
+    pending = [root]
+    while pending:
+        node = pending.pop()
+        if node.type in _WRITES or node.type == cs.TS_JS_FOR_IN_STATEMENT:
+            target = node.child_by_field_name(cs.FIELD_LEFT)
+        elif node.type == cs.TS_JS_UPDATE_EXPRESSION:
+            target = node.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+        else:
+            target = None
+        if target is not None and name in _written_names(target):
+            return True
+        pending.extend(node.named_children)
+    return False
+
+
+def _written_names(target: Node) -> set[str]:
+    names: set[str] = set()
+    pending = [target]
+    while pending:
+        node = pending.pop()
+        if node.type in (cs.TS_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN):
+            names.add(safe_decode_text(node) or "")
+        elif node.type in _WRITE_PATTERNS:
+            pending.extend(node.named_children)
+    return names
+
+
+def object_binding_qn(func_node: Node, member_qn: str) -> str | None:
+    """The qualified name of the binding an object member is reached through.
+
+    A member registers under the scope its object is written in
+    (`<scope>.<key>`, or a duplicate variant of it), and so does the
+    object's binding: `const api = { fetchUser() {} }` in module `m` gives
+    `m.api` for member `m.fetchUser` (issue #2763).
+    """
+    binding = object_literal_binding(func_node)
+    if binding is None:
+        return None
+    natural = member_qn.split(cs.DUP_QN_MARKER, 1)[0]
+    scope, sep, _key = natural.rpartition(cs.SEPARATOR_DOT)
+    return f"{scope}{cs.SEPARATOR_DOT}{binding}" if sep else None
+
+
+def mark_js_ts_object_binding(
+    registry: "FunctionRegistryTrieProtocol",
+    props: "PropertyDict",
+    qualified_name: str,
+    func_node: Node,
+) -> None:
+    # The binding the member's object is reached through, recorded in the
+    # registry and on the node, which carries it to an incremental run's
+    # rehydrated registry (the is_object_member pattern).
+    binding_qn = object_binding_qn(func_node, qualified_name)
+    key = props.get(cs.KEY_NAME)
+    if binding_qn is None or not isinstance(key, str):
+        return
+    props[cs.KEY_OBJECT_BINDING] = binding_qn
+    registry.mark_object_binding(qualified_name, binding_qn, key)
 
 
 def analyze_return_expression(expr_node: Node, method_qn: str) -> str | None:

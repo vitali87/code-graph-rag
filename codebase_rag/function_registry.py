@@ -55,6 +55,8 @@ class FunctionRegistryTrie:
         "_non_method_members",
         "_non_method_holders",
         "_object_members",
+        "_object_bindings",
+        "_object_binding_of",
         "_abstracts",
         "_module_private",
         "_rust_visibility",
@@ -103,6 +105,10 @@ class FunctionRegistryTrie:
         # pays for an exact MRO walk when some class hides the name.
         self._non_method_holders: dict[str, set[QualifiedName]] = {}
         self._object_members: set[QualifiedName] = set()
+        # binding qn -> {member key -> member qns}, and its inverse, for the
+        # object literals bound to a name (issue #2763).
+        self._object_bindings: dict[QualifiedName, dict[str, set[QualifiedName]]] = {}
+        self._object_binding_of: dict[QualifiedName, tuple[QualifiedName, str]] = {}
         self._abstracts: set[QualifiedName] = set()
         # JS/TS declarations their module does not export. `export * from`
         # passes on only exported names, so a private one in a star source is
@@ -162,6 +168,40 @@ class FunctionRegistryTrie:
 
     def is_object_member(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._object_members
+
+    def mark_object_binding(
+        self, qualified_name: QualifiedName, binding_qn: QualifiedName, key: str
+    ) -> None:
+        """Record that `binding.key` names this object member.
+
+        `const api = { fetchUser() {} }` registers `fetchUser` under its scope,
+        without the object's name; this is how `api.fetchUser()` finds it.
+        """
+        # A member bound before under another name (the object renamed)
+        # leaves that binding first.
+        if self._object_binding_of.get(qualified_name) != (binding_qn, key):
+            self._forget_object_binding(qualified_name)
+        self._object_bindings.setdefault(binding_qn, {}).setdefault(key, set()).add(
+            qualified_name
+        )
+        self._object_binding_of[qualified_name] = (binding_qn, key)
+
+    def object_binding_member(
+        self, binding_qn: QualifiedName, key: str
+    ) -> QualifiedName | None:
+        # Two literals bound to one name in sibling blocks of a function
+        # share its qn, and which one a call means is not known here, so
+        # neither is chosen (bot review on PR #3118).
+        members = self._object_bindings.get(binding_qn, {}).get(key)
+        if not members or len(members) != 1:
+            return None
+        return next(iter(members))
+
+    def has_object_bindings(self) -> bool:
+        return bool(self._object_bindings)
+
+    def has_object_binding(self, binding_qn: QualifiedName) -> bool:
+        return binding_qn in self._object_bindings
 
     def mark_abstract(self, qualified_name: QualifiedName) -> None:
         self._abstracts.add(qualified_name)
@@ -531,6 +571,7 @@ class FunctionRegistryTrie:
             ):
                 self._property_names.discard(simple_name)
         self._object_members.discard(qualified_name)
+        self._forget_object_binding(qualified_name)
         self._abstracts.discard(qualified_name)
         self._module_private.discard(qualified_name)
         self._rust_visibility.pop(qualified_name, None)
@@ -549,6 +590,20 @@ class FunctionRegistryTrie:
 
         parts = qualified_name.split(cs.SEPARATOR_DOT)
         self._cleanup_trie_path(parts, self.root)
+
+    def _forget_object_binding(self, qualified_name: QualifiedName) -> None:
+        # Drop the `binding.key` entry mark_object_binding recorded for a
+        # removed object member, and the binding once it has no members left.
+        if (bound := self._object_binding_of.pop(qualified_name, None)) is None:
+            return
+        binding_qn, key = bound
+        members = self._object_bindings.get(binding_qn, {})
+        if (named := members.get(key)) is not None:
+            named.discard(qualified_name)
+            if not named:
+                del members[key]
+        if not members:
+            self._object_bindings.pop(binding_qn, None)
 
     def _forget_same_definition(self, qualified_name: QualifiedName) -> None:
         for other in self._same_definition.pop(qualified_name, set()):

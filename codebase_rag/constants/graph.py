@@ -50,6 +50,10 @@ KEY_IMPLEMENTERS_UNKNOWN = "implementers_unknown"
 # A JS/TS function that is an object literal's property value, reached only
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
+# The qualified name of the binding an object member's literal is assigned to
+# (`const api = { fetchUser() {} }` -> `<module>.api`), so `api.fetchUser()`
+# resolves to it (issue #2763).
+KEY_OBJECT_BINDING = "object_binding"
 KEY_IS_MACRO = "is_macro"
 # The path a Rust function's visibility is restricted to, as declared:
 # `self` for a private one, `crate`, `super` or the `in` path of a
@@ -1361,6 +1365,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.first_return_type AS first_return_type, "
     "n.chain_return_type AS chain_return_type, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "
+    "n.object_binding AS object_binding, "
     "n.signature AS signature, n.declared_in_class AS declared_in_class, "
     "n.generic_arity AS generic_arity, "
     "n.is_exported AS is_exported, n.rust_visibility AS rust_visibility, "
