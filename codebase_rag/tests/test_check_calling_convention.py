@@ -375,7 +375,7 @@ def test_the_site_form_is_read_from_the_source(
     # judges neither through the graph; the reading itself is pinned here.
     (temp_repo / "cart.py").write_text(READER_PY, encoding="utf-8")
     tax = _method("tax", "cart.py", ("x",))
-    empty = Snapshot(frozenset(), {}, {}, (), {}, {})
+    empty = Snapshot(frozenset(), {}, {}, (), {}, {}, {})
 
     read = _site_form(
         _SourceTrees(temp_repo), _call("cart.py", line, col, tax), tax, empty
@@ -673,7 +673,7 @@ def _local_receiver(root: Path, call: str) -> str | None:
     # The receiver read at `call`'s `tax`, wherever LOCALS_PY writes it.
     (root / "shop.py").write_text(LOCALS_PY, encoding="utf-8")
     tax = _method("tax", "cart.py", ("x",))
-    empty = Snapshot(frozenset(), {}, {}, (), {}, {})
+    empty = Snapshot(frozenset(), {}, {}, (), {}, {}, {})
     ((line, text),) = [
         (n, text) for n, text in enumerate(LOCALS_PY.splitlines(), 1) if call in text
     ]
