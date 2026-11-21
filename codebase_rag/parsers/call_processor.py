@@ -557,9 +557,11 @@ def _calls_own_member(language: cs.SupportedLanguage | None, call_node: Node) ->
     """Whether the call reaches a member of the caller's own object: with no
     receiver (`label()`) or through `this` (`this->label()`, `$this->label()`).
 
-    PHP, C++ and Scala name a call on any other receiver by its bare method
-    too (`$other->label()`, `a.b.label()`, `xs label y`), so only the call's
-    shape tells the resolver which ones may reach an inherited method.
+    PHP and C++ name a call on any other receiver by its bare method too
+    (`$other->label()`, `a.b.label()`), so only the call's shape tells the
+    resolver which ones may reach an inherited method. Scala is left as on
+    main: nothing reads which names its parameters and locals bind where a
+    call sits, so a hidden bare call cannot be told apart (PR #3240).
     """
     match language:
         case cs.SupportedLanguage.DART:
@@ -574,15 +576,13 @@ def _calls_own_member(language: cs.SupportedLanguage | None, call_node: Node) ->
                 and receiver.type == cs.TS_PHP_VARIABLE_NAME
                 and safe_decode_text(receiver) == cs.PHP_THIS_VARIABLE
             )
-        case cs.SupportedLanguage.CPP | cs.SupportedLanguage.SCALA:
-            # A Scala infix call has no `function` field: its receiver is
-            # the left operand.
+        case cs.SupportedLanguage.CPP:
             callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
             return callee is not None and (
                 callee.type == cs.TS_IDENTIFIER
                 or (
                     callee.type == cs.TS_CPP_FIELD_EXPRESSION
-                    and _is_this_receiver(language, callee)
+                    and _is_this_receiver(callee)
                 )
             )
     return False
@@ -610,7 +610,7 @@ def _chain_root_call(
 ) -> tuple[Node, str] | None:
     """The first call of the receiver chain `call_node` ends, and the name
     it calls: `make()` in `make()->label()`. In Dart that is the selector
-    right after the chain's first name; elsewhere the innermost call of the
+    right after the chain's first name; in C++ the innermost call of the
     call's own type down its left spine."""
     if language == cs.SupportedLanguage.DART:
         start = _dart_chain_start(call_node)
@@ -631,15 +631,8 @@ def _chain_root_call(
     return root, safe_decode_text(root.child_by_field_name(cs.TS_FIELD_FUNCTION)) or ""
 
 
-def _is_this_receiver(language: cs.SupportedLanguage, member: Node) -> bool:
-    """Whether a member access is `this->m` / `(*this).m` (C++) or `this.m` (Scala)."""
-    if language == cs.SupportedLanguage.SCALA:
-        value = member.child_by_field_name(cs.FIELD_VALUE)
-        return (
-            value is not None
-            and value.type == cs.TS_IDENTIFIER
-            and safe_decode_text(value) == cs.SCALA_THIS
-        )
+def _is_this_receiver(member: Node) -> bool:
+    """Whether a C++ member access is `this->m` or `(*this).m`."""
     receiver = _cpp_without_parentheses(
         member.child_by_field_name(cs.TS_FIELD_ARGUMENT)
     )

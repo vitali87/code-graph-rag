@@ -1,10 +1,11 @@
 """A method's call to a method its class inherits binds the base's method.
 
-In C++, Dart, PHP and Scala, `label()` / `this->label()` / `$this->label()`
-inside `Circle` reach the resolver as the bare name `label`. Only `Circle`
-itself was searched, so the name-only fallback bound a same-named method of
-an unrelated class (`Archive.label`, heuristic) instead of `Base.label`
-(issue #3169; aria2: 713 of 1,693 such calls, every bloc `Cubit.emit`).
+In C++, Dart and PHP, `label()` / `this->label()` / `$this->label()` inside
+`Circle` reach the resolver as the bare name `label`. Only `Circle` itself
+was searched, so the name-only fallback bound a same-named method of an
+unrelated class (`Archive.label`, heuristic) instead of `Base.label` (issue
+#3169; aria2: 713 of 1,693 such calls, every bloc `Cubit.emit`). Scala is
+left as on main for now (see the last test).
 """
 
 from __future__ import annotations
@@ -69,17 +70,6 @@ class Circle extends Base {
 }
 """,
 }
-_SCALA = {
-    "Shapes.scala": """\
-package s
-class Archive { def label(): String = "archive" }
-class Base { def label(): String = "base" }
-class Circle extends Base {
-  def implicitCall(): String = label()
-  def thisCall(): String = this.label()
-}
-""",
-}
 
 _Calls = dict[tuple[str, str], str]
 
@@ -113,11 +103,6 @@ def php(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
     return _calls(tmp_path_factory.mktemp("php3169") / "inh", _PHP, "php")
 
 
-@pytest.fixture(scope="module")
-def scala(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
-    return _calls(tmp_path_factory.mktemp("scala3169") / "inh", _SCALA, "scala")
-
-
 def _callees(calls: _Calls, caller: str) -> dict[str, str]:
     return {to: res for (src, to), res in calls.items() if src == caller}
 
@@ -132,8 +117,6 @@ def _callees(calls: _Calls, caller: str) -> dict[str, str]:
         ("dart", "lib.shapes.Circle.mixinCall", "lib.shapes.Describes.describe"),
         ("php", "shapes.Circle.thisCall", "shapes.Base.label"),
         ("php", "shapes.Circle.traitCall", "shapes.Describes.describe"),
-        ("scala", "Shapes.Circle.implicitCall", "Shapes.Base.label"),
-        ("scala", "Shapes.Circle.thisCall", "Shapes.Base.label"),
     ],
     ids=[
         "cpp-implicit",
@@ -143,8 +126,6 @@ def _callees(calls: _Calls, caller: str) -> dict[str, str]:
         "dart-mixin",
         "php-this",
         "php-trait",
-        "scala-implicit",
-        "scala-this",
     ],
 )
 def test_an_inherited_call_binds_the_base_method(
@@ -180,8 +161,8 @@ def test_names_the_class_does_not_inherit_resolve_as_before(
     assert callee in _callees(edges, caller), edges
 
 
-# A trait or mixin overrides the superclass: Dart and Scala look the last
-# `with` type up first, and PHP takes a used trait's method over the parent's.
+# A trait or mixin overrides the superclass: Dart looks the last `with` type
+# up first, and PHP takes a used trait's method over the parent's.
 _DART_OVERRIDE = {
     "pubspec.yaml": 'name: shapes\nenvironment:\n  sdk: ">=3.0.0 <4.0.0"\n',
     "lib/signs.dart": """\
@@ -193,16 +174,6 @@ class Sign extends Base with Loud {
 }
 class Banner extends Base with Loud, Quiet {
   String implicitCall() => label();
-}
-""",
-}
-_SCALA_OVERRIDE = {
-    "Signs.scala": """\
-package s
-class Base { def label(): String = "base" }
-trait Loud extends Base { override def label(): String = "loud" }
-class Sign extends Base with Loud {
-  def implicitCall(): String = label()
 }
 """,
 }
@@ -251,7 +222,6 @@ def overrides(tmp_path_factory: pytest.TempPathFactory) -> dict[str, _Calls]:
         )
         for grammar, files in (
             ("dart", _DART_OVERRIDE),
-            ("scala", _SCALA_OVERRIDE),
             ("php", _PHP_OVERRIDE),
         )
     }
@@ -262,7 +232,6 @@ def overrides(tmp_path_factory: pytest.TempPathFactory) -> dict[str, _Calls]:
     [
         ("dart", "lib.signs.Sign.implicitCall", "lib.signs.Loud.label"),
         ("dart", "lib.signs.Banner.implicitCall", "lib.signs.Quiet.label"),
-        ("scala", "Signs.Sign.implicitCall", "Signs.Loud.label"),
         ("php", "signs.Sign.thisCall", "signs.Loud.label"),
         ("php", "picks.Picked.thisCall", "picks.First.label"),
         ("php", "picks.PickedLater.thisCall", "picks.Second.label"),
@@ -270,7 +239,6 @@ def overrides(tmp_path_factory: pytest.TempPathFactory) -> dict[str, _Calls]:
     ids=[
         "dart-mixin",
         "dart-last-mixin",
-        "scala-trait",
         "php-trait",
         "php-insteadof",
         "php-insteadof-folded",
@@ -804,3 +772,26 @@ def test_an_unhidden_inherited_chain_root_still_types_the_chain(
     # Controls: with no parameter or local of the name, or through `this`,
     # the chain starts at the inherited `Base.make`.
     assert _callees(round3[grammar], caller).get(callee) == "exact", round3[grammar]
+
+
+# Scala is left as on main for now: nothing yet reads which names a Scala
+# parameter or local binds where a call sits, so a bare call there cannot be
+# told from one a parameter hides (Greptile on PR #3240, #3663).
+_SCALA_HIDDEN = {
+    "Hide.scala": """\
+package s
+class A { def label(): String = "a" }
+class Z { def label(): String = "z" }
+class Base { def make(): A = new A() }
+class Kid extends Base {
+  def run(make: () => Z): String = make().label()
+}
+""",
+}
+
+
+def test_a_scala_parameter_call_never_binds_an_inherited_method_exactly(
+    tmp_path: Path,
+) -> None:
+    calls = _calls(tmp_path / "hide", _SCALA_HIDDEN, "scala")
+    assert _callees(calls, "Hide.Kid.run").get("Hide.Base.make") != "exact", calls

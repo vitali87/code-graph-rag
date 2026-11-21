@@ -107,10 +107,12 @@ _RS_OWNER_NODE_TYPES = frozenset(
 _PY_SELF_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
 # Languages whose `label()` / `this->label()` / `$this->label()` inside a method
 # reach the resolver as a bare name with the class as context (issue #3169).
+# Scala's calls reach it the same way, but are left as on main: nothing reads
+# which names a Scala parameter or local binds where a call sits, so a call a
+# parameter hides would bind the inherited method exactly (PR #3240, #3663).
 _INHERITED_BARE_CALL_LANGUAGES = frozenset(
     {
         cs.SupportedLanguage.CPP,
-        cs.SupportedLanguage.SCALA,
         cs.SupportedLanguage.DART,
         cs.SupportedLanguage.PHP,
     }
@@ -119,12 +121,10 @@ _INHERITED_BARE_CALL_LANGUAGES = frozenset(
 # an inherited member: Dart looks a bare name up lexically first. A PHP bare
 # `label()` is a function call, never a method, and is kept out altogether.
 _LEXICAL_FIRST_LANGUAGES = frozenset({cs.SupportedLanguage.DART})
-# And the ones whose trait or mixin overrides the superclass: Dart and Scala
-# look the last `with` type up first, while their bases are recorded
-# superclass first. A PHP class composes its traits on its own instead.
-_LINEARIZED_LANGUAGES = frozenset(
-    {cs.SupportedLanguage.DART, cs.SupportedLanguage.SCALA}
-)
+# And the ones whose mixin overrides the superclass: Dart looks the last
+# `with` type up first, while its bases are recorded superclass first. A PHP
+# class composes its traits on its own instead.
+_LINEARIZED_LANGUAGES = frozenset({cs.SupportedLanguage.DART})
 # The PHP declarations a trait `use` can sit in.
 _PHP_TYPE_DECLARATIONS = frozenset(cs.SPEC_PHP_CLASS_TYPES)
 # A PHP trait alias of the name whose trait method could not be found: the
@@ -2602,9 +2602,9 @@ class CallResolver:
     def _linearized_bases(
         self, class_qn: str, seen: frozenset[str], memo: dict[str, list[str]]
     ) -> list[str]:
-        # Scala's linearization, which Dart mixin application and PHP trait
-        # use match: the last recorded base first, each followed by its own
-        # bases, and a base two of them share kept only at its last place.
+        # Scala's linearization, which Dart mixin application matches: the
+        # last recorded base first, each followed by its own bases, and a
+        # base two of them share kept only at its last place.
         # `memo` keeps a diamond-heavy hierarchy from being walked once per
         # path to each base.
         if (known := memo.get(class_qn)) is not None:
