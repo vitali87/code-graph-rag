@@ -179,6 +179,7 @@ class JavaVariableAnalyzerMixin:
     _do_resolve_java_method_call: Callable[..., tuple[str, str] | None]
     _declared_return_type_of: Callable[..., str | None]
     _resolve_java_method_return_type: Callable[..., str | None]
+    _declared_java_fqn: Callable[..., str | None]
 
     @abstractmethod
     def _resolve_java_type_name(
@@ -1224,7 +1225,8 @@ class JavaVariableAnalyzerMixin:
                     root_node,
                     class_path,
                     field_name,
-                    _java_package(target_module_qn) == _java_package(module_qn),
+                    self._declared_java_package(target_module_qn)
+                    == self._declared_java_package(module_qn),
                 ):
                     return None
                 if field_type := self._find_field_type_in_nested_class(
@@ -1277,6 +1279,13 @@ class JavaVariableAnalyzerMixin:
             children = body.children
         return body
 
+    def _declared_java_package(self, module_qn: str) -> str:
+        # The package a file declares, not its folder: src/main/java and
+        # src/test/java hold one package (Greptile, PR #2991). The module
+        # path stands in only when neither the file nor its layout names one.
+        fqn = self._declared_java_fqn(module_qn) or module_qn
+        return fqn.rpartition(cs.SEPARATOR_DOT)[0]
+
     def _java_field_not_inherited(
         self,
         root_node: ASTNode,
@@ -1325,8 +1334,3 @@ class JavaVariableAnalyzerMixin:
                     str(field_type), module_qn, field_child
                 )
         return None
-
-
-def _java_package(module_qn: str) -> str:
-    # A Java file's package is the module path without the file's own name.
-    return module_qn.rpartition(cs.SEPARATOR_DOT)[0]

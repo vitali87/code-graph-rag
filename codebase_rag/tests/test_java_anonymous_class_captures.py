@@ -316,7 +316,27 @@ public class Nearest {
 }
 """
 
+# Bot review on PR #2991: a test source tree holds the same package as the
+# main tree, so the package a file declares, not its folder, decides whether
+# a package-private field is inherited.
+SPLIT_TREE = """\
+package com.acme;
+
+import com.acme.PkgSameBase;
+
+public class SplitTree {
+  static PkgSameBase sameDeclaredPackage(final Codec codec) {
+    return new PkgSameBase() {
+      String run(String in) {
+        return codec.encode(in); // test-tree-same-package
+      }
+    };
+  }
+}
+"""
+
 PREFIX = "src.main.java.com.acme"
+TEST_PREFIX = "src.test.java.com.acme"
 OTHER_ENCODE = "Other.Other.encode(String)"
 
 
@@ -345,11 +365,15 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     _write(root, f"{base}/other/PkgBase.java", PKG_BASE)
     _write(root, f"{base}/PkgSameBase.java", PKG_SAME_BASE)
     _write(root, f"{base}/Nearest.java", NEAREST)
+    _write(root, f"{TEST_PREFIX.replace('.', '/')}/SplitTree.java", SPLIT_TREE)
     return _index(root, MagicMock())
 
 
 def _callers_of_encode(
-    graph: RecordedGraph, target: str = ENCODE, source: str = "Factory"
+    graph: RecordedGraph,
+    target: str = ENCODE,
+    source: str = "Factory",
+    source_root: str = PREFIX,
 ) -> dict[int, str]:
     prefix = f"{graph.project}.{PREFIX}."
     return {
@@ -357,7 +381,7 @@ def _callers_of_encode(
         for src, rel, dst, props in graph.edges
         if rel == "CALLS"
         and dst == f"{prefix}{target}"
-        and src.startswith(f"{prefix}{source}.")
+        and src.startswith(f"{graph.project}.{source_root}.{source}.")
         and props.get("line")
     }
 
@@ -445,6 +469,19 @@ def test_a_package_private_field_of_the_same_package_hides_the_capture(
     line = _scoped_line("same-package-field", NEAREST)
     assert _callers_of_encode(graph, OTHER_ENCODE, "Nearest").get(line) == "exact"
     assert line not in _callers_of_encode(graph, source="Nearest")
+
+
+def test_a_package_private_field_of_the_same_declared_package_hides_the_capture(
+    graph: RecordedGraph,
+) -> None:
+    # SplitTree sits under src/test/java and PkgSameBase under src/main/java,
+    # both declaring `package com.acme`: the field is inherited.
+    line = _scoped_line("test-tree-same-package", SPLIT_TREE)
+    callers = _callers_of_encode(graph, OTHER_ENCODE, "SplitTree", TEST_PREFIX)
+    assert callers.get(line) == "exact"
+    assert line not in _callers_of_encode(
+        graph, source="SplitTree", source_root=TEST_PREFIX
+    )
 
 
 def test_a_resource_is_not_captured_in_its_finally_block(
