@@ -732,14 +732,79 @@ def _object_holder_name(obj: Node) -> str | None:
         return None
     if holder.type == cs.TS_VARIABLE_DECLARATOR:
         name = holder.child_by_field_name(cs.TS_FIELD_NAME)
-        if name is not None and name.type == cs.TS_IDENTIFIER:
-            return safe_decode_text(name)
+        if (
+            name is not None
+            and name.type == cs.TS_IDENTIFIER
+            and (text := safe_decode_text(name))
+            and not _written_again(holder, text)
+        ):
+            return text
         return None
     if holder.type == cs.TS_EXPORT_STATEMENT and any(
         child.type == cs.TS_EXPORT_DEFAULT for child in holder.children
     ):
         return cs.TS_EXPORT_DEFAULT
     return None
+
+
+_WRITES = frozenset(
+    {cs.TS_JS_ASSIGNMENT_EXPRESSION, cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION}
+)
+_WRITE_PATTERNS = frozenset(
+    {
+        cs.TS_OBJECT_PATTERN,
+        cs.TS_ARRAY_PATTERN,
+        cs.TS_PAIR_PATTERN,
+        cs.TS_REST_PATTERN,
+        cs.TS_ASSIGNMENT_PATTERN,
+        cs.TS_OBJECT_ASSIGNMENT_PATTERN,
+        cs.TS_PARENTHESIZED_EXPRESSION,
+    }
+)
+
+
+def _written_again(declarator: Node, name: str) -> bool:
+    # Whether the `let` or `var` the declarator binds is written anywhere in
+    # its file (`api = other`, `api += x`, `[api] = xs`, `api++`,
+    # `for (api in o)`): a call through the name may then reach another
+    # object (Greptile, PR #3118). A `const` is never written; a write to a
+    # local of the same name elsewhere only costs the binding.
+    declaration = declarator.parent
+    kind = (
+        declaration.child_by_field_name(cs.FIELD_KIND)
+        if declaration is not None
+        else None
+    )
+    if kind is not None and kind.type == cs.JS_CONST_KEYWORD:
+        return False
+    root = declarator
+    while root.parent is not None:
+        root = root.parent
+    pending = [root]
+    while pending:
+        node = pending.pop()
+        if node.type in _WRITES or node.type == cs.TS_JS_FOR_IN_STATEMENT:
+            target = node.child_by_field_name(cs.FIELD_LEFT)
+        elif node.type == cs.TS_JS_UPDATE_EXPRESSION:
+            target = node.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+        else:
+            target = None
+        if target is not None and name in _written_names(target):
+            return True
+        pending.extend(node.named_children)
+    return False
+
+
+def _written_names(target: Node) -> set[str]:
+    names: set[str] = set()
+    pending = [target]
+    while pending:
+        node = pending.pop()
+        if node.type in (cs.TS_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN):
+            names.add(safe_decode_text(node) or "")
+        elif node.type in _WRITE_PATTERNS:
+            pending.extend(node.named_children)
+    return names
 
 
 def object_binding_qn(func_node: Node, member_qn: str) -> str | None:

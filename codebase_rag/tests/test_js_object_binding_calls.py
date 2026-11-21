@@ -181,6 +181,35 @@ _FILES = {
         'import { api } from "./exported.mjs";\n'
         "export function viaExport() { return api.run(); }\n"
     ),
+    # Greptile, PR #3118: the block's `api` has expired at the call, which
+    # reads `outer`'s.
+    "expired.mjs": (
+        "export function outer() {\n"
+        "  const api = { run() { return 1; } };\n"
+        "  function inner(flag) {\n"
+        "    if (flag) {\n"
+        "      const api = { run() { return 2; } };\n"
+        "    }\n"
+        "    return api.run();\n"
+        "  }\n"
+        "  return inner;\n"
+        "}\n"
+    ),
+    # Greptile, PR #3118: a later write replaces the object a `let` holds.
+    "reassigned.mjs": (
+        "export let api = { run() { return 1; } };\n"
+        "function replacement() { return 2; }\n"
+        "api = { run: replacement };\n"
+        "export function use() { return api.run(); }\n"
+    ),
+    "reassigneduse.mjs": (
+        'import { api } from "./reassigned.mjs";\n'
+        "export function viaImport() { return api.run(); }\n"
+    ),
+    "letkept.mjs": (
+        "let api = { run() { return 1; } };\n"
+        "export function use() { return api.run(); }\n"
+    ),
 }
 
 
@@ -406,3 +435,28 @@ def test_a_callback_declaration_shadows_the_module_object(
         and res == cs.EdgeResolution.EXACT
     }
     assert not exact, calls
+
+
+def test_a_block_binding_the_call_is_past_does_not_take_it(
+    calls: dict[tuple[str, str], str],
+) -> None:
+    # `api.run()` reads `outer`'s `api`; `inner`'s block one has expired.
+    targets = _targets(calls, "expired.outer.inner")
+    assert targets.get("expired.outer.inner.run") != cs.EdgeResolution.EXACT, targets
+
+
+@pytest.mark.parametrize("caller", ["reassigned.use", "reassigneduse.viaImport"])
+def test_a_reassigned_let_binding_gets_no_exact_member(
+    calls: dict[tuple[str, str], str], caller: str
+) -> None:
+    # `api = { run: replacement }` runs `replacement`, not the first `run`.
+    targets = _targets(calls, caller)
+    assert targets.get("reassigned.run") != cs.EdgeResolution.EXACT, targets
+
+
+def test_a_let_binding_nothing_writes_stays_exact(
+    calls: dict[tuple[str, str], str],
+) -> None:
+    assert _targets(calls, "letkept.use").get("letkept.run") == (
+        cs.EdgeResolution.EXACT
+    ), calls

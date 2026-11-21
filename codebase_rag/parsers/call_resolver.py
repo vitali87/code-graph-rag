@@ -2512,6 +2512,7 @@ class CallResolver:
             local.object_literal
             and not rest
             and not self._js_shared_binding(call, head, local)
+            and not self._js_inner_binding(call, head, local)
         ):
             result = self._js_local_object_member(call, head, key)
         else:
@@ -2530,6 +2531,17 @@ class CallResolver:
         # review).
         intros = self.js_local_scopes.get(call.caller_qn or "", {}).get(head, ())
         return sum(1 for i in intros if i.object_literal and i.owner == local.owner) > 1
+
+    def _js_inner_binding(
+        self, call: _CallSite, head: str, local: js_ts_utils.JsLocalIntro
+    ) -> bool:
+        # A function nested in the one whose literal the call reads that
+        # binds the name to a literal of its own, in a block the call is
+        # past (`if (flag) { const api = {...} }`): the walk up from the
+        # caller would reach that function's binding first (Greptile, PR
+        # #3118).
+        intros = self.js_local_scopes.get(call.caller_qn or "", {}).get(head, ())
+        return any(i.object_literal and i.owner > local.owner for i in intros)
 
     def _js_local_object_member(
         self, call: _CallSite, head: str, key: str
