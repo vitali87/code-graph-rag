@@ -1588,6 +1588,7 @@ def _drop_class_keyed_entry(
     """Drop one removed class's rows from the class-keyed maps."""
     processor.class_inheritance.pop(qn, None)
     processor.class_field_types.pop(qn, None)
+    processor.rust_variant_payload_types.pop(qn, None)
     drop_callable_fields(processor.cpp_callable_fields, qn)
     # A Rust struct's guard-inner and element maps go with its field types:
     # the re-parse records them only for fields that still have one, and a
