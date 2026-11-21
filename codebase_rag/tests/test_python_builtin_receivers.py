@@ -88,7 +88,16 @@ APP = (
     "    first = x.get(1)\n    x = {}\n    return first\n\n\n"
     "def walrus_then_literal():\n"
     "    if (x := make_bag()) is not None:\n        first = x.get(1)\n"
-    "    x = {}\n    return first\n"
+    "    x = {}\n    return first\n\n\n"
+    # Greptile, PR #2912: an unpacking, a `for` or a `with` target binds the
+    # name to something other than the literal too.
+    "def pair() -> tuple[Bag, int]:\n    return Bag(), 1\n\n\n"
+    "def unpacked_then_literal():\n"
+    "    x, n = pair()\n    first = x.get(n)\n    x = {}\n    return first\n\n\n"
+    "def loop_then_literal():\n"
+    "    for x in [Bag()]:\n        first = x.get(1)\n    x = {}\n    return first\n\n\n"
+    "def with_then_literal():\n"
+    "    with make_bag() as x:\n        first = x.get(1)\n    x = {}\n    return first\n"
 )
 # A first-party class imported under a builtin's name is that class.
 ALIASED = (
@@ -161,12 +170,22 @@ def test_a_call_on_a_builtin_value_binds_no_first_party_method(
         "walrus_then_literal",
         "Resets.__init__",
         "param_then_literal",
+        "unpacked_then_literal",
+        "loop_then_literal",
     ],
 )
 def test_a_literal_does_not_retype_a_name_also_bound_to_an_instance(
     graph: RecordedGraph, caller: str
 ) -> None:
     assert _callees(graph, caller).get("lib.Bag.get") == "exact"
+
+
+def test_a_literal_does_not_drop_a_call_on_a_with_target(
+    graph: RecordedGraph,
+) -> None:
+    # `Bag` has no `__enter__` to type `x` from, so the call keeps the name
+    # fallback; the later `x = {}` typed it `dict` and dropped it.
+    assert "lib.Bag.get" in _callees(graph, "with_then_literal")
 
 
 def test_a_class_imported_under_a_builtins_name_is_that_class(

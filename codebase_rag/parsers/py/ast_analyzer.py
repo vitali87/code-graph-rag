@@ -1519,7 +1519,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         # the literal decide every call on `x` (bot review on PR #2912). A
         # parameter is such a binding too: `def f(x: Bag)` then `x = {}`
         # keeps the calls made through the argument (Greptile, PR #2912).
-        rebound = self._names_bound_to_non_literals(binders)
+        rebound = self._names_bound_to_non_literals(node, binders)
         if node.type == cs.TS_PY_FUNCTION_DEFINITION:
             rebound.update(_parameter_names(node))
         self._type_binders_simple(
@@ -1827,10 +1827,16 @@ class PythonAstAnalyzerMixin(_AstBase):
                 if name in scratch:
                     local_var_types[name] = scratch[name]
 
-    def _names_bound_to_non_literals(self, binders: list[Node]) -> set[str]:
+    def _names_bound_to_non_literals(
+        self, scope: Node, binders: list[Node]
+    ) -> set[str]:
         # The assignments and walruses (`(x := make_bag())`) that bind a
-        # name to anything but a literal.
+        # name to anything but a literal, and, for a name a literal binds,
+        # every other form that binds it: an unpacking (`x, n = pair()`), a
+        # `for`, `with` or `except` target, an import (Greptile, PR #2912).
         names: set[str] = set()
+        literal_binders: set[int] = set()
+        literal_names: set[str] = set()
         for binder in binders:
             if binder.type == cs.TS_PY_ASSIGNMENT:
                 left = binder.child_by_field_name(cs.TS_FIELD_LEFT)
@@ -1842,8 +1848,19 @@ class PythonAstAnalyzerMixin(_AstBase):
                 )
             else:
                 name, value = _walrus_parts(binder)
-            if name and value is not None and python_literal_type(value) is None:
+            if not name or value is None:
+                continue
+            if python_literal_type(value) is None:
                 names.add(name)
+            else:
+                literal_binders.add(binder.id)
+                literal_names.add(name)
+        if literal_names - names:
+            for binder, identifier in _bindings_in(scope):
+                if binder.id not in literal_binders and (
+                    (name := safe_decode_text(identifier)) in literal_names
+                ):
+                    names.add(name)
         return names
 
     def _process_assignment_simple(
