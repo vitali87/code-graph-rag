@@ -1798,13 +1798,20 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
     early: set[str] = set()
     # Names a function declaration binds before the module runs.
     hoisted: set[str] = set()
+    # Names an earlier statement writes, and the aliases taken of one: the
+    # alias may hold what the write left (Greptile review on PR #3312).
+    written: set[str] = set()
+    overwritten: set[str] = set()
     for statement in root.children:
         for alias, name, settled in _js_aliases(statement, declared):
             aliases[alias] = name
             if not settled:
                 early.add(alias)
+            if name in written:
+                overwritten.add(alias)
         declared.update(_js_declared_names(statement))
         hoisted.update(_js_hoisted_names(statement))
+        written.update(_js_written_names(statement))
         if statement.type not in (cs.TS_EXPORT_STATEMENT, cs.TS_IMPORT_STATEMENT):
             continue
         at = (statement.start_point[0] + 1, statement.start_point[1])
@@ -1837,7 +1844,8 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
         aliases={
             alias: name
             for alias, name in aliases.items()
-            if alias not in early or name not in declared or name in hoisted
+            if alias not in overwritten
+            and (alias not in early or name not in declared or name in hoisted)
         },
     )
 
@@ -1888,6 +1896,30 @@ def _js_aliases(statement: Node, declared: set[str]) -> Iterator[tuple[str, str,
             name = _node_text(value)
             yield _node_text(target), name, name in bound
         bound.add(_node_text(target))
+
+
+_JS_WRITES = frozenset(
+    {cs.TS_JS_ASSIGNMENT_EXPRESSION, cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION}
+)
+
+
+def _js_written_names(statement: Node) -> Iterator[str]:
+    """The names a statement assigns or updates (`impl = null`, `impl++`),
+    anywhere in it: one written in a function body may have run too."""
+    pending = [statement]
+    while pending:
+        node = pending.pop()
+        if node.type in _JS_WRITES:
+            target = node.child_by_field_name(cs.FIELD_LEFT)
+        elif node.type == cs.TS_JS_UPDATE_EXPRESSION:
+            target = node.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+        else:
+            target = None
+        if target is not None and (target := _js_unwrapped(target)).type == (
+            cs.TS_IDENTIFIER
+        ):
+            yield _node_text(target)
+        pending.extend(node.named_children)
 
 
 def _js_hoisted_names(statement: Node) -> Iterator[str]:

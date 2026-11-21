@@ -703,6 +703,20 @@ _DANGLES = [("page", "util")]
             _DANGLES,
             id="an-alias-of-a-later-class",
         ),
+        # Negative (Greptile, PR #3312): a write before the alias replaced
+        # what the name held.
+        pytest.param(
+            "impl = null;\nconst alias = impl;\nfunction impl(s: string): string {\n"
+            "  return s;\n}\nexport default alias;\n",
+            _DANGLES,
+            id="an-alias-of-a-function-written-before-it",
+        ),
+        pytest.param(
+            "function impl(s: string): string {\n  return s;\n}\nimpl = null;\n"
+            "const alias = impl;\nexport default alias;\n",
+            _DANGLES,
+            id="an-alias-of-a-name-written-before-it",
+        ),
         # Negative: a declaration of the module shadows the global.
         pytest.param(
             "const String = 5;\nexport default String;\n",
