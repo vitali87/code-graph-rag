@@ -28,6 +28,7 @@ from .js_ts import JsTypeInferenceEngine
 from .js_ts import utils as js_ts_utils
 from .lua import LuaTypeInferenceEngine
 from .py import PythonTypeInferenceEngine, resolve_class_name
+from .py.ast_analyzer import names_bound_more_than_once, own_scope_names
 from .rs import RustTypeInferenceEngine
 from .rs import utils as rs_utils
 from .rs.type_inference import is_constructor_guess
@@ -97,6 +98,100 @@ def _rust_named_item(
     )
 
 
+# Languages whose nested functions and named arrows read the enclosing
+# function's locals and whose maps type them by name (issue #3200).
+_CLOSURE_LANGUAGES = frozenset(
+    {
+        cs.SupportedLanguage.PYTHON,
+        cs.SupportedLanguage.JS,
+        cs.SupportedLanguage.TS,
+        cs.SupportedLanguage.TSX,
+    }
+)
+
+
+# One function's own variables by the byte span each holds in, innermost
+# spans nested in outer ones; a name mapped to None is declared there
+# without a type (issue #3200).
+type _ScopeBindings = Mapping[tuple[int, int], Mapping[str, str | None]]
+
+
+def _enclosing_function(
+    node: ASTNode, language: cs.SupportedLanguage
+) -> ASTNode | None:
+    # The function whose locals `node` closes over. A Python class body is
+    # not a scope its methods see, so it is passed through like any block.
+    function_types = (
+        (cs.TS_PY_FUNCTION_DEFINITION,)
+        if language == cs.SupportedLanguage.PYTHON
+        else cs.JS_TS_FUNCTION_NODES
+    )
+    current = node.parent
+    while current is not None:
+        if current.type in function_types:
+            return current
+        # A JS class's `static { ... }` block runs its own statements, whose
+        # `var`s no function's map holds: a callback in it may read those, so
+        # nothing around the block is taken as captured (Greptile on #3331).
+        if current.type == cs.TS_CLASS_STATIC_BLOCK:
+            return None
+        current = current.parent
+    return None
+
+
+# JS/TS classes, whose own name holds inside their body.
+_JS_TS_NAMED_CLASS_TYPES = frozenset(
+    {*cs.JS_TS_CLASS_NODES, cs.TS_ABSTRACT_CLASS_DECLARATION}
+)
+
+
+def _js_ts_class_names_between(node: ASTNode, stop: ASTNode | None) -> set[str]:
+    # The names of the classes around `node` below `stop`: inside
+    # `return class r { static cb() { return r.reset(); } }` the `r` is the
+    # class, not a captured `r` of the function around it (Greptile on
+    # #3331).
+    names: set[str] = set()
+    current = node.parent
+    while current is not None and (stop is None or current.id != stop.id):
+        if current.type in _JS_TS_NAMED_CLASS_TYPES and (
+            name := safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
+        ):
+            names.add(name)
+        current = current.parent
+    return names
+
+
+def _nearest_python_class(node: ASTNode) -> ASTNode | None:
+    current = node.parent
+    while current is not None and current.type != cs.TS_PY_CLASS_DEFINITION:
+        current = current.parent
+    return current
+
+
+def _python_class_context(
+    scope: ASTNode, caller_node: ASTNode, class_context: str | None
+) -> str | None:
+    # The class whose `self` `scope` sees: the nearest class around it, as
+    # the call processor names it for a caller there. `class_context` is the
+    # one around the caller, which differs when the caller is a method of a
+    # class defined inside `scope` (Greptile on #3331). A qualified name is
+    # structural, so each def and class on the way out drops its own
+    # segment; one that does not match leaves the class unknown, not guessed.
+    target = _nearest_python_class(scope)
+    node = _nearest_python_class(caller_node)
+    qn = class_context
+    while node is not None and qn:
+        if target is not None and node.id == target.id:
+            return qn
+        if node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION):
+            head, _, leaf = qn.rpartition(cs.SEPARATOR_DOT)
+            if leaf != safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)):
+                return None
+            qn = head
+        node = node.parent
+    return None
+
+
 def _shared[T](value: T | None, empty: Callable[[], T]) -> T:
     # Keep the caller's container (a shared reference populated after
     # construction); only a missing one gets a fresh empty container. `or`
@@ -161,6 +256,8 @@ class TypeInferenceEngine:
         "dart_extends_type_args",
         "dart_constructor_qns",
         "dart_extension_on_types",
+        "_scope_types_memo",
+        "_scope_types_module",
     )
 
     def __init__(
@@ -270,6 +367,13 @@ class TypeInferenceEngine:
             tuple[str, str], dict[tuple[str | None, bool], set[str]]
         ] = {}
         self._go_free_fn_index_size = -1
+        # The own-scope types of each enclosing function, for the module
+        # whose callers are being walked: every nested caller of a function
+        # reads the same map, which would otherwise be rebuilt per caller.
+        self._scope_types_memo: dict[
+            tuple[int, int, int, str | None], _ScopeBindings
+        ] = {}
+        self._scope_types_module: str | None = None
         # Shared reference (as with class_field_types): C# partial-class part
         # groups, populated during ingestion and read by the C# resolver to
         # span all parts of a split type.
@@ -444,6 +548,9 @@ class TypeInferenceEngine:
         ):
             if engine is not None:
                 engine._rel_to_module.clear()
+        # A re-walked module's trees are new; a node id could come round again.
+        self._scope_types_memo.clear()
+        self._scope_types_module = None
 
     @property
     def lua_type_inference(self) -> LuaTypeInferenceEngine:
@@ -494,6 +601,13 @@ class TypeInferenceEngine:
         local = self._build_local_variable_type_map(
             caller_node, module_qn, language, class_context
         )
+        if language in _CLOSURE_LANGUAGES:
+            # Below the caller's own bindings, above the field overlay: a
+            # bare name is the closure's variable, never a field.
+            if captured := self._captured_variable_types(
+                caller_node, module_qn, language, class_context
+            ):
+                local = {**captured, **local}
         if language == cs.SupportedLanguage.GO:
             self._resolve_go_qualified_locals(module_qn, local)
         # When the caller is a method, overlay its class's member-field types as a
@@ -527,6 +641,118 @@ class TypeInferenceEngine:
         elif language == cs.SupportedLanguage.DART:
             self._enrich_dart_call_locals(caller_node, local)
         return local
+
+    def _captured_variable_types(
+        self,
+        caller_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        class_context: str | None,
+    ) -> dict[str, str]:
+        """Types of the variables a nested function reads from the functions
+        around it (issue #3200). `r = Range()` in `outer` types `r.reset()`
+        in `outer.inner` too, unless `inner` or a function between them binds
+        `r` itself. Innermost scope first, so the nearest binding decides."""
+        scope = _enclosing_function(caller_node, language)
+        if scope is None:
+            # A top-level function or a method: nothing to capture, and its
+            # own names need not be listed.
+            return {}
+        hidden = set(self._own_scope_names(caller_node, language))
+        captured: dict[str, str] = {}
+        pos = caller_node.start_byte
+        python = language == cs.SupportedLanguage.PYTHON
+        if not python:
+            hidden |= _js_ts_class_names_between(caller_node, scope)
+        while scope is not None:
+            # Both builders type only what `scope` itself binds, so every
+            # entry is the enclosing scope's own variable (or `self.<attr>`).
+            bindings = self._scope_variable_types(
+                scope,
+                module_qn,
+                language,
+                _python_class_context(scope, caller_node, class_context)
+                if python
+                else None,
+            )
+            # Only the spans around the caller, innermost first: a block's
+            # `let r` hides the `r` of the block around it, and one in a
+            # sibling block is another variable the caller never reads.
+            around = sorted(
+                (span for span in bindings if span[0] <= pos < span[1]),
+                key=lambda span: (-span[0], span[1]),
+            )
+            for span in around:
+                for name, type_name in bindings[span].items():
+                    if (
+                        type_name is not None
+                        and name.split(cs.SEPARATOR_DOT, 1)[0] not in hidden
+                    ):
+                        captured.setdefault(name, type_name)
+                hidden.update(bindings[span])
+            own = self._own_scope_names(scope, language)
+            if not python:
+                # A `let r` in a block of `scope` the caller is not in is
+                # another variable: it hides nothing from the caller, unless
+                # `scope` also assigns `r` (Greptile on #3331).
+                held = {name for span in around for name in bindings[span]}
+                elsewhere = {
+                    name
+                    for span, names in bindings.items()
+                    if not span[0] <= pos < span[1]
+                    for name in names
+                }
+                own -= (elsewhere - held) - js_ts_utils.js_ts_assigned_names(scope)
+            hidden |= own
+            outer = _enclosing_function(scope, language)
+            if not python:
+                hidden |= _js_ts_class_names_between(scope, outer)
+            scope = outer
+        return captured
+
+    @staticmethod
+    def _own_scope_names(
+        func_node: ASTNode, language: cs.SupportedLanguage
+    ) -> frozenset[str]:
+        if language == cs.SupportedLanguage.PYTHON:
+            return own_scope_names(func_node)
+        return js_ts_utils.js_ts_own_scope_names(func_node)
+
+    def _scope_variable_types(
+        self,
+        scope: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        class_context: str | None,
+    ) -> _ScopeBindings:
+        if module_qn != self._scope_types_module:
+            self._scope_types_memo.clear()
+            self._scope_types_module = module_qn
+        key = (scope.id, scope.start_byte, scope.end_byte, class_context)
+        if (cached := self._scope_types_memo.get(key)) is not None:
+            return cached
+        bindings: _ScopeBindings
+        if language == cs.SupportedLanguage.PYTHON:
+            # The Python map is already this body's own: names a nested def
+            # binds are left out of it (#1922). A Python local holds in the
+            # whole def, blocks or not. A name bound at more than one place
+            # (`r = Range()`, then `if flag: r = Other()`) may hold either
+            # class when the nested def runs, so it lends no type, though it
+            # still hides an outer `r` (Greptile on #3331).
+            types: dict[str, str | None] = dict(
+                self.python_type_inference.build_local_variable_type_map(
+                    scope, module_qn, class_context
+                )
+            )
+            for name in names_bound_more_than_once(scope) & types.keys():
+                types[name] = None
+            bindings = {(scope.start_byte, scope.end_byte): types}
+        else:
+            bindings = self.js_type_inference.own_scope_variable_types(
+                scope, module_qn, language
+            )
+        self._scope_types_memo[key] = bindings
+        return bindings
 
     def collect_go_span_bindings(
         self,
