@@ -73,6 +73,10 @@ class SymbolRow(TypedDict):
 
 
 class DefinitionRow(SymbolRow):
+    # Where the definition starts on its line: two definitions can share a
+    # line span, and only the column tells them apart (bot review on PR
+    # #2895).
+    start_col: int | None
     # `start_line` and `source` open at the first decorator, as
     # `inspect.getsource` does; `name_line` is the line of the definition's
     # name, its `def`/`class` line, or the node's own start where the graph
@@ -648,7 +652,9 @@ def source_root_for(
     return local if Path(stored).resolve() == local else None
 
 
-def _decorated_start(row: ResultRow, own_start: int | None) -> int | None:
+def _decorated_start(
+    row: ResultRow | PropertyDict, own_start: int | None
+) -> int | None:
     """The first decorator's line when the node records one above its own
     start, else that start (issue #2428).
 
@@ -684,6 +690,7 @@ def definition(
             path=None,
             start_line=None,
             end_line=None,
+            start_col=None,
             name_line=None,
             decorators=[],
             name=None,
@@ -706,6 +713,7 @@ def definition(
         path=path,
         start_line=start,
         end_line=end,
+        start_col=_opt_int(row.get(cs.KEY_START_COL)),
         name_line=_opt_int(row.get(cs.KEY_NAME_START_LINE)) or own_start,
         decorators=_as_str_list(row.get(cs.KEY_DECORATORS)),
         name=_opt_str(row.get(cs.KEY_NAME)),
@@ -1304,6 +1312,20 @@ class ReachIndex:
                     next_frontier.append(caller)
             frontier = next_frontier
         return depth_of, through_of
+
+    def span(self, qualified_name: str) -> tuple[int, int]:
+        """The recorded (start, end) lines of a node, 0 where unknown; the
+        start is the first decorator's line, as `definition()` answers."""
+        entry = self._by_qn.get(qualified_name)
+        if entry is None:
+            return 0, 0
+        props = entry[1]
+        own, end = props.get(cs.KEY_START_LINE), props.get(cs.KEY_END_LINE)
+        start = _decorated_start(props, own if isinstance(own, int) else None)
+        return (
+            start if isinstance(start, int) else 0,
+            end if isinstance(end, int) else 0,
+        )
 
     def tests_reaching(self, qualified_name: str) -> list[TestReachRow]:
         depth_of, through_of = self._walk(qualified_name)

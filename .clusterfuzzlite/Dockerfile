@@ -91,7 +91,8 @@ RUN ln -sf "$(uv python find 3.12)" /usr/local/bin/python3 && \
 # The interpreter's bundled pip may predate the emSign distrust (pip 26.2.2),
 # so the first thing it fetches is pip itself, the release
 # scripts/pip-requirements.txt pins, checked against its SHA-256s. The installs
-# below and build.sh's then run on that pip.
+# below then run on that pip (build.sh installs the project with uv, from the
+# lockfile).
 COPY scripts/pip-requirements.txt /tmp/
 RUN python3 -m pip install --no-cache-dir --break-system-packages \
         --require-hashes -r /tmp/pip-requirements.txt
@@ -100,7 +101,10 @@ RUN python3 -m pip install --no-cache-dir --break-system-packages \
 # 3.12, so install them for the interpreter that will actually freeze the
 # targets, from requirements.txt, which pins them and what they pull in by
 # hash. atheris links the image's libFuzzer rather than building its own,
-# the same way base-builder's install_python.sh does it.
+# the same way base-builder's install_python.sh does it. coverage is there
+# for the coverage build, whose stub runs `import coverage` inside every
+# frozen target; it is a dev dependency, so build.sh's lockfile install
+# does not bring it.
 # uv's standalone interpreters ship an EXTERNALLY-MANAGED marker; this image
 # has no other Python for 3.12, so installing into it directly is intended.
 COPY .clusterfuzzlite/requirements.txt /tmp/fuzz-requirements.txt
