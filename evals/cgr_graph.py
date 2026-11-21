@@ -692,6 +692,9 @@ class _StatefulIngestor:
                             cs.KEY_IMPORTED_NAME: _result(
                                 self.props_for(edge).get(cs.KEY_IMPORTED_NAME)
                             ),
+                            cs.KEY_IMPORT_SCOPE: _result(
+                                self.props_for(edge).get(cs.KEY_IMPORT_SCOPE)
+                            ),
                         }
                     )
         return rows

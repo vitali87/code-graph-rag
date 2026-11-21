@@ -1962,7 +1962,8 @@ WHERE m.qualified_name STARTS WITH $project_prefix
           WHERE t.qualified_name <> longer_project
             AND NOT t.qualified_name STARTS WITH (longer_project + '.'))
 RETURN DISTINCT m.qualified_name AS from_qn, m.path AS from_path,
-       t.qualified_name AS to_qn, r.imported_name AS imported_name"""
+       t.qualified_name AS to_qn, r.imported_name AS imported_name,
+       r.import_scope AS import_scope"""
 # The import statements that bind a symbol BY NAME into or out of the
 # touched files (issue #2516), one row per bound name: an importer of a
 # touched module still naming a symbol the edit removed, and a touched
