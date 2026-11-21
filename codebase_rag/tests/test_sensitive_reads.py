@@ -87,6 +87,19 @@ def test_ordinary_files_are_not_sensitive(path: str) -> None:
     assert not is_sensitive_path(Path(path))
 
 
+@pytest.mark.parametrize(
+    "command",
+    ["uniq \x00\x00\x00\x00\x00\x00\x00\x13lo", "rg \x00\x00env \x00\x00 -rg -he +"],
+)
+def test_a_nul_byte_path_gets_a_verdict_not_an_exception(
+    tmp_path: Path, command: str
+) -> None:
+    # No file name can hold a NUL, and resolving one raises ValueError. The
+    # gate must still answer (the shell-command fuzzer found both inputs).
+    assert is_sensitive_path(tmp_path / "a\x00b") is False
+    _noninteractive_denial(command, tmp_path)
+
+
 def test_a_symlink_is_judged_by_its_target(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text(f"KEY={SECRET}\n", encoding="utf-8")
     os.symlink(tmp_path / ".env", tmp_path / "notes.txt")
