@@ -64,6 +64,12 @@ TS_PY_STRING = "string"
 TS_PY_INTERPOLATION = "interpolation"
 TS_PY_DECORATED_DEFINITION = "decorated_definition"
 TS_PY_DECORATOR = "decorator"
+# `@x.setter`, `@x.getter` and `@x.deleter` add an accessor to the property
+# `x`; the decorated `def` takes the same name and so does the property.
+PY_PROPERTY_ACCESSOR_ATTRS = frozenset({"getter", "setter", "deleter"})
+# `@property`, also spelled through the module it lives in (bot review on
+# PR #2725).
+PY_PROPERTY_DECORATORS = frozenset({"property", "builtins.property"})
 TS_PY_KEYWORD_ARGUMENT = "keyword_argument"
 TS_PY_LIST_SPLAT = "list_splat"
 TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
@@ -111,6 +117,9 @@ TS_PY_NAMED_EXPRESSION = "named_expression"
 TS_PY_COMPARISON_OPERATOR = "comparison_operator"
 TS_FIELD_OPERATORS = "operators"
 TS_PY_IF_STATEMENT = "if_statement"
+# `if TYPE_CHECKING:` and `if typing.TYPE_CHECKING:` guard imports that only a
+# type checker runs (issue #2685).
+PY_TYPE_CHECKING = "TYPE_CHECKING"
 TS_PY_TRY_STATEMENT = "try_statement"
 TS_PY_GLOBAL_STATEMENT = "global_statement"
 # `del x` and `type X = ...`: both bind (or unbind) the name they hold.
@@ -166,6 +175,20 @@ PY_STATEMENT_CONTAINERS = frozenset(
         TS_PY_FUNCTION_DEFINITION,
         TS_PY_CLASS_DEFINITION,
         TS_PY_DECORATED_DEFINITION,
+    }
+)
+# Module-level statements whose bodies still run at import, where an
+# `__all__` update counts (issue #2855).
+PY_MODULE_LEVEL_BLOCKS = frozenset(
+    {
+        TS_PY_IF_STATEMENT,
+        TS_PY_ELIF_CLAUSE,
+        TS_PY_ELSE_CLAUSE,
+        TS_PY_TRY_STATEMENT,
+        TS_PY_EXCEPT_CLAUSE,
+        TS_PY_FINALLY_CLAUSE,
+        TS_PY_WITH_STATEMENT,
+        TS_PY_BLOCK,
     }
 )
 # `typing.overload` and the modules exporting it: a stub it decorates is
@@ -539,6 +562,9 @@ PY_DUNDER_ALL = "__all__"
 PY_LIST_EXTEND = "extend"
 PY_LIST_APPEND = "append"
 PY_BUILTIN_LIST = "list"
+# The list methods that add to a module's declared API, `__all__`, so a name
+# they list is exported (issue #2855).
+PY_DUNDER_ALL_MUTATORS = frozenset({PY_LIST_APPEND, PY_LIST_EXTEND})
 PY_PRIVATE_PREFIX = "_"
 
 # Forward references in an annotation (`n: "Node"`, issue #2837): the quotes

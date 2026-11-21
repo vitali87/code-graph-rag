@@ -1015,6 +1015,14 @@ RENAME_DEFINITION_UNREADABLE = (
     "The index names a file the tree no longer has; re-index and retry."
 )
 RENAME_BAD_NAME = "Not a valid identifier: {name}"
+# A plain `def` after a property's accessors replaces the property, and once
+# they are renamed it would take the plain qualified name they held, so the
+# re-index could not tell the rename from a different definition (bot review
+# on PR #2725).
+RENAME_PROPERTY_REDEFINED = (
+    "{qn} is redefined by a plain def on line {line}, which replaces the "
+    "property; rename or remove that def first"
+)
 # Refused up front with the reason, rather than as a rewrite that "would no
 # longer parse" (issue #3225).
 RENAME_RESERVED_WORD = "Not a valid identifier: {name} is a reserved word in {language}"
@@ -1385,6 +1393,14 @@ SIGNATURE_CONTRACT_UNMEASURED = (
 )
 # context slice (issue #1536).
 CONTEXT_WHY_TARGET = "target"
+# How many of the candidates left out of a context slice it names; the rest
+# are only counted in `omitted_count` (issue #3243).
+CONTEXT_OMITTED_SAMPLE = 10
+# How deep a context slice prints each piece: inside the slice and its
+# `pieces` list, each level one MCP_JSON_INDENT more.
+CONTEXT_PIECE_DEPTH = 2
+# Files whose decoded lines a context slice keeps between quotes of them.
+CONTEXT_SOURCE_CACHE_FILES = 256
 CONTEXT_WHY_CALLER = "direct caller: the call line"
 CONTEXT_WHY_CALLEE = "direct callee: its signature"
 CONTEXT_WHY_RETURNS = "type it returns"

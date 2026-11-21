@@ -434,16 +434,30 @@ WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT define
 )
 
 
+# Deletes the Folder/File bound to `c` unless a project other than
+# `$project_name` claims it. Another project `q` claims a Folder/File it
+# reaches through Folders and Files from itself or from one of its own
+# Packages, the same two walks as _CYPHER_PROJECT_CLAIMS taken upward.
+_DELETE_UNLESS_CLAIMED_ELSEWHERE = f"""OPTIONAL MATCH (c)<-[:{_SHARED_ENTRY_RELS}*]-(holder)
+WHERE NOT (holder:Folder OR holder:File)
+OPTIONAL MATCH (holder)<-[:{_CONTAINMENT_RELS}*0..]-(q:Project)
+WHERE q.name <> $project_name
+AND (holder:Project OR holder.qualified_name = q.name
+OR holder.qualified_name STARTS WITH (q.name + '.'))
+WITH c, count(q) AS other_claims
+WHERE other_claims = 0
+DETACH DELETE c
+"""
+
+
 # Deletes what `p` claims, except a Folder or File another project claims
 # too: that one only loses `p`'s edges. The named nodes go first, so the
 # check that follows walks up from each Folder/File over what is left; no
 # large list is ever a grouping key, which cost seconds per thousand nodes.
-# Another project `q` claims a Folder/File it reaches through Folders and
-# Files from itself or from one of its own Packages, the same two walks as
-# _CYPHER_PROJECT_CLAIMS taken upward. The resource-to-resource flows go
-# before any of that: both ends of one are shared Resource nodes, so no
-# detach of what `p` claims reaches it, and its `scope` names the function
-# or module that produced it, one of `p`'s qualified names (issue #2746).
+# The resource-to-resource flows go before any of that: both ends of one are
+# shared Resource nodes, so no detach of what `p` claims reaches it, and its
+# `scope` names the function or module that produced it, one of `p`'s
+# qualified names (issue #2746).
 # Matching the scope by name rather than against `owned` takes a flow of a
 # unit cut off from `p` too, and keeps `owned` out of a grouping key. The
 # step follows `match_filter`, so prune's guarded variant removes no flow of
@@ -464,16 +478,7 @@ WITH [c IN owned WHERE c:Folder OR c:File] AS shareable,
 FOREACH (n IN named | DETACH DELETE n)
 WITH shareable
 UNWIND shareable AS c
-OPTIONAL MATCH (c)<-[:{_SHARED_ENTRY_RELS}*]-(holder)
-WHERE NOT (holder:Folder OR holder:File)
-OPTIONAL MATCH (holder)<-[:{_CONTAINMENT_RELS}*0..]-(q:Project)
-WHERE q.name <> $project_name
-AND (holder:Project OR holder.qualified_name = q.name
-OR holder.qualified_name STARTS WITH (q.name + '.'))
-WITH c, count(q) AS other_claims
-WHERE other_claims = 0
-DETACH DELETE c
-"""
+{_DELETE_UNLESS_CLAIMED_ELSEWHERE}"""
 
 
 CYPHER_DELETE_PROJECT = _delete_project()
@@ -552,6 +557,28 @@ def _sweep_detached() -> str:
         "WITH nested\n"
         for label in _DETACHABLE_LABELS
     )
+
+
+# The orphan prune's delete for a Folder whose directory is still on disk but
+# outside this project's walk (`.cgrignore`, `--exclude`; issue #2884). Folder
+# identity is the absolute path, so one checkout indexed under two names, or a
+# project nested in another, shares the node, and DETACH DELETE took it out of
+# the other project's tree too. This project's own containment edges go first
+# (from its Project or one of its Packages), then the Folder, only when no
+# other project still claims it. A Package under a longer registered name
+# (`demo.copy.pkg` beside `demo`) is that project's, so its edge stays: taken,
+# the claim check would find no other holder and delete the Folder from it.
+CYPHER_RELEASE_FOLDER = f"""
+OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH $project_prefix
+WITH collect(longer.name) AS nested
+MATCH (holder)-[r:CONTAINS_FOLDER]->(:Folder {{absolute_path: $path}})
+WHERE (holder:Project AND holder.name = $project_name)
+OR (holder:Package AND ({_belongs_to_named("holder")}))
+DELETE r
+"""
+CYPHER_DELETE_UNCLAIMED_FOLDER = (
+    "MATCH (c:Folder {absolute_path: $path})\n" + _DELETE_UNLESS_CLAIMED_ELSEWHERE
+)
 
 
 # Run after CYPHER_DELETE_PROJECT: the project's Packages and Modules that no
@@ -1105,6 +1132,7 @@ WHERE {_any_label("n", _DEAD_CODE_NODE_LABELS)} AND n.qualified_name STARTS WITH
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.name AS name, n.path AS path, n.namespace AS namespace,
        n.start_line AS start_line, n.end_line AS end_line,
+       n.decorated_start_line AS decorated_start_line,
        n.decorators AS decorators, n.is_exported AS is_exported,
        n.overrides_external AS overrides_external,
        n.is_program_main AS is_program_main,
@@ -1301,6 +1329,7 @@ CYPHER_GRAPH_DEFINITION = f"""MATCH (n)
 WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
+       n.start_col AS start_col,
        n.decorated_start_line AS decorated_start_line, n.decorators AS decorators,
        n.name_start_line AS name_start_line, n.docstring AS docstring
 {_DEFINITION_TIEBREAK}
@@ -1851,6 +1880,9 @@ WHERE {_any_label("n", _DELTA_DEFINITION_LABELS)} AND n.qualified_name STARTS WI
 # is not prefix-scoped, so an unresolved or external target name can reach
 # this lookup, and a shared graph holding several projects would otherwise
 # let a same-named definition from another project decide the arity verdict.
+# The shared fields carry `decorators`: a caller a renamed symbol left
+# dangling is looked up here, and a Rust `#[test]` fn is a test by its
+# attribute alone (bot review on PR #2913).
 CYPHER_DELTA_DEFINITIONS_BY_QN = f"""MATCH (n)
 WHERE {_any_label("n", _DELTA_DEFINITION_LABELS)} AND n.qualified_name IN $qns
   AND n.qualified_name STARTS WITH $project_prefix
@@ -1930,7 +1962,8 @@ WHERE m.qualified_name STARTS WITH $project_prefix
           WHERE t.qualified_name <> longer_project
             AND NOT t.qualified_name STARTS WITH (longer_project + '.'))
 RETURN DISTINCT m.qualified_name AS from_qn, m.path AS from_path,
-       t.qualified_name AS to_qn, r.imported_name AS imported_name"""
+       t.qualified_name AS to_qn, r.imported_name AS imported_name,
+       r.import_scope AS import_scope"""
 # The import statements that bind a symbol BY NAME into or out of the
 # touched files (issue #2516), one row per bound name: an importer of a
 # touched module still naming a symbol the edit removed, and a touched

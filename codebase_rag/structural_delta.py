@@ -125,6 +125,10 @@ class Snapshot(NamedTuple):
     sites: tuple[CallSite, ...]
     imports: dict[str, frozenset[str]]
     module_paths: dict[str, str]
+    # The imports that run when the importing module is imported. Only these
+    # can make an import cycle: a function-local or TYPE_CHECKING import is
+    # how a cycle is avoided (issue #2685).
+    eager_imports: dict[str, frozenset[str]]
     # (importer, target, imported name) per import statement; "" for a
     # whole-module import. Tells an import of a name the module still binds
     # (a constant the graph has no node for) from one of a moved symbol.
@@ -556,7 +560,39 @@ def snapshot(
     found = _definitions_by_qn(fetch_all, missing, project_name, longer_prefixes)
     callees = {qn: d for qn, d in found.items() if qn in missing_callees}
     callers = {qn: d for qn, d in found.items() if qn in missing_callers}
+    graph = _module_imports(fetch_all, params)
+    return Snapshot(
+        paths=frozenset(path_list),
+        definitions=definitions,
+        callees=callees,
+        sites=sites,
+        imports=graph.imports,
+        module_paths=graph.module_paths,
+        eager_imports=graph.eager,
+        imported=graph.imported,
+        bindings=_named_import_bindings(fetch_all, params),
+        callers=callers,
+        modules=_touched_modules(fetch_all, params),
+        module_bindings=_module_import_bindings(fetch_all, params),
+        bases=_bases_above(
+            fetch_all, params, {site.caller for site in sites} | set(chain_callers)
+        ),
+    )
+
+
+class _ModuleImports(NamedTuple):
+    imports: dict[str, frozenset[str]]
+    eager: dict[str, frozenset[str]]
+    module_paths: dict[str, str]
+    imported: frozenset[tuple[str, str, str]]
+
+
+def _module_imports(fetch_all: QueryFn, params: PropertyDict) -> _ModuleImports:
+    """The module import graph, its import-time subgraph, each importing
+    module's path, and every (importer, target, imported name). Every module
+    either graph names is a node of it."""
     imports: dict[str, set[str]] = {}
+    eager: dict[str, set[str]] = {}
     module_paths: dict[str, str] = {}
     imported: set[tuple[str, str, str]] = set()
     for row in fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTS, params):
@@ -567,22 +603,15 @@ def snapshot(
         imports.setdefault(source, set()).add(target)
         imported.add((source, target, _text(row.get(cs.KEY_IMPORTED_NAME))))
         imports.setdefault(target, set())
+        if row.get(cs.KEY_IMPORT_SCOPE) is None:
+            eager.setdefault(source, set()).add(target)
+            eager.setdefault(target, set())
         module_paths[source] = _text(row.get(cs.KEY_FROM_PATH))
-    return Snapshot(
-        paths=frozenset(path_list),
-        definitions=definitions,
-        callees=callees,
-        sites=sites,
+    return _ModuleImports(
         imports={qn: frozenset(targets) for qn, targets in imports.items()},
+        eager={qn: frozenset(targets) for qn, targets in eager.items()},
         module_paths=module_paths,
         imported=frozenset(imported),
-        bindings=_named_import_bindings(fetch_all, params),
-        callers=callers,
-        modules=_touched_modules(fetch_all, params),
-        module_bindings=_module_import_bindings(fetch_all, params),
-        bases=_bases_above(
-            fetch_all, params, {site.caller for site in sites} | set(chain_callers)
-        ),
     )
 
 
@@ -3416,7 +3445,7 @@ def import_cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
 def _new_import_cycles(before: Snapshot, after: Snapshot) -> list[list[str]]:
     touched = {qn for qn, path in after.module_paths.items() if path in after.paths}
     touched |= {qn for qn, path in before.module_paths.items() if path in before.paths}
-    fresh = _cycles(after.imports) - _cycles(before.imports)
+    fresh = _cycles(after.eager_imports) - _cycles(before.eager_imports)
     return sorted(sorted(component) for component in fresh if component & touched)
 
 
@@ -3429,11 +3458,56 @@ class _Reach(NamedTuple):
     nodes: dict[_NodeId, PropertyDict]
 
 
+class _GoneCaller(NamedTuple):
+    """A caller still naming a symbol the edit renamed or removed."""
+
+    target: str
+    path: str
+
+
+def _gone_caller_rows(
+    fetch_all: QueryFn,
+    prefix: str,
+    gone_callers: Mapping[str, _GoneCaller],
+    longer_project_prefixes: tuple[str, ...],
+) -> list[ResultRow]:
+    """The first hop the re-ingested graph can no longer show (issue #2903).
+
+    A caller of a renamed or removed symbol lost its edge with the target, so
+    no `CALLS` row leads to it any more; it is a caller at depth 1 through
+    the old name all the same, and the tests behind it are the ones that now
+    fail. Its node is looked up for the test check, and one the definition
+    lookup does not return (a module-level call) keeps the caller's own path.
+    """
+    if not gone_callers:
+        return []
+    found = {
+        _text(row.get(cs.KEY_QUALIFIED_NAME)): row
+        for row in fetch_all(
+            cq.CYPHER_DELTA_DEFINITIONS_BY_QN,
+            {
+                cs.KEY_PROJECT_PREFIX: prefix,
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
+                cs.KEY_QNS: sorted(gone_callers),
+            },
+        )
+    }
+    return [
+        {
+            **found.get(qn, {cs.KEY_PATH: gone.path}),
+            cs.KEY_QUALIFIED_NAME: qn,
+            cs.KEY_TO_QN: gone.target,
+        }
+        for qn, gone in sorted(gone_callers.items())
+    ]
+
+
 def _walk_callers(
     fetch_all: QueryFn,
     prefix: str,
     targets: set[str],
     longer_project_prefixes: tuple[str, ...],
+    gone_callers: Mapping[str, _GoneCaller] | None = None,
 ) -> _Reach:
     """Multi-source backward BFS, one indexed query per hop.
 
@@ -3445,17 +3519,27 @@ def _walk_callers(
     through = {qn: qn for qn in targets}
     nodes: dict[_NodeId, PropertyDict] = {}
     frontier = sorted(targets)
+    first_hop_extra = _gone_caller_rows(
+        fetch_all, prefix, gone_callers or {}, longer_project_prefixes
+    )
     for hop in range(1, cs.DELTA_REACH_MAX_DEPTH + 1):
-        if not frontier:
+        rows = [
+            *(
+                fetch_all(
+                    cq.CYPHER_DELTA_CALLERS_OF,
+                    {
+                        cs.KEY_PROJECT_PREFIX: prefix,
+                        cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
+                        cs.KEY_QNS: frontier,
+                    },
+                )
+                if frontier
+                else []
+            ),
+            *(first_hop_extra if hop == 1 else []),
+        ]
+        if not rows:
             break
-        rows = fetch_all(
-            cq.CYPHER_DELTA_CALLERS_OF,
-            {
-                cs.KEY_PROJECT_PREFIX: prefix,
-                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
-                cs.KEY_QNS: frontier,
-            },
-        )
         next_frontier: list[str] = []
         for row in sorted(
             rows,
@@ -3521,6 +3605,7 @@ def _tests_reaching(
     project_name: str,
     targets: Iterable[str],
     longer_project_prefixes: tuple[str, ...] | None = None,
+    gone_callers: Mapping[str, _GoneCaller] | None = None,
 ) -> list[TestReach]:
     prefix = _prefix(project_name)
     longer_prefixes = (
@@ -3528,7 +3613,9 @@ def _tests_reaching(
         if longer_project_prefixes is None
         else longer_project_prefixes
     )
-    reach = _walk_callers(fetch_all, prefix, set(targets), longer_prefixes)
+    reach = _walk_callers(
+        fetch_all, prefix, set(targets), longer_prefixes, gone_callers
+    )
     rust_modules, rust_spans = _rust_inputs(
         fetch_all, prefix, reach.nodes, longer_prefixes
     )
@@ -3609,13 +3696,17 @@ def structural_delta(
     touched = fresh | {
         qn for qn, d in after.definitions.items() if d.path in after.paths
     }
+    dangling = _dangling(before, after, symbols, repo_root)
+    gone_callers = {
+        d["caller"]: _GoneCaller(target=d["target"], path=d["path"]) for d in dangling
+    }
     return StructuralDelta(
         paths=sorted(before.paths | after.paths),
         reparsed=list(report.reparsed) if report else [],
         affected=list(report.affected) if report else [],
         removed_files=list(report.removed) if report else [],
         symbols=symbols,
-        dangling_callers=_dangling(before, after, symbols, repo_root),
+        dangling_callers=dangling,
         dangling_importers=_dangling_importers(
             before,
             after,
@@ -3638,9 +3729,9 @@ def structural_delta(
         new_import_cycles=_new_import_cycles(before, after),
         stale_importers=_stale_importers(after, symbols),
         tests_reaching=_tests_reaching(
-            fetch_all, project_name, touched, longer_prefixes
+            fetch_all, project_name, touched, longer_prefixes, gone_callers
         )
-        if touched
+        if touched or gone_callers
         else [],
         parse_errors=[],
         call_sites=SiteCounts(
