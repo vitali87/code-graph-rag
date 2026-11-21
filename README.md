@@ -61,11 +61,8 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Improved I/O Handling**: Enhanced how the toolchain interacts with input and output streams, including inline reads, standard stream writes, and environment variable management.
-- **Credential Management**: Introduced a dedicated credential word list for each hardcoded secret within a pack, improving security.
-- **Enhanced Code Analysis**: Improved the accuracy of code analysis by considering binding contexts, structural tiers, and the order of query captures.
-- **Refined Error Reporting**: Improved the clarity and detail of error messages, particularly for dead code, duplicates, and missing dependencies.
-- **Surface and Renaming Improvements**: Enhanced the recording and management of public surfaces and improved the handling of renaming operations.
+- **Improved Code Analysis**: Refined how query captures are read, how calls are judged, and how dead code is identified and handled.
+- **Surface Definition**: Introduced a mechanism to record and enforce the public surface of code, with CI failures for deviations.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
