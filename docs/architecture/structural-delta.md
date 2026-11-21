@@ -100,6 +100,25 @@ value elsewhere (`h = helper; h(x)`).
 | `stale_importers`    | Modules that still import a module every moved symbol left empty. Only a move (a rename across modules) produces one; the `move` operation's contract reads it. |
 | `tests_reaching`     | Test functions from which any symbol of the edited files is reachable through the call graph, with the shortest distance and the symbol it is reached through. |
 
+A removed or renamed module-level symbol whose own module still binds its
+name after the edit leaves no dangling caller (issue #3248): a move that
+keeps `from new_home import name` behind, or a rename that keeps
+`old = new`, still serves every caller reaching the name through that
+module, whether it imported the name, imported the module, or sits in the
+module itself. The binding is read as for `dangling_importers`, following
+re-exports into modules the edit left alone. An import or a definition
+under `if TYPE_CHECKING:`, or in the `else` of `if not TYPE_CHECKING:`,
+never runs, so it binds nothing for either check. A caller needs more than
+an importable name: a name only assigned a literal (`name = None`) cannot
+be called, and a JS/TS module serves a name, declared or imported, only
+through an `export` of it: `export function name`, `export { name } from
+"./home"`, or `export { local as name }`. So a re-export of a function its
+target module never exports serves nothing. A type-only import or export
+(`export type { name }`, `export { type name }`, `import type { name }`) is
+erased from the emitted JavaScript and serves no caller. A method is reached
+through its class, which no module binding stands in for, so its callers are
+listed as before.
+
 ### Arity verdicts
 
 Verdicts use the receiver arithmetic of `crash_correlation.diagnose_arity`:
