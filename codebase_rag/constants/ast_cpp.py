@@ -389,9 +389,24 @@ CPP_OP_LEFT_SHIFT = "<<"
 # READ of that handle's resource (issue #714).
 CPP_OP_RIGHT_SHIFT = ">>"
 TS_CPP_FOR_RANGE_LOOP = "for_range_loop"
+TS_CPP_FOR_STATEMENT = "for_statement"
+TS_CPP_IF_STATEMENT = "if_statement"
+TS_CPP_WHILE_STATEMENT = "while_statement"
 # Switch family: cases may fall through; a default arm is a
 # case_statement without a `value` field.
 TS_CPP_SWITCH_STATEMENT = "switch_statement"
+# Statements whose own header can declare a name (`for (auto x = ...;;)`,
+# `if (auto p = ...)`): it is in scope to the statement's end, not the end
+# of the block around it.
+CPP_HEADER_SCOPED_STATEMENTS = frozenset(
+    {
+        TS_CPP_FOR_STATEMENT,
+        TS_CPP_FOR_RANGE_LOOP,
+        TS_CPP_IF_STATEMENT,
+        TS_CPP_WHILE_STATEMENT,
+        TS_CPP_SWITCH_STATEMENT,
+    }
+)
 TS_CPP_CASE_STATEMENT = "case_statement"
 # field_expression = `obj.field` (argument/field); subscript_expression =
 # `arr[i]` (argument/indices). Inert for C++ I/O, wired for shape correctness.

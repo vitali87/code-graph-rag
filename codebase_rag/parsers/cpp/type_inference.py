@@ -28,7 +28,12 @@ def _scope_declarations(scope: Node | None) -> list[tuple[Node, int]]:
     pending = [(scope, scope.end_byte)] if scope is not None else []
     while pending:
         node, block_end = pending.pop()
-        if node.type == cs.CppNodeType.COMPOUND_STATEMENT:
+        # A `for`/`if`/`while`/`switch` header's declaration ends with its
+        # statement (CodeRabbit, PR #2948).
+        if (
+            node.type == cs.CppNodeType.COMPOUND_STATEMENT
+            or node.type in cs.CPP_HEADER_SCOPED_STATEMENTS
+        ):
             block_end = node.end_byte
         for child in node.children:
             if child.type not in cs.CPP_NESTED_SCOPE_NODE_TYPES:
@@ -333,9 +338,12 @@ class CppTypeInferenceEngine:
             # redecls across scopes are reconciled by the caller (drop-on-conflict).
             stack.extend(reversed(child.children))
 
-    def declaration_scopes(self, caller_node: Node) -> list[tuple[int, int, str, bool]]:
+    def declaration_scopes(
+        self, caller_node: Node, *, fields: bool = True
+    ) -> list[tuple[int, int, str, bool]]:
         """Each parameter, local and (for a member function written in its
-        class) field the caller can see, as (start, end, name, qualified):
+        class, unless `fields` is False) field the caller can see, as
+        (start, end, name, qualified):
         the byte window in which a use of `name` finds that declaration, and
         whether its declared type is spelled qualified (`::B`, `ns::B`). The
         type map keeps only the bare `B`, but such a name means the class the
@@ -351,16 +359,18 @@ class CppTypeInferenceEngine:
         ) is not None:
             params = [(param, whole[1]) for param in param_list.children]
         members = caller_node.parent
-        fields = (
+        field_declarations = (
             _scope_declarations(members)
-            if members is not None and members.type == cs.TS_CPP_FIELD_DECLARATION_LIST
+            if fields
+            and members is not None
+            and members.type == cs.TS_CPP_FIELD_DECLARATION_LIST
             else []
         )
         scopes = [(*whole, name, q) for _, _, name, q in self._declared_names(params)]
         hidden = {scope[2] for scope in scopes}
         scopes.extend(
             (*whole, name, q)
-            for _, _, name, q in self._declared_names(fields)
+            for _, _, name, q in self._declared_names(field_declarations)
             if name not in hidden
         )
         scopes.extend(
@@ -450,6 +460,23 @@ class CppTypeInferenceEngine:
         if not text:
             return None
         return text.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1] or None
+
+    def range_for_bindings(self, caller_node: Node) -> list[tuple[int, int, str]]:
+        """Each range-`for` variable in the caller's body, as (start, end,
+        name) of the loop it is bound in: `for (auto f : fs)` binds `f` on
+        the loop node itself, where no declaration holds it (Greptile and
+        CodeRabbit, PR #2948)."""
+        found: list[tuple[int, int, str]] = []
+        for node, _block_end in _scope_declarations(
+            caller_node.child_by_field_name(cs.FIELD_BODY)
+        ):
+            if node.type == cs.TS_CPP_FOR_RANGE_LOOP and (
+                name := self._declarator_name(
+                    node.child_by_field_name(cs.FIELD_DECLARATOR)
+                )
+            ):
+                found.append((node.start_byte, node.end_byte, name))
+        return found
 
     def _declarator_name(self, declarator: Node | None) -> str | None:
         # Unwrap pointer/reference/init declarators down to the bound identifier.
