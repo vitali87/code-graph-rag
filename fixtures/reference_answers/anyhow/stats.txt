@@ -1,0 +1,50 @@
+$ cgr -q stats --project anyhow
+status: 0
+--- stdout
+Scoped to: anyhow
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ Function    │   270 │
+│ Method      │   137 │
+│ File        │    52 │
+│ Module      │    44 │
+│ Class       │    36 │
+│ Interface   │    13 │
+│ Type        │     8 │
+│ Enum        │     8 │
+│ Folder      │     7 │
+│ Section     │     6 │
+│ Package     │     2 │
+│ Project     │     1 │
+├─────────────┼───────┤
+│ Total Nodes │   584 │
+└─────────────┴───────┘
+
+    Relationship Statistics    
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Relationship Type   ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ CALLS               │   743 │
+│ DEFINES             │   388 │
+│ IMPORTS             │   204 │
+│ REFERENCES          │   122 │
+│ DEFINES_METHOD      │    91 │
+│ RETURNS             │    88 │
+│ ACCEPTS             │    63 │
+│ CONTAINS_FILE       │    52 │
+│ IMPLEMENTS          │    47 │
+│ CONTAINS_MODULE     │    37 │
+│ INSTANTIATES        │    14 │
+│ OVERRIDES           │    12 │
+│ INHERITS            │     9 │
+│ DEPENDS_ON_EXTERNAL │     7 │
+│ CONTAINS_FOLDER     │     7 │
+│ CONTAINS_SECTION    │     6 │
+│ CONTAINS_PACKAGE    │     2 │
+├─────────────────────┼───────┤
+│ Total Relationships │ 1,892 │
+└─────────────────────┴───────┘
+--- stderr
+Fetching graph statistics...

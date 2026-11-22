@@ -1,0 +1,6 @@
+> tools/call endpoint_callers {"target": "GET /"}
+isError: true
+--- text
+{
+  "error": "endpoint_callers has nothing to read for project 'uuid': its last sync did not capture the `io` group (EXPOSES, READS_FROM, RESOLVES_TO, WRITES_TO), so an empty list here would not mean there are none. Re-index with `cgr start --repo-path <root> --update-graph --capture io`, or run update_repository on a server started with CGR_CAPTURE=io."
+}

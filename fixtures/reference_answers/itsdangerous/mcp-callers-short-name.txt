@@ -1,0 +1,6 @@
+> tools/call callers {"qualified_name": "base64_encode"}
+isError: true
+--- text
+{
+  "error": "'base64_encode' is not in the graph. Did you mean: itsdangerous.src.itsdangerous.encoding.base64_encode?"
+}

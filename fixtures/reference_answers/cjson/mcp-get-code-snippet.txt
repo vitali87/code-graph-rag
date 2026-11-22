@@ -1,0 +1,13 @@
+> tools/call get_code_snippet {"qualified_name": "cjson.cJSON.cJSON_CreateString"}
+isError: false
+--- text
+{
+  "qualified_name": "cjson.cJSON.cJSON_CreateString",
+  "source_code": "CJSON_PUBLIC(cJSON *) cJSON_CreateString(const char *string)\n{\n    cJSON *item = cJSON_New_Item(&global_hooks);\n    if(item)\n    {\n        item->type = cJSON_String;\n        item->valuestring = (char*)cJSON_strdup((const unsigned char*)string, &global_hooks);\n        if(!item->valuestring)\n        {\n            cJSON_Delete(item);\n            return NULL;\n        }\n    }\n\n    return item;\n}\n",
+  "file_path": "cJSON.c",
+  "line_start": 2478,
+  "line_end": 2493,
+  "docstring": null,
+  "found": true,
+  "error_message": null
+}

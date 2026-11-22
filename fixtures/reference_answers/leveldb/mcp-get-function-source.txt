@@ -1,0 +1,33 @@
+> tools/call get_function_source {"node_id": "<node_id:leveldb.db.db_impl.leveldb.SanitizeOptions>"}
+isError: false
+--- text
+Source code for node ID <node_id>:
+
+```
+Options SanitizeOptions(const std::string& dbname,
+                        const InternalKeyComparator* icmp,
+                        const InternalFilterPolicy* ipolicy,
+                        const Options& src) {
+  Options result = src;
+  result.comparator = icmp;
+  result.filter_policy = (src.filter_policy != nullptr) ? ipolicy : nullptr;
+  ClipToRange(&result.max_open_files, 64 + kNumNonTableCacheFiles, 50000);
+  ClipToRange(&result.write_buffer_size, 64 << 10, 1 << 30);
+  ClipToRange(&result.max_file_size, 1 << 20, 1 << 30);
+  ClipToRange(&result.block_size, 1 << 10, 4 << 20);
+  if (result.info_log == nullptr) {
+    // Open a log file in the same directory as the db
+    src.env->CreateDir(dbname);  // In case it does not exist
+    src.env->RenameFile(InfoLogFileName(dbname), OldInfoLogFileName(dbname));
+    Status s = src.env->NewLogger(InfoLogFileName(dbname), &result.info_log);
+    if (!s.ok()) {
+      // No place suitable for logging
+      result.info_log = nullptr;
+    }
+  }
+  if (result.block_cache == nullptr) {
+    result.block_cache = NewLRUCache(8 << 20);
+  }
+  return result;
+}
+```

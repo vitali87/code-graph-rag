@@ -1,0 +1,14 @@
+> tools/call glosses {"target": "mediatr.src.MediatR.Mediator.Mediator"}
+isError: false
+--- text
+{
+  "target": {
+    "label": "Class",
+    "qualified_name": "mediatr.src.MediatR.Mediator.Mediator",
+    "path": "src/MediatR/Mediator.cs",
+    "start_line": 16,
+    "end_line": 200
+  },
+  "annotating": [],
+  "mentioning": []
+}

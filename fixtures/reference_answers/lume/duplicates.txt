@@ -1,0 +1,28 @@
+$ cgr -q duplicates --project lume
+status: 0
+--- stdout
+                               Duplicate Code Groups (lume)                               
+┏━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Group ┃ Kind    ┃ Similarity ┃ Member                     ┃ Location                   ┃
+┡━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ 1     │ exact   │       100% │ test.test.anonymous_364_22 │ test/test.lua:365-370      │
+│       │         │            │ test.test.anonymous_372_21 │ test/test.lua:373-378      │
+├───────┼─────────┼────────────┼────────────────────────────┼────────────────────────────┤
+│ 2     │ exact   │       100% │ lume.lume.invert           │ lume.lua:421-425           │
+│       │         │            │ lume.lume.clone            │ lume.lua:446-450           │
+├───────┼─────────┼────────────┼────────────────────────────┼────────────────────────────┤
+│ 3     │ exact   │       100% │ test.util.tester.dopass    │ test/util/tester.lua:69-72 │
+│       │         │            │ test.util.tester.dofail    │ test/util/tester.lua:75-78 │
+├───────┼─────────┼────────────┼────────────────────────────┼────────────────────────────┤
+│ 4     │ exact   │       100% │ test.test.cmp              │ test/test.lua:85-85        │
+│       │         │            │ test.util.tester.t.number  │ test/util/tester.lua:20-20 │
+├───────┼─────────┼────────────┼────────────────────────────┼────────────────────────────┤
+│ 5     │ similar │       100% │ test.test.anonymous_39_21  │ test/test.lua:40-45        │
+│       │         │            │ test.test.anonymous_47_23  │ test/test.lua:48-54        │
+├───────┼─────────┼────────────┼────────────────────────────┼────────────────────────────┤
+│ 6     │ similar │       100% │ test.test.anonymous_415_19 │ test/test.lua:416-420      │
+│       │         │            │ test.test.anonymous_422_21 │ test/test.lua:423-428      │
+└───────┴─────────┴────────────┴────────────────────────────┴────────────────────────────┘
+6 duplicate group(s) covering 12 function(s).
+3 symbol(s) were not analyzed (no structural fingerprint: pattern-tier language or bodiless declaration).
+--- stderr

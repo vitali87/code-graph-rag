@@ -1,0 +1,35 @@
+> tools/call implementors {"qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName"}
+isError: false
+--- text
+[
+  {
+    "label": "Class",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ArrayTypeName.ArrayTypeName",
+    "path": "src/main/java/com/squareup/javapoet/ArrayTypeName.java",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterizedTypeName.ParameterizedTypeName",
+    "path": "src/main/java/com/squareup/javapoet/ParameterizedTypeName.java",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName.TypeVariableName",
+    "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.WildcardTypeName.WildcardTypeName",
+    "path": "src/main/java/com/squareup/javapoet/WildcardTypeName.java",
+    "relationship": "INHERITS"
+  }
+]

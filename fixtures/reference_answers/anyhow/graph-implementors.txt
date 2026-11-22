@@ -1,0 +1,30 @@
+$ cgr -q graph implementors anyhow.src.lib.StdError --project anyhow
+status: 0
+--- stdout
+[
+  {
+    "label": "Class",
+    "path": "src/error.rs",
+    "qualified_name": "anyhow.src.error.ErrorImpl",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "src/wrapper.rs",
+    "qualified_name": "anyhow.src.wrapper.BoxedError",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "src/wrapper.rs",
+    "qualified_name": "anyhow.src.wrapper.DisplayError",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "src/wrapper.rs",
+    "qualified_name": "anyhow.src.wrapper.MessageError",
+    "relationship": "IMPLEMENTS"
+  }
+]
+--- stderr

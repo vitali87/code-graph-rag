@@ -1,0 +1,5 @@
+$ cgr -q graph callers lume.lume.no_such_function --project lume
+status: 4
+--- stdout
+--- stderr
+'lume.lume.no_such_function' is not in the graph. 'cgr graph resolve NAME' lists the qualified names a name matches.

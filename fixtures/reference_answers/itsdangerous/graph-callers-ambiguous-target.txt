@@ -1,0 +1,5 @@
+$ cgr -q graph callers loads --project itsdangerous
+status: 5
+--- stdout
+--- stderr
+'loads' names 4 definitions: itsdangerous.src.itsdangerous._json._CompactJSON.loads, itsdangerous.src.itsdangerous.serializer.Serializer.loads, itsdangerous.src.itsdangerous.serializer._PDataSerializer.loads, itsdangerous.src.itsdangerous.timed.TimedSerializer.loads. Pass one of their qualified names.

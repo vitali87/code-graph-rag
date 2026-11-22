@@ -1,0 +1,114 @@
+$ cgr -q context itsdangerous.src.itsdangerous.signer.Signer.sign --budget 1500 --project itsdangerous --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "target": "itsdangerous.src.itsdangerous.signer.Signer.sign",
+  "resolved": "itsdangerous.src.itsdangerous.signer.Signer.sign",
+  "budget_tokens": 1500,
+  "used_tokens": 1157,
+  "pieces": [
+    {
+      "qualified_name": "itsdangerous.src.itsdangerous.signer.Signer.sign",
+      "file": "src/itsdangerous/signer.py",
+      "span": [
+        222,
+        225
+      ],
+      "why_included": "target",
+      "source": "def sign(self, value: str | bytes) -> bytes:\n        \"\"\"Signs the given string.\"\"\"\n        value = want_bytes(value)\n        return value + self.sep + self.get_signature(value)",
+      "tokens": 121
+    },
+    {
+      "qualified_name": "itsdangerous.src.itsdangerous.encoding.want_bytes",
+      "file": "src/itsdangerous/encoding.py",
+      "span": [
+        11,
+        11
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "def want_bytes(\n    s: str | bytes, encoding: str = \"utf-8\", errors: str = \"strict\"\n) -> bytes:",
+      "tokens": 109
+    },
+    {
+      "qualified_name": "itsdangerous.src.itsdangerous.signer.Signer.get_signature",
+      "file": "src/itsdangerous/signer.py",
+      "span": [
+        215,
+        215
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "def get_signature(self, value: str | bytes) -> bytes:",
+      "tokens": 93
+    },
+    {
+      "qualified_name": "itsdangerous.tests.test_itsdangerous.test_signer.TestSigner.test_secret_keys",
+      "file": "tests/test_itsdangerous/test_signer.py",
+      "span": [
+        96,
+        96
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "signed = signer.sign(\"my string\")",
+      "tokens": 95
+    },
+    {
+      "qualified_name": "itsdangerous.tests.test_itsdangerous.test_timed.TestTimestampSigner.test_malformed_timestamp",
+      "file": "tests/test_itsdangerous/test_timed.py",
+      "span": [
+        61,
+        61
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "signed = other.sign(b\"value.____________\")",
+      "tokens": 100
+    },
+    {
+      "qualified_name": "itsdangerous.tests.test_itsdangerous.test_timed.TestTimestampSigner.test_timestamp_missing",
+      "file": "tests/test_itsdangerous/test_timed.py",
+      "span": [
+        51,
+        51
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "signed = other.sign(\"value\")",
+      "tokens": 95
+    },
+    {
+      "qualified_name": "itsdangerous.tests.test_itsdangerous.test_signer.TestSigner.test_secret_keys",
+      "file": "tests/test_itsdangerous/test_signer.py",
+      "span": [
+        94,
+        102
+      ],
+      "why_included": "test reaching it at depth 1 through itsdangerous.src.itsdangerous.signer.Signer.sign",
+      "source": "def test_secret_keys(self):\n        signer = Signer(\"a\")\n        signed = signer.sign(\"my string\")\n        assert isinstance(signed, bytes)\n\n        signer = Signer([\"a\", \"b\"])\n        assert signer.validate(signed)\n        out = signer.unsign(signed)\n        assert out == b\"my string\"",
+      "tokens": 180
+    },
+    {
+      "qualified_name": "itsdangerous.tests.test_itsdangerous.test_timed.TestTimestampSigner.test_malformed_timestamp",
+      "file": "tests/test_itsdangerous/test_timed.py",
+      "span": [
+        59,
+        67
+      ],
+      "why_included": "test reaching it at depth 1 through itsdangerous.src.itsdangerous.signer.Signer.sign",
+      "source": "def test_malformed_timestamp(self, signer):\n        other = Signer(\"secret-key\")\n        signed = other.sign(b\"value.____________\")\n\n        with pytest.raises(BadTimeSignature) as exc_info:\n            signer.unsign(signed)\n\n        assert \"Malformed\" in str(exc_info.value)\n        assert exc_info.value.date_signed is None",
+      "tokens": 186
+    },
+    {
+      "qualified_name": "itsdangerous.tests.test_itsdangerous.test_timed.TestTimestampSigner.test_timestamp_missing",
+      "file": "tests/test_itsdangerous/test_timed.py",
+      "span": [
+        49,
+        57
+      ],
+      "why_included": "test reaching it at depth 1 through itsdangerous.src.itsdangerous.signer.Signer.sign",
+      "source": "def test_timestamp_missing(self, signer):\n        other = Signer(\"secret-key\")\n        signed = other.sign(\"value\")\n\n        with pytest.raises(BadTimeSignature) as exc_info:\n            signer.unsign(signed)\n\n        assert \"missing\" in str(exc_info.value)\n        assert exc_info.value.date_signed is None",
+      "tokens": 178
+    }
+  ],
+  "omitted": [],
+  "omitted_count": 0,
+  "truncated": false
+}
+--- stderr

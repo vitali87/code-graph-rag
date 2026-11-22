@@ -1,0 +1,21 @@
+$ cgr -q graph callers example-jl.src.Example.Example.hello --project example-jl
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 1,
+    "callee_path": "src/Example.jl",
+    "col": 6,
+    "depth": 1,
+    "end_col": 20,
+    "end_line": 3,
+    "kwarg_names": [],
+    "label": "Module",
+    "line": 3,
+    "path": "test/runtests.jl",
+    "qualified_name": "example-jl.test.runtests",
+    "resolution": "heuristic",
+    "through": "example-jl.src.Example.Example.hello"
+  }
+]
+--- stderr

@@ -1,0 +1,2058 @@
+$ cgr -q duplicates --project leveldb --format json
+status: 0
+--- stdout
+{
+  "groups": [
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 15,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.iterator_wrapper.leveldb.IteratorWrapper.value",
+          "name": "value",
+          "path": "table/iterator_wrapper.h",
+          "start_line": 42,
+          "end_line": 45
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.key",
+          "name": "key",
+          "path": "table/merger.cc",
+          "start_line": 110,
+          "end_line": 113
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.value",
+          "name": "value",
+          "path": "table/merger.cc",
+          "start_line": 115,
+          "end_line": 118
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.key",
+          "name": "key",
+          "path": "table/two_level_iterator.cc",
+          "start_line": 32,
+          "end_line": 35
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.value",
+          "name": "value",
+          "path": "table/two_level_iterator.cc",
+          "start_line": 36,
+          "end_line": 39
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 23,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.autocompact_test.leveldb.AutoCompactTest.Key",
+          "name": "Key",
+          "path": "db/autocompact_test.cc",
+          "start_line": 31,
+          "end_line": 35
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.db_test.leveldb.Key",
+          "name": "Key",
+          "path": "db/db_test.cc",
+          "start_line": 1047,
+          "end_line": 1051
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.db_test.leveldb.MakeKey",
+          "name": "MakeKey",
+          "path": "db/db_test.cc",
+          "start_line": 2298,
+          "end_line": 2302
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.log_test.leveldb.log.NumberString",
+          "name": "NumberString",
+          "path": "db/log_test.cc",
+          "start_line": 28,
+          "end_line": 32
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 17,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.filename.leveldb.LogFileName",
+          "name": "LogFileName",
+          "path": "db/filename.cc",
+          "start_line": 28,
+          "end_line": 31
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.filename.leveldb.TableFileName",
+          "name": "TableFileName",
+          "path": "db/filename.cc",
+          "start_line": 33,
+          "end_line": 36
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.filename.leveldb.SSTTableFileName",
+          "name": "SSTTableFileName",
+          "path": "db/filename.cc",
+          "start_line": 38,
+          "end_line": 41
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.filename.leveldb.TempFileName",
+          "name": "TempFileName",
+          "path": "db/filename.cc",
+          "start_line": 57,
+          "end_line": 60
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.iterator_wrapper.leveldb.IteratorWrapper.Next",
+          "name": "Next",
+          "path": "table/iterator_wrapper.h",
+          "start_line": 51,
+          "end_line": 55
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.iterator_wrapper.leveldb.IteratorWrapper.Prev",
+          "name": "Prev",
+          "path": "table/iterator_wrapper.h",
+          "start_line": 56,
+          "end_line": 60
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.iterator_wrapper.leveldb.IteratorWrapper.SeekToFirst",
+          "name": "SeekToFirst",
+          "path": "table/iterator_wrapper.h",
+          "start_line": 66,
+          "end_line": 70
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.iterator_wrapper.leveldb.IteratorWrapper.SeekToLast",
+          "name": "SeekToLast",
+          "path": "table/iterator_wrapper.h",
+          "start_line": 71,
+          "end_line": 75
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 83,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.benchmarks.db_bench.leveldb.TrimSpace",
+          "name": "TrimSpace",
+          "path": "benchmarks/db_bench.cc",
+          "start_line": 209,
+          "end_line": 219
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.benchmarks.db_bench_sqlite3.leveldb.TrimSpace",
+          "name": "TrimSpace",
+          "path": "benchmarks/db_bench_sqlite3.cc",
+          "start_line": 150,
+          "end_line": 160
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.benchmarks.db_bench_tree_db.leveldb.TrimSpace",
+          "name": "TrimSpace",
+          "path": "benchmarks/db_bench_tree_db.cc",
+          "start_line": 117,
+          "end_line": 127
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 55,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench.leveldb.RandomGenerator.Generate",
+          "name": "Generate",
+          "path": "benchmarks/db_bench.cc",
+          "start_line": 178,
+          "end_line": 185
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_sqlite3.leveldb.RandomGenerator.Generate",
+          "name": "Generate",
+          "path": "benchmarks/db_bench_sqlite3.cc",
+          "start_line": 140,
+          "end_line": 147
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_tree_db.leveldb.RandomGenerator.Generate",
+          "name": "Generate",
+          "path": "benchmarks/db_bench_tree_db.cc",
+          "start_line": 107,
+          "end_line": 114
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 46,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench.leveldb.RandomGenerator.RandomGenerator",
+          "name": "RandomGenerator",
+          "path": "benchmarks/db_bench.cc",
+          "start_line": 163,
+          "end_line": 176
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_sqlite3.leveldb.RandomGenerator.RandomGenerator",
+          "name": "RandomGenerator",
+          "path": "benchmarks/db_bench_sqlite3.cc",
+          "start_line": 125,
+          "end_line": 138
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_tree_db.leveldb.RandomGenerator.RandomGenerator",
+          "name": "RandomGenerator",
+          "path": "benchmarks/db_bench_tree_db.cc",
+          "start_line": 92,
+          "end_line": 105
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 17,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.c.leveldb_options_set_env",
+          "name": "leveldb_options_set_env",
+          "path": "db/c.cc",
+          "start_line": 397,
+          "end_line": 399
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.c.leveldb_options_set_info_log",
+          "name": "leveldb_options_set_info_log",
+          "path": "db/c.cc",
+          "start_line": 401,
+          "end_line": 403
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.c.leveldb_readoptions_set_snapshot",
+          "name": "leveldb_readoptions_set_snapshot",
+          "path": "db/c.cc",
+          "start_line": 509,
+          "end_line": 512
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 17,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.SingletonEnv.env",
+          "name": "env",
+          "path": "util/env_posix.cc",
+          "start_line": 853,
+          "end_line": 853
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.SingletonEnv.env",
+          "name": "env",
+          "path": "util/env_windows.cc",
+          "start_line": 761,
+          "end_line": 761
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.no_destructor.leveldb.NoDestructor.get",
+          "name": "get",
+          "path": "util/no_destructor.h",
+          "start_line": 35,
+          "end_line": 37
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 15,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.util.cache_test.leveldb.EncodeKey",
+          "name": "EncodeKey",
+          "path": "util/cache_test.cc",
+          "start_line": 15,
+          "end_line": 19
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.util.logging.leveldb.NumberToString",
+          "name": "NumberToString",
+          "path": "util/logging.cc",
+          "start_line": 37,
+          "end_line": 41
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.util.logging.leveldb.EscapeString",
+          "name": "EscapeString",
+          "path": "util/logging.cc",
+          "start_line": 43,
+          "end_line": 47
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 181,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_sqlite3.leveldb.Benchmark.FinishedSingleOp",
+          "name": "FinishedSingleOp",
+          "path": "benchmarks/db_bench_sqlite3.cc",
+          "start_line": 253,
+          "end_line": 284
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_tree_db.leveldb.Benchmark.FinishedSingleOp",
+          "name": "FinishedSingleOp",
+          "path": "benchmarks/db_bench_tree_db.cc",
+          "start_line": 231,
+          "end_line": 262
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 162,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_sqlite3.leveldb.Benchmark.Stop",
+          "name": "Stop",
+          "path": "benchmarks/db_bench_sqlite3.cc",
+          "start_line": 286,
+          "end_line": 312
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_tree_db.leveldb.Benchmark.Stop",
+          "name": "Stop",
+          "path": "benchmarks/db_bench_tree_db.cc",
+          "start_line": 264,
+          "end_line": 290
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 130,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.PosixWritableFile.Append",
+          "name": "Append",
+          "path": "util/env_posix.cc",
+          "start_line": 265,
+          "end_line": 292
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.WindowsWritableFile.Append",
+          "name": "Append",
+          "path": "util/env_windows.cc",
+          "start_line": 253,
+          "end_line": 280
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 115,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.util.coding.leveldb.GetVarint32PtrFallback",
+          "name": "GetVarint32PtrFallback",
+          "path": "util/coding.cc",
+          "start_line": 86,
+          "end_line": 102
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.util.coding.leveldb.GetVarint64Ptr",
+          "name": "GetVarint64Ptr",
+          "path": "util/coding.cc",
+          "start_line": 116,
+          "end_line": 131
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 101,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.ReadSequential",
+          "name": "ReadSequential",
+          "path": "benchmarks/db_bench.cc",
+          "start_line": 823,
+          "end_line": 834
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.ReadReverse",
+          "name": "ReadReverse",
+          "path": "benchmarks/db_bench.cc",
+          "start_line": 836,
+          "end_line": 847
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 88,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.table_test.leveldb.Harness.TestForwardScan",
+          "name": "TestForwardScan",
+          "path": "table/table_test.cc",
+          "start_line": 454,
+          "end_line": 466
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.table_test.leveldb.Harness.TestBackwardScan",
+          "name": "TestBackwardScan",
+          "path": "table/table_test.cc",
+          "start_line": 468,
+          "end_line": 480
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 82,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.PosixEnv.BackgroundThreadMain",
+          "name": "BackgroundThreadMain",
+          "path": "util/env_posix.cc",
+          "start_line": 802,
+          "end_line": 819
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.BackgroundThreadMain",
+          "name": "BackgroundThreadMain",
+          "path": "util/env_windows.cc",
+          "start_line": 712,
+          "end_line": 729
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 79,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.NewWritableFile",
+          "name": "NewWritableFile",
+          "path": "util/env_windows.cc",
+          "start_line": 437,
+          "end_line": 452
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.NewAppendableFile",
+          "name": "NewAppendableFile",
+          "path": "util/env_windows.cc",
+          "start_line": 454,
+          "end_line": 469
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 78,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.util.coding.leveldb.GetVarint32",
+          "name": "GetVarint32",
+          "path": "util/coding.cc",
+          "start_line": 104,
+          "end_line": 114
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.util.coding.leveldb.GetVarint64",
+          "name": "GetVarint64",
+          "path": "util/coding.cc",
+          "start_line": 133,
+          "end_line": 143
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 67,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.SkipEmptyDataBlocksForward",
+          "name": "SkipEmptyDataBlocksForward",
+          "path": "table/two_level_iterator.cc",
+          "start_line": 115,
+          "end_line": 126
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.SkipEmptyDataBlocksBackward",
+          "name": "SkipEmptyDataBlocksBackward",
+          "path": "table/two_level_iterator.cc",
+          "start_line": 128,
+          "end_line": 139
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 64,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.PosixEnv.NewWritableFile",
+          "name": "NewWritableFile",
+          "path": "util/env_posix.cc",
+          "start_line": 545,
+          "end_line": 556
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.PosixEnv.NewAppendableFile",
+          "name": "NewAppendableFile",
+          "path": "util/env_posix.cc",
+          "start_line": 558,
+          "end_line": 569
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 63,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.PosixEnv.Schedule",
+          "name": "Schedule",
+          "path": "util/env_posix.cc",
+          "start_line": 781,
+          "end_line": 800
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.Schedule",
+          "name": "Schedule",
+          "path": "util/env_windows.cc",
+          "start_line": 691,
+          "end_line": 710
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 59,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.helpers.memenv.memenv.leveldb.InMemoryEnv.NewSequentialFile",
+          "name": "NewSequentialFile",
+          "path": "helpers/memenv/memenv.cc",
+          "start_line": 232,
+          "end_line": 242
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.helpers.memenv.memenv.leveldb.InMemoryEnv.NewRandomAccessFile",
+          "name": "NewRandomAccessFile",
+          "path": "helpers/memenv/memenv.cc",
+          "start_line": 244,
+          "end_line": 254
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 58,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.db_test.leveldb.Between",
+          "name": "Between",
+          "path": "db/db_test.cc",
+          "start_line": 1187,
+          "end_line": 1195
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.table.table_test.leveldb.Between",
+          "name": "Between",
+          "path": "table/table_test.cc",
+          "start_line": 748,
+          "end_line": 756
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 55,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.SingletonEnv.SingletonEnv",
+          "name": "SingletonEnv",
+          "path": "util/env_posix.cc",
+          "start_line": 838,
+          "end_line": 847
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.SingletonEnv.SingletonEnv",
+          "name": "SingletonEnv",
+          "path": "util/env_windows.cc",
+          "start_line": 746,
+          "end_line": 755
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 47,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_sqlite3.leveldb.Benchmark.Start",
+          "name": "Start",
+          "path": "benchmarks/db_bench_sqlite3.cc",
+          "start_line": 243,
+          "end_line": 251
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_tree_db.leveldb.Benchmark.Start",
+          "name": "Start",
+          "path": "benchmarks/db_bench_tree_db.cc",
+          "start_line": 221,
+          "end_line": 229
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 47,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.PosixMmapReadableFile.Read",
+          "name": "Read",
+          "path": "util/env_posix.cc",
+          "start_line": 231,
+          "end_line": 240
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.WindowsMmapReadableFile.Read",
+          "name": "Read",
+          "path": "util/env_windows.cc",
+          "start_line": 228,
+          "end_line": 237
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 46,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.table_cache.leveldb.UnrefEntry",
+          "name": "UnrefEntry",
+          "path": "db/table_cache.cc",
+          "start_line": 26,
+          "end_line": 30
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.table.table.leveldb.ReleaseBlock",
+          "name": "ReleaseBlock",
+          "path": "table/table.cc",
+          "start_line": 145,
+          "end_line": 149
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 38,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.table_test.leveldb.Harness.ToString",
+          "name": "ToString",
+          "path": "table/table_test.cc",
+          "start_line": 551,
+          "end_line": 557
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.table_test.leveldb.Harness.ToString@559",
+          "name": "ToString",
+          "path": "table/table_test.cc",
+          "start_line": 559,
+          "end_line": 566
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 36,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.corruption_test.leveldb.CorruptionTest.Key",
+          "name": "Key",
+          "path": "db/corruption_test.cc",
+          "start_line": 171,
+          "end_line": 176
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.fault_injection_test.leveldb.FaultInjectionTest.Key",
+          "name": "Key",
+          "path": "db/fault_injection_test.cc",
+          "start_line": 440,
+          "end_line": 445
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 35,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.SeekToFirst",
+          "name": "SeekToFirst",
+          "path": "table/merger.cc",
+          "start_line": 31,
+          "end_line": 37
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.SeekToLast",
+          "name": "SeekToLast",
+          "path": "table/merger.cc",
+          "start_line": 39,
+          "end_line": 45
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 35,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.testutil.h.leveldb.test.ErrorEnv.NewWritableFile",
+          "name": "NewWritableFile",
+          "path": "util/testutil.h",
+          "start_line": 58,
+          "end_line": 66
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.testutil.h.leveldb.test.ErrorEnv.NewAppendableFile",
+          "name": "NewAppendableFile",
+          "path": "util/testutil.h",
+          "start_line": 68,
+          "end_line": 76
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 34,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.port.port_stdcxx.leveldb.port.Snappy_GetUncompressedLength",
+          "name": "Snappy_GetUncompressedLength",
+          "path": "port/port_stdcxx.h",
+          "start_line": 104,
+          "end_line": 115
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.port.port_stdcxx.leveldb.port.Snappy_Uncompress",
+          "name": "Snappy_Uncompress",
+          "path": "port/port_stdcxx.h",
+          "start_line": 117,
+          "end_line": 127
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 34,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.Limiter.Acquire",
+          "name": "Acquire",
+          "path": "util/env_posix.cc",
+          "start_line": 82,
+          "end_line": 90
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.Limiter.Acquire",
+          "name": "Acquire",
+          "path": "util/env_windows.cc",
+          "start_line": 124,
+          "end_line": 132
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 32,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.SeekToFirst",
+          "name": "SeekToFirst",
+          "path": "table/two_level_iterator.cc",
+          "start_line": 89,
+          "end_line": 94
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.SeekToLast",
+          "name": "SeekToLast",
+          "path": "table/two_level_iterator.cc",
+          "start_line": 96,
+          "end_line": 101
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 31,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.c.leveldb_iter_key",
+          "name": "leveldb_iter_key",
+          "path": "db/c.cc",
+          "start_line": 308,
+          "end_line": 312
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.c.leveldb_iter_value",
+          "name": "leveldb_iter_value",
+          "path": "db/c.cc",
+          "start_line": 314,
+          "end_line": 318
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 31,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_sqlite3.leveldb.Benchmark.PrintWarnings",
+          "name": "PrintWarnings",
+          "path": "benchmarks/db_bench_sqlite3.cc",
+          "start_line": 195,
+          "end_line": 206
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_tree_db.leveldb.Benchmark.PrintWarnings",
+          "name": "PrintWarnings",
+          "path": "benchmarks/db_bench_tree_db.cc",
+          "start_line": 170,
+          "end_line": 181
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 30,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.c.leveldb_comparator_t.Compare",
+          "name": "Compare",
+          "path": "db/c.cc",
+          "start_line": 92,
+          "end_line": 94
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.c.leveldb_filterpolicy_t.KeyMayMatch",
+          "name": "KeyMayMatch",
+          "path": "db/c.cc",
+          "start_line": 127,
+          "end_line": 130
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 29,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.util.coding.leveldb.PutVarint32",
+          "name": "PutVarint32",
+          "path": "util/coding.cc",
+          "start_line": 49,
+          "end_line": 53
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.util.coding.leveldb.PutVarint64",
+          "name": "PutVarint64",
+          "path": "util/coding.cc",
+          "start_line": 66,
+          "end_line": 70
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 29,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.autocompact_test.leveldb.AutoCompactTest.Size",
+          "name": "Size",
+          "path": "db/autocompact_test.cc",
+          "start_line": 37,
+          "end_line": 42
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.db_test.leveldb.DBTest.Size",
+          "name": "Size",
+          "path": "db/db_test.cc",
+          "start_line": 445,
+          "end_line": 450
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 29,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.RemoveFile",
+          "name": "RemoveFile",
+          "path": "util/env_windows.cc",
+          "start_line": 504,
+          "end_line": 509
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.RemoveDir",
+          "name": "RemoveDir",
+          "path": "util/env_windows.cc",
+          "start_line": 518,
+          "end_line": 523
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 28,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.version_set_test.leveldb.FindFileTest.~FindFileTest",
+          "name": "~FindFileTest",
+          "path": "db/version_set_test.cc",
+          "start_line": 17,
+          "end_line": 21
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.arena.h.leveldb.Arena.~Arena",
+          "name": "~Arena",
+          "path": "util/arena.cc",
+          "start_line": 14,
+          "end_line": 18
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 28,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.PosixEnv.RemoveFile",
+          "name": "RemoveFile",
+          "path": "util/env_posix.cc",
+          "start_line": 590,
+          "end_line": 595
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.PosixEnv.RemoveDir",
+          "name": "RemoveDir",
+          "path": "util/env_posix.cc",
+          "start_line": 604,
+          "end_line": 609
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 27,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.benchmarks.db_bench_tree_db.DBSynchronize",
+          "name": "DBSynchronize",
+          "path": "benchmarks/db_bench_tree_db.cc",
+          "start_line": 75,
+          "end_line": 80
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_tree_db.leveldb.Benchmark.~Benchmark",
+          "name": "~Benchmark",
+          "path": "benchmarks/db_bench_tree_db.cc",
+          "start_line": 318,
+          "end_line": 322
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 27,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.PosixEnv.~PosixEnv",
+          "name": "~PosixEnv",
+          "path": "util/env_posix.cc",
+          "start_line": 493,
+          "end_line": 498
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.~WindowsEnv",
+          "name": "~WindowsEnv",
+          "path": "util/env_windows.cc",
+          "start_line": 366,
+          "end_line": 371
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 26,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.util.coding.leveldb.PutFixed32",
+          "name": "PutFixed32",
+          "path": "util/coding.cc",
+          "start_line": 9,
+          "end_line": 13
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.util.coding.leveldb.PutFixed64",
+          "name": "PutFixed64",
+          "path": "util/coding.cc",
+          "start_line": 15,
+          "end_line": 19
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 25,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.db_test.leveldb.ModelDB.GetApproximateSizes",
+          "name": "GetApproximateSizes",
+          "path": "db/db_test.cc",
+          "start_line": 2103,
+          "end_line": 2107
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.version_set.h.leveldb.Compaction.Compaction",
+          "name": "Compaction",
+          "path": "db/version_set.cc",
+          "start_line": 1480,
+          "end_line": 1490
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 24,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.fault_injection_test.leveldb.FaultInjectionTestEnv.IsFileCreatedSinceLastDirSync",
+          "name": "IsFileCreatedSinceLastDirSync",
+          "path": "db/fault_injection_test.cc",
+          "start_line": 288,
+          "end_line": 293
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.helpers.memenv.memenv.leveldb.InMemoryEnv.FileExists",
+          "name": "FileExists",
+          "path": "helpers/memenv/memenv.cc",
+          "start_line": 289,
+          "end_line": 292
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 22,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.log_test.leveldb.log.LogTest.StringDest.Append",
+          "name": "Append",
+          "path": "db/log_test.cc",
+          "start_line": 167,
+          "end_line": 170
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.table_test.leveldb.StringSink.Append",
+          "name": "Append",
+          "path": "table/table_test.cc",
+          "start_line": 100,
+          "end_line": 103
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 22,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.SingletonEnv.AssertEnvNotInitialized",
+          "name": "AssertEnvNotInitialized",
+          "path": "util/env_posix.cc",
+          "start_line": 855,
+          "end_line": 859
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.SingletonEnv.AssertEnvNotInitialized",
+          "name": "AssertEnvNotInitialized",
+          "path": "util/env_windows.cc",
+          "start_line": 763,
+          "end_line": 767
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 21,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.benchmarks.db_bench_sqlite3.StepErrorCheck",
+          "name": "StepErrorCheck",
+          "path": "benchmarks/db_bench_sqlite3.cc",
+          "start_line": 93,
+          "end_line": 98
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.benchmarks.db_bench_sqlite3.ErrorCheck",
+          "name": "ErrorCheck",
+          "path": "benchmarks/db_bench_sqlite3.cc",
+          "start_line": 100,
+          "end_line": 105
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 20,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.skiplist.leveldb.SkipList<Key, Comparator>::Node.Next",
+          "name": "Next",
+          "path": "db/skiplist.h",
+          "start_line": 153,
+          "end_line": 158
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.skiplist.leveldb.SkipList<Key, Comparator>::Node.NoBarrier_Next",
+          "name": "NoBarrier_Next",
+          "path": "db/skiplist.h",
+          "start_line": 167,
+          "end_line": 170
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 20,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.skiplist.leveldb.SkipList<Key, Comparator>::Node.SetNext",
+          "name": "SetNext",
+          "path": "db/skiplist.h",
+          "start_line": 159,
+          "end_line": 164
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.skiplist.leveldb.SkipList<Key, Comparator>::Node.NoBarrier_SetNext",
+          "name": "NoBarrier_SetNext",
+          "path": "db/skiplist.h",
+          "start_line": 171,
+          "end_line": 174
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 19,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.PosixWritableFile.FlushBuffer",
+          "name": "FlushBuffer",
+          "path": "util/env_posix.cc",
+          "start_line": 326,
+          "end_line": 330
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.WindowsWritableFile.FlushBuffer",
+          "name": "FlushBuffer",
+          "path": "util/env_windows.cc",
+          "start_line": 309,
+          "end_line": 313
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 18,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.corruption_test.leveldb.CorruptionTest.Value",
+          "name": "Value",
+          "path": "db/corruption_test.cc",
+          "start_line": 179,
+          "end_line": 182
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.fault_injection_test.leveldb.FaultInjectionTest.Value",
+          "name": "Value",
+          "path": "db/fault_injection_test.cc",
+          "start_line": 448,
+          "end_line": 451
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 18,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.Next",
+          "name": "Next",
+          "path": "table/two_level_iterator.cc",
+          "start_line": 103,
+          "end_line": 107
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.Prev",
+          "name": "Prev",
+          "path": "table/two_level_iterator.cc",
+          "start_line": 109,
+          "end_line": 113
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 17,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.util.bloom.leveldb.BloomHash",
+          "name": "BloomHash",
+          "path": "util/bloom.cc",
+          "start_line": 13,
+          "end_line": 15
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.cache.leveldb.ShardedLRUCache.HashSlice",
+          "name": "HashSlice",
+          "path": "util/cache.cc",
+          "start_line": 345,
+          "end_line": 347
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_posix.leveldb.PosixEnv.StartThread",
+          "name": "StartThread",
+          "path": "util/env_posix.cc",
+          "start_line": 666,
+          "end_line": 670
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.StartThread",
+          "name": "StartThread",
+          "path": "util/env_windows.cc",
+          "start_line": 598,
+          "end_line": 602
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 15,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.db_test.leveldb.DBTest.dbfull",
+          "name": "dbfull",
+          "path": "db/db_test.cc",
+          "start_line": 286,
+          "end_line": 286
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.recovery_test.leveldb.RecoveryTest.dbfull",
+          "name": "dbfull",
+          "path": "db/recovery_test.cc",
+          "start_line": 31,
+          "end_line": 31
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 15,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.snapshot.leveldb.SnapshotList.oldest",
+          "name": "oldest",
+          "path": "db/snapshot.h",
+          "start_line": 47,
+          "end_line": 50
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.snapshot.leveldb.SnapshotList.newest",
+          "name": "newest",
+          "path": "db/snapshot.h",
+          "start_line": 51,
+          "end_line": 54
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 15,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.helpers.memenv.memenv.leveldb.InMemoryEnv.LockFile",
+          "name": "LockFile",
+          "path": "helpers/memenv/memenv.cc",
+          "start_line": 358,
+          "end_line": 361
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.helpers.memenv.memenv.leveldb.InMemoryEnv.NewLogger",
+          "name": "NewLogger",
+          "path": "helpers/memenv/memenv.cc",
+          "start_line": 373,
+          "end_line": 376
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.867,
+      "max_similarity": 0.867,
+      "node_count": 217,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.PrintEnvironment",
+          "name": "PrintEnvironment",
+          "path": "benchmarks/db_bench.cc",
+          "start_line": 425,
+          "end_line": 459
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_sqlite3.leveldb.Benchmark.PrintEnvironment",
+          "name": "PrintEnvironment",
+          "path": "benchmarks/db_bench_sqlite3.cc",
+          "start_line": 208,
+          "end_line": 241
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_tree_db.leveldb.Benchmark.PrintEnvironment",
+          "name": "PrintEnvironment",
+          "path": "benchmarks/db_bench_tree_db.cc",
+          "start_line": 183,
+          "end_line": 219
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "leveldb.benchmarks.db_bench.leveldb.Benchmark.PrintEnvironment",
+          "second": "leveldb.benchmarks.db_bench_sqlite3.leveldb.Benchmark.PrintEnvironment",
+          "similarity": 0.867
+        },
+        {
+          "first": "leveldb.benchmarks.db_bench.leveldb.Benchmark.PrintEnvironment",
+          "second": "leveldb.benchmarks.db_bench_tree_db.leveldb.Benchmark.PrintEnvironment",
+          "similarity": 0.867
+        },
+        {
+          "first": "leveldb.benchmarks.db_bench_sqlite3.leveldb.Benchmark.PrintEnvironment",
+          "second": "leveldb.benchmarks.db_bench_tree_db.leveldb.Benchmark.PrintEnvironment",
+          "similarity": 0.867
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 49,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.c.leveldb_comparator_create",
+          "name": "leveldb_comparator_create",
+          "path": "db/c.cc",
+          "start_line": 433,
+          "end_line": 444
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.db.c.leveldb_filterpolicy_create",
+          "name": "leveldb_filterpolicy_create",
+          "path": "db/c.cc",
+          "start_line": 448,
+          "end_line": 463
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.db_test.leveldb.ModelDB.GetSnapshot",
+          "name": "GetSnapshot",
+          "path": "db/db_test.cc",
+          "start_line": 2077,
+          "end_line": 2081
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "leveldb.db.c.leveldb_comparator_create",
+          "second": "leveldb.db.c.leveldb_filterpolicy_create",
+          "similarity": 1.0
+        },
+        {
+          "first": "leveldb.db.c.leveldb_comparator_create",
+          "second": "leveldb.db.db_test.leveldb.ModelDB.GetSnapshot",
+          "similarity": 1.0
+        },
+        {
+          "first": "leveldb.db.c.leveldb_filterpolicy_create",
+          "second": "leveldb.db.db_test.leveldb.ModelDB.GetSnapshot",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 21,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.autocompact_test.leveldb.AutoCompactTest.~AutoCompactTest",
+          "name": "~AutoCompactTest",
+          "path": "db/autocompact_test.cc",
+          "start_line": 25,
+          "end_line": 29
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.db_test.leveldb.DBTest.~DBTest",
+          "name": "~DBTest",
+          "path": "db/db_test.cc",
+          "start_line": 247,
+          "end_line": 252
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.fault_injection_test.leveldb.FaultInjectionTest.~FaultInjectionTest",
+          "name": "~FaultInjectionTest",
+          "path": "db/fault_injection_test.cc",
+          "start_line": 388,
+          "end_line": 393
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "leveldb.db.autocompact_test.leveldb.AutoCompactTest.~AutoCompactTest",
+          "second": "leveldb.db.db_test.leveldb.DBTest.~DBTest",
+          "similarity": 1.0
+        },
+        {
+          "first": "leveldb.db.autocompact_test.leveldb.AutoCompactTest.~AutoCompactTest",
+          "second": "leveldb.db.fault_injection_test.leveldb.FaultInjectionTest.~FaultInjectionTest",
+          "similarity": 1.0
+        },
+        {
+          "first": "leveldb.db.db_test.leveldb.DBTest.~DBTest",
+          "second": "leveldb.db.fault_injection_test.leveldb.FaultInjectionTest.~FaultInjectionTest",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 179,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.util.coding.h.leveldb.EncodeFixed32",
+          "name": "EncodeFixed32",
+          "path": "util/coding.h",
+          "start_line": 54,
+          "end_line": 62
+        },
+        {
+          "label": "Function",
+          "qualified_name": "leveldb.util.coding.h.leveldb.EncodeFixed64",
+          "name": "EncodeFixed64",
+          "path": "util/coding.h",
+          "start_line": 64,
+          "end_line": 76
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "leveldb.util.coding.h.leveldb.EncodeFixed32",
+          "second": "leveldb.util.coding.h.leveldb.EncodeFixed64",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.8,
+      "max_similarity": 0.8,
+      "node_count": 110,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_sqlite3.leveldb.Benchmark.Benchmark",
+          "name": "Benchmark",
+          "path": "benchmarks/db_bench_sqlite3.cc",
+          "start_line": 318,
+          "end_line": 339
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.benchmarks.db_bench_tree_db.leveldb.Benchmark.Benchmark",
+          "name": "Benchmark",
+          "path": "benchmarks/db_bench_tree_db.cc",
+          "start_line": 296,
+          "end_line": 316
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "leveldb.benchmarks.db_bench_sqlite3.leveldb.Benchmark.Benchmark",
+          "second": "leveldb.benchmarks.db_bench_tree_db.leveldb.Benchmark.Benchmark",
+          "similarity": 0.8
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 45,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.include.leveldb.write_batch.leveldb.WriteBatch.Put",
+          "name": "Put",
+          "path": "db/write_batch.cc",
+          "start_line": 98,
+          "end_line": 103
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.include.leveldb.write_batch.leveldb.WriteBatch.Delete",
+          "name": "Delete",
+          "path": "db/write_batch.cc",
+          "start_line": 105,
+          "end_line": 109
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "leveldb.include.leveldb.write_batch.leveldb.WriteBatch.Put",
+          "second": "leveldb.include.leveldb.write_batch.leveldb.WriteBatch.Delete",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 40,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.dumpfile.leveldb.WriteBatchItemPrinter.Put",
+          "name": "Put",
+          "path": "db/dumpfile.cc",
+          "start_line": 77,
+          "end_line": 84
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.dumpfile.leveldb.WriteBatchItemPrinter.Delete",
+          "name": "Delete",
+          "path": "db/dumpfile.cc",
+          "start_line": 85,
+          "end_line": 90
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "leveldb.db.dumpfile.leveldb.WriteBatchItemPrinter.Put",
+          "second": "leveldb.db.dumpfile.leveldb.WriteBatchItemPrinter.Delete",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 37,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.snapshot.leveldb.SnapshotList.SnapshotList",
+          "name": "SnapshotList",
+          "path": "db/snapshot.h",
+          "start_line": 41,
+          "end_line": 44
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.util.cache.leveldb.LRUCache.LRUCache",
+          "name": "LRUCache",
+          "path": "util/cache.cc",
+          "start_line": 198,
+          "end_line": 204
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "leveldb.db.snapshot.leveldb.SnapshotList.SnapshotList",
+          "second": "leveldb.util.cache.leveldb.LRUCache.LRUCache",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 24,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.db_iter.leveldb.DBIter.SeekToLast",
+          "name": "SeekToLast",
+          "path": "db/db_iter.cc",
+          "start_line": 303,
+          "end_line": 308
+        },
+        {
+          "label": "Method",
+          "qualified_name": "leveldb.db.skiplist_test.leveldb.TestState.Change",
+          "name": "Change",
+          "path": "db/skiplist_test.cc",
+          "start_line": 317,
+          "end_line": 322
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "leveldb.db.db_iter.leveldb.DBIter.SeekToLast",
+          "second": "leveldb.db.skiplist_test.leveldb.TestState.Change",
+          "similarity": 1.0
+        }
+      ]
+    }
+  ],
+  "skipped_symbols": 196,
+  "truncated": false
+}
+--- stderr

@@ -1,0 +1,35 @@
+> tools/call implementors {"qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffect"}
+isError: false
+--- text
+[
+  {
+    "label": "Class",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffect.DisplayToErr",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffect.DisplayToOut",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffect.ReportError",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffect.ReportWarning",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffect.Terminate",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "relationship": "INHERITS"
+  }
+]

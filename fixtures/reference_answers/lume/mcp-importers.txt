@@ -1,0 +1,17 @@
+> tools/call importers {"module_qualified_name": "lume.lume"}
+isError: false
+--- text
+[
+  {
+    "module": "lume.test.test",
+    "path": "test/test.lua",
+    "line": 5,
+    "col": 13,
+    "col_char": 13,
+    "end_line": 5,
+    "end_col": 27,
+    "end_col_char": 27,
+    "alias": "lume",
+    "imported_name": "lume"
+  }
+]

@@ -1,0 +1,18 @@
+$ cgr -q graph definition 'mediatr.src.MediatR.Mediator.Mediator.Send(TRequest, CancellationToken)' --project mediatr --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "decorators": [],
+  "docstring": null,
+  "end_line": 75,
+  "found": true,
+  "label": "Method",
+  "name": "Send",
+  "name_line": 59,
+  "path": "src/MediatR/Mediator.cs",
+  "qualified_name": "mediatr.src.MediatR.Mediator.Mediator.Send(TRequest, CancellationToken)",
+  "source": "public Task Send<TRequest>(TRequest request, CancellationToken cancellationToken = default)\r\n        where TRequest : IRequest\r\n    {\r\n        if (request == null)\r\n        {\r\n            throw new ArgumentNullException(nameof(request));\r\n        }\r\n\r\n        var handler = (RequestHandlerWrapper)_requestHandlers.GetOrAdd(request.GetType(), static requestType =>\r\n        {\r\n            var wrapperType = typeof(RequestHandlerWrapperImpl<>).MakeGenericType(requestType);\r\n            var wrapper = Activator.CreateInstance(wrapperType) ?? throw new InvalidOperationException($\"Could not create wrapper type for {requestType}\");\r\n            return (RequestHandlerBase)wrapper;\r\n        });\r\n\r\n        return handler.Handle(request, _serviceProvider, cancellationToken);\r\n    }",
+  "start_col": 4,
+  "start_line": 59
+}
+--- stderr

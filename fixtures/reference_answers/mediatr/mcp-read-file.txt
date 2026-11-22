@@ -1,0 +1,34 @@
+> tools/call read_file {"file_path": "src/MediatR/Mediator.cs", "limit": 30, "offset": 0}
+isError: false
+--- text
+# Lines 1-30 of 200
+using MediatR.NotificationPublishers;
+
+namespace MediatR;
+
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Wrappers;
+
+/// <summary>
+/// Default mediator implementation relying on single- and multi instance delegates for resolving handlers.
+/// </summary>
+public class Mediator : IMediator
+{
+    private readonly IServiceProvider _serviceProvider;
+    private readonly INotificationPublisher _publisher;
+    private static readonly ConcurrentDictionary<Type, RequestHandlerBase> _requestHandlers = new();
+    private static readonly ConcurrentDictionary<Type, NotificationHandlerWrapper> _notificationHandlers = new();
+    private static readonly ConcurrentDictionary<Type, StreamRequestHandlerBase> _streamRequestHandlers = new();
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="Mediator"/> class.
+    /// </summary>
+    /// <param name="serviceProvider">Service provider. Can be a scoped or root provider</param>
+    public Mediator(IServiceProvider serviceProvider) 
+        : this(serviceProvider, new ForeachAwaitPublisher()) { }
+

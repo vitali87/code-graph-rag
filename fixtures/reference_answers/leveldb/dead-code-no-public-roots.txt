@@ -1,0 +1,2334 @@
+$ cgr -q dead-code --project leveldb --no-public-roots --format json
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "name": "Benchmark",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.Benchmark",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 462,
+    "end_line": 485
+  },
+  {
+    "label": "Method",
+    "name": "Compact",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.Compact",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 986,
+    "end_line": 986
+  },
+  {
+    "label": "Method",
+    "name": "Crc32c",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.Crc32c",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 693,
+    "end_line": 710
+  },
+  {
+    "label": "Method",
+    "name": "DeleteRandom",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.DeleteRandom",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 953,
+    "end_line": 953
+  },
+  {
+    "label": "Method",
+    "name": "DeleteSeq",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.DeleteSeq",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 951,
+    "end_line": 951
+  },
+  {
+    "label": "Method",
+    "name": "DoDelete",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.DoDelete",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 930,
+    "end_line": 949
+  },
+  {
+    "label": "Method",
+    "name": "DoWrite",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.DoWrite",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 793,
+    "end_line": 821
+  },
+  {
+    "label": "Method",
+    "name": "OpenBench",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.OpenBench",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 781,
+    "end_line": 787
+  },
+  {
+    "label": "Method",
+    "name": "ReadHot",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.ReadHot",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 880,
+    "end_line": 891
+  },
+  {
+    "label": "Method",
+    "name": "ReadMissing",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.ReadMissing",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 867,
+    "end_line": 878
+  },
+  {
+    "label": "Method",
+    "name": "ReadRandom",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.ReadRandom",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 849,
+    "end_line": 865
+  },
+  {
+    "label": "Method",
+    "name": "ReadReverse",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.ReadReverse",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 836,
+    "end_line": 847
+  },
+  {
+    "label": "Method",
+    "name": "ReadSequential",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.ReadSequential",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 823,
+    "end_line": 834
+  },
+  {
+    "label": "Method",
+    "name": "ReadWhileWriting",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.ReadWhileWriting",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 955,
+    "end_line": 984
+  },
+  {
+    "label": "Method",
+    "name": "SeekOrdered",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.SeekOrdered",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 911,
+    "end_line": 928
+  },
+  {
+    "label": "Method",
+    "name": "SeekRandom",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.SeekRandom",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 893,
+    "end_line": 909
+  },
+  {
+    "label": "Method",
+    "name": "SnappyCompress",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.SnappyCompress",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 712,
+    "end_line": 735
+  },
+  {
+    "label": "Method",
+    "name": "SnappyUncompress",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.SnappyUncompress",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 737,
+    "end_line": 757
+  },
+  {
+    "label": "Method",
+    "name": "WriteRandom",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.WriteRandom",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 791,
+    "end_line": 791
+  },
+  {
+    "label": "Method",
+    "name": "WriteSeq",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.WriteSeq",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 789,
+    "end_line": 789
+  },
+  {
+    "label": "Method",
+    "name": "~Benchmark",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Benchmark.~Benchmark",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 487,
+    "end_line": 491
+  },
+  {
+    "label": "Method",
+    "name": "Compare",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.CountComparator.Compare",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 133,
+    "end_line": 136
+  },
+  {
+    "label": "Method",
+    "name": "CountComparator",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.CountComparator.CountComparator",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 131,
+    "end_line": 131
+  },
+  {
+    "label": "Method",
+    "name": "FindShortSuccessor",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.CountComparator.FindShortSuccessor",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 143,
+    "end_line": 145
+  },
+  {
+    "label": "Method",
+    "name": "FindShortestSeparator",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.CountComparator.FindShortestSeparator",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 138,
+    "end_line": 141
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.CountComparator.Name",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 137,
+    "end_line": 137
+  },
+  {
+    "label": "Method",
+    "name": "~CountComparator",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.CountComparator.~CountComparator",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 132,
+    "end_line": 132
+  },
+  {
+    "label": "Method",
+    "name": "KeyBuffer",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.KeyBuffer.KeyBuffer",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 190,
+    "end_line": 193
+  },
+  {
+    "label": "Method",
+    "name": "KeyBuffer",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.KeyBuffer.KeyBuffer@195",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 195,
+    "end_line": 195
+  },
+  {
+    "label": "Method",
+    "name": "Set",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.KeyBuffer.Set",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 197,
+    "end_line": 200
+  },
+  {
+    "label": "Method",
+    "name": "slice",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.KeyBuffer.slice",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 202,
+    "end_line": 202
+  },
+  {
+    "label": "Method",
+    "name": "Generate",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.RandomGenerator.Generate",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 178,
+    "end_line": 185
+  },
+  {
+    "label": "Method",
+    "name": "RandomGenerator",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.RandomGenerator.RandomGenerator",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 163,
+    "end_line": 176
+  },
+  {
+    "label": "Method",
+    "name": "AddBytes",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Stats.AddBytes",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 307,
+    "end_line": 307
+  },
+  {
+    "label": "Method",
+    "name": "AddMessage",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Stats.AddMessage",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 272,
+    "end_line": 272
+  },
+  {
+    "label": "Method",
+    "name": "FinishedSingleOp",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Stats.FinishedSingleOp",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 274,
+    "end_line": 305
+  },
+  {
+    "label": "Method",
+    "name": "Stats",
+    "qualified_name": "leveldb.benchmarks.db_bench.leveldb.Stats.Stats",
+    "path": "benchmarks/db_bench.cc",
+    "start_line": 243,
+    "end_line": 243
+  },
+  {
+    "label": "Method",
+    "name": "Benchmark",
+    "qualified_name": "leveldb.benchmarks.db_bench_sqlite3.leveldb.Benchmark.Benchmark",
+    "path": "benchmarks/db_bench_sqlite3.cc",
+    "start_line": 318,
+    "end_line": 339
+  },
+  {
+    "label": "Method",
+    "name": "~Benchmark",
+    "qualified_name": "leveldb.benchmarks.db_bench_sqlite3.leveldb.Benchmark.~Benchmark",
+    "path": "benchmarks/db_bench_sqlite3.cc",
+    "start_line": 341,
+    "end_line": 344
+  },
+  {
+    "label": "Method",
+    "name": "RandomGenerator",
+    "qualified_name": "leveldb.benchmarks.db_bench_sqlite3.leveldb.RandomGenerator.RandomGenerator",
+    "path": "benchmarks/db_bench_sqlite3.cc",
+    "start_line": 125,
+    "end_line": 138
+  },
+  {
+    "label": "Method",
+    "name": "Benchmark",
+    "qualified_name": "leveldb.benchmarks.db_bench_tree_db.leveldb.Benchmark.Benchmark",
+    "path": "benchmarks/db_bench_tree_db.cc",
+    "start_line": 296,
+    "end_line": 316
+  },
+  {
+    "label": "Method",
+    "name": "~Benchmark",
+    "qualified_name": "leveldb.benchmarks.db_bench_tree_db.leveldb.Benchmark.~Benchmark",
+    "path": "benchmarks/db_bench_tree_db.cc",
+    "start_line": 318,
+    "end_line": 322
+  },
+  {
+    "label": "Method",
+    "name": "RandomGenerator",
+    "qualified_name": "leveldb.benchmarks.db_bench_tree_db.leveldb.RandomGenerator.RandomGenerator",
+    "path": "benchmarks/db_bench_tree_db.cc",
+    "start_line": 92,
+    "end_line": 105
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "leveldb.db.c.leveldb_filterpolicy_t.Name",
+    "path": "db/c.cc",
+    "start_line": 112,
+    "end_line": 112
+  },
+  {
+    "label": "Method",
+    "name": "Add",
+    "qualified_name": "leveldb.db.db_impl.h.leveldb.DBImpl.CompactionStats.Add",
+    "path": "db/db_impl.h",
+    "start_line": 93,
+    "end_line": 97
+  },
+  {
+    "label": "Method",
+    "name": "CompactionStats",
+    "qualified_name": "leveldb.db.db_impl.h.leveldb.DBImpl.CompactionStats.CompactionStats",
+    "path": "db/db_impl.h",
+    "start_line": 91,
+    "end_line": 91
+  },
+  {
+    "label": "Method",
+    "name": "GetSnapshot",
+    "qualified_name": "leveldb.db.db_impl.h.leveldb.DBImpl.GetSnapshot",
+    "path": "db/db_impl.cc",
+    "start_line": 1181,
+    "end_line": 1184
+  },
+  {
+    "label": "Method",
+    "name": "NewIterator",
+    "qualified_name": "leveldb.db.db_impl.h.leveldb.DBImpl.NewIterator",
+    "path": "db/db_impl.cc",
+    "start_line": 1162,
+    "end_line": 1172
+  },
+  {
+    "label": "Method",
+    "name": "ReleaseSnapshot",
+    "qualified_name": "leveldb.db.db_impl.h.leveldb.DBImpl.ReleaseSnapshot",
+    "path": "db/db_impl.cc",
+    "start_line": 1186,
+    "end_line": 1189
+  },
+  {
+    "label": "Method",
+    "name": "CompactionState",
+    "qualified_name": "leveldb.db.db_impl.leveldb.DBImpl::CompactionState.CompactionState",
+    "path": "db/db_impl.cc",
+    "start_line": 64,
+    "end_line": 69
+  },
+  {
+    "label": "Method",
+    "name": "DBIter",
+    "qualified_name": "leveldb.db.db_iter.leveldb.DBIter.DBIter",
+    "path": "db/db_iter.cc",
+    "start_line": 48,
+    "end_line": 57
+  },
+  {
+    "label": "Method",
+    "name": "DBIter",
+    "qualified_name": "leveldb.db.db_iter.leveldb.DBIter.DBIter@59",
+    "path": "db/db_iter.cc",
+    "start_line": 59,
+    "end_line": 59
+  },
+  {
+    "label": "Method",
+    "name": "key",
+    "qualified_name": "leveldb.db.db_iter.leveldb.DBIter.key",
+    "path": "db/db_iter.cc",
+    "start_line": 64,
+    "end_line": 67
+  },
+  {
+    "label": "Method",
+    "name": "~DBIter",
+    "qualified_name": "leveldb.db.db_iter.leveldb.DBIter.~DBIter",
+    "path": "db/db_iter.cc",
+    "start_line": 62,
+    "end_line": 62
+  },
+  {
+    "label": "Function",
+    "name": "DumpInternalIter",
+    "qualified_name": "leveldb.db.db_iter.leveldb.DumpInternalIter",
+    "path": "db/db_iter.cc",
+    "start_line": 20,
+    "end_line": 29
+  },
+  {
+    "label": "Function",
+    "name": "NewDBIterator",
+    "qualified_name": "leveldb.db.db_iter.leveldb.NewDBIterator",
+    "path": "db/db_iter.cc",
+    "start_line": 312,
+    "end_line": 316
+  },
+  {
+    "label": "Method",
+    "name": "InternalFilterPolicy",
+    "qualified_name": "leveldb.db.dbformat.h.leveldb.InternalFilterPolicy.InternalFilterPolicy",
+    "path": "db/dbformat.h",
+    "start_line": 125,
+    "end_line": 125
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "leveldb.db.dbformat.h.leveldb.InternalFilterPolicy.Name",
+    "path": "db/dbformat.cc",
+    "start_line": 99,
+    "end_line": 99
+  },
+  {
+    "label": "Method",
+    "name": "SetFrom",
+    "qualified_name": "leveldb.db.dbformat.h.leveldb.InternalKey.SetFrom",
+    "path": "db/dbformat.h",
+    "start_line": 156,
+    "end_line": 159
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "leveldb.db.dbformat.h.leveldb.InternalKeyComparator.Name",
+    "path": "db/dbformat.cc",
+    "start_line": 43,
+    "end_line": 45
+  },
+  {
+    "label": "Function",
+    "name": "InternalKeyEncodingLength",
+    "qualified_name": "leveldb.db.dbformat.h.leveldb.InternalKeyEncodingLength",
+    "path": "db/dbformat.h",
+    "start_line": 81,
+    "end_line": 83
+  },
+  {
+    "label": "Method",
+    "name": "Delete",
+    "qualified_name": "leveldb.db.dumpfile.leveldb.WriteBatchItemPrinter.Delete",
+    "path": "db/dumpfile.cc",
+    "start_line": 85,
+    "end_line": 90
+  },
+  {
+    "label": "Method",
+    "name": "Put",
+    "qualified_name": "leveldb.db.dumpfile.leveldb.WriteBatchItemPrinter.Put",
+    "path": "db/dumpfile.cc",
+    "start_line": 77,
+    "end_line": 84
+  },
+  {
+    "label": "Method",
+    "name": "~Reporter",
+    "qualified_name": "leveldb.db.log_reader.h.leveldb.log.Reader.Reporter.~Reporter",
+    "path": "db/log_reader.cc",
+    "start_line": 16,
+    "end_line": 16
+  },
+  {
+    "label": "Method",
+    "name": "KeyComparator",
+    "qualified_name": "leveldb.db.memtable.h.leveldb.MemTable.KeyComparator.KeyComparator",
+    "path": "db/memtable.h",
+    "start_line": 71,
+    "end_line": 71
+  },
+  {
+    "label": "Function",
+    "name": "EncodeKey",
+    "qualified_name": "leveldb.db.memtable.leveldb.EncodeKey",
+    "path": "db/memtable.cc",
+    "start_line": 39,
+    "end_line": 44
+  },
+  {
+    "label": "Method",
+    "name": "Next",
+    "qualified_name": "leveldb.db.memtable.leveldb.MemTableIterator.Next",
+    "path": "db/memtable.cc",
+    "start_line": 59,
+    "end_line": 59
+  },
+  {
+    "label": "Method",
+    "name": "Prev",
+    "qualified_name": "leveldb.db.memtable.leveldb.MemTableIterator.Prev",
+    "path": "db/memtable.cc",
+    "start_line": 60,
+    "end_line": 60
+  },
+  {
+    "label": "Method",
+    "name": "Seek",
+    "qualified_name": "leveldb.db.memtable.leveldb.MemTableIterator.Seek",
+    "path": "db/memtable.cc",
+    "start_line": 56,
+    "end_line": 56
+  },
+  {
+    "label": "Method",
+    "name": "SeekToFirst",
+    "qualified_name": "leveldb.db.memtable.leveldb.MemTableIterator.SeekToFirst",
+    "path": "db/memtable.cc",
+    "start_line": 57,
+    "end_line": 57
+  },
+  {
+    "label": "Method",
+    "name": "SeekToLast",
+    "qualified_name": "leveldb.db.memtable.leveldb.MemTableIterator.SeekToLast",
+    "path": "db/memtable.cc",
+    "start_line": 58,
+    "end_line": 58
+  },
+  {
+    "label": "Method",
+    "name": "Valid",
+    "qualified_name": "leveldb.db.memtable.leveldb.MemTableIterator.Valid",
+    "path": "db/memtable.cc",
+    "start_line": 55,
+    "end_line": 55
+  },
+  {
+    "label": "Method",
+    "name": "key",
+    "qualified_name": "leveldb.db.memtable.leveldb.MemTableIterator.key",
+    "path": "db/memtable.cc",
+    "start_line": 61,
+    "end_line": 61
+  },
+  {
+    "label": "Method",
+    "name": "status",
+    "qualified_name": "leveldb.db.memtable.leveldb.MemTableIterator.status",
+    "path": "db/memtable.cc",
+    "start_line": 67,
+    "end_line": 67
+  },
+  {
+    "label": "Method",
+    "name": "value",
+    "qualified_name": "leveldb.db.memtable.leveldb.MemTableIterator.value",
+    "path": "db/memtable.cc",
+    "start_line": 62,
+    "end_line": 65
+  },
+  {
+    "label": "Method",
+    "name": "Contains",
+    "qualified_name": "leveldb.db.skiplist.leveldb.SkipList.Contains",
+    "path": "db/skiplist.h",
+    "start_line": 371,
+    "end_line": 378
+  },
+  {
+    "label": "Method",
+    "name": "Node",
+    "qualified_name": "leveldb.db.skiplist.leveldb.SkipList<Key, Comparator>::Node.Node",
+    "path": "db/skiplist.h",
+    "start_line": 147,
+    "end_line": 147
+  },
+  {
+    "label": "Method",
+    "name": "SnapshotImpl",
+    "qualified_name": "leveldb.db.snapshot.leveldb.SnapshotImpl.SnapshotImpl",
+    "path": "db/snapshot.h",
+    "start_line": 19,
+    "end_line": 20
+  },
+  {
+    "label": "Method",
+    "name": "Delete",
+    "qualified_name": "leveldb.db.snapshot.leveldb.SnapshotList.Delete",
+    "path": "db/snapshot.h",
+    "start_line": 79,
+    "end_line": 86
+  },
+  {
+    "label": "Method",
+    "name": "New",
+    "qualified_name": "leveldb.db.snapshot.leveldb.SnapshotList.New",
+    "path": "db/snapshot.h",
+    "start_line": 57,
+    "end_line": 70
+  },
+  {
+    "label": "Method",
+    "name": "SnapshotList",
+    "qualified_name": "leveldb.db.snapshot.leveldb.SnapshotList.SnapshotList",
+    "path": "db/snapshot.h",
+    "start_line": 41,
+    "end_line": 44
+  },
+  {
+    "label": "Method",
+    "name": "newest",
+    "qualified_name": "leveldb.db.snapshot.leveldb.SnapshotList.newest",
+    "path": "db/snapshot.h",
+    "start_line": 51,
+    "end_line": 54
+  },
+  {
+    "label": "Method",
+    "name": "Get",
+    "qualified_name": "leveldb.db.table_cache.h.leveldb.TableCache.Get",
+    "path": "db/table_cache.cc",
+    "start_line": 100,
+    "end_line": 112
+  },
+  {
+    "label": "Function",
+    "name": "DeleteEntry",
+    "qualified_name": "leveldb.db.table_cache.leveldb.DeleteEntry",
+    "path": "db/table_cache.cc",
+    "start_line": 19,
+    "end_line": 24
+  },
+  {
+    "label": "Function",
+    "name": "UnrefEntry",
+    "qualified_name": "leveldb.db.table_cache.leveldb.UnrefEntry",
+    "path": "db/table_cache.cc",
+    "start_line": 26,
+    "end_line": 30
+  },
+  {
+    "label": "Method",
+    "name": "VersionEdit",
+    "qualified_name": "leveldb.db.version_edit.h.leveldb.VersionEdit.VersionEdit",
+    "path": "db/version_edit.h",
+    "start_line": 31,
+    "end_line": 31
+  },
+  {
+    "label": "Method",
+    "name": "~VersionEdit",
+    "qualified_name": "leveldb.db.version_edit.h.leveldb.VersionEdit.~VersionEdit",
+    "path": "db/version_edit.h",
+    "start_line": 32,
+    "end_line": 32
+  },
+  {
+    "label": "Method",
+    "name": "DebugString",
+    "qualified_name": "leveldb.db.version_set.h.leveldb.Version.DebugString",
+    "path": "db/version_set.cc",
+    "start_line": 540,
+    "end_line": 564
+  },
+  {
+    "label": "Method",
+    "name": "NumFiles",
+    "qualified_name": "leveldb.db.version_set.h.leveldb.Version.NumFiles",
+    "path": "db/version_set.h",
+    "start_line": 112,
+    "end_line": 112
+  },
+  {
+    "label": "Method",
+    "name": "RecordReadSample",
+    "qualified_name": "leveldb.db.version_set.h.leveldb.Version.RecordReadSample",
+    "path": "db/version_set.cc",
+    "start_line": 415,
+    "end_line": 451
+  },
+  {
+    "label": "Function",
+    "name": "GetFileIterator",
+    "qualified_name": "leveldb.db.version_set.leveldb.GetFileIterator",
+    "path": "db/version_set.cc",
+    "start_line": 210,
+    "end_line": 220
+  },
+  {
+    "label": "Method",
+    "name": "Match",
+    "qualified_name": "leveldb.db.version_set.leveldb.Version.RecordReadSample.State.Match",
+    "path": "db/version_set.cc",
+    "start_line": 425,
+    "end_line": 435
+  },
+  {
+    "label": "Method",
+    "name": "LevelFileNumIterator",
+    "qualified_name": "leveldb.db.version_set.leveldb.Version::LevelFileNumIterator.LevelFileNumIterator",
+    "path": "db/version_set.cc",
+    "start_line": 165,
+    "end_line": 168
+  },
+  {
+    "label": "Method",
+    "name": "Next",
+    "qualified_name": "leveldb.db.version_set.leveldb.Version::LevelFileNumIterator.Next",
+    "path": "db/version_set.cc",
+    "start_line": 177,
+    "end_line": 180
+  },
+  {
+    "label": "Method",
+    "name": "Prev",
+    "qualified_name": "leveldb.db.version_set.leveldb.Version::LevelFileNumIterator.Prev",
+    "path": "db/version_set.cc",
+    "start_line": 181,
+    "end_line": 188
+  },
+  {
+    "label": "Method",
+    "name": "Seek",
+    "qualified_name": "leveldb.db.version_set.leveldb.Version::LevelFileNumIterator.Seek",
+    "path": "db/version_set.cc",
+    "start_line": 170,
+    "end_line": 172
+  },
+  {
+    "label": "Method",
+    "name": "SeekToFirst",
+    "qualified_name": "leveldb.db.version_set.leveldb.Version::LevelFileNumIterator.SeekToFirst",
+    "path": "db/version_set.cc",
+    "start_line": 173,
+    "end_line": 173
+  },
+  {
+    "label": "Method",
+    "name": "SeekToLast",
+    "qualified_name": "leveldb.db.version_set.leveldb.Version::LevelFileNumIterator.SeekToLast",
+    "path": "db/version_set.cc",
+    "start_line": 174,
+    "end_line": 176
+  },
+  {
+    "label": "Method",
+    "name": "Valid",
+    "qualified_name": "leveldb.db.version_set.leveldb.Version::LevelFileNumIterator.Valid",
+    "path": "db/version_set.cc",
+    "start_line": 169,
+    "end_line": 169
+  },
+  {
+    "label": "Method",
+    "name": "key",
+    "qualified_name": "leveldb.db.version_set.leveldb.Version::LevelFileNumIterator.key",
+    "path": "db/version_set.cc",
+    "start_line": 189,
+    "end_line": 192
+  },
+  {
+    "label": "Method",
+    "name": "status",
+    "qualified_name": "leveldb.db.version_set.leveldb.Version::LevelFileNumIterator.status",
+    "path": "db/version_set.cc",
+    "start_line": 199,
+    "end_line": 199
+  },
+  {
+    "label": "Method",
+    "name": "value",
+    "qualified_name": "leveldb.db.version_set.leveldb.Version::LevelFileNumIterator.value",
+    "path": "db/version_set.cc",
+    "start_line": 193,
+    "end_line": 198
+  },
+  {
+    "label": "Method",
+    "name": "Builder",
+    "qualified_name": "leveldb.db.version_set.leveldb.VersionSet::Builder.Builder",
+    "path": "db/version_set.cc",
+    "start_line": 598,
+    "end_line": 605
+  },
+  {
+    "label": "Method",
+    "name": "~Builder",
+    "qualified_name": "leveldb.db.version_set.leveldb.VersionSet::Builder.~Builder",
+    "path": "db/version_set.cc",
+    "start_line": 607,
+    "end_line": 626
+  },
+  {
+    "label": "Method",
+    "name": "~Handler",
+    "qualified_name": "leveldb.db.write_batch.WriteBatch.~Handler",
+    "path": "db/write_batch.cc",
+    "start_line": 33,
+    "end_line": 33
+  },
+  {
+    "label": "Method",
+    "name": "Delete",
+    "qualified_name": "leveldb.db.write_batch.leveldb.MemTableInserter.Delete",
+    "path": "db/write_batch.cc",
+    "start_line": 125,
+    "end_line": 128
+  },
+  {
+    "label": "Method",
+    "name": "Put",
+    "qualified_name": "leveldb.db.write_batch.leveldb.MemTableInserter.Put",
+    "path": "db/write_batch.cc",
+    "start_line": 121,
+    "end_line": 124
+  },
+  {
+    "label": "Method",
+    "name": "NewLogger",
+    "qualified_name": "leveldb.helpers.memenv.memenv.leveldb.InMemoryEnv.NewLogger",
+    "path": "helpers/memenv/memenv.cc",
+    "start_line": 373,
+    "end_line": 376
+  },
+  {
+    "label": "Method",
+    "name": "LRU_Append",
+    "qualified_name": "leveldb.include.leveldb.cache.leveldb.Cache.LRU_Append",
+    "path": "include/leveldb/cache.h",
+    "start_line": 102,
+    "end_line": 102
+  },
+  {
+    "label": "Method",
+    "name": "LRU_Remove",
+    "qualified_name": "leveldb.include.leveldb.cache.leveldb.Cache.LRU_Remove",
+    "path": "include/leveldb/cache.h",
+    "start_line": 101,
+    "end_line": 101
+  },
+  {
+    "label": "Method",
+    "name": "NewId",
+    "qualified_name": "leveldb.include.leveldb.cache.leveldb.Cache.NewId",
+    "path": "include/leveldb/cache.h",
+    "start_line": 87,
+    "end_line": 87
+  },
+  {
+    "label": "Method",
+    "name": "Prune",
+    "qualified_name": "leveldb.include.leveldb.cache.leveldb.Cache.Prune",
+    "path": "include/leveldb/cache.h",
+    "start_line": 94,
+    "end_line": 94
+  },
+  {
+    "label": "Method",
+    "name": "TotalCharge",
+    "qualified_name": "leveldb.include.leveldb.cache.leveldb.Cache.TotalCharge",
+    "path": "include/leveldb/cache.h",
+    "start_line": 98,
+    "end_line": 98
+  },
+  {
+    "label": "Method",
+    "name": "Unref",
+    "qualified_name": "leveldb.include.leveldb.cache.leveldb.Cache.Unref",
+    "path": "include/leveldb/cache.h",
+    "start_line": 103,
+    "end_line": 103
+  },
+  {
+    "label": "Method",
+    "name": "Compare",
+    "qualified_name": "leveldb.include.leveldb.comparator.leveldb.Comparator.Compare",
+    "path": "include/leveldb/comparator.h",
+    "start_line": 28,
+    "end_line": 28
+  },
+  {
+    "label": "Method",
+    "name": "FindShortSuccessor",
+    "qualified_name": "leveldb.include.leveldb.comparator.leveldb.Comparator.FindShortSuccessor",
+    "path": "include/leveldb/comparator.h",
+    "start_line": 54,
+    "end_line": 54
+  },
+  {
+    "label": "Method",
+    "name": "FindShortestSeparator",
+    "qualified_name": "leveldb.include.leveldb.comparator.leveldb.Comparator.FindShortestSeparator",
+    "path": "include/leveldb/comparator.h",
+    "start_line": 48,
+    "end_line": 49
+  },
+  {
+    "label": "Method",
+    "name": "~Comparator",
+    "qualified_name": "leveldb.include.leveldb.comparator.leveldb.Comparator.~Comparator",
+    "path": "util/comparator.cc",
+    "start_line": 18,
+    "end_line": 18
+  },
+  {
+    "label": "Method",
+    "name": "ReleaseSnapshot",
+    "qualified_name": "leveldb.include.leveldb.db.leveldb.DB.ReleaseSnapshot",
+    "path": "include/leveldb/db.h",
+    "start_line": 106,
+    "end_line": 106
+  },
+  {
+    "label": "Method",
+    "name": "NewLogger",
+    "qualified_name": "leveldb.include.leveldb.env.leveldb.Env.NewLogger",
+    "path": "include/leveldb/env.h",
+    "start_line": 211,
+    "end_line": 211
+  },
+  {
+    "label": "Method",
+    "name": "StartThread",
+    "qualified_name": "leveldb.include.leveldb.env.leveldb.Env.StartThread",
+    "path": "include/leveldb/env.h",
+    "start_line": 202,
+    "end_line": 202
+  },
+  {
+    "label": "Method",
+    "name": "NewLogger",
+    "qualified_name": "leveldb.include.leveldb.env.leveldb.EnvWrapper.NewLogger",
+    "path": "include/leveldb/env.h",
+    "start_line": 393,
+    "end_line": 395
+  },
+  {
+    "label": "Method",
+    "name": "Schedule",
+    "qualified_name": "leveldb.include.leveldb.env.leveldb.EnvWrapper.Schedule",
+    "path": "include/leveldb/env.h",
+    "start_line": 384,
+    "end_line": 386
+  },
+  {
+    "label": "Method",
+    "name": "StartThread",
+    "qualified_name": "leveldb.include.leveldb.env.leveldb.EnvWrapper.StartThread",
+    "path": "include/leveldb/env.h",
+    "start_line": 387,
+    "end_line": 389
+  },
+  {
+    "label": "Method",
+    "name": "Next",
+    "qualified_name": "leveldb.include.leveldb.iterator.leveldb.Iterator.Next",
+    "path": "include/leveldb/iterator.h",
+    "start_line": 53,
+    "end_line": 53
+  },
+  {
+    "label": "Method",
+    "name": "Prev",
+    "qualified_name": "leveldb.include.leveldb.iterator.leveldb.Iterator.Prev",
+    "path": "include/leveldb/iterator.h",
+    "start_line": 58,
+    "end_line": 58
+  },
+  {
+    "label": "Method",
+    "name": "Seek",
+    "qualified_name": "leveldb.include.leveldb.iterator.leveldb.Iterator.Seek",
+    "path": "include/leveldb/iterator.h",
+    "start_line": 48,
+    "end_line": 48
+  },
+  {
+    "label": "Method",
+    "name": "SeekToFirst",
+    "qualified_name": "leveldb.include.leveldb.iterator.leveldb.Iterator.SeekToFirst",
+    "path": "include/leveldb/iterator.h",
+    "start_line": 39,
+    "end_line": 39
+  },
+  {
+    "label": "Method",
+    "name": "SeekToLast",
+    "qualified_name": "leveldb.include.leveldb.iterator.leveldb.Iterator.SeekToLast",
+    "path": "include/leveldb/iterator.h",
+    "start_line": 43,
+    "end_line": 43
+  },
+  {
+    "label": "Method",
+    "name": "Valid",
+    "qualified_name": "leveldb.include.leveldb.iterator.leveldb.Iterator.Valid",
+    "path": "include/leveldb/iterator.h",
+    "start_line": 35,
+    "end_line": 35
+  },
+  {
+    "label": "Method",
+    "name": "key",
+    "qualified_name": "leveldb.include.leveldb.iterator.leveldb.Iterator.key",
+    "path": "include/leveldb/iterator.h",
+    "start_line": 64,
+    "end_line": 64
+  },
+  {
+    "label": "Method",
+    "name": "status",
+    "qualified_name": "leveldb.include.leveldb.iterator.leveldb.Iterator.status",
+    "path": "include/leveldb/iterator.h",
+    "start_line": 73,
+    "end_line": 73
+  },
+  {
+    "label": "Method",
+    "name": "value",
+    "qualified_name": "leveldb.include.leveldb.iterator.leveldb.Iterator.value",
+    "path": "include/leveldb/iterator.h",
+    "start_line": 70,
+    "end_line": 70
+  },
+  {
+    "label": "Method",
+    "name": "IsCorruption",
+    "qualified_name": "leveldb.include.leveldb.status.leveldb.Status.IsCorruption",
+    "path": "include/leveldb/status.h",
+    "start_line": 63,
+    "end_line": 63
+  },
+  {
+    "label": "Method",
+    "name": "IsIOError",
+    "qualified_name": "leveldb.include.leveldb.status.leveldb.Status.IsIOError",
+    "path": "include/leveldb/status.h",
+    "start_line": 66,
+    "end_line": 66
+  },
+  {
+    "label": "Method",
+    "name": "IsInvalidArgument",
+    "qualified_name": "leveldb.include.leveldb.status.leveldb.Status.IsInvalidArgument",
+    "path": "include/leveldb/status.h",
+    "start_line": 72,
+    "end_line": 72
+  },
+  {
+    "label": "Method",
+    "name": "~Status",
+    "qualified_name": "leveldb.include.leveldb.status.leveldb.Status.~Status",
+    "path": "include/leveldb/status.h",
+    "start_line": 28,
+    "end_line": 28
+  },
+  {
+    "label": "Method",
+    "name": "InternalGet",
+    "qualified_name": "leveldb.include.leveldb.table.leveldb.Table.InternalGet",
+    "path": "table/table.cc",
+    "start_line": 214,
+    "end_line": 242
+  },
+  {
+    "label": "Method",
+    "name": "ChangeOptions",
+    "qualified_name": "leveldb.include.leveldb.table_builder.leveldb.TableBuilder.ChangeOptions",
+    "path": "table/table_builder.cc",
+    "start_line": 78,
+    "end_line": 92
+  },
+  {
+    "label": "Method",
+    "name": "Append",
+    "qualified_name": "leveldb.include.leveldb.write_batch.leveldb.WriteBatch.Append",
+    "path": "db/write_batch.cc",
+    "start_line": 111,
+    "end_line": 113
+  },
+  {
+    "label": "Method",
+    "name": "ApproximateSize",
+    "qualified_name": "leveldb.include.leveldb.write_batch.leveldb.WriteBatch.ApproximateSize",
+    "path": "db/write_batch.cc",
+    "start_line": 40,
+    "end_line": 40
+  },
+  {
+    "label": "Method",
+    "name": "CondVar",
+    "qualified_name": "leveldb.port.port_example.leveldb.port.CondVar.CondVar",
+    "path": "port/port_example.h",
+    "start_line": 45,
+    "end_line": 45
+  },
+  {
+    "label": "Method",
+    "name": "SignallAll",
+    "qualified_name": "leveldb.port.port_example.leveldb.port.CondVar.SignallAll",
+    "path": "port/port_example.h",
+    "start_line": 58,
+    "end_line": 58
+  },
+  {
+    "label": "Method",
+    "name": "~CondVar",
+    "qualified_name": "leveldb.port.port_example.leveldb.port.CondVar.~CondVar",
+    "path": "port/port_example.h",
+    "start_line": 46,
+    "end_line": 46
+  },
+  {
+    "label": "Method",
+    "name": "Mutex",
+    "qualified_name": "leveldb.port.port_example.leveldb.port.Mutex.Mutex",
+    "path": "port/port_example.h",
+    "start_line": 26,
+    "end_line": 26
+  },
+  {
+    "label": "Method",
+    "name": "~Mutex",
+    "qualified_name": "leveldb.port.port_example.leveldb.port.Mutex.~Mutex",
+    "path": "port/port_example.h",
+    "start_line": 27,
+    "end_line": 27
+  },
+  {
+    "label": "Method",
+    "name": "CondVar",
+    "qualified_name": "leveldb.port.port_stdcxx.leveldb.port.CondVar.CondVar",
+    "path": "port/port_stdcxx.h",
+    "start_line": 67,
+    "end_line": 67
+  },
+  {
+    "label": "Method",
+    "name": "CondVar",
+    "qualified_name": "leveldb.port.port_stdcxx.leveldb.port.CondVar.CondVar@70",
+    "path": "port/port_stdcxx.h",
+    "start_line": 70,
+    "end_line": 70
+  },
+  {
+    "label": "Method",
+    "name": "Signal",
+    "qualified_name": "leveldb.port.port_stdcxx.leveldb.port.CondVar.Signal",
+    "path": "port/port_stdcxx.h",
+    "start_line": 78,
+    "end_line": 78
+  },
+  {
+    "label": "Method",
+    "name": "Wait",
+    "qualified_name": "leveldb.port.port_stdcxx.leveldb.port.CondVar.Wait",
+    "path": "port/port_stdcxx.h",
+    "start_line": 73,
+    "end_line": 77
+  },
+  {
+    "label": "Method",
+    "name": "~CondVar",
+    "qualified_name": "leveldb.port.port_stdcxx.leveldb.port.CondVar.~CondVar",
+    "path": "port/port_stdcxx.h",
+    "start_line": 68,
+    "end_line": 68
+  },
+  {
+    "label": "Method",
+    "name": "AssertHeld",
+    "qualified_name": "leveldb.port.port_stdcxx.leveldb.port.Mutex.AssertHeld",
+    "path": "port/port_stdcxx.h",
+    "start_line": 57,
+    "end_line": 57
+  },
+  {
+    "label": "Method",
+    "name": "Lock",
+    "qualified_name": "leveldb.port.port_stdcxx.leveldb.port.Mutex.Lock",
+    "path": "port/port_stdcxx.h",
+    "start_line": 55,
+    "end_line": 55
+  },
+  {
+    "label": "Method",
+    "name": "Mutex",
+    "qualified_name": "leveldb.port.port_stdcxx.leveldb.port.Mutex.Mutex",
+    "path": "port/port_stdcxx.h",
+    "start_line": 49,
+    "end_line": 49
+  },
+  {
+    "label": "Method",
+    "name": "Mutex",
+    "qualified_name": "leveldb.port.port_stdcxx.leveldb.port.Mutex.Mutex@52",
+    "path": "port/port_stdcxx.h",
+    "start_line": 52,
+    "end_line": 52
+  },
+  {
+    "label": "Method",
+    "name": "Unlock",
+    "qualified_name": "leveldb.port.port_stdcxx.leveldb.port.Mutex.Unlock",
+    "path": "port/port_stdcxx.h",
+    "start_line": 56,
+    "end_line": 56
+  },
+  {
+    "label": "Method",
+    "name": "~Mutex",
+    "qualified_name": "leveldb.port.port_stdcxx.leveldb.port.Mutex.~Mutex",
+    "path": "port/port_stdcxx.h",
+    "start_line": 50,
+    "end_line": 50
+  },
+  {
+    "label": "Method",
+    "name": "CorruptionError",
+    "qualified_name": "leveldb.table.block.leveldb.Block::Iter.CorruptionError",
+    "path": "table/block.cc",
+    "start_line": 242,
+    "end_line": 248
+  },
+  {
+    "label": "Method",
+    "name": "GetRestartPoint",
+    "qualified_name": "leveldb.table.block.leveldb.Block::Iter.GetRestartPoint",
+    "path": "table/block.cc",
+    "start_line": 100,
+    "end_line": 103
+  },
+  {
+    "label": "Method",
+    "name": "Iter",
+    "qualified_name": "leveldb.table.block.leveldb.Block::Iter.Iter",
+    "path": "table/block.cc",
+    "start_line": 116,
+    "end_line": 125
+  },
+  {
+    "label": "Method",
+    "name": "Next",
+    "qualified_name": "leveldb.table.block.leveldb.Block::Iter.Next",
+    "path": "table/block.cc",
+    "start_line": 138,
+    "end_line": 141
+  },
+  {
+    "label": "Method",
+    "name": "NextEntryOffset",
+    "qualified_name": "leveldb.table.block.leveldb.Block::Iter.NextEntryOffset",
+    "path": "table/block.cc",
+    "start_line": 96,
+    "end_line": 98
+  },
+  {
+    "label": "Method",
+    "name": "ParseNextKey",
+    "qualified_name": "leveldb.table.block.leveldb.Block::Iter.ParseNextKey",
+    "path": "table/block.cc",
+    "start_line": 250,
+    "end_line": 277
+  },
+  {
+    "label": "Method",
+    "name": "Prev",
+    "qualified_name": "leveldb.table.block.leveldb.Block::Iter.Prev",
+    "path": "table/block.cc",
+    "start_line": 143,
+    "end_line": 162
+  },
+  {
+    "label": "Method",
+    "name": "Seek",
+    "qualified_name": "leveldb.table.block.leveldb.Block::Iter.Seek",
+    "path": "table/block.cc",
+    "start_line": 164,
+    "end_line": 227
+  },
+  {
+    "label": "Method",
+    "name": "SeekToFirst",
+    "qualified_name": "leveldb.table.block.leveldb.Block::Iter.SeekToFirst",
+    "path": "table/block.cc",
+    "start_line": 229,
+    "end_line": 232
+  },
+  {
+    "label": "Method",
+    "name": "SeekToLast",
+    "qualified_name": "leveldb.table.block.leveldb.Block::Iter.SeekToLast",
+    "path": "table/block.cc",
+    "start_line": 234,
+    "end_line": 239
+  },
+  {
+    "label": "Method",
+    "name": "SeekToRestartPoint",
+    "qualified_name": "leveldb.table.block.leveldb.Block::Iter.SeekToRestartPoint",
+    "path": "table/block.cc",
+    "start_line": 105,
+    "end_line": 113
+  },
+  {
+    "label": "Method",
+    "name": "status",
+    "qualified_name": "leveldb.table.block.leveldb.Block::Iter.status",
+    "path": "table/block.cc",
+    "start_line": 128,
+    "end_line": 128
+  },
+  {
+    "label": "Function",
+    "name": "DecodeEntry",
+    "qualified_name": "leveldb.table.block.leveldb.DecodeEntry",
+    "path": "table/block.cc",
+    "start_line": 55,
+    "end_line": 75
+  },
+  {
+    "label": "Method",
+    "name": "Finish",
+    "qualified_name": "leveldb.table.filter_block.h.leveldb.FilterBlockBuilder.Finish",
+    "path": "table/filter_block.cc",
+    "start_line": 35,
+    "end_line": 49
+  },
+  {
+    "label": "Method",
+    "name": "KeyMayMatch",
+    "qualified_name": "leveldb.table.filter_block.h.leveldb.FilterBlockReader.KeyMayMatch",
+    "path": "table/filter_block.cc",
+    "start_line": 90,
+    "end_line": 104
+  },
+  {
+    "label": "Method",
+    "name": "BlockHandle",
+    "qualified_name": "leveldb.table.format.h.leveldb.BlockHandle.BlockHandle",
+    "path": "table/format.h",
+    "start_line": 94,
+    "end_line": 95
+  },
+  {
+    "label": "Method",
+    "name": "Footer",
+    "qualified_name": "leveldb.table.format.h.leveldb.Footer.Footer",
+    "path": "table/format.h",
+    "start_line": 55,
+    "end_line": 55
+  },
+  {
+    "label": "Method",
+    "name": "Next",
+    "qualified_name": "leveldb.table.iterator.leveldb.EmptyIterator.Next",
+    "path": "table/iterator.cc",
+    "start_line": 52,
+    "end_line": 52
+  },
+  {
+    "label": "Method",
+    "name": "Prev",
+    "qualified_name": "leveldb.table.iterator.leveldb.EmptyIterator.Prev",
+    "path": "table/iterator.cc",
+    "start_line": 53,
+    "end_line": 53
+  },
+  {
+    "label": "Method",
+    "name": "Seek",
+    "qualified_name": "leveldb.table.iterator.leveldb.EmptyIterator.Seek",
+    "path": "table/iterator.cc",
+    "start_line": 49,
+    "end_line": 49
+  },
+  {
+    "label": "Method",
+    "name": "SeekToFirst",
+    "qualified_name": "leveldb.table.iterator.leveldb.EmptyIterator.SeekToFirst",
+    "path": "table/iterator.cc",
+    "start_line": 50,
+    "end_line": 50
+  },
+  {
+    "label": "Method",
+    "name": "SeekToLast",
+    "qualified_name": "leveldb.table.iterator.leveldb.EmptyIterator.SeekToLast",
+    "path": "table/iterator.cc",
+    "start_line": 51,
+    "end_line": 51
+  },
+  {
+    "label": "Method",
+    "name": "Valid",
+    "qualified_name": "leveldb.table.iterator.leveldb.EmptyIterator.Valid",
+    "path": "table/iterator.cc",
+    "start_line": 48,
+    "end_line": 48
+  },
+  {
+    "label": "Method",
+    "name": "key",
+    "qualified_name": "leveldb.table.iterator.leveldb.EmptyIterator.key",
+    "path": "table/iterator.cc",
+    "start_line": 54,
+    "end_line": 57
+  },
+  {
+    "label": "Method",
+    "name": "value",
+    "qualified_name": "leveldb.table.iterator.leveldb.EmptyIterator.value",
+    "path": "table/iterator.cc",
+    "start_line": 58,
+    "end_line": 61
+  },
+  {
+    "label": "Method",
+    "name": "Next",
+    "qualified_name": "leveldb.table.iterator_wrapper.leveldb.IteratorWrapper.Next",
+    "path": "table/iterator_wrapper.h",
+    "start_line": 51,
+    "end_line": 55
+  },
+  {
+    "label": "Method",
+    "name": "Prev",
+    "qualified_name": "leveldb.table.iterator_wrapper.leveldb.IteratorWrapper.Prev",
+    "path": "table/iterator_wrapper.h",
+    "start_line": 56,
+    "end_line": 60
+  },
+  {
+    "label": "Method",
+    "name": "Seek",
+    "qualified_name": "leveldb.table.iterator_wrapper.leveldb.IteratorWrapper.Seek",
+    "path": "table/iterator_wrapper.h",
+    "start_line": 61,
+    "end_line": 65
+  },
+  {
+    "label": "Method",
+    "name": "SeekToFirst",
+    "qualified_name": "leveldb.table.iterator_wrapper.leveldb.IteratorWrapper.SeekToFirst",
+    "path": "table/iterator_wrapper.h",
+    "start_line": 66,
+    "end_line": 70
+  },
+  {
+    "label": "Method",
+    "name": "SeekToLast",
+    "qualified_name": "leveldb.table.iterator_wrapper.leveldb.IteratorWrapper.SeekToLast",
+    "path": "table/iterator_wrapper.h",
+    "start_line": 71,
+    "end_line": 75
+  },
+  {
+    "label": "Method",
+    "name": "Valid",
+    "qualified_name": "leveldb.table.iterator_wrapper.leveldb.IteratorWrapper.Valid",
+    "path": "table/iterator_wrapper.h",
+    "start_line": 37,
+    "end_line": 37
+  },
+  {
+    "label": "Method",
+    "name": "key",
+    "qualified_name": "leveldb.table.iterator_wrapper.leveldb.IteratorWrapper.key",
+    "path": "table/iterator_wrapper.h",
+    "start_line": 38,
+    "end_line": 41
+  },
+  {
+    "label": "Method",
+    "name": "status",
+    "qualified_name": "leveldb.table.iterator_wrapper.leveldb.IteratorWrapper.status",
+    "path": "table/iterator_wrapper.h",
+    "start_line": 47,
+    "end_line": 50
+  },
+  {
+    "label": "Method",
+    "name": "value",
+    "qualified_name": "leveldb.table.iterator_wrapper.leveldb.IteratorWrapper.value",
+    "path": "table/iterator_wrapper.h",
+    "start_line": 42,
+    "end_line": 45
+  },
+  {
+    "label": "Method",
+    "name": "FindLargest",
+    "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.FindLargest",
+    "path": "table/merger.cc",
+    "start_line": 163,
+    "end_line": 176
+  },
+  {
+    "label": "Method",
+    "name": "FindSmallest",
+    "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.FindSmallest",
+    "path": "table/merger.cc",
+    "start_line": 148,
+    "end_line": 161
+  },
+  {
+    "label": "Method",
+    "name": "Next",
+    "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.Next",
+    "path": "table/merger.cc",
+    "start_line": 55,
+    "end_line": 79
+  },
+  {
+    "label": "Method",
+    "name": "Prev",
+    "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.Prev",
+    "path": "table/merger.cc",
+    "start_line": 81,
+    "end_line": 108
+  },
+  {
+    "label": "Method",
+    "name": "Seek",
+    "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.Seek",
+    "path": "table/merger.cc",
+    "start_line": 47,
+    "end_line": 53
+  },
+  {
+    "label": "Method",
+    "name": "SeekToFirst",
+    "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.SeekToFirst",
+    "path": "table/merger.cc",
+    "start_line": 31,
+    "end_line": 37
+  },
+  {
+    "label": "Method",
+    "name": "SeekToLast",
+    "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.SeekToLast",
+    "path": "table/merger.cc",
+    "start_line": 39,
+    "end_line": 45
+  },
+  {
+    "label": "Method",
+    "name": "Valid",
+    "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.Valid",
+    "path": "table/merger.cc",
+    "start_line": 29,
+    "end_line": 29
+  },
+  {
+    "label": "Method",
+    "name": "key",
+    "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.key",
+    "path": "table/merger.cc",
+    "start_line": 110,
+    "end_line": 113
+  },
+  {
+    "label": "Method",
+    "name": "status",
+    "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.status",
+    "path": "table/merger.cc",
+    "start_line": 120,
+    "end_line": 129
+  },
+  {
+    "label": "Method",
+    "name": "value",
+    "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.value",
+    "path": "table/merger.cc",
+    "start_line": 115,
+    "end_line": 118
+  },
+  {
+    "label": "Function",
+    "name": "DeleteBlock",
+    "qualified_name": "leveldb.table.table.leveldb.DeleteBlock",
+    "path": "table/table.cc",
+    "start_line": 136,
+    "end_line": 138
+  },
+  {
+    "label": "Function",
+    "name": "DeleteCachedBlock",
+    "qualified_name": "leveldb.table.table.leveldb.DeleteCachedBlock",
+    "path": "table/table.cc",
+    "start_line": 140,
+    "end_line": 143
+  },
+  {
+    "label": "Function",
+    "name": "ReleaseBlock",
+    "qualified_name": "leveldb.table.table.leveldb.ReleaseBlock",
+    "path": "table/table.cc",
+    "start_line": 145,
+    "end_line": 149
+  },
+  {
+    "label": "Method",
+    "name": "~Rep",
+    "qualified_name": "leveldb.table.table.leveldb.Table::Rep.~Rep",
+    "path": "table/table.cc",
+    "start_line": 21,
+    "end_line": 25
+  },
+  {
+    "label": "Method",
+    "name": "InitDataBlock",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.InitDataBlock",
+    "path": "table/two_level_iterator.cc",
+    "start_line": 146,
+    "end_line": 161
+  },
+  {
+    "label": "Method",
+    "name": "Next",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.Next",
+    "path": "table/two_level_iterator.cc",
+    "start_line": 103,
+    "end_line": 107
+  },
+  {
+    "label": "Method",
+    "name": "Prev",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.Prev",
+    "path": "table/two_level_iterator.cc",
+    "start_line": 109,
+    "end_line": 113
+  },
+  {
+    "label": "Method",
+    "name": "SaveError",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.SaveError",
+    "path": "table/two_level_iterator.cc",
+    "start_line": 52,
+    "end_line": 54
+  },
+  {
+    "label": "Method",
+    "name": "Seek",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.Seek",
+    "path": "table/two_level_iterator.cc",
+    "start_line": 82,
+    "end_line": 87
+  },
+  {
+    "label": "Method",
+    "name": "SeekToFirst",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.SeekToFirst",
+    "path": "table/two_level_iterator.cc",
+    "start_line": 89,
+    "end_line": 94
+  },
+  {
+    "label": "Method",
+    "name": "SeekToLast",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.SeekToLast",
+    "path": "table/two_level_iterator.cc",
+    "start_line": 96,
+    "end_line": 101
+  },
+  {
+    "label": "Method",
+    "name": "SetDataIterator",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.SetDataIterator",
+    "path": "table/two_level_iterator.cc",
+    "start_line": 141,
+    "end_line": 144
+  },
+  {
+    "label": "Method",
+    "name": "SkipEmptyDataBlocksBackward",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.SkipEmptyDataBlocksBackward",
+    "path": "table/two_level_iterator.cc",
+    "start_line": 128,
+    "end_line": 139
+  },
+  {
+    "label": "Method",
+    "name": "SkipEmptyDataBlocksForward",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.SkipEmptyDataBlocksForward",
+    "path": "table/two_level_iterator.cc",
+    "start_line": 115,
+    "end_line": 126
+  },
+  {
+    "label": "Method",
+    "name": "Valid",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.Valid",
+    "path": "table/two_level_iterator.cc",
+    "start_line": 31,
+    "end_line": 31
+  },
+  {
+    "label": "Method",
+    "name": "key",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.key",
+    "path": "table/two_level_iterator.cc",
+    "start_line": 32,
+    "end_line": 35
+  },
+  {
+    "label": "Method",
+    "name": "status",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.status",
+    "path": "table/two_level_iterator.cc",
+    "start_line": 40,
+    "end_line": 49
+  },
+  {
+    "label": "Method",
+    "name": "value",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.value",
+    "path": "table/two_level_iterator.cc",
+    "start_line": 36,
+    "end_line": 39
+  },
+  {
+    "label": "Method",
+    "name": "Arena",
+    "qualified_name": "leveldb.util.arena.h.leveldb.Arena.Arena",
+    "path": "util/arena.cc",
+    "start_line": 11,
+    "end_line": 12
+  },
+  {
+    "label": "Method",
+    "name": "Arena",
+    "qualified_name": "leveldb.util.arena.h.leveldb.Arena.Arena@20",
+    "path": "util/arena.h",
+    "start_line": 20,
+    "end_line": 20
+  },
+  {
+    "label": "Method",
+    "name": "~Arena",
+    "qualified_name": "leveldb.util.arena.h.leveldb.Arena.~Arena",
+    "path": "util/arena.cc",
+    "start_line": 14,
+    "end_line": 18
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "leveldb.util.bloom.leveldb.BloomFilterPolicy.Name",
+    "path": "util/bloom.cc",
+    "start_line": 26,
+    "end_line": 26
+  },
+  {
+    "label": "Method",
+    "name": "HandleTable",
+    "qualified_name": "leveldb.util.cache.leveldb.HandleTable.HandleTable",
+    "path": "util/cache.cc",
+    "start_line": 72,
+    "end_line": 72
+  },
+  {
+    "label": "Method",
+    "name": "Insert",
+    "qualified_name": "leveldb.util.cache.leveldb.HandleTable.Insert",
+    "path": "util/cache.cc",
+    "start_line": 79,
+    "end_line": 93
+  },
+  {
+    "label": "Method",
+    "name": "Remove",
+    "qualified_name": "leveldb.util.cache.leveldb.HandleTable.Remove",
+    "path": "util/cache.cc",
+    "start_line": 95,
+    "end_line": 103
+  },
+  {
+    "label": "Method",
+    "name": "Resize",
+    "qualified_name": "leveldb.util.cache.leveldb.HandleTable.Resize",
+    "path": "util/cache.cc",
+    "start_line": 123,
+    "end_line": 147
+  },
+  {
+    "label": "Method",
+    "name": "~HandleTable",
+    "qualified_name": "leveldb.util.cache.leveldb.HandleTable.~HandleTable",
+    "path": "util/cache.cc",
+    "start_line": 73,
+    "end_line": 73
+  },
+  {
+    "label": "Method",
+    "name": "Erase",
+    "qualified_name": "leveldb.util.cache.leveldb.LRUCache.Erase",
+    "path": "util/cache.cc",
+    "start_line": 319,
+    "end_line": 322
+  },
+  {
+    "label": "Method",
+    "name": "FinishErase",
+    "qualified_name": "leveldb.util.cache.leveldb.LRUCache.FinishErase",
+    "path": "util/cache.cc",
+    "start_line": 308,
+    "end_line": 317
+  },
+  {
+    "label": "Method",
+    "name": "Insert",
+    "qualified_name": "leveldb.util.cache.leveldb.LRUCache.Insert",
+    "path": "util/cache.cc",
+    "start_line": 267,
+    "end_line": 304
+  },
+  {
+    "label": "Method",
+    "name": "LRUCache",
+    "qualified_name": "leveldb.util.cache.leveldb.LRUCache.LRUCache",
+    "path": "util/cache.cc",
+    "start_line": 198,
+    "end_line": 204
+  },
+  {
+    "label": "Method",
+    "name": "LRU_Append",
+    "qualified_name": "leveldb.util.cache.leveldb.LRUCache.LRU_Append",
+    "path": "util/cache.cc",
+    "start_line": 245,
+    "end_line": 251
+  },
+  {
+    "label": "Method",
+    "name": "LRU_Remove",
+    "qualified_name": "leveldb.util.cache.leveldb.LRUCache.LRU_Remove",
+    "path": "util/cache.cc",
+    "start_line": 240,
+    "end_line": 243
+  },
+  {
+    "label": "Method",
+    "name": "Lookup",
+    "qualified_name": "leveldb.util.cache.leveldb.LRUCache.Lookup",
+    "path": "util/cache.cc",
+    "start_line": 253,
+    "end_line": 260
+  },
+  {
+    "label": "Method",
+    "name": "Prune",
+    "qualified_name": "leveldb.util.cache.leveldb.LRUCache.Prune",
+    "path": "util/cache.cc",
+    "start_line": 324,
+    "end_line": 334
+  },
+  {
+    "label": "Method",
+    "name": "Ref",
+    "qualified_name": "leveldb.util.cache.leveldb.LRUCache.Ref",
+    "path": "util/cache.cc",
+    "start_line": 218,
+    "end_line": 224
+  },
+  {
+    "label": "Method",
+    "name": "Release",
+    "qualified_name": "leveldb.util.cache.leveldb.LRUCache.Release",
+    "path": "util/cache.cc",
+    "start_line": 262,
+    "end_line": 265
+  },
+  {
+    "label": "Method",
+    "name": "Unref",
+    "qualified_name": "leveldb.util.cache.leveldb.LRUCache.Unref",
+    "path": "util/cache.cc",
+    "start_line": 226,
+    "end_line": 238
+  },
+  {
+    "label": "Method",
+    "name": "~LRUCache",
+    "qualified_name": "leveldb.util.cache.leveldb.LRUCache.~LRUCache",
+    "path": "util/cache.cc",
+    "start_line": 206,
+    "end_line": 216
+  },
+  {
+    "label": "Method",
+    "name": "Insert",
+    "qualified_name": "leveldb.util.cache.leveldb.ShardedLRUCache.Insert",
+    "path": "util/cache.cc",
+    "start_line": 359,
+    "end_line": 363
+  },
+  {
+    "label": "Method",
+    "name": "Lookup",
+    "qualified_name": "leveldb.util.cache.leveldb.ShardedLRUCache.Lookup",
+    "path": "util/cache.cc",
+    "start_line": 364,
+    "end_line": 367
+  },
+  {
+    "label": "Method",
+    "name": "Prune",
+    "qualified_name": "leveldb.util.cache.leveldb.ShardedLRUCache.Prune",
+    "path": "util/cache.cc",
+    "start_line": 383,
+    "end_line": 387
+  },
+  {
+    "label": "Method",
+    "name": "TotalCharge",
+    "qualified_name": "leveldb.util.cache.leveldb.ShardedLRUCache.TotalCharge",
+    "path": "util/cache.cc",
+    "start_line": 388,
+    "end_line": 394
+  },
+  {
+    "label": "Method",
+    "name": "BytewiseComparatorImpl",
+    "qualified_name": "leveldb.util.comparator.leveldb.BytewiseComparatorImpl.BytewiseComparatorImpl",
+    "path": "util/comparator.cc",
+    "start_line": 23,
+    "end_line": 23
+  },
+  {
+    "label": "Method",
+    "name": "Compare",
+    "qualified_name": "leveldb.util.comparator.leveldb.BytewiseComparatorImpl.Compare",
+    "path": "util/comparator.cc",
+    "start_line": 27,
+    "end_line": 29
+  },
+  {
+    "label": "Method",
+    "name": "FindShortSuccessor",
+    "qualified_name": "leveldb.util.comparator.leveldb.BytewiseComparatorImpl.FindShortSuccessor",
+    "path": "util/comparator.cc",
+    "start_line": 54,
+    "end_line": 66
+  },
+  {
+    "label": "Method",
+    "name": "FindShortestSeparator",
+    "qualified_name": "leveldb.util.comparator.leveldb.BytewiseComparatorImpl.FindShortestSeparator",
+    "path": "util/comparator.cc",
+    "start_line": 31,
+    "end_line": 52
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "leveldb.util.comparator.leveldb.BytewiseComparatorImpl.Name",
+    "path": "util/comparator.cc",
+    "start_line": 25,
+    "end_line": 25
+  },
+  {
+    "label": "Function",
+    "name": "Value",
+    "qualified_name": "leveldb.util.crc32c.h.leveldb.crc32c.Value",
+    "path": "util/crc32c.h",
+    "start_line": 20,
+    "end_line": 20
+  },
+  {
+    "label": "Function",
+    "name": "RoundUp",
+    "qualified_name": "leveldb.util.crc32c.leveldb.crc32c.RoundUp",
+    "path": "util/crc32c.cc",
+    "start_line": 256,
+    "end_line": 261
+  },
+  {
+    "label": "Method",
+    "name": "Limiter",
+    "qualified_name": "leveldb.util.env_posix.leveldb.Limiter.Limiter",
+    "path": "util/env_posix.cc",
+    "start_line": 75,
+    "end_line": 75
+  },
+  {
+    "label": "Method",
+    "name": "Limiter",
+    "qualified_name": "leveldb.util.env_posix.leveldb.Limiter.Limiter@77",
+    "path": "util/env_posix.cc",
+    "start_line": 77,
+    "end_line": 77
+  },
+  {
+    "label": "Method",
+    "name": "BackgroundThreadEntryPoint",
+    "qualified_name": "leveldb.util.env_posix.leveldb.PosixEnv.BackgroundThreadEntryPoint",
+    "path": "util/env_posix.cc",
+    "start_line": 722,
+    "end_line": 724
+  },
+  {
+    "label": "Method",
+    "name": "BackgroundThreadMain",
+    "qualified_name": "leveldb.util.env_posix.leveldb.PosixEnv.BackgroundThreadMain",
+    "path": "util/env_posix.cc",
+    "start_line": 802,
+    "end_line": 819
+  },
+  {
+    "label": "Method",
+    "name": "BackgroundWorkItem",
+    "qualified_name": "leveldb.util.env_posix.leveldb.PosixEnv.BackgroundWorkItem.BackgroundWorkItem",
+    "path": "util/env_posix.cc",
+    "start_line": 733,
+    "end_line": 734
+  },
+  {
+    "label": "Method",
+    "name": "PosixEnv",
+    "qualified_name": "leveldb.util.env_posix.leveldb.PosixEnv.PosixEnv",
+    "path": "util/env_posix.cc",
+    "start_line": 775,
+    "end_line": 779
+  },
+  {
+    "label": "Method",
+    "name": "~PosixEnv",
+    "qualified_name": "leveldb.util.env_posix.leveldb.PosixEnv.~PosixEnv",
+    "path": "util/env_posix.cc",
+    "start_line": 493,
+    "end_line": 498
+  },
+  {
+    "label": "Method",
+    "name": "SingletonEnv",
+    "qualified_name": "leveldb.util.env_posix.leveldb.SingletonEnv.SingletonEnv",
+    "path": "util/env_posix.cc",
+    "start_line": 838,
+    "end_line": 847
+  },
+  {
+    "label": "Method",
+    "name": "SingletonEnv",
+    "qualified_name": "leveldb.util.env_posix.leveldb.SingletonEnv.SingletonEnv@850",
+    "path": "util/env_posix.cc",
+    "start_line": 850,
+    "end_line": 850
+  },
+  {
+    "label": "Method",
+    "name": "~SingletonEnv",
+    "qualified_name": "leveldb.util.env_posix.leveldb.SingletonEnv.~SingletonEnv",
+    "path": "util/env_posix.cc",
+    "start_line": 848,
+    "end_line": 848
+  },
+  {
+    "label": "Method",
+    "name": "Limiter",
+    "qualified_name": "leveldb.util.env_windows.leveldb.Limiter.Limiter",
+    "path": "util/env_windows.cc",
+    "start_line": 117,
+    "end_line": 117
+  },
+  {
+    "label": "Method",
+    "name": "Limiter",
+    "qualified_name": "leveldb.util.env_windows.leveldb.Limiter.Limiter@119",
+    "path": "util/env_windows.cc",
+    "start_line": 119,
+    "end_line": 119
+  },
+  {
+    "label": "Method",
+    "name": "Release",
+    "qualified_name": "leveldb.util.env_windows.leveldb.ScopedHandle.Release",
+    "path": "util/env_windows.cc",
+    "start_line": 100,
+    "end_line": 104
+  },
+  {
+    "label": "Method",
+    "name": "ScopedHandle",
+    "qualified_name": "leveldb.util.env_windows.leveldb.ScopedHandle.ScopedHandle",
+    "path": "util/env_windows.cc",
+    "start_line": 73,
+    "end_line": 73
+  },
+  {
+    "label": "Method",
+    "name": "ScopedHandle",
+    "qualified_name": "leveldb.util.env_windows.leveldb.ScopedHandle.ScopedHandle@74",
+    "path": "util/env_windows.cc",
+    "start_line": 74,
+    "end_line": 74
+  },
+  {
+    "label": "Method",
+    "name": "ScopedHandle",
+    "qualified_name": "leveldb.util.env_windows.leveldb.ScopedHandle.ScopedHandle@75",
+    "path": "util/env_windows.cc",
+    "start_line": 75,
+    "end_line": 75
+  },
+  {
+    "label": "Method",
+    "name": "~ScopedHandle",
+    "qualified_name": "leveldb.util.env_windows.leveldb.ScopedHandle.~ScopedHandle",
+    "path": "util/env_windows.cc",
+    "start_line": 76,
+    "end_line": 76
+  },
+  {
+    "label": "Method",
+    "name": "SingletonEnv",
+    "qualified_name": "leveldb.util.env_windows.leveldb.SingletonEnv.SingletonEnv",
+    "path": "util/env_windows.cc",
+    "start_line": 746,
+    "end_line": 755
+  },
+  {
+    "label": "Method",
+    "name": "SingletonEnv",
+    "qualified_name": "leveldb.util.env_windows.leveldb.SingletonEnv.SingletonEnv@758",
+    "path": "util/env_windows.cc",
+    "start_line": 758,
+    "end_line": 758
+  },
+  {
+    "label": "Method",
+    "name": "~SingletonEnv",
+    "qualified_name": "leveldb.util.env_windows.leveldb.SingletonEnv.~SingletonEnv",
+    "path": "util/env_windows.cc",
+    "start_line": 756,
+    "end_line": 756
+  },
+  {
+    "label": "Method",
+    "name": "BackgroundThreadEntryPoint",
+    "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.BackgroundThreadEntryPoint",
+    "path": "util/env_windows.cc",
+    "start_line": 655,
+    "end_line": 657
+  },
+  {
+    "label": "Method",
+    "name": "BackgroundThreadMain",
+    "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.BackgroundThreadMain",
+    "path": "util/env_windows.cc",
+    "start_line": 712,
+    "end_line": 729
+  },
+  {
+    "label": "Method",
+    "name": "BackgroundWorkItem",
+    "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.BackgroundWorkItem.BackgroundWorkItem",
+    "path": "util/env_windows.cc",
+    "start_line": 666,
+    "end_line": 667
+  },
+  {
+    "label": "Method",
+    "name": "NewLogger",
+    "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.NewLogger",
+    "path": "util/env_windows.cc",
+    "start_line": 624,
+    "end_line": 633
+  },
+  {
+    "label": "Method",
+    "name": "StartThread",
+    "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.StartThread",
+    "path": "util/env_windows.cc",
+    "start_line": 598,
+    "end_line": 602
+  },
+  {
+    "label": "Method",
+    "name": "WindowsEnv",
+    "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.WindowsEnv",
+    "path": "util/env_windows.cc",
+    "start_line": 686,
+    "end_line": 689
+  },
+  {
+    "label": "Method",
+    "name": "~WindowsEnv",
+    "qualified_name": "leveldb.util.env_windows.leveldb.WindowsEnv.~WindowsEnv",
+    "path": "util/env_windows.cc",
+    "start_line": 366,
+    "end_line": 371
+  },
+  {
+    "label": "Function",
+    "name": "background_thread",
+    "qualified_name": "leveldb.util.env_windows.leveldb.background_thread",
+    "path": "util/env_windows.cc",
+    "start_line": 699,
+    "end_line": 699
+  },
+  {
+    "label": "Method",
+    "name": "Histogram",
+    "qualified_name": "leveldb.util.histogram.h.leveldb.Histogram.Histogram",
+    "path": "util/histogram.h",
+    "start_line": 14,
+    "end_line": 14
+  },
+  {
+    "label": "Method",
+    "name": "~Histogram",
+    "qualified_name": "leveldb.util.histogram.h.leveldb.Histogram.~Histogram",
+    "path": "util/histogram.h",
+    "start_line": 15,
+    "end_line": 15
+  },
+  {
+    "label": "Method",
+    "name": "NoDestructor",
+    "qualified_name": "leveldb.util.no_destructor.leveldb.NoDestructor.NoDestructor",
+    "path": "util/no_destructor.h",
+    "start_line": 20,
+    "end_line": 28
+  },
+  {
+    "label": "Method",
+    "name": "NoDestructor",
+    "qualified_name": "leveldb.util.no_destructor.leveldb.NoDestructor.NoDestructor@32",
+    "path": "util/no_destructor.h",
+    "start_line": 32,
+    "end_line": 32
+  },
+  {
+    "label": "Method",
+    "name": "~NoDestructor",
+    "qualified_name": "leveldb.util.no_destructor.leveldb.NoDestructor.~NoDestructor",
+    "path": "util/no_destructor.h",
+    "start_line": 30,
+    "end_line": 30
+  },
+  {
+    "label": "Method",
+    "name": "ErrorEnv",
+    "qualified_name": "leveldb.util.testutil.h.leveldb.test.ErrorEnv.ErrorEnv",
+    "path": "util/testutil.h",
+    "start_line": 52,
+    "end_line": 55
+  },
+  {
+    "label": "Method",
+    "name": "~ErrorEnv",
+    "qualified_name": "leveldb.util.testutil.h.leveldb.test.ErrorEnv.~ErrorEnv",
+    "path": "util/testutil.h",
+    "start_line": 56,
+    "end_line": 56
+  },
+  {
+    "label": "Function",
+    "name": "CompressibleString",
+    "qualified_name": "leveldb.util.testutil.leveldb.test.CompressibleString",
+    "path": "util/testutil.cc",
+    "start_line": 34,
+    "end_line": 48
+  },
+  {
+    "label": "Function",
+    "name": "RandomKey",
+    "qualified_name": "leveldb.util.testutil.leveldb.test.RandomKey",
+    "path": "util/testutil.cc",
+    "start_line": 22,
+    "end_line": 32
+  },
+  {
+    "label": "Method",
+    "name": "WindowsLogger",
+    "qualified_name": "leveldb.util.windows_logger.leveldb.WindowsLogger.WindowsLogger",
+    "path": "util/windows_logger.h",
+    "start_line": 26,
+    "end_line": 26
+  },
+  {
+    "label": "Method",
+    "name": "~WindowsLogger",
+    "qualified_name": "leveldb.util.windows_logger.leveldb.WindowsLogger.~WindowsLogger",
+    "path": "util/windows_logger.h",
+    "start_line": 28,
+    "end_line": 28
+  }
+]
+--- stderr

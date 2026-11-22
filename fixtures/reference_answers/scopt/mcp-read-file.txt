@@ -1,0 +1,29 @@
+> tools/call read_file {"file_path": "shared/src/main/scala/scopt/OEffect.scala", "limit": 25, "offset": 0}
+isError: false
+--- text
+# Lines 1-25 of 38
+package scopt
+
+sealed trait OEffect
+object OEffect {
+  case class DisplayToOut(msg: String) extends OEffect
+  case class DisplayToErr(msg: String) extends OEffect
+  case class ReportError(msg: String) extends OEffect
+  case class ReportWarning(msg: String) extends OEffect
+  case class Terminate(exitState: Either[String, Unit]) extends OEffect
+}
+
+trait OEffectSetup {
+  def displayToOut(msg: String): Unit
+  def displayToErr(msg: String): Unit
+  def reportError(msg: String): Unit
+  def reportWarning(msg: String): Unit
+  def terminate(exitState: Either[String, Unit]): Unit
+}
+
+abstract class DefaultOEffectSetup extends OEffectSetup {
+  override def displayToOut(msg: String): Unit = {
+    Console.out.println(msg)
+  }
+  override def displayToErr(msg: String): Unit = {
+    Console.err.println(msg)

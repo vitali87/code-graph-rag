@@ -1,0 +1,8 @@
+> tools/call get_function_source {"node_id": "<node_id:scopt.shared.src.main.scala.scopt.OptionDef.OptionDefCallback.onChange>"}
+isError: false
+--- text
+Source code for node ID <node_id>:
+
+```
+override private[scopt] def onChange[A: Read](value: OptionDef[A, C]): Unit = ()
+```

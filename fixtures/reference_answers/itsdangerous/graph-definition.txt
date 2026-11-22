@@ -1,0 +1,18 @@
+$ cgr -q graph definition itsdangerous.src.itsdangerous.signer.Signer.sign --project itsdangerous --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "decorators": [],
+  "docstring": "Signs the given string.",
+  "end_line": 225,
+  "found": true,
+  "label": "Method",
+  "name": "sign",
+  "name_line": 222,
+  "path": "src/itsdangerous/signer.py",
+  "qualified_name": "itsdangerous.src.itsdangerous.signer.Signer.sign",
+  "source": "def sign(self, value: str | bytes) -> bytes:\n        \"\"\"Signs the given string.\"\"\"\n        value = want_bytes(value)\n        return value + self.sep + self.get_signature(value)",
+  "start_col": 4,
+  "start_line": 222
+}
+--- stderr

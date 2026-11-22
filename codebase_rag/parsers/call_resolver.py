@@ -28,7 +28,7 @@ from .parameter_nodes import c_family_parameter_list
 from .php import class_names as php_class_names
 from .php.class_names import ClassPath as PhpClassPath
 from .php.class_names import ascii_fold as _php_fold
-from .py import resolve_class_name
+from .py import module_binds_name, python_literal_text_type, resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
@@ -317,6 +317,7 @@ class CallResolver:
         "python_shadowed_imports",
         "go_local_scopes",
         "cpp_local_scopes",
+        "js_local_scopes",
         "python_local_names",
         "js_parameter_names",
         "function_registry",
@@ -337,6 +338,7 @@ class CallResolver:
         "_interface_impl_cache",
         "_simple_resolution_cache",
         "last_resolution",
+        "last_bound_member",
         "_resolution_labels",
         "_wildcard_cache",
         "_protocol_impl_cache",
@@ -398,6 +400,11 @@ class CallResolver:
         # is in scope over, filled the same way: a bare call to one of them
         # there calls that value, not a base's member it hides (PR #2948).
         self.cpp_local_scopes: dict[str, dict[str, tuple[tuple[int, int], ...]]] = {}
+        # JS/TS caller qn -> the names it and each function around it
+        # introduce, filled by the call processor before the caller's calls
+        # resolve: `api.run()` on one of them is that local's, never the
+        # module's or an import's `api` (#2763 review).
+        self.js_local_scopes: dict[str, js_ts_utils.JsLocalIntros] = {}
         # caller qn -> every name that Python function binds itself (#2666);
         # filled alongside python_shadowed_imports.
         self.python_local_names: dict[str, frozenset[str]] = {}
@@ -460,6 +467,10 @@ class CallResolver:
         # The branch that produced the last answer (issue #1526), memoised
         # beside the cache so a hit reports the same confidence as the miss.
         self.last_resolution: str = cs.EdgeResolution.EXACT
+        # The object member the last call named through its literal's binding
+        # (`a.go()` -> a's `go`, issue #2763): that one member, not the
+        # same-key members of other objects that share its `@line` group.
+        self.last_bound_member: str | None = None
         self._resolution_labels: dict[_ResolutionKey, str] = {}
         self._wildcard_cache: dict[int, list[tuple[str, str]]] = {}
         self._protocol_impl_cache: dict[str, str] | None = None
@@ -753,6 +764,7 @@ class CallResolver:
         call written with no receiver (`count($xs)`, `max(a, b)`), which
         those languages' call names do not tell apart from a member call."""
         self.last_resolution = cs.EdgeResolution.EXACT
+        self.last_bound_member = None
         result = self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
                 self._resolve_function_call(
@@ -2124,7 +2136,7 @@ class CallResolver:
             return result
         # Ahead of the import probe: for a receiver it cannot place, that probe
         # binds `subprocess.run` to a same-module function named `run`.
-        if self._receiver_is_external_python_module(call):
+        if self._python_receiver_is_not_first_party(call):
             self._remember_cacheable(cache_key, None)
             return None
         handled, result = self._resolve_imported_or_module_member(call, cache_key)
@@ -2291,6 +2303,7 @@ class CallResolver:
             self._resolve_rust_block_scope,
             self._resolve_caller_scope,
             self._resolve_c_family_inherited_member,
+            self._resolve_js_object_member,
         ):
             handled, result = stage(call)
             if handled:
@@ -2568,6 +2581,137 @@ class CallResolver:
             if label is None:
                 return None
         return None
+
+    def _js_object_member_call(self, call: _CallSite) -> tuple[str, str, str] | None:
+        # `<receiver>.<key>(...)` split as (head, rest of the receiver, key)
+        # for a JS/TS call when some object literal is bound to a name; None
+        # otherwise. A receiver the type map holds is a typed value, which
+        # the typed paths own.
+        if (
+            call.language not in cs.JS_TS_LANGUAGES
+            or not self.function_registry.has_object_bindings()
+        ):
+            return None
+        receiver, sep, key = call.call_name.rpartition(cs.SEPARATOR_DOT)
+        if not sep or not receiver:
+            return None
+        head, _, rest = receiver.partition(cs.SEPARATOR_DOT)
+        if call.local_var_types and head in call.local_var_types:
+            return None
+        return head, rest, key
+
+    def _object_member_result(
+        self, binding_qn: str, key: str
+    ) -> tuple[str, str] | None:
+        member = self.function_registry.object_binding_member(binding_qn, key)
+        if member is None or member not in self.function_registry:
+            return None
+        return self.function_registry[member].value, member
+
+    def _js_local_receiver(
+        self, call: _CallSite, head: str
+    ) -> js_ts_utils.JsLocalIntro | None:
+        # The innermost introduction of `head` around the call by the calling
+        # function or one enclosing it; None when only the module or an
+        # import binds the name there.
+        if not call.caller_qn:
+            return None
+        intros = self.js_local_scopes.get(call.caller_qn, {}).get(head, ())
+        point = call.call_point
+        enclosing = [i for i in intros if point is None or i.start <= point < i.end]
+        if not enclosing:
+            return None
+        return max(enclosing, key=lambda intro: intro.start)
+
+    def _resolve_js_object_member(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # `api.fetchUser()` on a name an object literal is bound to: that
+        # literal's member (issue #2763). Caller-specific, as a parameter or
+        # other local of the receiver's name shadows the module's or an
+        # import's `api` (#2763 review), so ahead of the cache.
+        parts = self._js_object_member_call(call)
+        if parts is None:
+            return False, None
+        head, rest, key = parts
+        local = self._js_local_receiver(call, head)
+        if local is None:
+            result = self._js_module_object_member(call, head, rest, key)
+        elif (
+            local.object_literal
+            and not rest
+            and not self._js_shared_binding(call, head, local)
+            and not self._js_inner_binding(call, head, local)
+        ):
+            result = self._js_local_object_member(call, head, key)
+        else:
+            result = None
+        if result is None:
+            return False, None
+        self.last_bound_member = result[1]
+        return True, result
+
+    def _js_shared_binding(
+        self, call: _CallSite, head: str, local: js_ts_utils.JsLocalIntro
+    ) -> bool:
+        # Two literals one function binds to the name (in sibling blocks)
+        # register their members under one binding qn, whatever keys each
+        # has, so which literal a call means is not known there (#2763
+        # review).
+        intros = self.js_local_scopes.get(call.caller_qn or "", {}).get(head, ())
+        return sum(1 for i in intros if i.object_literal and i.owner == local.owner) > 1
+
+    def _js_inner_binding(
+        self, call: _CallSite, head: str, local: js_ts_utils.JsLocalIntro
+    ) -> bool:
+        # A function nested in the one whose literal the call reads that
+        # binds the name to a literal of its own, in a block the call is
+        # past (`if (flag) { const api = {...} }`): the walk up from the
+        # caller would reach that function's binding first (Greptile, PR
+        # #3118).
+        intros = self.js_local_scopes.get(call.caller_qn or "", {}).get(head, ())
+        return any(i.object_literal and i.owner > local.owner for i in intros)
+
+    def _js_local_object_member(
+        self, call: _CallSite, head: str, key: str
+    ) -> tuple[str, str] | None:
+        # `tools.build()` where `const tools = { build: () => 2 }` is written
+        # in the calling function or one enclosing it.
+        scope = call.caller_qn
+        while scope and scope != call.module_qn:
+            binding_qn = f"{scope}{cs.SEPARATOR_DOT}{head}"
+            if self.function_registry.has_object_binding(binding_qn):
+                # The nearest function binding the name decides, also when
+                # two of its blocks bind it and no member is chosen (bot
+                # review on PR #3118).
+                return self._object_member_result(binding_qn, key)
+            scope = scope.rpartition(cs.SEPARATOR_DOT)[0]
+        return None
+
+    def _js_module_object_member(
+        self, call: _CallSite, head: str, rest: str, key: str
+    ) -> tuple[str, str] | None:
+        # An object literal bound at module level, here or in the module an
+        # import names (`import { api }`, `import * as ns` + `ns.api.f()`, a
+        # CommonJS destructure, or `import api` of an `export default
+        # { ... }`): its member registers under its module without the
+        # object's name.
+        import_map = self.import_processor.import_mapping.get(call.module_qn, {})
+        base = import_map.get(head) or f"{call.module_qn}{cs.SEPARATOR_DOT}{head}"
+        binding_qn = f"{base}{cs.SEPARATOR_DOT}{rest}" if rest else base
+        if head in import_map:
+            # What the source module exports under the name, through its
+            # export table: `export { publicApi as api }` beside a private
+            # `const api` gives the importer `publicApi` (bot review on PR
+            # #3118).
+            followed = self.import_processor.follow_js_reexports(
+                binding_qn,
+                self.type_inference.module_qn_to_file_path,
+                self.function_registry,
+            )
+            if followed != binding_qn:
+                return self._object_member_result(followed, key)
+        return self._object_member_result(binding_qn, key)
 
     def _resolution_cache_key(self, call: _CallSite) -> _ResolutionKey | None:
         module_qn, caller_qn = call.module_qn, call.caller_qn
@@ -3765,6 +3909,39 @@ class CallResolver:
         language = call.language or self._module_language(call.module_qn)
         return language == cs.SupportedLanguage.PYTHON
 
+    def _python_receiver_is_not_first_party(self, call: _CallSite) -> bool:
+        # An external module's (`subprocess.run`) or a builtin value's
+        # (`"-".join(...)`, `self.cache.get(k)` on `self.cache = {}`): the
+        # probes after it match the name alone, and bound it to any
+        # first-party definition that shares it (issue #2859).
+        if self._receiver_is_external_python_module(call):
+            return True
+        return self._receiver_is_python_builtin_value(call)
+
+    def _receiver_is_python_builtin_value(self, call: _CallSite) -> bool:
+        # A literal receiver (`"-"`, `{}`, `[x for x in y]`), or one whose
+        # type is a builtin's: a local or attribute assigned a literal, or
+        # annotated as one. `rpartition`, so `self.cache` is the receiver of
+        # `self.cache.get` and `"a.b"` of `"a.b".join`.
+        if call.constructing or not self._is_python_call(call):
+            return False
+        receiver, sep, _method = call.call_name.rpartition(cs.SEPARATOR_DOT)
+        if not sep or not receiver:
+            return False
+        typed = (call.local_var_types or {}).get(receiver)
+        if typed is not None:
+            # A builtin's name the module binds itself (`from lib import Bag
+            # as dict`) is that binding, not the builtin (Greptile, PR #2912).
+            return typed in cs.PY_BUILTIN_VALUE_TYPES and not self._module_binds(
+                call.module_qn, typed
+            )
+        return python_literal_text_type(receiver) is not None
+
+    def _module_binds(self, module_qn: str, name: str) -> bool:
+        return module_binds_name(
+            module_qn, name, self.import_processor, self.function_registry
+        )
+
     def _receiver_is_external_python_module(self, call: _CallSite) -> bool:
         # True for a Python `mod.attr(...)` whose `mod` is bound by an import
         # of a module outside the project (`import subprocess`, `from
@@ -4492,7 +4669,7 @@ class CallResolver:
             )
 
         return self._resolve_multi_part_call(
-            parts, call_name, import_map, module_qn, local_var_types
+            parts, call_name, import_map, module_qn, local_var_types, language
         )
 
     def _try_resolve_csharp_qualified_call(
@@ -6090,6 +6267,12 @@ class CallResolver:
         )
         for method_qn in method_qns:
             if method_qn in self.function_registry:
+                if language in cs.JS_TS_LANGUAGES and self._js_static_only(
+                    class_qn, method_name
+                ):
+                    # The receiver is an instance of the class, and its
+                    # prototype chain never holds a static member (#3672).
+                    return self._js_instance_member(class_qn, method_name)
                 logger.debug(
                     ls.CALL_TYPE_INFERRED,
                     call_name=call_name,
@@ -6107,8 +6290,53 @@ class CallResolver:
                 obj=object_name,
                 var_type=var_type,
             )
+            if language in cs.JS_TS_LANGUAGES and self._js_static_only(
+                inherited[1].rpartition(cs.SEPARATOR_DOT)[0], method_name
+            ):
+                return self._js_instance_member(class_qn, method_name)
             return inherited
         return None
+
+    def _js_static_only(self, class_qn: str, method: str) -> bool:
+        """Whether a JS/TS class declares `method` as a static member only."""
+        return self.type_inference.js_member_sides(class_qn, method) == (False, True)
+
+    def _js_instance_member(self, class_qn: str, method: str) -> tuple[str, str] | None:
+        """`(label, qn)` of the `method` an instance of the class runs: the
+        nearest class along its chain declaring `method` for its instances.
+        A static member lives on the class object, which an instance never
+        reaches, so it hides nothing. An instance field hides every base's
+        method and names none to bind."""
+        queue: deque[str] = deque([class_qn])
+        seen = {class_qn}
+        while queue:
+            owner = self._follow_reexports(queue.popleft())
+            member_qn = f"{owner}{cs.SEPARATOR_DOT}{method}"
+            registered = member_qn in self.function_registry
+            if self._js_declares_for_instances(owner, method, registered):
+                return (
+                    (self.function_registry[member_qn], member_qn)
+                    if registered
+                    else None
+                )
+            for base in self.class_inheritance.get(owner, []):
+                if base not in seen:
+                    seen.add(base)
+                    queue.append(base)
+        return None
+
+    def _js_declares_for_instances(
+        self, class_qn: str, method: str, registered: bool
+    ) -> bool:
+        # As a method, accessor, field or signature in the body; or, with no
+        # declaration there, through a registration from outside it (a
+        # prototype write, a merged interface). With no class body to read,
+        # the registered member is the declaration.
+        sides = self.type_inference.js_member_sides(class_qn, method)
+        if sides is None:
+            return registered
+        instance, static = sides
+        return instance or (registered and not static)
 
     def _try_resolve_via_import(
         self,
@@ -6397,58 +6625,84 @@ class CallResolver:
         import_map: dict[str, str],
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         class_name = parts[0]
         method_name = cs.SEPARATOR_DOT.join(parts[1:])
 
-        if class_name in import_map:
-            class_qn = import_map[class_name]
-            method_qn = f"{class_qn}.{method_name}"
-            if method_qn in self.function_registry:
-                logger.debug(
-                    ls.CALL_IMPORT_QUALIFIED,
-                    call_name=call_name,
-                    method_qn=method_qn,
-                )
-                return self.function_registry[method_qn], method_qn
-            # `import pkg.util` is recorded as `pkg -> proj.pkg.util`, so a
-            # call spelled `pkg.util.helper` repeats the module's tail; the
-            # import names the module exactly, so the call is exact too and
-            # must not fall to the name-only trie (issue #1526).
-            if module_qn_hit := self._import_tail_qualified(class_qn, parts, call_name):
-                return module_qn_hit
+        if class_name in import_map and (
+            imported := self._import_qualified_method(
+                import_map[class_name], parts, method_name, call_name
+            )
+        ):
+            return imported
 
         if local_var_types and class_name in local_var_types:
             var_type = local_var_types[class_name]
             if class_qn := self._resolve_class_qn_from_type(
                 var_type, import_map, module_qn
             ):
-                method_qn = f"{class_qn}.{method_name}"
-                if method_qn in self.function_registry:
-                    logger.debug(
-                        ls.CALL_INSTANCE_QUALIFIED,
-                        call_name=call_name,
-                        method_qn=method_qn,
-                        class_name=class_name,
-                        var_type=var_type,
-                    )
-                    return self.function_registry[method_qn], method_qn
-
-                if inherited_method := self._resolve_inherited_method(
-                    class_qn, method_name
+                if language in cs.JS_TS_LANGUAGES and len(parts) == 2:
+                    # The typed lookup answered for this instance already,
+                    # nothing when a field hides the method (issue #3672).
+                    return self._js_instance_member(class_qn, method_name)
+                if typed := self._typed_local_method(
+                    class_qn, method_name, call_name, class_name, var_type
                 ):
-                    logger.debug(
-                        ls.CALL_INSTANCE_INHERITED,
-                        call_name=call_name,
-                        method_qn=inherited_method[1],
-                        class_name=class_name,
-                        var_type=var_type,
-                    )
-                    return inherited_method
+                    return typed
 
         return self._resolve_field_hop_method(
             parts, call_name, import_map, module_qn, local_var_types
         )
+
+    def _import_qualified_method(
+        self, class_qn: str, parts: list[str], method_name: str, call_name: str
+    ) -> tuple[str, str] | None:
+        """`method_name` on the module or class the call's first part imports."""
+        method_qn = f"{class_qn}.{method_name}"
+        if method_qn in self.function_registry:
+            logger.debug(
+                ls.CALL_IMPORT_QUALIFIED,
+                call_name=call_name,
+                method_qn=method_qn,
+            )
+            return self.function_registry[method_qn], method_qn
+        # `import pkg.util` is recorded as `pkg -> proj.pkg.util`, so a
+        # call spelled `pkg.util.helper` repeats the module's tail; the
+        # import names the module exactly, so the call is exact too and
+        # must not fall to the name-only trie (issue #1526).
+        return self._import_tail_qualified(class_qn, parts, call_name)
+
+    def _typed_local_method(
+        self,
+        class_qn: str,
+        method_name: str,
+        call_name: str,
+        class_name: str,
+        var_type: str,
+    ) -> tuple[str, str] | None:
+        """`method_name` on a typed local's class, or inherited by it."""
+        method_qn = f"{class_qn}.{method_name}"
+        if method_qn in self.function_registry:
+            logger.debug(
+                ls.CALL_INSTANCE_QUALIFIED,
+                call_name=call_name,
+                method_qn=method_qn,
+                class_name=class_name,
+                var_type=var_type,
+            )
+            return self.function_registry[method_qn], method_qn
+
+        if inherited_method := self._resolve_inherited_method(class_qn, method_name):
+            logger.debug(
+                ls.CALL_INSTANCE_INHERITED,
+                call_name=call_name,
+                method_qn=inherited_method[1],
+                class_name=class_name,
+                var_type=var_type,
+            )
+            return inherited_method
+        return None
 
     def _import_tail_qualified(
         self, class_qn: str, parts: list[str], call_name: str

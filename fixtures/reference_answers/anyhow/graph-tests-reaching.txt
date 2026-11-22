@@ -1,0 +1,153 @@
+$ cgr -q graph tests-reaching anyhow.src.error.Error.msg --project anyhow
+status: 0
+--- stdout
+[
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/test_boxed.rs",
+    "qualified_name": "anyhow.tests.test_boxed.test_boxed_anyhow",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/test_boxed.rs",
+    "qualified_name": "anyhow.tests.test_boxed.test_boxed_str",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/test_boxed.rs",
+    "qualified_name": "anyhow.tests.test_boxed.test_boxed_thiserror",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/test_chain.rs",
+    "qualified_name": "anyhow.tests.test_chain.error",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/test_ensure.rs",
+    "qualified_name": "anyhow.tests.test_ensure.test_trailer",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/test_ffi.rs",
+    "qualified_name": "anyhow.tests.test_ffi.anyhow2",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/test_ffi.rs",
+    "qualified_name": "anyhow.tests.test_ffi.anyhow3",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/test_macros.rs",
+    "qualified_name": "anyhow.tests.test_macros.test_brace_escape",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/test_macros.rs",
+    "qualified_name": "anyhow.tests.test_macros.test_temporaries",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/test_source.rs",
+    "qualified_name": "anyhow.tests.test_source.test_anyhow_from_anyhow",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/test_source.rs",
+    "qualified_name": "anyhow.tests.test_source.test_fmt_source",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/test_source.rs",
+    "qualified_name": "anyhow.tests.test_source.test_io_source",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/test_source.rs",
+    "qualified_name": "anyhow.tests.test_source.test_literal_source",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/test_source.rs",
+    "qualified_name": "anyhow.tests.test_source.test_variable_source",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/ui/must-use.rs",
+    "qualified_name": "anyhow.tests.ui.must-use.main",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/ui/no-impl.rs",
+    "qualified_name": "anyhow.tests.ui.no-impl.main",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "tests/ui/temporary-value.rs",
+    "qualified_name": "anyhow.tests.ui.temporary-value.main",
+    "through": "anyhow.src.macros.anyhow"
+  },
+  {
+    "depth": 3,
+    "label": "Function",
+    "path": "tests/test_chain.rs",
+    "qualified_name": "anyhow.tests.test_chain.test_clone",
+    "through": "anyhow.tests.test_chain.error"
+  },
+  {
+    "depth": 3,
+    "label": "Function",
+    "path": "tests/test_chain.rs",
+    "qualified_name": "anyhow.tests.test_chain.test_iter",
+    "through": "anyhow.tests.test_chain.error"
+  },
+  {
+    "depth": 3,
+    "label": "Function",
+    "path": "tests/test_chain.rs",
+    "qualified_name": "anyhow.tests.test_chain.test_len",
+    "through": "anyhow.tests.test_chain.error"
+  },
+  {
+    "depth": 3,
+    "label": "Function",
+    "path": "tests/test_chain.rs",
+    "qualified_name": "anyhow.tests.test_chain.test_rev",
+    "through": "anyhow.tests.test_chain.error"
+  }
+]
+--- stderr

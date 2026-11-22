@@ -1,0 +1,42 @@
+$ cgr -q dead-code --project anyhow
+status: 0
+--- stdout
+                                  Dead Code Candidates (anyhow)                                   
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+┃ Kind     ┃ Qualified Name                                         ┃ Path             ┃   Lines ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+│ Function │ anyhow.src.backtrace._assert_send_sync                 │ src/backtrace.rs │ 408-411 │
+│ Function │ anyhow.src.backtrace.assert                            │ src/backtrace.rs │ 409-409 │
+│ Method   │ anyhow.src.backtrace.capture.Backtrace.capture         │ src/backtrace.rs │ 212-219 │
+│ Method   │ anyhow.src.backtrace.capture.Backtrace.create          │ src/backtrace.rs │ 223-251 │
+│ Method   │ anyhow.src.backtrace.capture.Backtrace.enabled         │ src/backtrace.rs │ 193-209 │
+│ Method   │ anyhow.src.backtrace.capture.Capture.resolve           │ src/backtrace.rs │ 345-367 │
+│ Method   │ anyhow.src.backtrace.capture.LazilyResolvedCapture.new │ src/backtrace.rs │ 318-323 │
+│ Function │ anyhow.src.backtrace.capture.anonymous_225_29          │ src/backtrace.rs │ 226-235 │
+│ Function │ anyhow.src.backtrace.capture.anonymous_354_48          │ src/backtrace.rs │ 355-365 │
+│ Function │ anyhow.src.backtrace.capture.anonymous_356_48          │ src/backtrace.rs │ 357-357 │
+│ Function │ anyhow.src.backtrace.capture.anonymous_357_60          │ src/backtrace.rs │ 358-361 │
+│ Method   │ anyhow.src.context.ContextError.provide                │ src/context.rs   │ 147-149 │
+│ Method   │ anyhow.src.context.ContextError.provide@161            │ src/context.rs   │ 161-163 │
+│ Method   │ anyhow.src.ensure.Buf.as_str                           │ src/ensure.rs    │   48-55 │
+│ Method   │ anyhow.src.ensure.Buf.new                              │ src/ensure.rs    │   41-46 │
+│ Function │ anyhow.src.ensure.render                               │ src/ensure.rs    │  81-101 │
+│ Function │ anyhow.src.error.context_backtrace                     │ src/error.rs     │ 918-926 │
+│ Function │ anyhow.src.error.context_chain_downcast                │ src/error.rs     │ 857-870 │
+│ Function │ anyhow.src.error.context_chain_downcast_mut            │ src/error.rs     │ 874-887 │
+│ Function │ anyhow.src.error.context_chain_drop_rest               │ src/error.rs     │ 890-910 │
+│ Function │ anyhow.src.error.context_downcast                      │ src/error.rs     │ 800-816 │
+│ Function │ anyhow.src.error.context_downcast_mut                  │ src/error.rs     │ 820-836 │
+│ Function │ anyhow.src.error.context_drop_rest                     │ src/error.rs     │ 840-854 │
+│ Function │ anyhow.src.error.no_backtrace                          │ src/error.rs     │ 793-796 │
+│ Function │ anyhow.src.error.object_boxed                          │ src/error.rs     │ 737-744 │
+│ Function │ anyhow.src.error.object_downcast                       │ src/error.rs     │ 747-770 │
+│ Function │ anyhow.src.error.object_downcast_mut                   │ src/error.rs     │ 774-787 │
+│ Function │ anyhow.src.error.object_drop                           │ src/error.rs     │ 689-694 │
+│ Function │ anyhow.src.error.object_drop_front                     │ src/error.rs     │ 697-704 │
+│ Function │ anyhow.src.error.object_mut                            │ src/error.rs     │ 727-734 │
+│ Function │ anyhow.src.error.object_ref                            │ src/error.rs     │ 707-722 │
+│ Method   │ anyhow.src.wrapper.BoxedError.provide                  │ src/wrapper.rs   │   81-83 │
+└──────────┴────────────────────────────────────────────────────────┴──────────────────┴─────────┘
+32 candidate(s) for review.
+--- stderr

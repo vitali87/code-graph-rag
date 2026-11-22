@@ -1,0 +1,47 @@
+> tools/call flow_verdict {"sink_qualified_name": "anyhow.src.error.Error.msg", "source_qualified_name": "anyhow.src.error.Error.downcast"}
+isError: false
+--- text
+{
+  "verdict": "UNKNOWN",
+  "path": [],
+  "gaps": [
+    "README.md",
+    "build.rs",
+    "src/backtrace.rs",
+    "src/chain.rs",
+    "src/context.rs",
+    "src/ensure.rs",
+    "src/error.rs",
+    "src/fmt.rs",
+    "src/kind.rs",
+    "src/lib.rs",
+    "src/macros.rs",
+    "src/ptr.rs",
+    "src/wrapper.rs",
+    "tests/common/mod.rs",
+    "tests/compiletest.rs",
+    "tests/crate/test.rs",
+    "tests/drop/mod.rs",
+    "tests/test_autotrait.rs",
+    "tests/test_backtrace.rs",
+    "tests/test_boxed.rs",
+    "tests/test_chain.rs",
+    "tests/test_context.rs",
+    "tests/test_convert.rs",
+    "tests/test_downcast.rs",
+    "tests/test_ensure.rs",
+    "tests/test_ffi.rs",
+    "tests/test_fmt.rs",
+    "tests/test_macros.rs",
+    "tests/test_repr.rs",
+    "tests/test_source.rs",
+    "tests/ui/chained-comparison.rs",
+    "tests/ui/empty-ensure.rs",
+    "tests/ui/ensure-nonbool.rs",
+    "tests/ui/must-use.rs",
+    "tests/ui/no-impl.rs",
+    "tests/ui/temporary-value.rs",
+    "tests/ui/wrong-interpolation.rs"
+  ],
+  "remote_hops": []
+}

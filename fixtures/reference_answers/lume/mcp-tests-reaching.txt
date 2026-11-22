@@ -1,0 +1,19 @@
+> tools/call tests_reaching {"qualified_name": "lume.lume.lume.trim"}
+isError: false
+--- text
+[
+  {
+    "label": "Function",
+    "qualified_name": "lume.test.test.anonymous_518_21",
+    "path": "test/test.lua",
+    "depth": 1,
+    "through": "lume.lume.lume.trim"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "lume.test.test.anonymous_575_24",
+    "path": "test/test.lua",
+    "depth": 2,
+    "through": "lume.lume.lume.hotswap"
+  }
+]

@@ -1,0 +1,29 @@
+> tools/call read_file {"file_path": "include/leveldb/status.h", "limit": 25, "offset": 20}
+isError: false
+--- text
+# Lines 21-45 of 122
+
+namespace leveldb {
+
+class LEVELDB_EXPORT Status {
+ public:
+  // Create a success status.
+  Status() noexcept : state_(nullptr) {}
+  ~Status() { delete[] state_; }
+
+  Status(const Status& rhs);
+  Status& operator=(const Status& rhs);
+
+  Status(Status&& rhs) noexcept : state_(rhs.state_) { rhs.state_ = nullptr; }
+  Status& operator=(Status&& rhs) noexcept;
+
+  // Return a success status.
+  static Status OK() { return Status(); }
+
+  // Return error status of an appropriate type.
+  static Status NotFound(const Slice& msg, const Slice& msg2 = Slice()) {
+    return Status(kNotFound, msg, msg2);
+  }
+  static Status Corruption(const Slice& msg, const Slice& msg2 = Slice()) {
+    return Status(kCorruption, msg, msg2);
+  }

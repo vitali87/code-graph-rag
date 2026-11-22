@@ -1,0 +1,62 @@
+$ cgr -q graph tests-reaching php-diff.src.Parser.Parser.parse --project php-diff
+status: 0
+--- stdout
+[
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "tests/ParserTest.php",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParse",
+    "through": "php-diff.src.Parser.Parser.parse"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "tests/ParserTest.php",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseDiffForMulitpleFiles",
+    "through": "php-diff.src.Parser.Parser.parse"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "tests/ParserTest.php",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseWithMultipleChunks",
+    "through": "php-diff.src.Parser.Parser.parse"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "tests/ParserTest.php",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseWithRange",
+    "through": "php-diff.src.Parser.Parser.parse"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "tests/ParserTest.php",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseWithRemovedLines",
+    "through": "php-diff.src.Parser.Parser.parse"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "tests/ParserTest.php",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseWithSpacesInFileNames",
+    "through": "php-diff.src.Parser.Parser.parse"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "tests/ParserTest.php",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseWithSpacesInFileNamesAndTimesamp",
+    "through": "php-diff.src.Parser.Parser.parse"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "tests/ParserTest.php",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParser",
+    "through": "php-diff.src.Parser.Parser.parse"
+  }
+]
+--- stderr

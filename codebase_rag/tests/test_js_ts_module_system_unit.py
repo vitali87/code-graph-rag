@@ -134,6 +134,55 @@ class TestProcessCommonjsImport:
 
         assert mock_import_processor.defer_import_edge.call_count == 1
 
+    @pytest.mark.parametrize(
+        "bound", ["test_project.src.utils.helper", "test_project.src.utils"]
+    )
+    def test_skips_a_name_parse_imports_bound_to_the_module(
+        self,
+        mixin: ConcreteModuleSystemMixin,
+        mock_import_processor: MagicMock,
+        bound: str,
+    ) -> None:
+        # Its located IMPORTS edge is queued already; a site-less row for
+        # the pair would keep an edge of its own (issue #2879).
+        mock_import_processor._resolve_js_module_path.return_value = (
+            "test_project.src.utils"
+        )
+        mock_import_processor.import_mapping = {"my_module": {"helper": bound}}
+
+        mixin._process_commonjs_import(
+            "helper", "./src/utils", "my_module", cs.SupportedLanguage.JS
+        )
+
+        mock_import_processor.defer_import_edge.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "mapping",
+        [
+            {},
+            {"my_module": {}},
+            {"my_module": {"helper": "test_project.src.utils_extra.helper"}},
+        ],
+    )
+    def test_still_defers_a_name_bound_to_no_module_or_another(
+        self,
+        mixin: ConcreteModuleSystemMixin,
+        mock_import_processor: MagicMock,
+        mapping: dict[str, dict[str, str]],
+    ) -> None:
+        mock_import_processor._resolve_js_module_path.return_value = (
+            "test_project.src.utils"
+        )
+        mock_import_processor.import_mapping = mapping
+
+        mixin._process_commonjs_import(
+            "helper", "./src/utils", "my_module", cs.SupportedLanguage.JS
+        )
+
+        mock_import_processor.defer_import_edge.assert_called_once_with(
+            "my_module", "test_project.src.utils", cs.SupportedLanguage.JS
+        )
+
     def test_handles_resolution_error_gracefully(
         self,
         mixin: ConcreteModuleSystemMixin,

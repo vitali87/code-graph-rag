@@ -1,0 +1,36 @@
+$ cgr -q duplicates --project itsdangerous --format json
+status: 0
+--- stdout
+{
+  "groups": [
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 62,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "itsdangerous.tests.test_itsdangerous.test_timed.TestTimestampSigner.test_timestamp_missing",
+          "name": "test_timestamp_missing",
+          "path": "tests/test_itsdangerous/test_timed.py",
+          "start_line": 49,
+          "end_line": 57
+        },
+        {
+          "label": "Method",
+          "qualified_name": "itsdangerous.tests.test_itsdangerous.test_timed.TestTimestampSigner.test_malformed_timestamp",
+          "name": "test_malformed_timestamp",
+          "path": "tests/test_itsdangerous/test_timed.py",
+          "start_line": 59,
+          "end_line": 67
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    }
+  ],
+  "skipped_symbols": 0,
+  "truncated": false
+}
+--- stderr

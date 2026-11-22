@@ -1,0 +1,136 @@
+$ cgr -q context ky.source.index.createInstance --budget 1500 --project ky --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "target": "ky.source.index.createInstance",
+  "resolved": "ky.source.index.createInstance",
+  "budget_tokens": 1500,
+  "used_tokens": 1229,
+  "pieces": [
+    {
+      "qualified_name": "ky.source.index.createInstance",
+      "file": "source/index.ts",
+      "span": [
+        10,
+        31
+      ],
+      "why_included": "target",
+      "source": "const createInstance = (defaults?: Partial<Options>): KyInstance => {\n\t// eslint-disable-next-line @typescript-eslint/promise-function-async\n\tconst ky: Partial<Mutable<KyInstance>> = (input: Input, options?: Options) => Ky.create(input, validateAndMerge(defaults, options));\n\n\tfor (const method of requestMethods) {\n\t\t// eslint-disable-next-line @typescript-eslint/promise-function-async\n\t\tky[method] = (input: Input, options?: Options) => Ky.create(input, validateAndMerge(defaults, options, {method}));\n\t}\n\n\tky.create = (newDefaults?: Partial<Options>) => createInstance(validateAndMerge(newDefaults));\n\tky.extend = (newDefaults?: Partial<Options> | ((parentDefaults: Partial<Options>) => Partial<Options>)) => {\n\t\tif (typeof newDefaults === 'function') {\n\t\t\tnewDefaults = newDefaults(defaults ?? {});\n\t\t}\n\n\t\treturn createInstance(validateAndMerge(defaults, newDefaults));\n\t};\n\n\tky.stop = stop;\n\n\treturn ky as KyInstance;\n};",
+      "tokens": 318
+    },
+    {
+      "qualified_name": "ky.source.core.Ky.Ky.create",
+      "file": "source/core/Ky.ts",
+      "span": [
+        28,
+        28
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "static create(input: Input, options: Options): ResponsePromise {",
+      "tokens": 84
+    },
+    {
+      "qualified_name": "ky.source.index",
+      "file": "source/index.ts",
+      "span": [
+        33,
+        33
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "const ky = createInstance();",
+      "tokens": 71
+    },
+    {
+      "qualified_name": "ky.source.index.createInstance",
+      "file": "source/index.ts",
+      "span": [
+        19,
+        19
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "ky.create = (newDefaults?: Partial<Options>) => createInstance(validateAndMerge(newDefaults));",
+      "tokens": 87
+    },
+    {
+      "qualified_name": "ky.source.index.createInstance",
+      "file": "source/index.ts",
+      "span": [
+        25,
+        25
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "return createInstance(validateAndMerge(defaults, newDefaults));",
+      "tokens": 79
+    },
+    {
+      "qualified_name": "ky.source.index.createInstance",
+      "file": "source/index.ts",
+      "span": [
+        10,
+        10
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "const createInstance = (defaults?: Partial<Options>): KyInstance => {",
+      "tokens": 81
+    },
+    {
+      "qualified_name": "ky.source.index.createInstance.create",
+      "file": "source/index.ts",
+      "span": [
+        19,
+        19
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "ky.create = (newDefaults?: Partial<Options>) => createInstance(validateAndMerge(newDefaults));",
+      "tokens": 88
+    },
+    {
+      "qualified_name": "ky.source.index.createInstance.extend",
+      "file": "source/index.ts",
+      "span": [
+        25,
+        25
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "return createInstance(validateAndMerge(defaults, newDefaults));",
+      "tokens": 80
+    },
+    {
+      "qualified_name": "ky.source.types.ky.KyInstance",
+      "file": "source/types/ky.ts",
+      "span": [
+        5,
+        5
+      ],
+      "why_included": "type it returns",
+      "source": "export type KyInstance = {",
+      "tokens": 75
+    },
+    {
+      "qualified_name": "ky.source.types.options.Options",
+      "file": "source/types/options.ts",
+      "span": [
+        222,
+        222
+      ],
+      "why_included": "type it accepts",
+      "source": "export interface Options extends KyOptions, Omit<RequestInit, 'headers'> { // eslint-disable-line @typescript-eslint/consistent-type-definitions -- This must stay an interface so that it can be extended outside of Ky for use in `ky.create`.\n\t/**\n\tHTTP method used to make the request.\n\n\tInternally, the standard methods (`GET`, `POST`, `PUT`, `PATCH`, `HEAD` and `DELETE`) are uppercased in order to avoid server errors due to case sensitivity.",
+      "tokens": 172
+    },
+    {
+      "qualified_name": "ky.source.utils.merge.validateAndMerge",
+      "file": "source/utils/merge.ts",
+      "span": [
+        5,
+        5
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "export const validateAndMerge = (...sources: Array<Partial<Options> | undefined>): Partial<Options> => {",
+      "tokens": 94
+    }
+  ],
+  "omitted": [],
+  "omitted_count": 0,
+  "truncated": false
+}
+--- stderr

@@ -179,6 +179,7 @@ class JavaVariableAnalyzerMixin:
     _do_resolve_java_method_call: Callable[..., tuple[str, str] | None]
     _declared_return_type_of: Callable[..., str | None]
     _resolve_java_method_return_type: Callable[..., str | None]
+    _declared_java_fqn: Callable[..., str | None]
 
     @abstractmethod
     def _resolve_java_type_name(
@@ -1191,8 +1192,17 @@ class JavaVariableAnalyzerMixin:
         return variable_types.get(var_name) or variable_types.get(this_var)
 
     def _lookup_java_field_type(
-        self, class_type: str, field_name: str, module_qn: str
+        self,
+        class_type: str,
+        field_name: str,
+        module_qn: str,
+        inherited_only: bool = False,
     ) -> str | None:
+        # `inherited_only`: the field a SUBCLASS of `class_type` in
+        # `module_qn` inherits as `field_name`. The first declaration up the
+        # chain decides, and a private one, or a package-private one in
+        # another package, is not inherited and hides any farther one (JLS
+        # 8.2, 8.3).
         if not class_type or not field_name:
             return None
 
@@ -1209,16 +1219,37 @@ class JavaVariableAnalyzerMixin:
         seen: set[str] = set()
         while class_qn and class_qn not in seen:
             seen.add(class_qn)
-            if located := self._locate_class(class_qn):
-                root_node, class_path, target_module_qn = located
-                if field_type := self._find_field_type_in_nested_class(
-                    root_node, class_path, field_name, target_module_qn
-                ):
-                    return field_type
+            found, field_type = self._java_field_declared_by(
+                class_qn, field_name, module_qn, inherited_only
+            )
+            if found:
+                return field_type
             parents = self.class_inheritance.get(class_qn)
             class_qn = parents[0] if parents else None
 
         return None
+
+    def _java_field_declared_by(
+        self, class_qn: str, field_name: str, module_qn: str, inherited_only: bool
+    ) -> tuple[bool, str | None]:
+        # Whether `class_qn` itself decides `field_name`, and the type it
+        # gives: a declaration the subclass does not inherit decides too, as
+        # no type, since it hides any farther one.
+        if (located := self._locate_class(class_qn)) is None:
+            return False, None
+        root_node, class_path, target_module_qn = located
+        if inherited_only and self._java_field_not_inherited(
+            root_node,
+            class_path,
+            field_name,
+            self._declared_java_package(target_module_qn)
+            == self._declared_java_package(module_qn),
+        ):
+            return True, None
+        field_type = self._find_field_type_in_nested_class(
+            root_node, class_path, field_name, target_module_qn
+        )
+        return bool(field_type), field_type
 
     def _locate_class(self, class_qn: str) -> tuple[ASTNode, list[str], str] | None:
         # The file module is the longest registered prefix of the class qn; the rest
@@ -1240,13 +1271,8 @@ class JavaVariableAnalyzerMixin:
             root_node, [class_name], field_name, module_qn
         )
 
-    def _find_field_type_in_nested_class(
-        self,
-        root_node: ASTNode,
-        class_path: list[str],
-        field_name: str,
-        module_qn: str,
-    ) -> str | None:
+    @staticmethod
+    def _nested_class_body(root_node: ASTNode, class_path: list[str]) -> ASTNode | None:
         children = root_node.children
         body: ASTNode | None = None
         for class_name in class_path:
@@ -1264,8 +1290,47 @@ class JavaVariableAnalyzerMixin:
             ):
                 return None
             children = body.children
+        return body
 
-        if body is None:
+    def _declared_java_package(self, module_qn: str) -> str:
+        # The package a file declares, not its folder: src/main/java and
+        # src/test/java hold one package (Greptile, PR #2991). The module
+        # path stands in only when neither the file nor its layout names one.
+        fqn = self._declared_java_fqn(module_qn) or module_qn
+        return fqn.rpartition(cs.SEPARATOR_DOT)[0]
+
+    def _java_field_not_inherited(
+        self,
+        root_node: ASTNode,
+        class_path: list[str],
+        field_name: str,
+        same_package: bool,
+    ) -> bool:
+        if (body := self._nested_class_body(root_node, class_path)) is None:
+            return False
+        for field_child in body.children:
+            if field_child.type != cs.TS_FIELD_DECLARATION:
+                continue
+            info = extract_field_info(field_child)
+            if info.get(cs.FIELD_NAME) != field_name:
+                continue
+            modifiers = info["modifiers"]
+            if cs.JAVA_MODIFIER_PRIVATE in modifiers:
+                return True
+            return not same_package and not (
+                cs.JAVA_MODIFIER_PUBLIC in modifiers
+                or cs.JAVA_MODIFIER_PROTECTED in modifiers
+            )
+        return False
+
+    def _find_field_type_in_nested_class(
+        self,
+        root_node: ASTNode,
+        class_path: list[str],
+        field_name: str,
+        module_qn: str,
+    ) -> str | None:
+        if (body := self._nested_class_body(root_node, class_path)) is None:
             return None
 
         for field_child in body.children:
