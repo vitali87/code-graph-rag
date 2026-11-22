@@ -511,6 +511,9 @@ message GraphCodeIndex {
     // `super`, an `in` path); empty for a plain `pub` one, `self` for a
     // `macro_rules!` macro (PR #3242).
     string rust_visibility = 15;
+    // The binding its object literal is assigned to (`const api = {...}` ->
+    // `<module>.api`), so `api.fetchUser()` finds it (issue #2763).
+    string object_binding = 16;
     // Graph properties the index used to drop (#3206). Numbered from 20 so
     // fields other changes add below do not collide.
     string path = 20;

@@ -1,0 +1,12 @@
+> tools/call resolve {"target": "domath"}
+isError: false
+--- text
+[
+  {
+    "label": "Function",
+    "qualified_name": "example-jl.src.Example.Example.domath",
+    "path": "src/Example.jl",
+    "start_line": 16,
+    "end_line": 16
+  }
+]

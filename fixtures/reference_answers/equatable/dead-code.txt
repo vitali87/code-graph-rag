@@ -1,0 +1,6 @@
+$ cgr -q dead-code --project equatable
+status: 0
+--- stdout
+No unreachable functions or methods found.
+(public symbols treated as roots; use --no-public-roots for application code)
+--- stderr

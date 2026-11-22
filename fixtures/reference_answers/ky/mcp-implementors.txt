@@ -1,0 +1,11 @@
+> tools/call implementors {"qualified_name": "ky.source.types.options.KyOptions"}
+isError: false
+--- text
+[
+  {
+    "label": "Interface",
+    "qualified_name": "ky.source.types.options.Options",
+    "path": "source/types/options.ts",
+    "relationship": "INHERITS"
+  }
+]

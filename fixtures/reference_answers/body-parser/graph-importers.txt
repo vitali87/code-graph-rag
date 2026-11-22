@@ -1,0 +1,86 @@
+$ cgr -q graph importers body-parser.lib.utils --project body-parser
+status: 0
+--- stdout
+[
+  {
+    "alias": "getCharset",
+    "col": 0,
+    "end_col": 58,
+    "end_line": 20,
+    "imported_name": "getCharset",
+    "line": 20,
+    "module": "body-parser.lib.types.json",
+    "path": "lib/types/json.js"
+  },
+  {
+    "alias": "normalizeOptions",
+    "col": 0,
+    "end_col": 58,
+    "end_line": 20,
+    "imported_name": "normalizeOptions",
+    "line": 20,
+    "module": "body-parser.lib.types.json",
+    "path": "lib/types/json.js"
+  },
+  {
+    "alias": "normalizeOptions",
+    "col": 0,
+    "end_col": 46,
+    "end_line": 17,
+    "imported_name": "normalizeOptions",
+    "line": 17,
+    "module": "body-parser.lib.types.raw",
+    "path": "lib/types/raw.js"
+  },
+  {
+    "alias": "getCharset",
+    "col": 0,
+    "end_col": 58,
+    "end_line": 17,
+    "imported_name": "getCharset",
+    "line": 17,
+    "module": "body-parser.lib.types.text",
+    "path": "lib/types/text.js"
+  },
+  {
+    "alias": "normalizeOptions",
+    "col": 0,
+    "end_col": 58,
+    "end_line": 17,
+    "imported_name": "normalizeOptions",
+    "line": 17,
+    "module": "body-parser.lib.types.text",
+    "path": "lib/types/text.js"
+  },
+  {
+    "alias": "getCharset",
+    "col": 0,
+    "end_col": 58,
+    "end_line": 21,
+    "imported_name": "getCharset",
+    "line": 21,
+    "module": "body-parser.lib.types.urlencoded",
+    "path": "lib/types/urlencoded.js"
+  },
+  {
+    "alias": "normalizeOptions",
+    "col": 0,
+    "end_col": 58,
+    "end_line": 21,
+    "imported_name": "normalizeOptions",
+    "line": 21,
+    "module": "body-parser.lib.types.urlencoded",
+    "path": "lib/types/urlencoded.js"
+  },
+  {
+    "alias": "normalizeOptions",
+    "col": 0,
+    "end_col": 55,
+    "end_line": 4,
+    "imported_name": "normalizeOptions",
+    "line": 4,
+    "module": "body-parser.test.utils",
+    "path": "test/utils.js"
+  }
+]
+--- stderr

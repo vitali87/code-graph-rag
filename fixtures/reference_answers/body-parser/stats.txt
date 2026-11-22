@@ -1,0 +1,37 @@
+$ cgr -q stats --project body-parser
+status: 0
+--- stdout
+Scoped to: body-parser
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ Function    │   491 │
+│ Section     │   131 │
+│ File        │    24 │
+│ Module      │    15 │
+│ Folder      │     5 │
+│ Project     │     1 │
+├─────────────┼───────┤
+│ Total Nodes │   667 │
+└─────────────┴───────┘
+
+    Relationship Statistics    
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Relationship Type   ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ CALLS               │   696 │
+│ REFERENCES          │   594 │
+│ DEFINES             │   491 │
+│ CONTAINS_SECTION    │   131 │
+│ IMPORTS             │    46 │
+│ CONTAINS_FILE       │    24 │
+│ DEPENDS_ON_EXTERNAL │    19 │
+│ CONTAINS_MODULE     │    15 │
+│ LINKS_TO            │     6 │
+│ CONTAINS_FOLDER     │     5 │
+├─────────────────────┼───────┤
+│ Total Relationships │ 2,027 │
+└─────────────────────┴───────┘
+--- stderr
+Fetching graph statistics...

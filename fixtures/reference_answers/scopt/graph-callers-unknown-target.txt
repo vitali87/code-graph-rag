@@ -1,0 +1,5 @@
+$ cgr -q graph callers scopt.shared.src.main.scala.scopt.ORunner.no_such_function --project scopt
+status: 4
+--- stdout
+--- stderr
+'scopt.shared.src.main.scala.scopt.ORunner.no_such_function' is not in the graph. 'cgr graph resolve NAME' lists the qualified names a name matches.

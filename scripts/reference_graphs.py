@@ -43,9 +43,11 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Generator, Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from functools import cache
 from pathlib import Path
+from typing import NamedTuple
 
 from codebase_rag import constants as cs
 from codebase_rag.types_defs import JsonValue, ReferenceRepo
@@ -63,7 +65,17 @@ DEFAULT_CACHE = Path.home() / ".cache" / cs.REFERENCE_CACHE_DIRNAME
 type ExportRecord = dict[str, JsonValue]
 
 
-def _say(text: str) -> None:
+class Indexed(NamedTuple):
+    """A repository indexed into a graph of its own, while that graph lives."""
+
+    export: ExportRecord
+    # The scratch directory the index ran from; its `home` holds the graph.
+    work: Path
+    # The environment it ran with, so a command can read the same graph.
+    env: dict[str, str]
+
+
+def say(text: str) -> None:
     sys.stdout.write(f"{text}\n")
 
 
@@ -200,15 +212,18 @@ def _index_env(home: Path, seed: int | None) -> dict[str, str]:
     return env
 
 
-def index(
+@contextmanager
+def indexed(
     cgr: Sequence[str], repo: ReferenceRepo, source: Path, seed: int | None
-) -> ExportRecord:
-    """Index `source` into a graph of its own and return `cgr`'s JSON export."""
+) -> Generator[Indexed]:
+    """Index `source` into a graph of its own, which lives until the block
+    ends, and hand back `cgr`'s JSON export of it."""
     with tempfile.TemporaryDirectory(prefix="cgr-reference-") as tmp:
         work = Path(tmp)
         home = work / "home"
         home.mkdir()
         output = work / "graph.json"
+        env = _index_env(home, seed)
         command = [
             *cgr,
             "-q",
@@ -229,7 +244,7 @@ def index(
             command,
             check=False,
             cwd=work,
-            env=_index_env(home, seed),
+            env=env,
             capture_output=True,
             text=True,
             timeout=cs.REFERENCE_INDEX_TIMEOUT_S,
@@ -239,7 +254,17 @@ def index(
                 f"{repo['name']}: `{shlex.join(command)}` exited "
                 f"{result.returncode}\n{result.stderr[-4000:]}"
             )
-        return json.loads(output.read_text(encoding=cs.ENCODING_UTF8))
+        yield Indexed(
+            json.loads(output.read_text(encoding=cs.ENCODING_UTF8)), work, env
+        )
+
+
+def index(
+    cgr: Sequence[str], repo: ReferenceRepo, source: Path, seed: int | None
+) -> ExportRecord:
+    """Index `source` into a graph of its own and return `cgr`'s JSON export."""
+    with indexed(cgr, repo, source, seed) as done:
+        return done.export
 
 
 def parse_capabilities() -> list[str]:
@@ -511,11 +536,25 @@ def _summary(lines: Sequence[str]) -> str:
 
 def _report(title: str, diff: Sequence[str]) -> None:
     removed = sum(1 for line in diff if line.startswith("-"))
-    _say(f"{title}: {removed} lines only before, {len(diff) - removed} only after")
+    say(f"{title}: {removed} lines only before, {len(diff) - removed} only after")
     for line in diff[: cs.REFERENCE_DIFF_LINES]:
-        _say(f"    {line}")
+        say(f"    {line}")
     if len(diff) > cs.REFERENCE_DIFF_LINES:
-        _say(f"    ... and {len(diff) - cs.REFERENCE_DIFF_LINES} more")
+        say(f"    ... and {len(diff) - cs.REFERENCE_DIFF_LINES} more")
+
+
+def checkouts(
+    repo: ReferenceRepo, checkout: Path, runs: int
+) -> Iterator[tuple[int | None, Path]]:
+    """Where each of `runs` runs indexes, with the hash seed it runs under:
+    the checkout itself, then for each later run a copy at another path,
+    which lives until the next one is asked for."""
+    yield None, checkout
+    for seed in range(1, runs):
+        with tempfile.TemporaryDirectory(prefix="cgr-reference-copy-") as tmp:
+            copy = Path(tmp) / f"run{seed}" / repo["name"]
+            shutil.copytree(checkout, copy, symlinks=True)
+            yield seed, copy
 
 
 def _graphs(
@@ -523,13 +562,14 @@ def _graphs(
 ) -> tuple[list[str], list[tuple[int, list[str]]]]:
     """The first run's graph and, for each later run, its own: each later run
     indexes a copy at another path under another hash seed."""
-    first = canonical(index(cgr, repo, checkout, None), checkout)
+    first: list[str] = []
     later: list[tuple[int, list[str]]] = []
-    for seed in range(1, runs):
-        with tempfile.TemporaryDirectory(prefix="cgr-reference-copy-") as tmp:
-            copy = Path(tmp) / f"run{seed}" / repo["name"]
-            shutil.copytree(checkout, copy, symlinks=True)
-            later.append((seed, canonical(index(cgr, repo, copy, seed), copy)))
+    for seed, source in checkouts(repo, checkout, runs):
+        graph = canonical(index(cgr, repo, source, seed), source)
+        if seed is None:
+            first = graph
+        else:
+            later.append((seed, graph))
     return first, later
 
 
@@ -551,23 +591,37 @@ def _runs_this_python(cgr: Sequence[str]) -> bool:
     return _same_file(found) in ours
 
 
-def _environment_gate(
-    command: str, cgr: Sequence[str], directory: Path, partial: bool
+def environment_gate(
+    command: str,
+    cgr: Sequence[str],
+    directory: Path,
+    partial: bool,
+    *,
+    what: str = cs.REFERENCE_GRAPHS_RECORDED,
+    regenerate: str = cs.REFERENCE_REGENERATE,
 ) -> tuple[list[str], bool]:
-    """What this Python parses, and whether the run may go on."""
+    """What this Python parses, and whether the run may go on.
+
+    `what` and `regenerate` name what the run records and the command
+    that records it, for a check of something other than the graphs that
+    shares their environment.txt.
+    """
     if not _runs_this_python(cgr):
         if command == "record":
-            _say(
+            say(
                 cs.REFERENCE_OTHER_CGR_RECORD.format(
                     cgr=shlex.join(cgr),
                     python=sys.executable,
-                    regenerate=cs.REFERENCE_REGENERATE,
+                    recorded=what,
+                    regenerate=regenerate,
                 )
             )
             return [], False
-        _say(
+        say(
             cs.REFERENCE_OTHER_CGR_CHECK.format(
-                cgr=shlex.join(cgr), path=environment_path(directory)
+                cgr=shlex.join(cgr),
+                path=environment_path(directory),
+                recorded=what,
             )
         )
         return [], True
@@ -582,7 +636,7 @@ def _environment_gate(
             directory,
         )
         if refusal:
-            _say(refusal)
+            say(refusal)
             return environment, False
     return environment, True
 
@@ -597,7 +651,7 @@ def run(
     *,
     partial: bool = False,
 ) -> int:
-    environment, proceed = _environment_gate(command, cgr, directory, partial)
+    environment, proceed = environment_gate(command, cgr, directory, partial)
     if not proceed:
         return cs.REFERENCE_EXIT_FAILED
     status = 0
@@ -608,7 +662,7 @@ def run(
     for repo in repos:
         checkout = fetch(repo, cache)
         first, later = _graphs(cgr, repo, checkout, runs)
-        _say(f"{repo['name']} ({repo['language']}): {_summary(first)}")
+        say(f"{repo['name']} ({repo['language']}): {_summary(first)}")
         for seed, graph in later:
             diff = difference(first, graph)
             if diff:
@@ -622,7 +676,7 @@ def run(
             continue
         if not path.is_file():
             status = cs.REFERENCE_EXIT_DIFFERENT
-            _say(f"  no recorded graph at {path}; run `{cs.REFERENCE_REGENERATE}`")
+            say(f"  no recorded graph at {path}; run `{cs.REFERENCE_REGENERATE}`")
             continue
         diff = difference(read_graph(path), first)
         if diff:
@@ -635,21 +689,21 @@ def run(
             _report(f"  differs from {shown}", diff)
     if command == "record":
         if status:
-            _say("Runs disagreed, so no graph was written.")
+            say("Runs disagreed, so no graph was written.")
             return status
         for path, lines in staged:
             write_graph(path, lines)
         if not partial:
             write_graph(environment_path(directory), environment)
     if command == "check" and status == cs.REFERENCE_EXIT_DIFFERENT:
-        _say(
+        say(
             "If the change is intended, run "
             f"`{cs.REFERENCE_REGENERATE}` and commit {cs.REFERENCE_DIR}."
         )
     return status
 
 
-def _command(text: str) -> list[str]:
+def cgr_command(text: str) -> list[str]:
     """`--cgr` as an argument list, with a relative program path made
     absolute: the index runs from a scratch directory."""
     program, *rest = shlex.split(text)
@@ -678,7 +732,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == cs.REFERENCE_ENVIRONMENT_COMMAND:
         for line in parse_capabilities() if args.in_process else probe():
-            _say(line)
+            say(line)
         return 0
     repos = load_manifest()
     unknown = set(args.names) - {repo["name"] for repo in repos}
@@ -688,7 +742,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     return run(
         args.command,
         chosen,
-        _command(args.cgr),
+        cgr_command(args.cgr),
         args.cache,
         max(args.runs, 1),
         partial=bool(args.names),

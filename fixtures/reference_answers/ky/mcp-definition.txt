@@ -1,0 +1,17 @@
+> tools/call definition {"qualified_name": "ky.source.core.Ky.Ky.create"}
+isError: false
+--- text
+{
+  "label": "Method",
+  "qualified_name": "ky.source.core.Ky.Ky.create",
+  "path": "source/core/Ky.ts",
+  "start_line": 28,
+  "end_line": 114,
+  "start_col": 1,
+  "name_line": 28,
+  "decorators": [],
+  "name": "create",
+  "docstring": null,
+  "source": "static create(input: Input, options: Options): ResponsePromise {\n\t\tconst ky = new Ky(input, options);\n\n\t\tconst function_ = async (): Promise<Response> => {\n\t\t\tif (typeof ky._options.timeout === 'number' && ky._options.timeout > maxSafeTimeout) {\n\t\t\t\tthrow new RangeError(`The \\`timeout\\` option cannot be greater than ${maxSafeTimeout}`);\n\t\t\t}\n\n\t\t\t// Delay the fetch so that body method shortcuts can set the Accept header\n\t\t\tawait Promise.resolve();\n\t\t\tlet response = await ky._fetch();\n\n\t\t\tfor (const hook of ky._options.hooks.afterResponse) {\n\t\t\t\t// eslint-disable-next-line no-await-in-loop\n\t\t\t\tconst modifiedResponse = await hook(\n\t\t\t\t\tky.request,\n\t\t\t\t\tky._options as NormalizedOptions,\n\t\t\t\t\tky._decorateResponse(response.clone()),\n\t\t\t\t);\n\n\t\t\t\tif (modifiedResponse instanceof globalThis.Response) {\n\t\t\t\t\tresponse = modifiedResponse;\n\t\t\t\t}\n\t\t\t}\n\n\t\t\tky._decorateResponse(response);\n\n\t\t\tif (!response.ok && ky._options.throwHttpErrors) {\n\t\t\t\tlet error = new HTTPError(response, ky.request, ky._options as NormalizedOptions);\n\n\t\t\t\tfor (const hook of ky._options.hooks.beforeError) {\n\t\t\t\t\t// eslint-disable-next-line no-await-in-loop\n\t\t\t\t\terror = await hook(error);\n\t\t\t\t}\n\n\t\t\t\tthrow error;\n\t\t\t}\n\n\t\t\t// If `onDownloadProgress` is passed, it uses the stream API internally\n\t\t\t/* istanbul ignore next */\n\t\t\tif (ky._options.onDownloadProgress) {\n\t\t\t\tif (typeof ky._options.onDownloadProgress !== 'function') {\n\t\t\t\t\tthrow new TypeError('The `onDownloadProgress` option must be a function');\n\t\t\t\t}\n\n\t\t\t\tif (!supportsResponseStreams) {\n\t\t\t\t\tthrow new Error('Streams are not supported in your environment. `ReadableStream` is missing.');\n\t\t\t\t}\n\n\t\t\t\treturn ky._stream(response.clone(), ky._options.onDownloadProgress);\n\t\t\t}\n\n\t\t\treturn response;\n\t\t};\n\n\t\tconst isRetriableMethod = ky._options.retry.methods.includes(ky.request.method.toLowerCase());\n\t\tconst result = (isRetriableMethod ? ky._retry(function_) : function_()) as ResponsePromise;\n\n\t\tfor (const [type, mimeType] of Object.entries(responseTypes) as ObjectEntries<typeof responseTypes>) {\n\t\t\tresult[type] = async () => {\n\t\t\t\t// eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing\n\t\t\t\tky.request.headers.set('accept', ky.request.headers.get('accept') || mimeType);\n\n\t\t\t\tconst response = await result;\n\n\t\t\t\tif (type === 'json') {\n\t\t\t\t\tif (response.status === 204) {\n\t\t\t\t\t\treturn '';\n\t\t\t\t\t}\n\n\t\t\t\t\tconst arrayBuffer = await response.clone().arrayBuffer();\n\t\t\t\t\tconst responseSize = arrayBuffer.byteLength;\n\t\t\t\t\tif (responseSize === 0) {\n\t\t\t\t\t\treturn '';\n\t\t\t\t\t}\n\n\t\t\t\t\tif (options.parseJson) {\n\t\t\t\t\t\treturn options.parseJson(await response.text());\n\t\t\t\t\t}\n\t\t\t\t}\n\n\t\t\t\treturn response[type]();\n\t\t\t};\n\t\t}\n\n\t\treturn result;\n\t}",
+  "found": true
+}

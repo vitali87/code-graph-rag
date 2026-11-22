@@ -1,0 +1,558 @@
+$ cgr -q dead-code --project anyhow --no-public-roots --format json
+status: 0
+--- stdout
+[
+  {
+    "label": "Function",
+    "name": "_assert_send_sync",
+    "qualified_name": "anyhow.src.backtrace._assert_send_sync",
+    "path": "src/backtrace.rs",
+    "start_line": 408,
+    "end_line": 411
+  },
+  {
+    "label": "Function",
+    "name": "assert",
+    "qualified_name": "anyhow.src.backtrace.assert",
+    "path": "src/backtrace.rs",
+    "start_line": 409,
+    "end_line": 409
+  },
+  {
+    "label": "Method",
+    "name": "capture",
+    "qualified_name": "anyhow.src.backtrace.capture.Backtrace.capture",
+    "path": "src/backtrace.rs",
+    "start_line": 212,
+    "end_line": 219
+  },
+  {
+    "label": "Method",
+    "name": "create",
+    "qualified_name": "anyhow.src.backtrace.capture.Backtrace.create",
+    "path": "src/backtrace.rs",
+    "start_line": 223,
+    "end_line": 251
+  },
+  {
+    "label": "Method",
+    "name": "enabled",
+    "qualified_name": "anyhow.src.backtrace.capture.Backtrace.enabled",
+    "path": "src/backtrace.rs",
+    "start_line": 193,
+    "end_line": 209
+  },
+  {
+    "label": "Method",
+    "name": "resolve",
+    "qualified_name": "anyhow.src.backtrace.capture.Capture.resolve",
+    "path": "src/backtrace.rs",
+    "start_line": 345,
+    "end_line": 367
+  },
+  {
+    "label": "Method",
+    "name": "new",
+    "qualified_name": "anyhow.src.backtrace.capture.LazilyResolvedCapture.new",
+    "path": "src/backtrace.rs",
+    "start_line": 318,
+    "end_line": 323
+  },
+  {
+    "label": "Function",
+    "name": "anonymous_225_29",
+    "qualified_name": "anyhow.src.backtrace.capture.anonymous_225_29",
+    "path": "src/backtrace.rs",
+    "start_line": 226,
+    "end_line": 235
+  },
+  {
+    "label": "Function",
+    "name": "anonymous_354_48",
+    "qualified_name": "anyhow.src.backtrace.capture.anonymous_354_48",
+    "path": "src/backtrace.rs",
+    "start_line": 355,
+    "end_line": 365
+  },
+  {
+    "label": "Function",
+    "name": "anonymous_356_48",
+    "qualified_name": "anyhow.src.backtrace.capture.anonymous_356_48",
+    "path": "src/backtrace.rs",
+    "start_line": 357,
+    "end_line": 357
+  },
+  {
+    "label": "Function",
+    "name": "anonymous_357_60",
+    "qualified_name": "anyhow.src.backtrace.capture.anonymous_357_60",
+    "path": "src/backtrace.rs",
+    "start_line": 358,
+    "end_line": 361
+  },
+  {
+    "label": "Method",
+    "name": "provide",
+    "qualified_name": "anyhow.src.context.ContextError.provide",
+    "path": "src/context.rs",
+    "start_line": 147,
+    "end_line": 149
+  },
+  {
+    "label": "Method",
+    "name": "provide",
+    "qualified_name": "anyhow.src.context.ContextError.provide@161",
+    "path": "src/context.rs",
+    "start_line": 161,
+    "end_line": 163
+  },
+  {
+    "label": "Method",
+    "name": "context",
+    "qualified_name": "anyhow.src.context.Option.context",
+    "path": "src/context.rs",
+    "start_line": 91,
+    "end_line": 101
+  },
+  {
+    "label": "Method",
+    "name": "with_context",
+    "qualified_name": "anyhow.src.context.Option.with_context",
+    "path": "src/context.rs",
+    "start_line": 103,
+    "end_line": 112
+  },
+  {
+    "label": "Method",
+    "name": "context",
+    "qualified_name": "anyhow.src.context.Result.context",
+    "path": "src/context.rs",
+    "start_line": 46,
+    "end_line": 56
+  },
+  {
+    "label": "Method",
+    "name": "with_context",
+    "qualified_name": "anyhow.src.context.Result.with_context",
+    "path": "src/context.rs",
+    "start_line": 58,
+    "end_line": 67
+  },
+  {
+    "label": "Method",
+    "name": "ext_context",
+    "qualified_name": "anyhow.src.context.ext.E.ext_context",
+    "path": "src/context.rs",
+    "start_line": 23,
+    "end_line": 29
+  },
+  {
+    "label": "Method",
+    "name": "ext_context",
+    "qualified_name": "anyhow.src.context.ext.Error.ext_context",
+    "path": "src/context.rs",
+    "start_line": 33,
+    "end_line": 38
+  },
+  {
+    "label": "Method",
+    "name": "ext_context",
+    "qualified_name": "anyhow.src.context.ext.StdError.ext_context",
+    "path": "src/context.rs",
+    "start_line": 13,
+    "end_line": 15
+  },
+  {
+    "label": "Method",
+    "name": "__dispatch_ensure",
+    "qualified_name": "anyhow.src.ensure.BothDebug.__dispatch_ensure",
+    "path": "src/ensure.rs",
+    "start_line": 11,
+    "end_line": 11
+  },
+  {
+    "label": "Method",
+    "name": "as_str",
+    "qualified_name": "anyhow.src.ensure.Buf.as_str",
+    "path": "src/ensure.rs",
+    "start_line": 48,
+    "end_line": 55
+  },
+  {
+    "label": "Method",
+    "name": "new",
+    "qualified_name": "anyhow.src.ensure.Buf.new",
+    "path": "src/ensure.rs",
+    "start_line": 41,
+    "end_line": 46
+  },
+  {
+    "label": "Method",
+    "name": "__dispatch_ensure",
+    "qualified_name": "anyhow.src.ensure.NotBothDebug.__dispatch_ensure",
+    "path": "src/ensure.rs",
+    "start_line": 26,
+    "end_line": 26
+  },
+  {
+    "label": "Function",
+    "name": "__fallback_ensure",
+    "qualified_name": "anyhow.src.ensure.__fallback_ensure",
+    "path": "src/ensure.rs",
+    "start_line": 912,
+    "end_line": 935
+  },
+  {
+    "label": "Function",
+    "name": "__fancy_ensure",
+    "qualified_name": "anyhow.src.ensure.__fancy_ensure",
+    "path": "src/ensure.rs",
+    "start_line": 886,
+    "end_line": 908
+  },
+  {
+    "label": "Function",
+    "name": "__parse_ensure",
+    "qualified_name": "anyhow.src.ensure.__parse_ensure",
+    "path": "src/ensure.rs",
+    "start_line": 105,
+    "end_line": 882
+  },
+  {
+    "label": "Function",
+    "name": "render",
+    "qualified_name": "anyhow.src.ensure.render",
+    "path": "src/ensure.rs",
+    "start_line": 81,
+    "end_line": 101
+  },
+  {
+    "label": "Method",
+    "name": "construct_from_boxed",
+    "qualified_name": "anyhow.src.error.Error.construct_from_boxed",
+    "path": "src/error.rs",
+    "start_line": 270,
+    "end_line": 296
+  },
+  {
+    "label": "Method",
+    "name": "construct_from_context",
+    "qualified_name": "anyhow.src.error.Error.construct_from_context",
+    "path": "src/error.rs",
+    "start_line": 236,
+    "end_line": 266
+  },
+  {
+    "label": "Method",
+    "name": "construct_from_display",
+    "qualified_name": "anyhow.src.error.Error.construct_from_display",
+    "path": "src/error.rs",
+    "start_line": 206,
+    "end_line": 232
+  },
+  {
+    "label": "Method",
+    "name": "context",
+    "qualified_name": "anyhow.src.error.Error.context",
+    "path": "src/error.rs",
+    "start_line": 383,
+    "end_line": 414
+  },
+  {
+    "label": "Method",
+    "name": "from_boxed",
+    "qualified_name": "anyhow.src.error.Error.from_boxed",
+    "path": "src/error.rs",
+    "start_line": 144,
+    "end_line": 147
+  },
+  {
+    "label": "Method",
+    "name": "provide",
+    "qualified_name": "anyhow.src.error.Error.provide",
+    "path": "src/error.rs",
+    "start_line": 606,
+    "end_line": 608
+  },
+  {
+    "label": "Method",
+    "name": "thiserror_provide",
+    "qualified_name": "anyhow.src.error.Error.thiserror_provide",
+    "path": "src/error.rs",
+    "start_line": 617,
+    "end_line": 619
+  },
+  {
+    "label": "Method",
+    "name": "provide",
+    "qualified_name": "anyhow.src.error.ErrorImpl.provide",
+    "path": "src/error.rs",
+    "start_line": 1005,
+    "end_line": 1010
+  },
+  {
+    "label": "Method",
+    "name": "provide",
+    "qualified_name": "anyhow.src.error.ErrorImpl.provide@1027",
+    "path": "src/error.rs",
+    "start_line": 1027,
+    "end_line": 1029
+  },
+  {
+    "label": "Function",
+    "name": "context_backtrace",
+    "qualified_name": "anyhow.src.error.context_backtrace",
+    "path": "src/error.rs",
+    "start_line": 918,
+    "end_line": 926
+  },
+  {
+    "label": "Function",
+    "name": "context_chain_downcast",
+    "qualified_name": "anyhow.src.error.context_chain_downcast",
+    "path": "src/error.rs",
+    "start_line": 857,
+    "end_line": 870
+  },
+  {
+    "label": "Function",
+    "name": "context_chain_downcast_mut",
+    "qualified_name": "anyhow.src.error.context_chain_downcast_mut",
+    "path": "src/error.rs",
+    "start_line": 874,
+    "end_line": 887
+  },
+  {
+    "label": "Function",
+    "name": "context_chain_drop_rest",
+    "qualified_name": "anyhow.src.error.context_chain_drop_rest",
+    "path": "src/error.rs",
+    "start_line": 890,
+    "end_line": 910
+  },
+  {
+    "label": "Function",
+    "name": "context_downcast",
+    "qualified_name": "anyhow.src.error.context_downcast",
+    "path": "src/error.rs",
+    "start_line": 800,
+    "end_line": 816
+  },
+  {
+    "label": "Function",
+    "name": "context_downcast_mut",
+    "qualified_name": "anyhow.src.error.context_downcast_mut",
+    "path": "src/error.rs",
+    "start_line": 820,
+    "end_line": 836
+  },
+  {
+    "label": "Function",
+    "name": "context_drop_rest",
+    "qualified_name": "anyhow.src.error.context_drop_rest",
+    "path": "src/error.rs",
+    "start_line": 840,
+    "end_line": 854
+  },
+  {
+    "label": "Function",
+    "name": "no_backtrace",
+    "qualified_name": "anyhow.src.error.no_backtrace",
+    "path": "src/error.rs",
+    "start_line": 793,
+    "end_line": 796
+  },
+  {
+    "label": "Function",
+    "name": "object_boxed",
+    "qualified_name": "anyhow.src.error.object_boxed",
+    "path": "src/error.rs",
+    "start_line": 737,
+    "end_line": 744
+  },
+  {
+    "label": "Function",
+    "name": "object_downcast",
+    "qualified_name": "anyhow.src.error.object_downcast",
+    "path": "src/error.rs",
+    "start_line": 747,
+    "end_line": 770
+  },
+  {
+    "label": "Function",
+    "name": "object_downcast_mut",
+    "qualified_name": "anyhow.src.error.object_downcast_mut",
+    "path": "src/error.rs",
+    "start_line": 774,
+    "end_line": 787
+  },
+  {
+    "label": "Function",
+    "name": "object_drop",
+    "qualified_name": "anyhow.src.error.object_drop",
+    "path": "src/error.rs",
+    "start_line": 689,
+    "end_line": 694
+  },
+  {
+    "label": "Function",
+    "name": "object_drop_front",
+    "qualified_name": "anyhow.src.error.object_drop_front",
+    "path": "src/error.rs",
+    "start_line": 697,
+    "end_line": 704
+  },
+  {
+    "label": "Function",
+    "name": "object_mut",
+    "qualified_name": "anyhow.src.error.object_mut",
+    "path": "src/error.rs",
+    "start_line": 727,
+    "end_line": 734
+  },
+  {
+    "label": "Function",
+    "name": "object_ref",
+    "qualified_name": "anyhow.src.error.object_ref",
+    "path": "src/error.rs",
+    "start_line": 707,
+    "end_line": 722
+  },
+  {
+    "label": "Method",
+    "name": "new",
+    "qualified_name": "anyhow.src.kind.Adhoc.new",
+    "path": "src/kind.rs",
+    "start_line": 69,
+    "end_line": 74
+  },
+  {
+    "label": "Method",
+    "name": "anyhow_kind",
+    "qualified_name": "anyhow.src.kind.AdhocKind.anyhow_kind",
+    "path": "src/kind.rs",
+    "start_line": 60,
+    "end_line": 62
+  },
+  {
+    "label": "Method",
+    "name": "new",
+    "qualified_name": "anyhow.src.kind.Boxed.new",
+    "path": "src/kind.rs",
+    "start_line": 117,
+    "end_line": 120
+  },
+  {
+    "label": "Method",
+    "name": "anyhow_kind",
+    "qualified_name": "anyhow.src.kind.BoxedKind.anyhow_kind",
+    "path": "src/kind.rs",
+    "start_line": 106,
+    "end_line": 108
+  },
+  {
+    "label": "Method",
+    "name": "new",
+    "qualified_name": "anyhow.src.kind.Trait.new",
+    "path": "src/kind.rs",
+    "start_line": 91,
+    "end_line": 96
+  },
+  {
+    "label": "Method",
+    "name": "anyhow_kind",
+    "qualified_name": "anyhow.src.kind.TraitKind.anyhow_kind",
+    "path": "src/kind.rs",
+    "start_line": 82,
+    "end_line": 84
+  },
+  {
+    "label": "Method",
+    "name": "context",
+    "qualified_name": "anyhow.src.lib.Context.context",
+    "path": "src/lib.rs",
+    "start_line": 618,
+    "end_line": 620
+  },
+  {
+    "label": "Method",
+    "name": "with_context",
+    "qualified_name": "anyhow.src.lib.Context.with_context",
+    "path": "src/lib.rs",
+    "start_line": 624,
+    "end_line": 627
+  },
+  {
+    "label": "Function",
+    "name": "__anyhow",
+    "qualified_name": "anyhow.src.macros.__anyhow",
+    "path": "src/macros.rs",
+    "start_line": 227,
+    "end_line": 242
+  },
+  {
+    "label": "Method",
+    "name": "extend",
+    "qualified_name": "anyhow.src.ptr.Mut.extend",
+    "path": "src/ptr.rs",
+    "start_line": 174,
+    "end_line": 179
+  },
+  {
+    "label": "Method",
+    "name": "new",
+    "qualified_name": "anyhow.src.ptr.Mut.new",
+    "path": "src/ptr.rs",
+    "start_line": 152,
+    "end_line": 157
+  },
+  {
+    "label": "Method",
+    "name": "read",
+    "qualified_name": "anyhow.src.ptr.Mut.read",
+    "path": "src/ptr.rs",
+    "start_line": 187,
+    "end_line": 189
+  },
+  {
+    "label": "Method",
+    "name": "boxed",
+    "qualified_name": "anyhow.src.ptr.Own.boxed",
+    "path": "src/ptr.rs",
+    "start_line": 44,
+    "end_line": 46
+  },
+  {
+    "label": "Method",
+    "name": "by_ref",
+    "qualified_name": "anyhow.src.ptr.Own.by_ref",
+    "path": "src/ptr.rs",
+    "start_line": 48,
+    "end_line": 53
+  },
+  {
+    "label": "Method",
+    "name": "by_mut",
+    "qualified_name": "anyhow.src.ptr.Ref.by_mut",
+    "path": "src/ptr.rs",
+    "start_line": 110,
+    "end_line": 115
+  },
+  {
+    "label": "Method",
+    "name": "from_raw",
+    "qualified_name": "anyhow.src.ptr.Ref.from_raw",
+    "path": "src/ptr.rs",
+    "start_line": 95,
+    "end_line": 100
+  },
+  {
+    "label": "Method",
+    "name": "provide",
+    "qualified_name": "anyhow.src.wrapper.BoxedError.provide",
+    "path": "src/wrapper.rs",
+    "start_line": 81,
+    "end_line": 83
+  }
+]
+--- stderr

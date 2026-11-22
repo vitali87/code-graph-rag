@@ -1,0 +1,9 @@
+$ cgr -q duplicates --project example-jl --format json
+status: 0
+--- stdout
+{
+  "groups": [],
+  "skipped_symbols": 2,
+  "truncated": false
+}
+--- stderr

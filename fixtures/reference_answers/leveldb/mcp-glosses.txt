@@ -1,0 +1,14 @@
+> tools/call glosses {"target": "leveldb.include.leveldb.status.leveldb.Status.ToString"}
+isError: false
+--- text
+{
+  "target": {
+    "label": "Method",
+    "qualified_name": "leveldb.include.leveldb.status.leveldb.Status.ToString",
+    "path": "util/status.cc",
+    "start_line": 38,
+    "end_line": 75
+  },
+  "annotating": [],
+  "mentioning": []
+}

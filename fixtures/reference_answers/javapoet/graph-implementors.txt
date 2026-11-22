@@ -1,0 +1,36 @@
+$ cgr -q graph implementors javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName --project javapoet
+status: 0
+--- stdout
+[
+  {
+    "label": "Class",
+    "path": "src/main/java/com/squareup/javapoet/ArrayTypeName.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ArrayTypeName.ArrayTypeName",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "src/main/java/com/squareup/javapoet/ParameterizedTypeName.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterizedTypeName.ParameterizedTypeName",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName.TypeVariableName",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "src/main/java/com/squareup/javapoet/WildcardTypeName.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.WildcardTypeName.WildcardTypeName",
+    "relationship": "INHERITS"
+  }
+]
+--- stderr

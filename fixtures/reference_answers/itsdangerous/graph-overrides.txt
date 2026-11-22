@@ -1,0 +1,24 @@
+$ cgr -q graph overrides itsdangerous.src.itsdangerous.signer.SigningAlgorithm.get_signature --project itsdangerous
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "path": "src/itsdangerous/signer.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.signer.HMACAlgorithm.get_signature",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "src/itsdangerous/signer.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.signer.NoneAlgorithm.get_signature",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "tests/test_itsdangerous/test_signer.py",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_signer._ReverseAlgorithm.get_signature",
+    "relationship": "OVERRIDES"
+  }
+]
+--- stderr

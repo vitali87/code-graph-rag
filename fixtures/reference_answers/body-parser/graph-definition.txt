@@ -1,0 +1,18 @@
+$ cgr -q graph definition body-parser.lib.types.json.json --project body-parser --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "decorators": [],
+  "docstring": null,
+  "end_line": 132,
+  "found": true,
+  "label": "Function",
+  "name": "json",
+  "name_line": 53,
+  "path": "lib/types/json.js",
+  "qualified_name": "body-parser.lib.types.json.json",
+  "source": "function json (options) {\n  var { inflate, limit, verify, shouldParse } = normalizeOptions(options, 'application/json')\n\n  var reviver = options?.reviver\n  var strict = options?.strict !== false\n\n  function parse (body) {\n    if (body.length === 0) {\n      // special-case empty json body, as it's a common client-side mistake\n      // TODO: maybe make this configurable or part of \"strict\" option\n      return {}\n    }\n\n    if (strict) {\n      var first = firstchar(body)\n\n      if (first !== '{' && first !== '[') {\n        debug('strict violation')\n        throw createStrictSyntaxError(body, first)\n      }\n    }\n\n    try {\n      debug('parse json')\n      return JSON.parse(body, reviver)\n    } catch (e) {\n      throw normalizeJsonSyntaxError(e, {\n        message: e.message,\n        stack: e.stack\n      })\n    }\n  }\n\n  return function jsonParser (req, res, next) {\n    if (isFinished(req)) {\n      debug('body already parsed')\n      next()\n      return\n    }\n\n    if (!('body' in req)) {\n      req.body = undefined\n    }\n\n    // skip requests without bodies\n    if (!typeis.hasBody(req)) {\n      debug('skip empty body')\n      next()\n      return\n    }\n\n    debug('content-type %j', req.headers['content-type'])\n\n    // determine if request should be parsed\n    if (!shouldParse(req)) {\n      debug('skip parsing')\n      next()\n      return\n    }\n\n    // assert charset per RFC 7159 sec 8.1\n    var charset = getCharset(req) || 'utf-8'\n    if (charset.slice(0, 4) !== 'utf-') {\n      debug('invalid charset')\n      next(createError(415, 'unsupported charset \"' + charset.toUpperCase() + '\"', {\n        charset: charset,\n        type: 'charset.unsupported'\n      }))\n      return\n    }\n\n    // read\n    read(req, res, next, parse, debug, {\n      encoding: charset,\n      inflate,\n      limit,\n      verify\n    })\n  }\n}",
+  "start_col": 0,
+  "start_line": 53
+}
+--- stderr

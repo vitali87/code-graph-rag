@@ -20,11 +20,13 @@ repos:
       # "fixing" whitespace or appending a newline silently re-points the
       # seed at another grammar. Both hooks did exactly that once, and
       # pre-commit.ci would have redone it server-side on every PR
-      # (autofix_prs is on).
+      # (autofix_prs is on). The recorded answers are output byte for byte,
+      # a table's padding and a blank last line included, and the
+      # check compares them that way.
       - id: trailing-whitespace
-        exclude: ^fuzz/corpus/
+        exclude: ^(fuzz/corpus/|fixtures/reference_answers/)
       - id: end-of-file-fixer
-        exclude: ^fuzz/corpus/
+        exclude: ^(fuzz/corpus/|fixtures/reference_answers/)
       - id: check-yaml
         args: [--unsafe]
       - id: check-toml

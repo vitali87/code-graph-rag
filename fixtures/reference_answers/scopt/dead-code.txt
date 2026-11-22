@@ -1,0 +1,80 @@
+$ cgr -q dead-code --project scopt
+status: 0
+--- stdout
+                                                                 Dead Code Candidates (scopt)                                                                  
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+┃ Kind     ┃ Qualified Name                                                                     ┃ Path                                              ┃   Lines ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+│ Method   │ scopt.js.src.main.scala.PlatformReadInstances.platform.applyArgumentExHandler      │ js/src/main/scala/PlatformReadInstances.scala     │   25-34 │
+│ Method   │ scopt.jvm.src.main.scala.PlatformReadInstances.platform.applyArgumentExHandler     │ jvm/src/main/scala/PlatformReadInstances.scala    │   37-58 │
+│ Method   │ scopt.jvm.src.main.scala.PlatformReadInstances.platform.exit                       │ jvm/src/main/scala/PlatformReadInstances.scala    │   60-60 │
+│ Method   │ scopt.jvm.src.main.scala.PlatformReadInstances.platform.mkParseEx                  │ jvm/src/main/scala/PlatformReadInstances.scala    │   17-17 │
+│ Method   │ scopt.native.src.main.scala.PlatformReadInstances.platform.applyArgumentExHandler  │ native/src/main/scala/PlatformReadInstances.scala │   19-26 │
+│ Method   │ scopt.native.src.main.scala.PlatformReadInstances.platform.exit                    │ native/src/main/scala/PlatformReadInstances.scala │   28-28 │
+│ Method   │ scopt.native.src.main.scala.PlatformReadInstances.platform.mkParseEx               │ native/src/main/scala/PlatformReadInstances.scala │   12-12 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OParser.OParser@257.showTryHelp                  │ shared/src/main/scala/scopt/OParser.scala         │ 280-280 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OParser.OParser@257.showTryHelp@284              │ shared/src/main/scala/scopt/OParser.scala         │ 284-284 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OParser.OParser@257.showUsageAsError             │ shared/src/main/scala/scopt/OParser.scala         │ 279-279 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OParser.OParser@257.showUsageAsError@283         │ shared/src/main/scala/scopt/OParser.scala         │ 283-283 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.arguments                        │ shared/src/main/scala/scopt/ORunner.scala         │   18-18 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.arguments@215                    │ shared/src/main/scala/scopt/ORunner.scala         │ 215-215 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.checks                           │ shared/src/main/scala/scopt/ORunner.scala         │ 217-217 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.commandExample                   │ shared/src/main/scala/scopt/ORunner.scala         │ 164-187 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.commandName                      │ shared/src/main/scala/scopt/ORunner.scala         │ 165-170 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.commands                         │ shared/src/main/scala/scopt/ORunner.scala         │   19-19 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.commands@216                     │ shared/src/main/scala/scopt/ORunner.scala         │ 216-216 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.displayToErr                     │ shared/src/main/scala/scopt/ORunner.scala         │ 230-230 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.displayToOut                     │ shared/src/main/scala/scopt/ORunner.scala         │ 229-229 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.findCommand                      │ shared/src/main/scala/scopt/ORunner.scala         │ 313-316 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleArgument                   │ shared/src/main/scala/scopt/ORunner.scala         │ 268-283 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleChecks                     │ shared/src/main/scala/scopt/ORunner.scala         │ 335-342 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleError                      │ shared/src/main/scala/scopt/ORunner.scala         │ 252-257 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleFallback                   │ shared/src/main/scala/scopt/ORunner.scala         │ 284-299 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleOccurrence                 │ shared/src/main/scala/scopt/ORunner.scala         │ 300-312 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleShortOptions               │ shared/src/main/scala/scopt/ORunner.scala         │ 316-334 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.heads                            │ shared/src/main/scala/scopt/ORunner.scala         │   17-17 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.heads@208                        │ shared/src/main/scala/scopt/ORunner.scala         │ 208-208 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.indentDescription                │ shared/src/main/scala/scopt/ORunner.scala         │   55-55 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.isShortOpt                       │ shared/src/main/scala/scopt/ORunner.scala         │ 377-380 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.itemUsage                        │ shared/src/main/scala/scopt/ORunner.scala         │   53-79 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.nonArgs                          │ shared/src/main/scala/scopt/ORunner.scala         │ 209-214 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.optionsForRender                 │ shared/src/main/scala/scopt/ORunner.scala         │   26-51 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.oxford                           │ shared/src/main/scala/scopt/ORunner.scala         │ 347-350 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.programName                      │ shared/src/main/scala/scopt/ORunner.scala         │   21-24 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.programNames                     │ shared/src/main/scala/scopt/ORunner.scala         │   20-20 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.pushChildren                     │ shared/src/main/scala/scopt/ORunner.scala         │ 235-251 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.renderOneColumnUsage             │ shared/src/main/scala/scopt/ORunner.scala         │ 130-138 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.renderTwoColumnsUsage            │ shared/src/main/scala/scopt/ORunner.scala         │ 140-162 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.reportError                      │ shared/src/main/scala/scopt/ORunner.scala         │ 231-231 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.reportWarning                    │ shared/src/main/scala/scopt/ORunner.scala         │ 232-232 │
+│ Method   │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.runEffects                       │ shared/src/main/scala/scopt/ORunner.scala         │ 434-442 │
+│ Method   │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.runParser                        │ shared/src/main/scala/scopt/ORunner.scala         │ 200-432 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.showTryHelp                      │ shared/src/main/scala/scopt/ORunner.scala         │ 346-356 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.showUsageAsError                 │ shared/src/main/scala/scopt/ORunner.scala         │ 343-345 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.spaceToDesc                      │ shared/src/main/scala/scopt/ORunner.scala         │ 108-118 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.terminate                        │ shared/src/main/scala/scopt/ORunner.scala         │ 233-233 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageColumn1                     │ shared/src/main/scala/scopt/ORunner.scala         │  83-107 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageExample                     │ shared/src/main/scala/scopt/ORunner.scala         │ 189-189 │
+│ Function │ scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageTwoColumn                   │ shared/src/main/scala/scopt/ORunner.scala         │ 107-128 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.action@187                   │ shared/src/main/scala/scopt/OptionDef.scala       │ 187-187 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.applyArgument                │ shared/src/main/scala/scopt/OptionDef.scala       │ 202-219 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.applyFallback                │ shared/src/main/scala/scopt/OptionDef.scala       │ 219-236 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.argName                      │ shared/src/main/scala/scopt/OptionDef.scala       │ 287-292 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.checks                       │ shared/src/main/scala/scopt/OptionDef.scala       │ 196-196 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.getParentId                  │ shared/src/main/scala/scopt/OptionDef.scala       │ 192-192 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.hasParent                    │ shared/src/main/scala/scopt/OptionDef.scala       │ 191-191 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.isOptLike                    │ shared/src/main/scala/scopt/OptionDef.scala       │ 247-249 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.keyValueString               │ shared/src/main/scala/scopt/OptionDef.scala       │ 273-275 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.read                         │ shared/src/main/scala/scopt/OptionDef.scala       │ 103-103 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.shortOptOrBlank              │ shared/src/main/scala/scopt/OptionDef.scala       │ 190-190 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.tokensToRead                 │ shared/src/main/scala/scopt/OptionDef.scala       │ 249-257 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.valueString                  │ shared/src/main/scala/scopt/OptionDef.scala       │ 275-275 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionDef.OptionDef@294.generateId               │ shared/src/main/scala/scopt/OptionDef.scala       │ 305-305 │
+│ Function │ scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.errorOnUnknownArgument │ shared/src/main/scala/scopt/OptionParser.scala    │ 181-181 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.onChange               │ shared/src/main/scala/scopt/OptionParser.scala    │ 161-161 │
+│ Method   │ scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.optionsWithProgramName │ shared/src/main/scala/scopt/OptionParser.scala    │ 169-174 │
+│ Function │ scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.renderingMode          │ shared/src/main/scala/scopt/OptionParser.scala    │ 180-180 │
+│ Function │ scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.showUsageOnError       │ shared/src/main/scala/scopt/OptionParser.scala    │ 182-182 │
+└──────────┴────────────────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────┴─────────┘
+70 candidate(s) for review.
+--- stderr

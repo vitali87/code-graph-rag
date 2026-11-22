@@ -1,0 +1,7 @@
+> tools/call list_directory {"directory_path": "lib/types"}
+isError: false
+--- text
+json.js
+raw.js
+text.js
+urlencoded.js

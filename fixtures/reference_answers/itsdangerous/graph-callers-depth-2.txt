@@ -1,0 +1,81 @@
+$ cgr -q graph callers itsdangerous.src.itsdangerous.signer.Signer.get_signature --depth 2 --project itsdangerous
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 1,
+    "callee_path": "src/itsdangerous/signer.py",
+    "col": 39,
+    "depth": 1,
+    "end_col": 59,
+    "end_line": 225,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 225,
+    "path": "src/itsdangerous/signer.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.signer.Signer.sign",
+    "resolution": "exact",
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.get_signature"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/itsdangerous/signer.py",
+    "col": 34,
+    "depth": 1,
+    "end_col": 54,
+    "end_line": 51,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 51,
+    "path": "src/itsdangerous/timed.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.timed.TimestampSigner.sign",
+    "resolution": "exact",
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.get_signature"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/itsdangerous/signer.py",
+    "col": 24,
+    "depth": 2,
+    "end_col": 41,
+    "end_line": 96,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 96,
+    "path": "tests/test_itsdangerous/test_signer.py",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_signer.TestSigner.test_secret_keys",
+    "resolution": "heuristic",
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.sign"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/itsdangerous/signer.py",
+    "col": 23,
+    "depth": 2,
+    "end_col": 50,
+    "end_line": 61,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 61,
+    "path": "tests/test_itsdangerous/test_timed.py",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_timed.TestTimestampSigner.test_malformed_timestamp",
+    "resolution": "heuristic",
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.sign"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/itsdangerous/signer.py",
+    "col": 23,
+    "depth": 2,
+    "end_col": 36,
+    "end_line": 51,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 51,
+    "path": "tests/test_itsdangerous/test_timed.py",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_timed.TestTimestampSigner.test_timestamp_missing",
+    "resolution": "heuristic",
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.sign"
+  }
+]
+--- stderr

@@ -1,0 +1,38 @@
+$ cgr -q duplicates --project equatable
+status: 0
+--- stdout
+                                           Duplicate Code Groups (equatable)                                           
+┏━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Group ┃ Kind  ┃ Similarity ┃ Member                                          ┃ Location                             ┃
+┡━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ 1     │ exact │       100% │ test.custom_list.CustomList.add                 │ test/custom_list.dart:172-175        │
+│       │       │            │ test.custom_list.CustomList.addAll              │ test/custom_list.dart:178-181        │
+│       │       │            │ test.custom_list.CustomList.sort                │ test/custom_list.dart:184-187        │
+│       │       │            │ test.custom_list.CustomList.shuffle             │ test/custom_list.dart:190-193        │
+│       │       │            │ test.custom_list.CustomList.removeWhere         │ test/custom_list.dart:238-241        │
+│       │       │            │ test.custom_list.CustomList.retainWhere         │ test/custom_list.dart:244-247        │
+├───────┼───────┼────────────┼─────────────────────────────────────────────────┼──────────────────────────────────────┤
+│ 2     │ exact │       100% │ test.custom_list.CustomList.insert              │ test/custom_list.dart:202-205        │
+│       │       │            │ test.custom_list.CustomList.insertAll           │ test/custom_list.dart:208-211        │
+│       │       │            │ test.custom_list.CustomList.setAll              │ test/custom_list.dart:214-217        │
+│       │       │            │ test.custom_list.CustomList.removeRange         │ test/custom_list.dart:256-259        │
+├───────┼───────┼────────────┼─────────────────────────────────────────────────┼──────────────────────────────────────┤
+│ 3     │ exact │       100% │ test.custom_list.CustomList.length@148          │ test/custom_list.dart:148-151        │
+│       │       │            │ test.custom_list.CustomList.first@160           │ test/custom_list.dart:160-163        │
+│       │       │            │ test.custom_list.CustomList.last@166            │ test/custom_list.dart:166-169        │
+├───────┼───────┼────────────┼─────────────────────────────────────────────────┼──────────────────────────────────────┤
+│ 4     │ exact │       100% │ test.equatable_mixin_test.Credentials.fromJson  │ test/equatable_mixin_test.dart:72-77 │
+│       │       │            │ test.equatable_test.Credentials.fromJson        │ test/equatable_test.dart:76-81       │
+├───────┼───────┼────────────┼─────────────────────────────────────────────────┼──────────────────────────────────────┤
+│ 5     │ exact │       100% │ lib.src.equatable.Equatable.toString            │ lib/src/equatable.dart:56-61         │
+│       │       │            │ lib.src.equatable_mixin.EquatableMixin.toString │ lib/src/equatable_mixin.dart:32-37   │
+├───────┼───────┼────────────┼─────────────────────────────────────────────────┼──────────────────────────────────────┤
+│ 6     │ exact │       100% │ test.custom_list.CustomList.fillRange           │ test/custom_list.dart:262-265        │
+│       │       │            │ test.custom_list.CustomList.replaceRange        │ test/custom_list.dart:268-271        │
+├───────┼───────┼────────────┼─────────────────────────────────────────────────┼──────────────────────────────────────┤
+│ 7     │ exact │       100% │ test.custom_list.CustomList.remove              │ test/custom_list.dart:220-223        │
+│       │       │            │ test.custom_list.CustomList.removeAt            │ test/custom_list.dart:226-229        │
+└───────┴───────┴────────────┴─────────────────────────────────────────────────┴──────────────────────────────────────┘
+7 duplicate group(s) covering 21 function(s).
+31 symbol(s) were not analyzed (no structural fingerprint: pattern-tier language or bodiless declaration).
+--- stderr

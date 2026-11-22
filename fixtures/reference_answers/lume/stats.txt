@@ -1,0 +1,36 @@
+$ cgr -q stats --project lume
+status: 0
+--- stdout
+Scoped to: lume
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ Function    │   202 │
+│ Section     │    66 │
+│ File        │     5 │
+│ Module      │     4 │
+│ Folder      │     2 │
+│ Project     │     1 │
+├─────────────┼───────┤
+│ Total Nodes │   280 │
+└─────────────┴───────┘
+
+    Relationship Statistics    
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Relationship Type   ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ CALLS               │   491 │
+│ DEFINES             │   202 │
+│ CONTAINS_SECTION    │    66 │
+│ REFERENCES          │    59 │
+│ IMPORTS             │    14 │
+│ CONTAINS_FILE       │     5 │
+│ CONTAINS_MODULE     │     4 │
+│ CONTAINS_FOLDER     │     2 │
+│ LINKS_TO            │     1 │
+├─────────────────────┼───────┤
+│ Total Relationships │   844 │
+└─────────────────────┴───────┘
+--- stderr
+Fetching graph statistics...

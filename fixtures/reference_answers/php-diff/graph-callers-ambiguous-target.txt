@@ -1,0 +1,5 @@
+$ cgr -q graph callers getDiff --project php-diff
+status: 5
+--- stdout
+--- stderr
+'getDiff' names 5 definitions: php-diff.src.Output.DiffOnlyOutputBuilder.DiffOnlyOutputBuilder.getDiff, php-diff.src.Output.DiffOutputBuilderInterface.DiffOutputBuilderInterface.getDiff, php-diff.src.Output.StrictUnifiedDiffOutputBuilder.StrictUnifiedDiffOutputBuilder.getDiff, php-diff.src.Output.UnifiedDiffOutputBuilder.UnifiedDiffOutputBuilder.getDiff, php-diff.tests.Output.AbstractChunkOutputBuilderTest.AbstractChunkOutputBuilderTest.testGetCommonChunks.anonymous_127_22.getDiff. Pass one of their qualified names.

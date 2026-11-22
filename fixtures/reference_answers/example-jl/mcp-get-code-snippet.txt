@@ -1,0 +1,13 @@
+> tools/call get_code_snippet {"qualified_name": "example-jl.src.Example.Example.domath"}
+isError: false
+--- text
+{
+  "qualified_name": "example-jl.src.Example.Example.domath",
+  "source_code": "domath(x::Number) = x + 5\n",
+  "file_path": "src/Example.jl",
+  "line_start": 16,
+  "line_end": 16,
+  "docstring": null,
+  "found": true,
+  "error_message": null
+}

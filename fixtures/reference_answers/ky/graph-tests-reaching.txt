@@ -1,0 +1,13 @@
+$ cgr -q graph tests-reaching ky.source.utils.timeout.timeout --project ky
+status: 0
+--- stdout
+[
+  {
+    "depth": 1,
+    "label": "Module",
+    "path": "test/headers.ts",
+    "qualified_name": "ky.test.headers",
+    "through": "ky.source.utils.timeout.timeout"
+  }
+]
+--- stderr

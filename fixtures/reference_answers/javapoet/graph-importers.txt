@@ -1,0 +1,326 @@
+$ cgr -q graph importers javapoet.src.main.java.com.squareup.javapoet.Util --project javapoet
+status: 0
+--- stdout
+[
+  {
+    "alias": "characterLiteralWithoutSingleQuotes",
+    "col": 0,
+    "end_col": 77,
+    "end_line": 39,
+    "imported_name": "characterLiteralWithoutSingleQuotes",
+    "line": 39,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java"
+  },
+  {
+    "alias": "checkArgument",
+    "col": 0,
+    "end_col": 55,
+    "end_line": 40,
+    "imported_name": "checkArgument",
+    "line": 40,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java"
+  },
+  {
+    "alias": "checkNotNull",
+    "col": 0,
+    "end_col": 54,
+    "end_line": 41,
+    "imported_name": "checkNotNull",
+    "line": 41,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java"
+  },
+  {
+    "alias": "checkNotNull",
+    "col": 0,
+    "end_col": 54,
+    "end_line": 28,
+    "imported_name": "checkNotNull",
+    "line": 28,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.ArrayTypeName",
+    "path": "src/main/java/com/squareup/javapoet/ArrayTypeName.java"
+  },
+  {
+    "alias": "checkArgument",
+    "col": 0,
+    "end_col": 55,
+    "end_line": 29,
+    "imported_name": "checkArgument",
+    "line": 29,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.ClassName",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java"
+  },
+  {
+    "alias": "checkNotNull",
+    "col": 0,
+    "end_col": 54,
+    "end_line": 30,
+    "imported_name": "checkNotNull",
+    "line": 30,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.ClassName",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java"
+  },
+  {
+    "alias": "checkArgument",
+    "col": 0,
+    "end_col": 55,
+    "end_line": 30,
+    "imported_name": "checkArgument",
+    "line": 30,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java"
+  },
+  {
+    "alias": "checkArgument",
+    "col": 0,
+    "end_col": 55,
+    "end_line": 33,
+    "imported_name": "checkArgument",
+    "line": 33,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.CodeWriter",
+    "path": "src/main/java/com/squareup/javapoet/CodeWriter.java"
+  },
+  {
+    "alias": "checkNotNull",
+    "col": 0,
+    "end_col": 54,
+    "end_line": 34,
+    "imported_name": "checkNotNull",
+    "line": 34,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.CodeWriter",
+    "path": "src/main/java/com/squareup/javapoet/CodeWriter.java"
+  },
+  {
+    "alias": "checkState",
+    "col": 0,
+    "end_col": 52,
+    "end_line": 35,
+    "imported_name": "checkState",
+    "line": 35,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.CodeWriter",
+    "path": "src/main/java/com/squareup/javapoet/CodeWriter.java"
+  },
+  {
+    "alias": "stringLiteralWithDoubleQuotes",
+    "col": 0,
+    "end_col": 71,
+    "end_line": 36,
+    "imported_name": "stringLiteralWithDoubleQuotes",
+    "line": 36,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.CodeWriter",
+    "path": "src/main/java/com/squareup/javapoet/CodeWriter.java"
+  },
+  {
+    "alias": "checkArgument",
+    "col": 0,
+    "end_col": 55,
+    "end_line": 27,
+    "imported_name": "checkArgument",
+    "line": 27,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java"
+  },
+  {
+    "alias": "checkNotNull",
+    "col": 0,
+    "end_col": 54,
+    "end_line": 28,
+    "imported_name": "checkNotNull",
+    "line": 28,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java"
+  },
+  {
+    "alias": "checkState",
+    "col": 0,
+    "end_col": 52,
+    "end_line": 29,
+    "imported_name": "checkState",
+    "line": 29,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java"
+  },
+  {
+    "alias": "checkArgument",
+    "col": 0,
+    "end_col": 55,
+    "end_line": 41,
+    "imported_name": "checkArgument",
+    "line": 41,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.JavaFile",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java"
+  },
+  {
+    "alias": "checkNotNull",
+    "col": 0,
+    "end_col": 54,
+    "end_line": 42,
+    "imported_name": "checkNotNull",
+    "line": 42,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.JavaFile",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java"
+  },
+  {
+    "alias": "checkNotNull",
+    "col": 0,
+    "end_col": 54,
+    "end_line": 20,
+    "imported_name": "checkNotNull",
+    "line": 20,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.LineWrapper",
+    "path": "src/main/java/com/squareup/javapoet/LineWrapper.java"
+  },
+  {
+    "alias": "checkArgument",
+    "col": 0,
+    "end_col": 55,
+    "end_line": 38,
+    "imported_name": "checkArgument",
+    "line": 38,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java"
+  },
+  {
+    "alias": "checkNotNull",
+    "col": 0,
+    "end_col": 54,
+    "end_line": 39,
+    "imported_name": "checkNotNull",
+    "line": 39,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java"
+  },
+  {
+    "alias": "checkState",
+    "col": 0,
+    "end_col": 52,
+    "end_line": 40,
+    "imported_name": "checkState",
+    "line": 40,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java"
+  },
+  {
+    "alias": "checkNotNull",
+    "col": 0,
+    "end_col": 54,
+    "end_line": 25,
+    "imported_name": "checkNotNull",
+    "line": 25,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.NameAllocator",
+    "path": "src/main/java/com/squareup/javapoet/NameAllocator.java"
+  },
+  {
+    "alias": "checkArgument",
+    "col": 0,
+    "end_col": 55,
+    "end_line": 30,
+    "imported_name": "checkArgument",
+    "line": 30,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java"
+  },
+  {
+    "alias": "checkNotNull",
+    "col": 0,
+    "end_col": 54,
+    "end_line": 31,
+    "imported_name": "checkNotNull",
+    "line": 31,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java"
+  },
+  {
+    "alias": "checkArgument",
+    "col": 0,
+    "end_col": 55,
+    "end_line": 28,
+    "imported_name": "checkArgument",
+    "line": 28,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.ParameterizedTypeName",
+    "path": "src/main/java/com/squareup/javapoet/ParameterizedTypeName.java"
+  },
+  {
+    "alias": "checkNotNull",
+    "col": 0,
+    "end_col": 54,
+    "end_line": 29,
+    "imported_name": "checkNotNull",
+    "line": 29,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.ParameterizedTypeName",
+    "path": "src/main/java/com/squareup/javapoet/ParameterizedTypeName.java"
+  },
+  {
+    "alias": "checkArgument",
+    "col": 0,
+    "end_col": 55,
+    "end_line": 42,
+    "imported_name": "checkArgument",
+    "line": 42,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java"
+  },
+  {
+    "alias": "checkNotNull",
+    "col": 0,
+    "end_col": 54,
+    "end_line": 43,
+    "imported_name": "checkNotNull",
+    "line": 43,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java"
+  },
+  {
+    "alias": "checkState",
+    "col": 0,
+    "end_col": 52,
+    "end_line": 44,
+    "imported_name": "checkState",
+    "line": 44,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java"
+  },
+  {
+    "alias": "requireExactlyOneOf",
+    "col": 0,
+    "end_col": 61,
+    "end_line": 45,
+    "imported_name": "requireExactlyOneOf",
+    "line": 45,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java"
+  },
+  {
+    "alias": "checkArgument",
+    "col": 0,
+    "end_col": 55,
+    "end_line": 31,
+    "imported_name": "checkArgument",
+    "line": 31,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName",
+    "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java"
+  },
+  {
+    "alias": "checkNotNull",
+    "col": 0,
+    "end_col": 54,
+    "end_line": 32,
+    "imported_name": "checkNotNull",
+    "line": 32,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName",
+    "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java"
+  },
+  {
+    "alias": "checkArgument",
+    "col": 0,
+    "end_col": 55,
+    "end_line": 29,
+    "imported_name": "checkArgument",
+    "line": 29,
+    "module": "javapoet.src.main.java.com.squareup.javapoet.WildcardTypeName",
+    "path": "src/main/java/com/squareup/javapoet/WildcardTypeName.java"
+  }
+]
+--- stderr

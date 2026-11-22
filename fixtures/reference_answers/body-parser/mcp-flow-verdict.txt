@@ -1,0 +1,25 @@
+> tools/call flow_verdict {"sink_qualified_name": "body-parser.lib.read.read", "source_qualified_name": "body-parser.lib.types.json.json"}
+isError: false
+--- text
+{
+  "verdict": "UNKNOWN",
+  "path": [],
+  "gaps": [
+    "HISTORY.md",
+    "README.md",
+    "index.js",
+    "lib/read.js",
+    "lib/types/json.js",
+    "lib/types/raw.js",
+    "lib/types/text.js",
+    "lib/types/urlencoded.js",
+    "lib/utils.js",
+    "test/body-parser.js",
+    "test/json.js",
+    "test/raw.js",
+    "test/text.js",
+    "test/urlencoded.js",
+    "test/utils.js"
+  ],
+  "remote_hops": []
+}

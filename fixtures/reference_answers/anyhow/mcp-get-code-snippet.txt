@@ -1,0 +1,13 @@
+> tools/call get_code_snippet {"qualified_name": "anyhow.src.chain.Chain.next"}
+isError: false
+--- text
+{
+  "qualified_name": "anyhow.src.chain.Chain.next",
+  "source_code": "    fn next(&mut self) -> Option<Self::Item> {\n        match &mut self.state {\n            Linked { next } => {\n                let error = (*next)?;\n                *next = error.source();\n                Some(error)\n            }\n            #[cfg(any(feature = \"std\", not(anyhow_no_core_error)))]\n            Buffered { rest } => rest.next(),\n        }\n    }\n",
+  "file_path": "src/chain.rs",
+  "line_start": 38,
+  "line_end": 48,
+  "docstring": null,
+  "found": true,
+  "error_message": null
+}

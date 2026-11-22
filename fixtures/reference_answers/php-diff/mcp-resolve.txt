@@ -1,0 +1,40 @@
+> tools/call resolve {"target": "getDiff"}
+isError: false
+--- text
+[
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.src.Output.DiffOnlyOutputBuilder.DiffOnlyOutputBuilder.getDiff",
+    "path": "src/Output/DiffOnlyOutputBuilder.php",
+    "start_line": 33,
+    "end_line": 69
+  },
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.src.Output.DiffOutputBuilderInterface.DiffOutputBuilderInterface.getDiff",
+    "path": "src/Output/DiffOutputBuilderInterface.php",
+    "start_line": 18,
+    "end_line": 18
+  },
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.src.Output.StrictUnifiedDiffOutputBuilder.StrictUnifiedDiffOutputBuilder.getDiff",
+    "path": "src/Output/StrictUnifiedDiffOutputBuilder.php",
+    "start_line": 93,
+    "end_line": 123
+  },
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.src.Output.UnifiedDiffOutputBuilder.UnifiedDiffOutputBuilder.getDiff",
+    "path": "src/Output/UnifiedDiffOutputBuilder.php",
+    "start_line": 45,
+    "end_line": 72
+  },
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.tests.Output.AbstractChunkOutputBuilderTest.AbstractChunkOutputBuilderTest.testGetCommonChunks.anonymous_127_22.getDiff",
+    "path": "tests/Output/AbstractChunkOutputBuilderTest.php",
+    "start_line": 130,
+    "end_line": 133
+  }
+]

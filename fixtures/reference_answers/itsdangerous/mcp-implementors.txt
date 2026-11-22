@@ -1,0 +1,23 @@
+> tools/call implementors {"qualified_name": "itsdangerous.src.itsdangerous.signer.SigningAlgorithm"}
+isError: false
+--- text
+[
+  {
+    "label": "Class",
+    "qualified_name": "itsdangerous.src.itsdangerous.signer.HMACAlgorithm",
+    "path": "src/itsdangerous/signer.py",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "itsdangerous.src.itsdangerous.signer.NoneAlgorithm",
+    "path": "src/itsdangerous/signer.py",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_signer._ReverseAlgorithm",
+    "path": "tests/test_itsdangerous/test_signer.py",
+    "relationship": "INHERITS"
+  }
+]

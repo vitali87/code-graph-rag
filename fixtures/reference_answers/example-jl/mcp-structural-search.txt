@@ -1,0 +1,4 @@
+> tools/call structural_search {"language": "julia", "pattern": "hello($X)"}
+isError: true
+--- text
+Unknown or unsupported language 'julia'. Supported: bash, c, cpp, csharp, dart, elixir, go, haskell, java, javascript, kotlin, lua, nix, php, python, ruby, rust, scala, solidity, swift, tsx, typescript

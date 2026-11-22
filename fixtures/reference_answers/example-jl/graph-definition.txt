@@ -1,0 +1,18 @@
+$ cgr -q graph definition example-jl.src.Example.Example.domath --project example-jl --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "decorators": [],
+  "docstring": null,
+  "end_line": 16,
+  "found": true,
+  "label": "Function",
+  "name": "domath",
+  "name_line": 16,
+  "path": "src/Example.jl",
+  "qualified_name": "example-jl.src.Example.Example.domath",
+  "source": "domath(x::Number) = x + 5",
+  "start_col": 0,
+  "start_line": 16
+}
+--- stderr

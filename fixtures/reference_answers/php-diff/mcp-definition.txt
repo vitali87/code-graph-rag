@@ -1,0 +1,17 @@
+> tools/call definition {"qualified_name": "php-diff.src.Differ.Differ.diff"}
+isError: false
+--- text
+{
+  "label": "Method",
+  "qualified_name": "php-diff.src.Differ.Differ.diff",
+  "path": "src/Differ.php",
+  "start_line": 49,
+  "end_line": 54,
+  "start_col": 4,
+  "name_line": 49,
+  "decorators": [],
+  "name": "diff",
+  "docstring": "@param list<string>|string $from\n@param list<string>|string $to",
+  "source": "public function diff(array|string $from, array|string $to, ?LongestCommonSubsequenceCalculator $lcs = null): string\n    {\n        $diff = $this->diffToArray($from, $to, $lcs);\n\n        return $this->outputBuilder->getDiff($diff);\n    }",
+  "found": true
+}

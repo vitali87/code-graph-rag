@@ -1,0 +1,101 @@
+> tools/call implementors {"qualified_name": "equatable.lib.src.equatable.Equatable"}
+isError: false
+--- text
+[
+  {
+    "label": "Class",
+    "qualified_name": "equatable.benchmarks.main.CollectionEquatable",
+    "path": "benchmarks/main.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.benchmarks.main.EmptyEquatable",
+    "path": "benchmarks/main.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.benchmarks.main.PrimitiveEquatable",
+    "path": "benchmarks/main.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.example.main.Credentials",
+    "path": "example/main.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.test.equatable_config_test.Credentials",
+    "path": "test/equatable_config_test.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.test.equatable_test.ComplexEquatable",
+    "path": "test/equatable_test.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.test.equatable_test.ComplexStringify",
+    "path": "test/equatable_test.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.test.equatable_test.ConstTest",
+    "path": "test/equatable_test.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.test.equatable_test.Credentials",
+    "path": "test/equatable_test.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.test.equatable_test.EmptyEquatable",
+    "path": "test/equatable_test.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.test.equatable_test.EquatableData",
+    "path": "test/equatable_test.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.test.equatable_test.ExplicitStringifyFalse",
+    "path": "test/equatable_test.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.test.equatable_test.MultipartEquatable",
+    "path": "test/equatable_test.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.test.equatable_test.OtherEquatable",
+    "path": "test/equatable_test.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.test.equatable_test.SimpleEquatable",
+    "path": "test/equatable_test.dart",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "equatable.test.equatable_test.SuperLongPropertiesStringify",
+    "path": "test/equatable_test.dart",
+    "relationship": "INHERITS"
+  }
+]

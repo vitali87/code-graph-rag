@@ -1,0 +1,5 @@
+$ cgr -q graph callers toBuilder --project javapoet
+status: 5
+--- stdout
+--- stderr
+'toBuilder' names 8 definitions: javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.toBuilder(), javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.toBuilder(), javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.toBuilder(), javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.toBuilder(), javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.toBuilder(), javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.toBuilder(), javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.toBuilder(TypeName,String), javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.toBuilder(). Pass one of their qualified names.

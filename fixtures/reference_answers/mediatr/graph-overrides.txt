@@ -1,0 +1,54 @@
+$ cgr -q graph overrides 'mediatr.src.MediatR.Pipeline.IRequestPostProcessor.IRequestPostProcessor.Process(TRequest, TResponse, CancellationToken)' --project mediatr
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "path": "samples/MediatR.Examples/ConstrainedRequestPostProcessor.cs",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ConstrainedRequestPostProcessor.ConstrainedRequestPostProcessor.Process(TRequest, TResponse, CancellationToken)",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "samples/MediatR.Examples/GenericRequestPostProcessor.cs",
+    "qualified_name": "mediatr.samples.MediatR.Examples.GenericRequestPostProcessor.GenericRequestPostProcessor.Process(TRequest, TResponse, CancellationToken)",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/MediatR.Benchmarks/GenericRequestPostProcessor.cs",
+    "qualified_name": "mediatr.test.MediatR.Benchmarks.GenericRequestPostProcessor.GenericRequestPostProcessor.Process(TRequest, TResponse, CancellationToken)",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.FirstConcretePostProcessor.Process(Ping, Pong, CancellationToken)",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.FirstPostProcessor.Process(TRequest, TResponse, CancellationToken)",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.NextConcretePostProcessor.Process(Ping, Pong, CancellationToken)",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.NextPostProcessor.Process(TRequest, TResponse, CancellationToken)",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/MediatR.Tests/Pipeline/RequestPostProcessorTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.Pipeline.RequestPostProcessorTests.RequestPostProcessorTests.PingPongPostProcessor.Process(Ping, Pong, CancellationToken)",
+    "relationship": "OVERRIDES"
+  }
+]
+--- stderr

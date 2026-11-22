@@ -1,0 +1,592 @@
+$ cgr -q duplicates --project anyhow --format json
+status: 0
+--- stdout
+{
+  "groups": [
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 23,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_autotrait.test_send",
+          "name": "test_send",
+          "path": "tests/test_autotrait.rs",
+          "start_line": 7,
+          "end_line": 10
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_autotrait.test_sync",
+          "name": "test_sync",
+          "path": "tests/test_autotrait.rs",
+          "start_line": 13,
+          "end_line": 16
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_autotrait.test_unwind_safe",
+          "name": "test_unwind_safe",
+          "path": "tests/test_autotrait.rs",
+          "start_line": 19,
+          "end_line": 22
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_autotrait.test_ref_unwind_safe",
+          "name": "test_ref_unwind_safe",
+          "path": "tests/test_autotrait.rs",
+          "start_line": 25,
+          "end_line": 28
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_autotrait.test_unpin",
+          "name": "test_unpin",
+          "path": "tests/test_autotrait.rs",
+          "start_line": 31,
+          "end_line": 34
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 15,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.error.Error.backtrace",
+          "name": "backtrace",
+          "path": "src/error.rs",
+          "start_line": 444,
+          "end_line": 446
+        },
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.error.Error.chain",
+          "name": "chain",
+          "path": "src/error.rs",
+          "start_line": 471,
+          "end_line": 473
+        },
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.error.Error.deref",
+          "name": "deref",
+          "path": "src/error.rs",
+          "start_line": 638,
+          "end_line": 640
+        },
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.error.Error.deref_mut",
+          "name": "deref_mut",
+          "path": "src/error.rs",
+          "start_line": 645,
+          "end_line": 647
+        },
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.ptr.Own.boxed",
+          "name": "boxed",
+          "path": "src/ptr.rs",
+          "start_line": 44,
+          "end_line": 46
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 66,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_context.test_downcast_high",
+          "name": "test_downcast_high",
+          "path": "tests/test_context.rs",
+          "start_line": 121,
+          "end_line": 130
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_context.test_downcast_mid",
+          "name": "test_downcast_mid",
+          "path": "tests/test_context.rs",
+          "start_line": 133,
+          "end_line": 142
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_context.test_downcast_low",
+          "name": "test_downcast_low",
+          "path": "tests/test_context.rs",
+          "start_line": 145,
+          "end_line": 154
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 51,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_convert.test_convert",
+          "name": "test_convert",
+          "path": "tests/test_convert.rs",
+          "start_line": 10,
+          "end_line": 17
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_convert.test_convert_send",
+          "name": "test_convert_send",
+          "path": "tests/test_convert.rs",
+          "start_line": 20,
+          "end_line": 27
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_convert.test_convert_send_sync",
+          "name": "test_convert_send_sync",
+          "path": "tests/test_convert.rs",
+          "start_line": 30,
+          "end_line": 37
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 43,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_fmt.test_altdisplay",
+          "name": "test_altdisplay",
+          "path": "tests/test_fmt.rs",
+          "start_line": 75,
+          "end_line": 79
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_fmt.test_debug",
+          "name": "test_debug",
+          "path": "tests/test_fmt.rs",
+          "start_line": 82,
+          "end_line": 86
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_fmt.test_altdebug",
+          "name": "test_altdebug",
+          "path": "tests/test_fmt.rs",
+          "start_line": 89,
+          "end_line": 93
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.error.Error.provide",
+          "name": "provide",
+          "path": "src/error.rs",
+          "start_line": 606,
+          "end_line": 608
+        },
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.error.Error.fmt",
+          "name": "fmt",
+          "path": "src/error.rs",
+          "start_line": 651,
+          "end_line": 653
+        },
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.error.Error.fmt@657",
+          "name": "fmt",
+          "path": "src/error.rs",
+          "start_line": 657,
+          "end_line": 659
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 15,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_ensure.anonymous_661_15",
+          "name": "anonymous_661_15",
+          "path": "tests/test_ensure.rs",
+          "start_line": 662,
+          "end_line": 662
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_ensure.anonymous_664_15",
+          "name": "anonymous_664_15",
+          "path": "tests/test_ensure.rs",
+          "start_line": 665,
+          "end_line": 665
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_ensure.anonymous_667_15",
+          "name": "anonymous_667_15",
+          "path": "tests/test_ensure.rs",
+          "start_line": 668,
+          "end_line": 668
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 161,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.error.Error.construct_from_adhoc",
+          "name": "construct_from_adhoc",
+          "path": "src/error.rs",
+          "start_line": 177,
+          "end_line": 203
+        },
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.error.Error.construct_from_display",
+          "name": "construct_from_display",
+          "path": "src/error.rs",
+          "start_line": 206,
+          "end_line": 232
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 94,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_chain.test_rev",
+          "name": "test_rev",
+          "path": "tests/test_chain.rs",
+          "start_line": 20,
+          "end_line": 29
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_chain.test_clone",
+          "name": "test_clone",
+          "path": "tests/test_chain.rs",
+          "start_line": 60,
+          "end_line": 69
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 54,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.src.fmt.tests.one_digit",
+          "name": "one_digit",
+          "path": "src/fmt.rs",
+          "start_line": 109,
+          "end_line": 123
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.src.fmt.tests.two_digits",
+          "name": "two_digits",
+          "path": "src/fmt.rs",
+          "start_line": 126,
+          "end_line": 140
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 37,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_boxed.test_boxed_anyhow",
+          "name": "test_boxed_anyhow",
+          "path": "tests/test_boxed.rs",
+          "start_line": 41,
+          "end_line": 45
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_source.test_anyhow_from_anyhow",
+          "name": "test_anyhow_from_anyhow",
+          "path": "tests/test_source.rs",
+          "start_line": 58,
+          "end_line": 62
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 20,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_ensure.anonymous_346_15",
+          "name": "anonymous_346_15",
+          "path": "tests/test_ensure.rs",
+          "start_line": 347,
+          "end_line": 347
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_ensure.anonymous_353_15",
+          "name": "anonymous_353_15",
+          "path": "tests/test_ensure.rs",
+          "start_line": 354,
+          "end_line": 354
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 20,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_ensure.anonymous_365_15",
+          "name": "anonymous_365_15",
+          "path": "tests/test_ensure.rs",
+          "start_line": 366,
+          "end_line": 366
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_ensure.anonymous_372_15",
+          "name": "anonymous_372_15",
+          "path": "tests/test_ensure.rs",
+          "start_line": 373,
+          "end_line": 373
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 18,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.common.bail_error",
+          "name": "bail_error",
+          "path": "tests/common/mod.rs",
+          "start_line": 12,
+          "end_line": 14
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_fmt.f",
+          "name": "f",
+          "path": "tests/test_fmt.rs",
+          "start_line": 4,
+          "end_line": 6
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 17,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_ensure.anonymous_402_15",
+          "name": "anonymous_402_15",
+          "path": "tests/test_ensure.rs",
+          "start_line": 403,
+          "end_line": 403
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_ensure.anonymous_406_15",
+          "name": "anonymous_406_15",
+          "path": "tests/test_ensure.rs",
+          "start_line": 407,
+          "end_line": 407
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 17,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_macros.anonymous_34_12",
+          "name": "anonymous_34_12",
+          "path": "tests/test_macros.rs",
+          "start_line": 35,
+          "end_line": 38
+        },
+        {
+          "label": "Function",
+          "qualified_name": "anyhow.tests.test_macros.anonymous_40_12",
+          "name": "anonymous_40_12",
+          "path": "tests/test_macros.rs",
+          "start_line": 41,
+          "end_line": 44
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 17,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.error.Error.from_boxed",
+          "name": "from_boxed",
+          "path": "src/error.rs",
+          "start_line": 144,
+          "end_line": 147
+        },
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.kind.Boxed.new",
+          "name": "new",
+          "path": "src/kind.rs",
+          "start_line": 117,
+          "end_line": 120
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.error.Error.new",
+          "name": "new",
+          "path": "src/error.rs",
+          "start_line": 34,
+          "end_line": 40
+        },
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.error.Error.from",
+          "name": "from",
+          "path": "src/error.rs",
+          "start_line": 628,
+          "end_line": 631
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.ptr.Ref.cast",
+          "name": "cast",
+          "path": "src/ptr.rs",
+          "start_line": 102,
+          "end_line": 107
+        },
+        {
+          "label": "Method",
+          "qualified_name": "anyhow.src.ptr.Mut.cast",
+          "name": "cast",
+          "path": "src/ptr.rs",
+          "start_line": 159,
+          "end_line": 164
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    }
+  ],
+  "skipped_symbols": 6,
+  "truncated": false
+}
+--- stderr

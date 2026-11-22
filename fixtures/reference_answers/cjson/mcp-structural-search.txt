@@ -1,0 +1,13 @@
+> tools/call structural_search {"language": "c", "pattern": "cJSON_Minify($X);"}
+isError: false
+--- text
+fuzzing/cjson_read_fuzzer.c:64:8  cJSON_Minify((char*)copied + offset);
+tests/minify_tests.c:37:4  cJSON_Minify(unclosed_multiline_comment);
+tests/minify_tests.c:40:4  cJSON_Minify(pending_escape);
+tests/minify_tests.c:52:4  cJSON_Minify(minified);
+tests/minify_tests.c:66:4  cJSON_Minify(minified);
+tests/minify_tests.c:80:4  cJSON_Minify(minified);
+tests/minify_tests.c:94:4  cJSON_Minify(minified);
+tests/minify_tests.c:149:4  cJSON_Minify(buffer);
+tests/minify_tests.c:158:4  cJSON_Minify(string);
+tests/misc_tests.c:448:4  cJSON_Minify(NULL);

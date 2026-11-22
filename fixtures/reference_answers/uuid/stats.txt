@@ -1,0 +1,41 @@
+$ cgr -q stats --project uuid
+status: 0
+--- stdout
+Scoped to: uuid
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ Function    │   106 │
+│ Method      │    31 │
+│ File        │    31 │
+│ Module      │    24 │
+│ Section     │    19 │
+│ Class       │     7 │
+│ Type        │     6 │
+│ Folder      │     2 │
+│ Project     │     1 │
+├─────────────┼───────┤
+│ Total Nodes │   227 │
+└─────────────┴───────┘
+
+    Relationship Statistics    
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Relationship Type   ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ CALLS               │   286 │
+│ DEFINES             │   119 │
+│ IMPORTS             │    52 │
+│ DEFINES_METHOD      │    31 │
+│ CONTAINS_FILE       │    31 │
+│ RETURNS             │    27 │
+│ CONTAINS_MODULE     │    24 │
+│ CONTAINS_SECTION    │    19 │
+│ INSTANTIATES        │    18 │
+│ ACCEPTS             │    10 │
+│ CONTAINS_FOLDER     │     2 │
+├─────────────────────┼───────┤
+│ Total Relationships │   619 │
+└─────────────────────┴───────┘
+--- stderr
+Fetching graph statistics...

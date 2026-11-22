@@ -1581,10 +1581,12 @@ def _preserves_verdict[**P, R](
     @wraps(fn)
     def wrapper(self: CallProcessor, *args: P.args, **kwargs: P.kwargs) -> R:
         saved = self._resolver.last_resolution
+        saved_member = self._resolver.last_bound_member
         try:
             return fn(self, *args, **kwargs)
         finally:
             self._resolver.last_resolution = saved
+            self._resolver.last_bound_member = saved_member
 
     return wrapper
 
@@ -2371,6 +2373,75 @@ def _js_scope_introductions(
             _js_catch_introduction(node, intros)
         stack.extend(node.children)
     return MappingProxyType({name: tuple(found) for name, found in intros.items()})
+
+
+def _js_enclosing_introductions(caller_node: Node) -> js_ts_utils.JsLocalIntros:
+    """Every introduction by `caller_node` or a function around it, by name.
+
+    A module-level caller has none: the module's own bindings are what the
+    object-binding probe resolves through.
+    """
+    found: defaultdict[str, list[js_ts_utils.JsLocalIntro]] = defaultdict(list)
+    scope: Node | None = caller_node
+    while scope is not None:
+        if scope.type in cs.JS_TS_FUNCTION_NODES:
+            for name, intros in _js_scope_introductions(scope).items():
+                found[name].extend(
+                    js_ts_utils.JsLocalIntro(
+                        start,
+                        end,
+                        kind == _JS_DECL_PLAIN
+                        and js_ts_utils.binds_object_literal(value),
+                        scope.start_byte,
+                    )
+                    for start, end, kind, value in intros
+                )
+            _js_nested_callable_introductions(scope, scope is caller_node, found)
+        scope = scope.parent
+    return {name: tuple(intros) for name, intros in found.items()}
+
+
+def _js_nested_callable_introductions(
+    scope: Node,
+    is_caller: bool,
+    found: defaultdict[str, list[js_ts_utils.JsLocalIntro]],
+) -> None:
+    """What the callables nested in `scope` introduce for `api.run()` (#2763
+    review): a `function api() {}` declared there shadows a module `api` in
+    the block that holds it, and inside the caller, an inline callback's
+    parameter (`api => api.run()`, walked as part of the caller) shadows it
+    in that callback. Neither is an object literal."""
+    stack: list[Node] = list(scope.children)
+    while stack:
+        node = stack.pop()
+        if node.type not in cs.JS_TS_FUNCTION_NODES:
+            stack.extend(node.children)
+            continue
+        holder = node.parent
+        name = safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
+        if node.type == cs.TS_FUNCTION_DECLARATION and name and holder is not None:
+            found[name].append(
+                js_ts_utils.JsLocalIntro(
+                    holder.start_byte, holder.end_byte, False, scope.start_byte
+                )
+            )
+        if is_caller:
+            for param in _js_param_names(node):
+                found[param].append(
+                    js_ts_utils.JsLocalIntro(
+                        node.start_byte, node.end_byte, False, node.start_byte
+                    )
+                )
+            # The callback's own `const api = ...` shadows an outer `api`
+            # inside it; its literal's members register under no binding
+            # this caller's lookup reads, so it is no object literal here
+            # (bot review on PR #3118).
+            for local, intros in _js_scope_introductions(node).items():
+                found[local].extend(
+                    js_ts_utils.JsLocalIntro(start, end, False, node.start_byte)
+                    for start, end, _kind, _value in intros
+                )
+            stack.extend(node.children)
 
 
 def _js_innermost_enclosing(
@@ -5964,6 +6035,7 @@ class CallProcessor:
             self._record_go_local_names(caller_node, caller_qn, caller_type)
         elif language in _JS_TS_LANGUAGES:
             self._record_js_parameter_names(caller_node, caller_qn)
+            self._record_js_local_names(caller_node, caller_qn)
 
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
 
@@ -6288,6 +6360,20 @@ class CallProcessor:
             self._resolver.go_local_scopes[caller_qn] = scopes
         else:
             self._resolver.go_local_scopes.pop(caller_qn, None)
+
+    def _record_js_local_names(self, caller_node: Node, caller_qn: str) -> None:
+        # What the caller and each function around it introduce: `api.run()`
+        # on a parameter or local named `api` is that value's, never the
+        # module's or an import's object literal (#2763 review).
+        intros = (
+            _js_enclosing_introductions(caller_node)
+            if self._resolver.function_registry.has_object_bindings()
+            else {}
+        )
+        if intros:
+            self._resolver.js_local_scopes[caller_qn] = intros
+        else:
+            self._resolver.js_local_scopes.pop(caller_qn, None)
 
     def _record_caller_flow_params(
         self,
@@ -6707,6 +6793,7 @@ class CallProcessor:
         # verdict; without this reset such an edge would inherit the
         # label the previous call node left behind (issue #1526).
         self._resolver.last_resolution = cs.EdgeResolution.EXACT
+        self._resolver.last_bound_member = None
         if ctx.is_java and call_node.type == cs.TS_JAVA_METHOD_REFERENCE:
             self._ingest_java_method_reference(ctx, call_node)
             return
@@ -9621,6 +9708,11 @@ class CallProcessor:
             # hedge that fans an ambiguous callee onto its twins would
             # cross the block boundary here (issue #1061).
             targets = [callee_qn]
+        if self._resolver.last_bound_member == callee_qn:
+            # `a.go()` named a's own `go` through a's object literal; another
+            # object's `go` shares its `@line` group, not its binding (#2763
+            # review).
+            targets = [callee_qn]
         # The resolver's verdict on this callee, then one edge per
         # same-named candidate when the callee fans out (issue #1526).
         self._resolution = self._resolver.last_resolution
@@ -9750,6 +9842,9 @@ class CallProcessor:
             ctx.is_js_ts
             and cs.SEPARATOR_DOT in call_name
             and callee_type in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
+            # A member its literal's binding named has no prototype twin; a
+            # same-named member of a nested scope's literal is another object's.
+            and self._resolver.last_bound_member != callee_qn
         ):
             self._emit_js_member_twins(ctx, callee_qn)
 
@@ -12636,8 +12731,8 @@ class CallProcessor:
     ) -> tuple[PropertyDict, ...]:
         # A receiver whose walk recorded no invocation still invokes the
         # parameter (the registry says so): keep the edge, without a site and
-        # so without `via_param`, since a site-less row merges on its endpoints
-        # alone and would stamp it on a direct call joining the same pair.
+        # so without `via_param`, which names the parameter at a recorded
+        # invocation.
         return invocations.get((func_qn, param_name)) or ({},)
 
     def _emit_passed_callbacks(

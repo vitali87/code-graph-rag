@@ -1,0 +1,62 @@
+$ cgr -q graph resolve toBuilder --project javapoet
+status: 0
+--- stdout
+[
+  {
+    "end_line": 169,
+    "label": "Method",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.toBuilder()",
+    "start_line": 163
+  },
+  {
+    "end_line": 157,
+    "label": "Method",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.toBuilder()",
+    "start_line": 152
+  },
+  {
+    "end_line": 107,
+    "label": "Method",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.toBuilder()",
+    "start_line": 100
+  },
+  {
+    "end_line": 274,
+    "label": "Method",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.toBuilder()",
+    "start_line": 268
+  },
+  {
+    "end_line": 292,
+    "label": "Method",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.toBuilder()",
+    "start_line": 279
+  },
+  {
+    "end_line": 128,
+    "label": "Method",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.toBuilder()",
+    "start_line": 126
+  },
+  {
+    "end_line": 135,
+    "label": "Method",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.toBuilder(TypeName,String)",
+    "start_line": 130
+  },
+  {
+    "end_line": 184,
+    "label": "Method",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.toBuilder()",
+    "start_line": 167
+  }
+]
+--- stderr

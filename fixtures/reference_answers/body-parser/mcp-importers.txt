@@ -1,0 +1,101 @@
+> tools/call importers {"module_qualified_name": "body-parser.lib.utils"}
+isError: false
+--- text
+[
+  {
+    "module": "body-parser.lib.types.json",
+    "path": "lib/types/json.js",
+    "line": 20,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 20,
+    "end_col": 58,
+    "end_col_char": 58,
+    "alias": "getCharset",
+    "imported_name": "getCharset"
+  },
+  {
+    "module": "body-parser.lib.types.json",
+    "path": "lib/types/json.js",
+    "line": 20,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 20,
+    "end_col": 58,
+    "end_col_char": 58,
+    "alias": "normalizeOptions",
+    "imported_name": "normalizeOptions"
+  },
+  {
+    "module": "body-parser.lib.types.raw",
+    "path": "lib/types/raw.js",
+    "line": 17,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 17,
+    "end_col": 46,
+    "end_col_char": 46,
+    "alias": "normalizeOptions",
+    "imported_name": "normalizeOptions"
+  },
+  {
+    "module": "body-parser.lib.types.text",
+    "path": "lib/types/text.js",
+    "line": 17,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 17,
+    "end_col": 58,
+    "end_col_char": 58,
+    "alias": "getCharset",
+    "imported_name": "getCharset"
+  },
+  {
+    "module": "body-parser.lib.types.text",
+    "path": "lib/types/text.js",
+    "line": 17,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 17,
+    "end_col": 58,
+    "end_col_char": 58,
+    "alias": "normalizeOptions",
+    "imported_name": "normalizeOptions"
+  },
+  {
+    "module": "body-parser.lib.types.urlencoded",
+    "path": "lib/types/urlencoded.js",
+    "line": 21,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 21,
+    "end_col": 58,
+    "end_col_char": 58,
+    "alias": "getCharset",
+    "imported_name": "getCharset"
+  },
+  {
+    "module": "body-parser.lib.types.urlencoded",
+    "path": "lib/types/urlencoded.js",
+    "line": 21,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 21,
+    "end_col": 58,
+    "end_col_char": 58,
+    "alias": "normalizeOptions",
+    "imported_name": "normalizeOptions"
+  },
+  {
+    "module": "body-parser.test.utils",
+    "path": "test/utils.js",
+    "line": 4,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 4,
+    "end_col": 55,
+    "end_col_char": 55,
+    "alias": "normalizeOptions",
+    "imported_name": "normalizeOptions"
+  }
+]

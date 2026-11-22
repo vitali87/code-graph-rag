@@ -1,0 +1,20 @@
+$ cgr -q graph definition equatable.lib.src.equatable.Equatable.toString --project equatable --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "decorators": [
+    "@override"
+  ],
+  "docstring": null,
+  "end_line": 61,
+  "found": true,
+  "label": "Method",
+  "name": "toString",
+  "name_line": 56,
+  "path": "lib/src/equatable.dart",
+  "qualified_name": "equatable.lib.src.equatable.Equatable.toString",
+  "source": "@override\n  String toString() {\n    if (stringify ?? EquatableConfig.stringify) {\n      return mapPropsToString(runtimeType, props);\n    }\n    return '$runtimeType';\n  }",
+  "start_col": 2,
+  "start_line": 55
+}
+--- stderr

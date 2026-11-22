@@ -1,0 +1,34 @@
+$ cgr -q graph resolve String --project uuid
+status: 0
+--- stdout
+[
+  {
+    "end_line": 80,
+    "label": "Method",
+    "path": "dce.go",
+    "qualified_name": "uuid.dce.Domain.String",
+    "start_line": 70
+  },
+  {
+    "end_line": 248,
+    "label": "Method",
+    "path": "uuid.go",
+    "qualified_name": "uuid.uuid.UUID.String",
+    "start_line": 244
+  },
+  {
+    "end_line": 311,
+    "label": "Method",
+    "path": "uuid.go",
+    "qualified_name": "uuid.uuid.Variant.String",
+    "start_line": 297
+  },
+  {
+    "end_line": 295,
+    "label": "Method",
+    "path": "uuid.go",
+    "qualified_name": "uuid.uuid.Version.String",
+    "start_line": 290
+  }
+]
+--- stderr

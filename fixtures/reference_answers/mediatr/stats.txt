@@ -1,0 +1,47 @@
+$ cgr -q stats --project mediatr
+status: 0
+--- stdout
+Scoped to: mediatr
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ Method      │   721 │
+│ Class       │   317 │
+│ File        │   150 │
+│ Module      │   115 │
+│ Folder      │    32 │
+│ Interface   │    25 │
+│ Section     │     4 │
+│ Function    │     3 │
+│ Enum        │     2 │
+│ Project     │     1 │
+├─────────────┼───────┤
+│ Total Nodes │ 1,370 │
+└─────────────┴───────┘
+
+    Relationship Statistics    
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Relationship Type   ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ DEFINES_METHOD      │   721 │
+│ IMPORTS             │   558 │
+│ CALLS               │   462 │
+│ DEFINES             │   347 │
+│ ACCEPTS             │   312 │
+│ INSTANTIATES        │   239 │
+│ REFERENCES          │   233 │
+│ IMPLEMENTS          │   213 │
+│ OVERRIDES           │   171 │
+│ CONTAINS_FILE       │   150 │
+│ CONTAINS_MODULE     │   115 │
+│ RETURNS             │    88 │
+│ INHERITS            │    35 │
+│ CONTAINS_FOLDER     │    32 │
+│ DEPENDS_ON_EXTERNAL │    25 │
+│ CONTAINS_SECTION    │     4 │
+├─────────────────────┼───────┤
+│ Total Relationships │ 3,705 │
+└─────────────────────┴───────┘
+--- stderr
+Fetching graph statistics...

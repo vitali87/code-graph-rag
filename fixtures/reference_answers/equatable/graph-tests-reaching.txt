@@ -1,0 +1,13 @@
+$ cgr -q graph tests-reaching equatable.lib.src.equatable_utils.mapEquals --project equatable
+status: 0
+--- stdout
+[
+  {
+    "depth": 1,
+    "label": "Function",
+    "path": "test/equatable_utils_test.dart",
+    "qualified_name": "equatable.test.equatable_utils_test.main",
+    "through": "equatable.lib.src.equatable_utils.mapEquals"
+  }
+]
+--- stderr

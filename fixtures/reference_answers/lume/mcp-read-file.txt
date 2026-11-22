@@ -1,0 +1,24 @@
+> tools/call read_file {"file_path": "lume.lua", "limit": 20, "offset": 30}
+isError: false
+--- text
+# Lines 31-50 of 772
+
+local absindex = function(len, i)
+  return i < 0 and (len + i + 1) or i
+end
+
+local iscallable = function(x)
+  if type(x) == "function" then return true end
+  local mt = getmetatable(x)
+  return mt and mt.__call ~= nil
+end
+
+local getiter = function(x)
+  if lume.isarray(x) then
+    return ipairs
+  elseif type(x) == "table" then
+    return pairs
+  end
+  error("expected table", 3)
+end
+

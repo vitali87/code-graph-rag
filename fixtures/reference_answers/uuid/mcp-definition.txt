@@ -1,0 +1,17 @@
+> tools/call definition {"qualified_name": "uuid.uuid.UUID.String"}
+isError: false
+--- text
+{
+  "label": "Method",
+  "qualified_name": "uuid.uuid.UUID.String",
+  "path": "uuid.go",
+  "start_line": 244,
+  "end_line": 248,
+  "start_col": 0,
+  "name_line": 244,
+  "decorators": [],
+  "name": "String",
+  "docstring": "String returns the string form of uuid, xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\n, or \"\" if uuid is invalid.",
+  "source": "func (uuid UUID) String() string {\n\tvar buf [36]byte\n\tencodeHex(buf[:], uuid)\n\treturn string(buf[:])\n}",
+  "found": true
+}

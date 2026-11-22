@@ -1,0 +1,5 @@
+$ cgr -q graph callers serialize --project lume
+status: 5
+--- stdout
+--- stderr
+'serialize' names 2 definitions: lume.lume.lume.serialize, lume.lume.serialize. Pass one of their qualified names.

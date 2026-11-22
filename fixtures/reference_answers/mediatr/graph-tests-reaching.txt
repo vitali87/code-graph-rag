@@ -1,0 +1,216 @@
+$ cgr -q graph tests-reaching 'mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.FindInterfacesThatClose(Type, Type)' --project mediatr
+status: 0
+--- stdout
+[
+  {
+    "depth": 3,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_constrained_generics",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPostProcessor(ServiceLifetime)@426"
+  },
+  {
+    "depth": 3,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_exceptions_from_behaviors",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddBehavior(ServiceLifetime)@154"
+  },
+  {
+    "depth": 3,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_behavior_registration",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddBehavior(ServiceLifetime)@154"
+  },
+  {
+    "depth": 3,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_post_processor_registration",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPostProcessor(ServiceLifetime)@426"
+  },
+  {
+    "depth": 3,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_pre_processor_registration",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPreProcessor(ServiceLifetime)@340"
+  },
+  {
+    "depth": 3,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_stream_behavior_registration",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddStreamBehavior(ServiceLifetime)@255"
+  },
+  {
+    "depth": 3,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_register_correctly",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddBehavior(ServiceLifetime)@154"
+  },
+  {
+    "depth": 3,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_register_pre_and_post_processors",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPostProcessor(ServiceLifetime)@426"
+  },
+  {
+    "depth": 3,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_wrap_with_behavior",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddBehavior(ServiceLifetime)@154"
+  },
+  {
+    "depth": 3,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/StreamPipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.StreamPipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.StreamPipelineTests.Should_register_and_wrap_with_behavior",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddStreamBehavior(ServiceLifetime)@255"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/GenericRequestHandlerTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.GenericRequestHandlerTests.GenericRequestHandlerTests.ShouldNotRegisterGenericHandlersWhenOptingOut",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/GenericRequestHandlerTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.GenericRequestHandlerTests.GenericRequestHandlerTests.ShouldThrowExceptionWhenGenericHandlerRegistrationsExceedsMaximum",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/GenericRequestHandlerTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.GenericRequestHandlerTests.GenericRequestHandlerTests.ShouldThrowExceptionWhenGenericTypeParametersExceedsMaximum",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/GenericRequestHandlerTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.GenericRequestHandlerTests.GenericRequestHandlerTests.ShouldThrowExceptionWhenTimeoutOccurs",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/GenericRequestHandlerTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.GenericRequestHandlerTests.GenericRequestHandlerTests.ShouldThrowExceptionWhenTypesClosingExceedsMaximum",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/AssemblyResolutionTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.AssemblyResolutionTests.AssemblyResolutionTests",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/CustomMediatorTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.CustomMediatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.CustomMediatorTests.Can_Call_AddMediatr_multiple_times",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/CustomMediatorTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.CustomMediatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.CustomMediatorTests.CustomMediatorTests",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/DerivingRequestsTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.DerivingRequestsTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.DerivingRequestsTests.DerivingRequestsTests",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/DuplicateAssemblyResolutionTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.DuplicateAssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.DuplicateAssemblyResolutionTests.DuplicateAssemblyResolutionTests",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipeLineMultiCallToConstructorTest.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipeLineMultiCallToConstructorTest.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineMultiCallToConstructorTests.Should_not_call_constructor_multiple_times_when_using_a_pipeline",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_auto_register_processors_when_configured_including_all_concrete_types",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_pick_up_base_exception_behaviors",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_pick_up_exception_actions",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_pick_up_specific_exception_behaviors",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_wrap_generics_with_behavior",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/StreamPipelineTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.StreamPipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.StreamPipelineTests.Should_wrap_with_behavior",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeEvaluatorTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeEvaluatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeEvaluatorTests.TypeEvaluatorTests",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.ShouldHandleKeyedServices",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.TypeResolutionTests",
+    "through": "mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)"
+  }
+]
+--- stderr

@@ -1,0 +1,76 @@
+$ cgr -q graph tests-reaching 'javapoet.src.main.java.com.squareup.javapoet.NameAllocator.NameAllocator.newName(String,Object)' --project javapoet
+status: 0
+--- stdout
+[
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+    "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingInvalidStartButValidPart()",
+    "through": "javapoet.src.main.java.com.squareup.javapoet.NameAllocator.NameAllocator.newName(String,Object)"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+    "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingInvalidStartIsInvalidPart()",
+    "through": "javapoet.src.main.java.com.squareup.javapoet.NameAllocator.NameAllocator.newName(String,Object)"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+    "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingSubstitute()",
+    "through": "javapoet.src.main.java.com.squareup.javapoet.NameAllocator.NameAllocator.newName(String,Object)"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+    "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingSurrogate()",
+    "through": "javapoet.src.main.java.com.squareup.javapoet.NameAllocator.NameAllocator.newName(String,Object)"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+    "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.cloneUsage()",
+    "through": "javapoet.src.main.java.com.squareup.javapoet.NameAllocator.NameAllocator.newName(String,Object)"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+    "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.javaKeyword()",
+    "through": "javapoet.src.main.java.com.squareup.javapoet.NameAllocator.NameAllocator.newName(String,Object)"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+    "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.nameCollisionWithTag()",
+    "through": "javapoet.src.main.java.com.squareup.javapoet.NameAllocator.NameAllocator.newName(String,Object)"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+    "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.tagReuseForbidden()",
+    "through": "javapoet.src.main.java.com.squareup.javapoet.NameAllocator.NameAllocator.newName(String,Object)"
+  },
+  {
+    "depth": 1,
+    "label": "Method",
+    "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+    "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.usage()",
+    "through": "javapoet.src.main.java.com.squareup.javapoet.NameAllocator.NameAllocator.newName(String,Object)"
+  },
+  {
+    "depth": 2,
+    "label": "Method",
+    "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+    "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.nameCollision()",
+    "through": "javapoet.src.main.java.com.squareup.javapoet.NameAllocator.NameAllocator.newName(String)"
+  }
+]
+--- stderr

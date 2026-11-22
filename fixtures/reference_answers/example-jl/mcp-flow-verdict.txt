@@ -1,0 +1,18 @@
+> tools/call flow_verdict {"sink_qualified_name": "example-jl.src.Example.Example.domath", "source_qualified_name": "example-jl.src.Example.Example.hello"}
+isError: false
+--- text
+{
+  "verdict": "UNKNOWN",
+  "path": [],
+  "gaps": [
+    ".github/ISSUE_TEMPLATE/bug_report.md",
+    ".github/ISSUE_TEMPLATE/custom.md",
+    ".github/ISSUE_TEMPLATE/feature_request.md",
+    "README.md",
+    "docs/make.jl",
+    "docs/src/index.md",
+    "src/Example.jl",
+    "test/runtests.jl"
+  ],
+  "remote_hops": []
+}

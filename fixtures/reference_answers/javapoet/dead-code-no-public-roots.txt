@@ -1,0 +1,1846 @@
+$ cgr -q dead-code --project javapoet --no-public-roots --format json
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "name": "AnnotationSpec",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.AnnotationSpec(Builder)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 48,
+    "end_line": 51
+  },
+  {
+    "label": "Method",
+    "name": "Builder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.Builder.Builder(TypeName)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 198,
+    "end_line": 200
+  },
+  {
+    "label": "Method",
+    "name": "addMember",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.Builder.addMember(String,CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 206,
+    "end_line": 210
+  },
+  {
+    "label": "Method",
+    "name": "addMember",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.Builder.addMember(String,String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 202,
+    "end_line": 204
+  },
+  {
+    "label": "Method",
+    "name": "addMemberForValue",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.Builder.addMemberForValue(String,Object)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 217,
+    "end_line": 237
+  },
+  {
+    "label": "Method",
+    "name": "build",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.Builder.build()",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 239,
+    "end_line": 245
+  },
+  {
+    "label": "Method",
+    "name": "Visitor",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.Visitor.Visitor(Builder)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 254,
+    "end_line": 257
+  },
+  {
+    "label": "Method",
+    "name": "defaultAction",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.Visitor.defaultAction(Object,String)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 259,
+    "end_line": 261
+  },
+  {
+    "label": "Method",
+    "name": "visitAnnotation",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.Visitor.visitAnnotation(AnnotationMirror,String)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 263,
+    "end_line": 265
+  },
+  {
+    "label": "Method",
+    "name": "visitArray",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.Visitor.visitArray(List<? extends AnnotationValue>,String)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 275,
+    "end_line": 280
+  },
+  {
+    "label": "Method",
+    "name": "visitEnumConstant",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.Visitor.visitEnumConstant(VariableElement,String)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 267,
+    "end_line": 269
+  },
+  {
+    "label": "Method",
+    "name": "visitType",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.Visitor.visitType(TypeMirror,String)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 271,
+    "end_line": 273
+  },
+  {
+    "label": "Method",
+    "name": "builder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.builder(Class<?>)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 159,
+    "end_line": 161
+  },
+  {
+    "label": "Method",
+    "name": "builder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.builder(ClassName)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 154,
+    "end_line": 157
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.get(Annotation)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 108,
+    "end_line": 110
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.get(Annotation,boolean)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 112,
+    "end_line": 140
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.get(AnnotationMirror)",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 142,
+    "end_line": 152
+  },
+  {
+    "label": "Method",
+    "name": "toBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.toBuilder()",
+    "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+    "start_line": 163,
+    "end_line": 169
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ArrayTypeName.ArrayTypeName.get(ArrayType)",
+    "path": "src/main/java/com/squareup/javapoet/ArrayTypeName.java",
+    "start_line": 92,
+    "end_line": 94
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ArrayTypeName.ArrayTypeName.get(GenericArrayType)",
+    "path": "src/main/java/com/squareup/javapoet/ArrayTypeName.java",
+    "start_line": 102,
+    "end_line": 104
+  },
+  {
+    "label": "Method",
+    "name": "of",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ArrayTypeName.ArrayTypeName.of(Type)",
+    "path": "src/main/java/com/squareup/javapoet/ArrayTypeName.java",
+    "start_line": 87,
+    "end_line": 89
+  },
+  {
+    "label": "Method",
+    "name": "bestGuess",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.bestGuess(String)",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java",
+    "start_line": 194,
+    "end_line": 212
+  },
+  {
+    "label": "Method",
+    "name": "canonicalName",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.canonicalName()",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java",
+    "start_line": 158,
+    "end_line": 160
+  },
+  {
+    "label": "Method",
+    "name": "compareTo",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.compareTo(ClassName)",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java",
+    "start_line": 250,
+    "end_line": 252
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.get(String,String,String...)",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java",
+    "start_line": 218,
+    "end_line": 224
+  },
+  {
+    "label": "Function",
+    "name": "defaultAction",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.get.defaultAction",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java",
+    "start_line": 244,
+    "end_line": 246
+  },
+  {
+    "label": "Function",
+    "name": "visitPackage",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.get.visitPackage",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java",
+    "start_line": 232,
+    "end_line": 234
+  },
+  {
+    "label": "Function",
+    "name": "visitType",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.get.visitType",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java",
+    "start_line": 236,
+    "end_line": 238
+  },
+  {
+    "label": "Function",
+    "name": "visitUnknown",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.get.visitUnknown",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java",
+    "start_line": 240,
+    "end_line": 242
+  },
+  {
+    "label": "Method",
+    "name": "peerClass",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.peerClass(String)",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java",
+    "start_line": 137,
+    "end_line": 139
+  },
+  {
+    "label": "Method",
+    "name": "reflectionName",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.reflectionName()",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java",
+    "start_line": 110,
+    "end_line": 114
+  },
+  {
+    "label": "Method",
+    "name": "add",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.add(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 411,
+    "end_line": 415
+  },
+  {
+    "label": "Method",
+    "name": "addNamed",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.addNamed(String,Map<String, ?>)",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 181,
+    "end_line": 225
+  },
+  {
+    "label": "Method",
+    "name": "addStatement",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.addStatement(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 407,
+    "end_line": 409
+  },
+  {
+    "label": "Method",
+    "name": "addStatement",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.addStatement(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 400,
+    "end_line": 405
+  },
+  {
+    "label": "Method",
+    "name": "beginControlFlow",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.beginControlFlow(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 367,
+    "end_line": 371
+  },
+  {
+    "label": "Method",
+    "name": "build",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.build()",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 433,
+    "end_line": 435
+  },
+  {
+    "label": "Method",
+    "name": "clear",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.clear()",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 427,
+    "end_line": 431
+  },
+  {
+    "label": "Method",
+    "name": "endControlFlow",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.endControlFlow()",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 384,
+    "end_line": 388
+  },
+  {
+    "label": "Method",
+    "name": "endControlFlow",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.endControlFlow(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 394,
+    "end_line": 398
+  },
+  {
+    "label": "Method",
+    "name": "indent",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.indent()",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 417,
+    "end_line": 420
+  },
+  {
+    "label": "Method",
+    "name": "isEmpty",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.isEmpty()",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 166,
+    "end_line": 168
+  },
+  {
+    "label": "Method",
+    "name": "nextControlFlow",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.nextControlFlow(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 377,
+    "end_line": 382
+  },
+  {
+    "label": "Method",
+    "name": "unindent",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.unindent()",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 422,
+    "end_line": 425
+  },
+  {
+    "label": "Method",
+    "name": "CodeBlock",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.CodeBlock(Builder)",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 74,
+    "end_line": 77
+  },
+  {
+    "label": "Method",
+    "name": "CodeBlockJoiner",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.CodeBlockJoiner.CodeBlockJoiner(String,Builder)",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 443,
+    "end_line": 446
+  },
+  {
+    "label": "Method",
+    "name": "add",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.CodeBlockJoiner.add(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 448,
+    "end_line": 456
+  },
+  {
+    "label": "Method",
+    "name": "join",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.CodeBlockJoiner.join()",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 466,
+    "end_line": 468
+  },
+  {
+    "label": "Method",
+    "name": "merge",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.CodeBlockJoiner.merge(CodeBlockJoiner)",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 458,
+    "end_line": 464
+  },
+  {
+    "label": "Method",
+    "name": "join",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.join(Iterable<CodeBlock>,String)",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 113,
+    "end_line": 115
+  },
+  {
+    "label": "Method",
+    "name": "joining",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.joining(String)",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 122,
+    "end_line": 128
+  },
+  {
+    "label": "Method",
+    "name": "joining",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.joining(String,String,String)",
+    "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+    "start_line": 135,
+    "end_line": 146
+  },
+  {
+    "label": "Method",
+    "name": "Builder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.Builder(TypeName,String)",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 119,
+    "end_line": 122
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotation",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.addAnnotation(AnnotationSpec)",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 142,
+    "end_line": 145
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotation",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.addAnnotation(Class<?>)",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 152,
+    "end_line": 154
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotation",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.addAnnotation(ClassName)",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 147,
+    "end_line": 150
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotations",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.addAnnotations(Iterable<AnnotationSpec>)",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 134,
+    "end_line": 140
+  },
+  {
+    "label": "Method",
+    "name": "addJavadoc",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.addJavadoc(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 129,
+    "end_line": 132
+  },
+  {
+    "label": "Method",
+    "name": "addJavadoc",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.addJavadoc(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 124,
+    "end_line": 127
+  },
+  {
+    "label": "Method",
+    "name": "addModifiers",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.addModifiers(Modifier...)",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 156,
+    "end_line": 159
+  },
+  {
+    "label": "Method",
+    "name": "build",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.build()",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 171,
+    "end_line": 173
+  },
+  {
+    "label": "Method",
+    "name": "initializer",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.initializer(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 165,
+    "end_line": 169
+  },
+  {
+    "label": "Method",
+    "name": "initializer",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.initializer(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 161,
+    "end_line": 163
+  },
+  {
+    "label": "Method",
+    "name": "FieldSpec",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.FieldSpec(Builder)",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 40,
+    "end_line": 49
+  },
+  {
+    "label": "Method",
+    "name": "builder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.builder(Type,String,Modifier...)",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 96,
+    "end_line": 98
+  },
+  {
+    "label": "Method",
+    "name": "builder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.builder(TypeName,String,Modifier...)",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 89,
+    "end_line": 94
+  },
+  {
+    "label": "Method",
+    "name": "toBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.toBuilder()",
+    "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+    "start_line": 100,
+    "end_line": 107
+  },
+  {
+    "label": "Method",
+    "name": "Builder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.Builder.Builder(String,TypeSpec)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 285,
+    "end_line": 288
+  },
+  {
+    "label": "Method",
+    "name": "addFileComment",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.Builder.addFileComment(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 290,
+    "end_line": 293
+  },
+  {
+    "label": "Method",
+    "name": "addStaticImport",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.Builder.addStaticImport(Class<?>,String...)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 299,
+    "end_line": 301
+  },
+  {
+    "label": "Method",
+    "name": "addStaticImport",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.Builder.addStaticImport(ClassName,String...)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 303,
+    "end_line": 312
+  },
+  {
+    "label": "Method",
+    "name": "addStaticImport",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.Builder.addStaticImport(Enum<?>)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 295,
+    "end_line": 297
+  },
+  {
+    "label": "Method",
+    "name": "build",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.Builder.build()",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 332,
+    "end_line": 334
+  },
+  {
+    "label": "Method",
+    "name": "indent",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.Builder.indent(String)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 327,
+    "end_line": 330
+  },
+  {
+    "label": "Method",
+    "name": "skipJavaLangImports",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.Builder.skipJavaLangImports(boolean)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 322,
+    "end_line": 325
+  },
+  {
+    "label": "Method",
+    "name": "JavaFile",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.JavaFile(Builder)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 67,
+    "end_line": 78
+  },
+  {
+    "label": "Method",
+    "name": "append",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.append(CharSequence)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 48,
+    "end_line": 50
+  },
+  {
+    "label": "Method",
+    "name": "append",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.append(CharSequence,int,int)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 51,
+    "end_line": 53
+  },
+  {
+    "label": "Method",
+    "name": "append",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.append(char)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 54,
+    "end_line": 56
+  },
+  {
+    "label": "Method",
+    "name": "builder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.builder(String,TypeSpec)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 262,
+    "end_line": 266
+  },
+  {
+    "label": "Method",
+    "name": "equals",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.equals(Object)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 222,
+    "end_line": 227
+  },
+  {
+    "label": "Method",
+    "name": "fillAlwaysQualifiedNames",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.fillAlwaysQualifiedNames(TypeSpec,Set<String>)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 80,
+    "end_line": 85
+  },
+  {
+    "label": "Method",
+    "name": "hashCode",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.hashCode()",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 229,
+    "end_line": 231
+  },
+  {
+    "label": "Method",
+    "name": "toBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.toBuilder()",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 268,
+    "end_line": 274
+  },
+  {
+    "label": "Function",
+    "name": "getCharContent",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.toJavaFileObject.getCharContent",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 250,
+    "end_line": 252
+  },
+  {
+    "label": "Function",
+    "name": "getLastModified",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.toJavaFileObject.getLastModified",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 256,
+    "end_line": 258
+  },
+  {
+    "label": "Function",
+    "name": "openInputStream",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.toJavaFileObject.openInputStream",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 253,
+    "end_line": 255
+  },
+  {
+    "label": "Method",
+    "name": "writeTo",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.writeTo(Path,Charset)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 113,
+    "end_line": 115
+  },
+  {
+    "label": "Method",
+    "name": "writeToFile",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.writeToFile(File)",
+    "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+    "start_line": 158,
+    "end_line": 161
+  },
+  {
+    "label": "Method",
+    "name": "append",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.LineWrapper.LineWrapper.RecordingAppendable.append(CharSequence,int,int)",
+    "path": "src/main/java/com/squareup/javapoet/LineWrapper.java",
+    "start_line": 161,
+    "end_line": 164
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotation",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addAnnotation(AnnotationSpec)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 340,
+    "end_line": 343
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotation",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addAnnotation(Class<?>)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 350,
+    "end_line": 352
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotation",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addAnnotation(ClassName)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 345,
+    "end_line": 348
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotations",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addAnnotations(Iterable<AnnotationSpec>)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 332,
+    "end_line": 338
+  },
+  {
+    "label": "Method",
+    "name": "addCode",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addCode(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 448,
+    "end_line": 451
+  },
+  {
+    "label": "Method",
+    "name": "addCode",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addCode(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 438,
+    "end_line": 441
+  },
+  {
+    "label": "Method",
+    "name": "addComment",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addComment(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 453,
+    "end_line": 456
+  },
+  {
+    "label": "Method",
+    "name": "addExceptions",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addExceptions(Iterable<? extends TypeName>)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 421,
+    "end_line": 427
+  },
+  {
+    "label": "Method",
+    "name": "addJavadoc",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addJavadoc(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 327,
+    "end_line": 330
+  },
+  {
+    "label": "Method",
+    "name": "addJavadoc",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addJavadoc(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 322,
+    "end_line": 325
+  },
+  {
+    "label": "Method",
+    "name": "addModifiers",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addModifiers(Iterable<Modifier>)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 360,
+    "end_line": 366
+  },
+  {
+    "label": "Method",
+    "name": "addModifiers",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addModifiers(Modifier...)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 354,
+    "end_line": 358
+  },
+  {
+    "label": "Method",
+    "name": "addNamedCode",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addNamedCode(String,Map<String, ?>)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 443,
+    "end_line": 446
+  },
+  {
+    "label": "Method",
+    "name": "addParameter",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addParameter(ParameterSpec)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 399,
+    "end_line": 402
+  },
+  {
+    "label": "Method",
+    "name": "addParameter",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addParameter(Type,String,Modifier...)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 408,
+    "end_line": 410
+  },
+  {
+    "label": "Method",
+    "name": "addParameter",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addParameter(TypeName,String,Modifier...)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 404,
+    "end_line": 406
+  },
+  {
+    "label": "Method",
+    "name": "addParameters",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addParameters(Iterable<ParameterSpec>)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 391,
+    "end_line": 397
+  },
+  {
+    "label": "Method",
+    "name": "addStatement",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addStatement(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 529,
+    "end_line": 532
+  },
+  {
+    "label": "Method",
+    "name": "addStatement",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addStatement(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 524,
+    "end_line": 527
+  },
+  {
+    "label": "Method",
+    "name": "addTypeVariable",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addTypeVariable(TypeVariableName)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 376,
+    "end_line": 379
+  },
+  {
+    "label": "Method",
+    "name": "addTypeVariables",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addTypeVariables(Iterable<TypeVariableName>)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 368,
+    "end_line": 374
+  },
+  {
+    "label": "Method",
+    "name": "beginControlFlow",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.beginControlFlow(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 481,
+    "end_line": 483
+  },
+  {
+    "label": "Method",
+    "name": "beginControlFlow",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.beginControlFlow(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 472,
+    "end_line": 475
+  },
+  {
+    "label": "Method",
+    "name": "build",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.build()",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 534,
+    "end_line": 536
+  },
+  {
+    "label": "Method",
+    "name": "defaultValue",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.defaultValue(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 462,
+    "end_line": 466
+  },
+  {
+    "label": "Method",
+    "name": "defaultValue",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.defaultValue(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 458,
+    "end_line": 460
+  },
+  {
+    "label": "Method",
+    "name": "endControlFlow",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.endControlFlow()",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 502,
+    "end_line": 505
+  },
+  {
+    "label": "Method",
+    "name": "endControlFlow",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.endControlFlow(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 520,
+    "end_line": 522
+  },
+  {
+    "label": "Method",
+    "name": "endControlFlow",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.endControlFlow(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 511,
+    "end_line": 514
+  },
+  {
+    "label": "Method",
+    "name": "nextControlFlow",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.nextControlFlow(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 498,
+    "end_line": 500
+  },
+  {
+    "label": "Method",
+    "name": "nextControlFlow",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.nextControlFlow(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 489,
+    "end_line": 492
+  },
+  {
+    "label": "Method",
+    "name": "returns",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.returns(Type)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 387,
+    "end_line": 389
+  },
+  {
+    "label": "Method",
+    "name": "returns",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.returns(TypeName)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 381,
+    "end_line": 385
+  },
+  {
+    "label": "Method",
+    "name": "varargs",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.varargs()",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 412,
+    "end_line": 414
+  },
+  {
+    "label": "Method",
+    "name": "varargs",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.varargs(boolean)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 416,
+    "end_line": 419
+  },
+  {
+    "label": "Method",
+    "name": "MethodSpec",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.MethodSpec(Builder)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 58,
+    "end_line": 76
+  },
+  {
+    "label": "Method",
+    "name": "constructorBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.constructorBuilder()",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 191,
+    "end_line": 193
+  },
+  {
+    "label": "Method",
+    "name": "lastParameterIsArray",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.lastParameterIsArray(List<ParameterSpec>)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 78,
+    "end_line": 81
+  },
+  {
+    "label": "Method",
+    "name": "methodBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.methodBuilder(String)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 187,
+    "end_line": 189
+  },
+  {
+    "label": "Method",
+    "name": "overriding",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.overriding(ExecutableElement)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 204,
+    "end_line": 243
+  },
+  {
+    "label": "Method",
+    "name": "overriding",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.overriding(ExecutableElement,DeclaredType,Types)",
+    "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+    "start_line": 257,
+    "end_line": 277
+  },
+  {
+    "label": "Method",
+    "name": "Builder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.Builder(TypeName,String)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 145,
+    "end_line": 148
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotation",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.addAnnotation(AnnotationSpec)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 168,
+    "end_line": 171
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotation",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.addAnnotation(Class<?>)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 178,
+    "end_line": 180
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotation",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.addAnnotation(ClassName)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 173,
+    "end_line": 176
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotations",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.addAnnotations(Iterable<AnnotationSpec>)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 160,
+    "end_line": 166
+  },
+  {
+    "label": "Method",
+    "name": "addJavadoc",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.addJavadoc(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 155,
+    "end_line": 158
+  },
+  {
+    "label": "Method",
+    "name": "addJavadoc",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.addJavadoc(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 150,
+    "end_line": 153
+  },
+  {
+    "label": "Method",
+    "name": "addModifiers",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.addModifiers(Iterable<Modifier>)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 187,
+    "end_line": 196
+  },
+  {
+    "label": "Method",
+    "name": "addModifiers",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.addModifiers(Modifier...)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 182,
+    "end_line": 185
+  },
+  {
+    "label": "Method",
+    "name": "build",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.build()",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 198,
+    "end_line": 200
+  },
+  {
+    "label": "Method",
+    "name": "ParameterSpec",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.ParameterSpec(Builder)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 41,
+    "end_line": 47
+  },
+  {
+    "label": "Method",
+    "name": "builder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.builder(Type,String,Modifier...)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 122,
+    "end_line": 124
+  },
+  {
+    "label": "Method",
+    "name": "builder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.builder(TypeName,String,Modifier...)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 115,
+    "end_line": 120
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.get(VariableElement)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 86,
+    "end_line": 96
+  },
+  {
+    "label": "Method",
+    "name": "hasModifier",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.hasModifier(Modifier)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 49,
+    "end_line": 51
+  },
+  {
+    "label": "Method",
+    "name": "isValidParameterName",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.isValidParameterName(String)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 106,
+    "end_line": 113
+  },
+  {
+    "label": "Method",
+    "name": "parametersOf",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.parametersOf(ExecutableElement)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 98,
+    "end_line": 104
+  },
+  {
+    "label": "Method",
+    "name": "toBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.toBuilder()",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 126,
+    "end_line": 128
+  },
+  {
+    "label": "Method",
+    "name": "toBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.toBuilder(TypeName,String)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+    "start_line": 130,
+    "end_line": 135
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterizedTypeName.ParameterizedTypeName.get(Class<?>,Type...)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterizedTypeName.java",
+    "start_line": 118,
+    "end_line": 120
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterizedTypeName.ParameterizedTypeName.get(ClassName,TypeName...)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterizedTypeName.java",
+    "start_line": 113,
+    "end_line": 115
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterizedTypeName.ParameterizedTypeName.get(ParameterizedType)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterizedTypeName.java",
+    "start_line": 123,
+    "end_line": 125
+  },
+  {
+    "label": "Method",
+    "name": "nestedClass",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterizedTypeName.ParameterizedTypeName.nestedClass(String)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterizedTypeName.java",
+    "start_line": 96,
+    "end_line": 100
+  },
+  {
+    "label": "Method",
+    "name": "arrayComponent",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.arrayComponent(TypeName)",
+    "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+    "start_line": 372,
+    "end_line": 376
+  },
+  {
+    "label": "Method",
+    "name": "box",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.box()",
+    "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+    "start_line": 161,
+    "end_line": 173
+  },
+  {
+    "label": "Function",
+    "name": "defaultAction",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get.defaultAction",
+    "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+    "start_line": 315,
+    "end_line": 317
+  },
+  {
+    "label": "Function",
+    "name": "visitArray",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get.visitArray",
+    "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+    "start_line": 298,
+    "end_line": 300
+  },
+  {
+    "label": "Function",
+    "name": "visitDeclared",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get.visitDeclared",
+    "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+    "start_line": 272,
+    "end_line": 292
+  },
+  {
+    "label": "Function",
+    "name": "visitError",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get.visitError",
+    "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+    "start_line": 294,
+    "end_line": 296
+  },
+  {
+    "label": "Function",
+    "name": "visitNoType",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get.visitNoType",
+    "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+    "start_line": 310,
+    "end_line": 313
+  },
+  {
+    "label": "Function",
+    "name": "visitPrimitive",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get.visitPrimitive",
+    "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+    "start_line": 249,
+    "end_line": 270
+  },
+  {
+    "label": "Function",
+    "name": "visitTypeVariable",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get.visitTypeVariable",
+    "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+    "start_line": 302,
+    "end_line": 304
+  },
+  {
+    "label": "Function",
+    "name": "visitWildcard",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get.visitWildcard",
+    "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+    "start_line": 306,
+    "end_line": 308
+  },
+  {
+    "label": "Method",
+    "name": "isBoxedPrimitive",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.isBoxedPrimitive()",
+    "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+    "start_line": 146,
+    "end_line": 155
+  },
+  {
+    "label": "Method",
+    "name": "unbox",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.unbox()",
+    "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+    "start_line": 181,
+    "end_line": 193
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotation",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addAnnotation(AnnotationSpec)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 456,
+    "end_line": 460
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotation",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addAnnotation(Class<?>)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 466,
+    "end_line": 468
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotation",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addAnnotation(ClassName)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 462,
+    "end_line": 464
+  },
+  {
+    "label": "Method",
+    "name": "addAnnotations",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addAnnotations(Iterable<AnnotationSpec>)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 448,
+    "end_line": 454
+  },
+  {
+    "label": "Method",
+    "name": "addEnumConstant",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addEnumConstant(String)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 580,
+    "end_line": 582
+  },
+  {
+    "label": "Method",
+    "name": "addEnumConstant",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addEnumConstant(String,TypeSpec)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 584,
+    "end_line": 587
+  },
+  {
+    "label": "Method",
+    "name": "addField",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addField(FieldSpec)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 597,
+    "end_line": 600
+  },
+  {
+    "label": "Method",
+    "name": "addField",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addField(Type,String,Modifier...)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 606,
+    "end_line": 608
+  },
+  {
+    "label": "Method",
+    "name": "addField",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addField(TypeName,String,Modifier...)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 602,
+    "end_line": 604
+  },
+  {
+    "label": "Method",
+    "name": "addFields",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addFields(Iterable<FieldSpec>)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 589,
+    "end_line": 595
+  },
+  {
+    "label": "Method",
+    "name": "addJavadoc",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addJavadoc(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 443,
+    "end_line": 446
+  },
+  {
+    "label": "Method",
+    "name": "addJavadoc",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addJavadoc(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 438,
+    "end_line": 441
+  },
+  {
+    "label": "Method",
+    "name": "addMethod",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addMethod(MethodSpec)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 635,
+    "end_line": 638
+  },
+  {
+    "label": "Method",
+    "name": "addMethods",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addMethods(Iterable<MethodSpec>)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 627,
+    "end_line": 633
+  },
+  {
+    "label": "Method",
+    "name": "addModifiers",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addModifiers(Modifier...)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 470,
+    "end_line": 473
+  },
+  {
+    "label": "Method",
+    "name": "addOriginatingElement",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addOriginatingElement(Element)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 653,
+    "end_line": 656
+  },
+  {
+    "label": "Method",
+    "name": "addStaticBlock",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addStaticBlock(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 610,
+    "end_line": 613
+  },
+  {
+    "label": "Method",
+    "name": "addSuperinterface",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addSuperinterface(Type)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 540,
+    "end_line": 542
+  },
+  {
+    "label": "Method",
+    "name": "addSuperinterface",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addSuperinterface(Type,boolean)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 544,
+    "end_line": 553
+  },
+  {
+    "label": "Method",
+    "name": "addSuperinterface",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addSuperinterface(TypeMirror)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 565,
+    "end_line": 567
+  },
+  {
+    "label": "Method",
+    "name": "addSuperinterface",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addSuperinterface(TypeMirror,boolean)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 569,
+    "end_line": 578
+  },
+  {
+    "label": "Method",
+    "name": "addSuperinterface",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addSuperinterface(TypeName)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 534,
+    "end_line": 538
+  },
+  {
+    "label": "Method",
+    "name": "addSuperinterfaces",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addSuperinterfaces(Iterable<? extends TypeName>)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 526,
+    "end_line": 532
+  },
+  {
+    "label": "Method",
+    "name": "addType",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addType(TypeSpec)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 648,
+    "end_line": 651
+  },
+  {
+    "label": "Method",
+    "name": "addTypeVariable",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addTypeVariable(TypeVariableName)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 483,
+    "end_line": 486
+  },
+  {
+    "label": "Method",
+    "name": "addTypeVariables",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addTypeVariables(Iterable<TypeVariableName>)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 475,
+    "end_line": 481
+  },
+  {
+    "label": "Method",
+    "name": "addTypes",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addTypes(Iterable<TypeSpec>)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 640,
+    "end_line": 646
+  },
+  {
+    "label": "Method",
+    "name": "alwaysQualify",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.alwaysQualify(String...)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 658,
+    "end_line": 669
+  },
+  {
+    "label": "Method",
+    "name": "avoidClashesWithNestedClasses",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.avoidClashesWithNestedClasses(Class<?>)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 739,
+    "end_line": 752
+  },
+  {
+    "label": "Method",
+    "name": "avoidClashesWithNestedClasses",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.avoidClashesWithNestedClasses(TypeElement)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 695,
+    "end_line": 713
+  },
+  {
+    "label": "Method",
+    "name": "getRawType",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.getRawType(Type)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 555,
+    "end_line": 563
+  },
+  {
+    "label": "Method",
+    "name": "superclass",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.superclass(Type)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 497,
+    "end_line": 499
+  },
+  {
+    "label": "Method",
+    "name": "superclass",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.superclass(Type,boolean)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 501,
+    "end_line": 510
+  },
+  {
+    "label": "Method",
+    "name": "superclass",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.superclass(TypeMirror)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 512,
+    "end_line": 514
+  },
+  {
+    "label": "Method",
+    "name": "superclass",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.superclass(TypeMirror,boolean)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 516,
+    "end_line": 524
+  },
+  {
+    "label": "Method",
+    "name": "superclass",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.superclass(TypeName)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 488,
+    "end_line": 495
+  },
+  {
+    "label": "Method",
+    "name": "annotationBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.annotationBuilder(ClassName)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 163,
+    "end_line": 165
+  },
+  {
+    "label": "Method",
+    "name": "annotationBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.annotationBuilder(String)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 159,
+    "end_line": 161
+  },
+  {
+    "label": "Method",
+    "name": "anonymousClassBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.anonymousClassBuilder(CodeBlock)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 155,
+    "end_line": 157
+  },
+  {
+    "label": "Method",
+    "name": "anonymousClassBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.anonymousClassBuilder(String,Object...)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 151,
+    "end_line": 153
+  },
+  {
+    "label": "Method",
+    "name": "classBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.classBuilder(ClassName)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 131,
+    "end_line": 133
+  },
+  {
+    "label": "Method",
+    "name": "classBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.classBuilder(String)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 127,
+    "end_line": 129
+  },
+  {
+    "label": "Method",
+    "name": "enumBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.enumBuilder(ClassName)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 147,
+    "end_line": 149
+  },
+  {
+    "label": "Method",
+    "name": "enumBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.enumBuilder(String)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 143,
+    "end_line": 145
+  },
+  {
+    "label": "Method",
+    "name": "hasModifier",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.hasModifier(Modifier)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 123,
+    "end_line": 125
+  },
+  {
+    "label": "Method",
+    "name": "interfaceBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.interfaceBuilder(ClassName)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 139,
+    "end_line": 141
+  },
+  {
+    "label": "Method",
+    "name": "interfaceBuilder",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.interfaceBuilder(String)",
+    "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+    "start_line": 135,
+    "end_line": 137
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName.TypeVariableName.get(String)",
+    "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java",
+    "start_line": 88,
+    "end_line": 90
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName.TypeVariableName.get(String,Type...)",
+    "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java",
+    "start_line": 98,
+    "end_line": 100
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName.TypeVariableName.get(String,TypeName...)",
+    "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java",
+    "start_line": 93,
+    "end_line": 95
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName.TypeVariableName.get(TypeParameterElement)",
+    "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java",
+    "start_line": 135,
+    "end_line": 145
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName.TypeVariableName.get(TypeVariable)",
+    "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java",
+    "start_line": 103,
+    "end_line": 105
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName.TypeVariableName.get(TypeVariable,Map<TypeParameterElement, TypeVariableName>)",
+    "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java",
+    "start_line": 115,
+    "end_line": 132
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName.TypeVariableName.get(java.lang.reflect.TypeVariable<?>)",
+    "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java",
+    "start_line": 148,
+    "end_line": 150
+  },
+  {
+    "label": "Method",
+    "name": "of",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName.TypeVariableName.of(String,List<TypeName>)",
+    "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java",
+    "start_line": 75,
+    "end_line": 80
+  },
+  {
+    "label": "Method",
+    "name": "Util",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.Util.Util.Util()",
+    "path": "src/main/java/com/squareup/javapoet/Util.java",
+    "start_line": 36,
+    "end_line": 37
+  },
+  {
+    "label": "Method",
+    "name": "immutableMultimap",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.Util.Util.immutableMultimap(Map<K, List<V>>)",
+    "path": "src/main/java/com/squareup/javapoet/Util.java",
+    "start_line": 39,
+    "end_line": 46
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.WildcardTypeName.WildcardTypeName.get(WildcardType)",
+    "path": "src/main/java/com/squareup/javapoet/WildcardTypeName.java",
+    "start_line": 120,
+    "end_line": 122
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.WildcardTypeName.WildcardTypeName.get(javax.lang.model.type.WildcardType)",
+    "path": "src/main/java/com/squareup/javapoet/WildcardTypeName.java",
+    "start_line": 100,
+    "end_line": 102
+  },
+  {
+    "label": "Method",
+    "name": "get",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.WildcardTypeName.WildcardTypeName.get(javax.lang.model.type.WildcardType,Map<TypeParameterElement, TypeVariableName>)",
+    "path": "src/main/java/com/squareup/javapoet/WildcardTypeName.java",
+    "start_line": 104,
+    "end_line": 118
+  },
+  {
+    "label": "Method",
+    "name": "subtypeOf",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.WildcardTypeName.WildcardTypeName.subtypeOf(Type)",
+    "path": "src/main/java/com/squareup/javapoet/WildcardTypeName.java",
+    "start_line": 83,
+    "end_line": 85
+  },
+  {
+    "label": "Method",
+    "name": "subtypeOf",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.WildcardTypeName.WildcardTypeName.subtypeOf(TypeName)",
+    "path": "src/main/java/com/squareup/javapoet/WildcardTypeName.java",
+    "start_line": 79,
+    "end_line": 81
+  },
+  {
+    "label": "Method",
+    "name": "supertypeOf",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.WildcardTypeName.WildcardTypeName.supertypeOf(Type)",
+    "path": "src/main/java/com/squareup/javapoet/WildcardTypeName.java",
+    "start_line": 96,
+    "end_line": 98
+  },
+  {
+    "label": "Method",
+    "name": "supertypeOf",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.WildcardTypeName.WildcardTypeName.supertypeOf(TypeName)",
+    "path": "src/main/java/com/squareup/javapoet/WildcardTypeName.java",
+    "start_line": 91,
+    "end_line": 94
+  }
+]
+--- stderr

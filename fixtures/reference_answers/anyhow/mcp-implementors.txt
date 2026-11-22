@@ -1,0 +1,29 @@
+> tools/call implementors {"qualified_name": "anyhow.src.lib.StdError"}
+isError: false
+--- text
+[
+  {
+    "label": "Class",
+    "qualified_name": "anyhow.src.error.ErrorImpl",
+    "path": "src/error.rs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "anyhow.src.wrapper.BoxedError",
+    "path": "src/wrapper.rs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "anyhow.src.wrapper.DisplayError",
+    "path": "src/wrapper.rs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "anyhow.src.wrapper.MessageError",
+    "path": "src/wrapper.rs",
+    "relationship": "IMPLEMENTS"
+  }
+]

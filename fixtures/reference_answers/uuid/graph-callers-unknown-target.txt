@@ -1,0 +1,5 @@
+$ cgr -q graph callers uuid.uuid.no_such_function --project uuid
+status: 4
+--- stdout
+--- stderr
+'uuid.uuid.no_such_function' is not in the graph. 'cgr graph resolve NAME' lists the qualified names a name matches.

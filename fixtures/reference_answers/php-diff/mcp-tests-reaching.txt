@@ -1,0 +1,61 @@
+> tools/call tests_reaching {"qualified_name": "php-diff.src.Parser.Parser.parse"}
+isError: false
+--- text
+[
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParse",
+    "path": "tests/ParserTest.php",
+    "depth": 1,
+    "through": "php-diff.src.Parser.Parser.parse"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseDiffForMulitpleFiles",
+    "path": "tests/ParserTest.php",
+    "depth": 1,
+    "through": "php-diff.src.Parser.Parser.parse"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseWithMultipleChunks",
+    "path": "tests/ParserTest.php",
+    "depth": 1,
+    "through": "php-diff.src.Parser.Parser.parse"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseWithRange",
+    "path": "tests/ParserTest.php",
+    "depth": 1,
+    "through": "php-diff.src.Parser.Parser.parse"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseWithRemovedLines",
+    "path": "tests/ParserTest.php",
+    "depth": 1,
+    "through": "php-diff.src.Parser.Parser.parse"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseWithSpacesInFileNames",
+    "path": "tests/ParserTest.php",
+    "depth": 1,
+    "through": "php-diff.src.Parser.Parser.parse"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseWithSpacesInFileNamesAndTimesamp",
+    "path": "tests/ParserTest.php",
+    "depth": 1,
+    "through": "php-diff.src.Parser.Parser.parse"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParser",
+    "path": "tests/ParserTest.php",
+    "depth": 1,
+    "through": "php-diff.src.Parser.Parser.parse"
+  }
+]
