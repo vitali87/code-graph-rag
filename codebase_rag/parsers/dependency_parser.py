@@ -4,13 +4,13 @@ import tomllib
 from pathlib import Path
 from typing import ClassVar, NamedTuple
 
-import defusedxml.ElementTree as ET
-from defusedxml import DefusedXmlException
 from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
 from ..models import Dependency
+from ..types_defs import JsonValue
+from ..utils import safe_xml
 
 
 def _extract_pep508_package_name(dep_string: str) -> tuple[str, str]:
@@ -35,16 +35,34 @@ def _load_toml(file_path: Path) -> dict:
     return tomllib.loads(file_path.read_bytes().decode(cs.ENCODING_UTF8_SIG))
 
 
+# A manifest is repository content, so any value in it can have any type. A
+# section of the wrong type declares nothing, and an entry of the wrong type
+# is skipped or loses its version, so it never costs the entries beside it.
+def _table(value: JsonValue) -> dict[str, JsonValue]:
+    return value if isinstance(value, dict) else {}
+
+
+def _lines(value: JsonValue) -> list[str]:
+    # A string is not a list of requirements: iterating it would read one
+    # package per character.
+    if not isinstance(value, list):
+        return []
+    return [line for line in value if isinstance(line, str)]
+
+
+def _version(value: JsonValue) -> str:
+    return value if isinstance(value, str) else ""
+
+
 # What a manifest's own content raises: not valid JSON, TOML or XML, not
-# UTF-8, or XML entity declarations that defusedxml refuses. Anything else (a
+# UTF-8, or XML entity declarations that safe_xml refuses. Anything else (a
 # file gone or unreadable, a fault in the parser) stays an ERROR, which the
 # #1070 suite gate watches for.
 _CONTENT_ERRORS = (
     json.JSONDecodeError,
     tomllib.TOMLDecodeError,
     UnicodeDecodeError,
-    ET.ParseError,
-    DefusedXmlException,
+    *safe_xml.XML_CONTENT_ERRORS,
 )
 
 
@@ -104,29 +122,23 @@ class PyProjectTomlParser(DependencyParser):
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         data = _load_toml(file_path)
 
-        if poetry_deps := (
-            data.get(cs.DEP_KEY_TOOL, {})
-            .get(cs.DEP_KEY_POETRY, {})
-            .get(cs.DEP_KEY_DEPENDENCIES, {})
-        ):
-            dependencies.extend(
-                Dependency(dep_name, str(dep_spec))
-                for dep_name, dep_spec in poetry_deps.items()
-                if dep_name.lower() != cs.DEP_EXCLUDE_PYTHON
-            )
-        if project_deps := data.get(cs.DEP_KEY_PROJECT, {}).get(
-            cs.DEP_KEY_DEPENDENCIES, []
-        ):
-            for dep_line in project_deps:
-                dep_name, _ = _extract_pep508_package_name(dep_line)
-                if dep_name:
-                    dependencies.append(Dependency(dep_name, dep_line))
-
-        optional_deps = data.get(cs.DEP_KEY_PROJECT, {}).get(
-            cs.DEP_KEY_OPTIONAL_DEPS, {}
+        poetry = _table(_table(data.get(cs.DEP_KEY_TOOL)).get(cs.DEP_KEY_POETRY))
+        dependencies.extend(
+            Dependency(dep_name, str(dep_spec))
+            for dep_name, dep_spec in _table(
+                poetry.get(cs.DEP_KEY_DEPENDENCIES)
+            ).items()
+            if dep_name.lower() != cs.DEP_EXCLUDE_PYTHON
         )
+        project = _table(data.get(cs.DEP_KEY_PROJECT))
+        for dep_line in _lines(project.get(cs.DEP_KEY_DEPENDENCIES)):
+            dep_name, _ = _extract_pep508_package_name(dep_line)
+            if dep_name:
+                dependencies.append(Dependency(dep_name, dep_line))
+
+        optional_deps = _table(project.get(cs.DEP_KEY_OPTIONAL_DEPS))
         for group_name, deps in optional_deps.items():
-            for dep_line in deps:
+            for dep_line in _lines(deps):
                 dep_name, _ = _extract_pep508_package_name(dep_line)
                 if dep_name:
                     dependencies.append(
@@ -156,16 +168,16 @@ class PackageJsonParser(DependencyParser):
 
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         with open(file_path, encoding=cs.ENCODING_UTF8_SIG) as f:
-            data = json.load(f)
+            data = _table(json.load(f))
 
         dependencies.extend(
-            Dependency(dep_name, dep_spec)
+            Dependency(dep_name, _version(dep_spec))
             for key in (
                 cs.DEP_KEY_DEPENDENCIES,
                 cs.DEP_KEY_DEV_DEPS_JSON,
                 cs.DEP_KEY_PEER_DEPS,
             )
-            for dep_name, dep_spec in data.get(key, {}).items()
+            for dep_name, dep_spec in _table(data.get(key)).items()
         )
 
 
@@ -176,23 +188,14 @@ class CargoTomlParser(DependencyParser):
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         data = _load_toml(file_path)
 
-        deps = data.get(cs.DEP_KEY_DEPENDENCIES, {})
-        for dep_name, dep_spec in deps.items():
-            version = (
-                dep_spec
-                if isinstance(dep_spec, str)
-                else dep_spec.get(cs.DEP_KEY_VERSION, "")
-            )
-            dependencies.append(Dependency(dep_name, version))
-
-        dev_deps = data.get(cs.DEP_KEY_DEV_DEPENDENCIES, {})
-        for dep_name, dep_spec in dev_deps.items():
-            version = (
-                dep_spec
-                if isinstance(dep_spec, str)
-                else dep_spec.get(cs.DEP_KEY_VERSION, "")
-            )
-            dependencies.append(Dependency(dep_name, version))
+        for key in (cs.DEP_KEY_DEPENDENCIES, cs.DEP_KEY_DEV_DEPENDENCIES):
+            for dep_name, dep_spec in _table(data.get(key)).items():
+                version = (
+                    dep_spec.get(cs.DEP_KEY_VERSION)
+                    if isinstance(dep_spec, dict)
+                    else dep_spec
+                )
+                dependencies.append(Dependency(dep_name, _version(version)))
 
 
 class GoModParser(DependencyParser):
@@ -263,17 +266,18 @@ class ComposerJsonParser(DependencyParser):
 
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         with open(file_path, encoding=cs.ENCODING_UTF8_SIG) as f:
-            data = json.load(f)
+            data = _table(json.load(f))
 
-        deps = data.get(cs.DEP_KEY_REQUIRE, {})
+        deps = _table(data.get(cs.DEP_KEY_REQUIRE))
         dependencies.extend(
-            Dependency(dep_name, dep_spec)
+            Dependency(dep_name, _version(dep_spec))
             for dep_name, dep_spec in deps.items()
             if dep_name != cs.DEP_EXCLUDE_PHP
         )
-        dev_deps = data.get(cs.DEP_KEY_REQUIRE_DEV, {})
+        dev_deps = _table(data.get(cs.DEP_KEY_REQUIRE_DEV))
         dependencies.extend(
-            Dependency(dep_name, dep_spec) for dep_name, dep_spec in dev_deps.items()
+            Dependency(dep_name, _version(dep_spec))
+            for dep_name, dep_spec in dev_deps.items()
         )
 
 
@@ -282,10 +286,7 @@ class CsprojParser(DependencyParser):
     failure_message = ls.DEP_PARSE_ERROR_CSPROJ
 
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
-        tree = ET.parse(file_path)
-        root = tree.getroot()
-
-        for pkg_ref in root.iter(cs.DEP_XML_PACKAGE_REF):
+        for pkg_ref in safe_xml.find_all(file_path, cs.DEP_XML_PACKAGE_REF):
             include = pkg_ref.get(cs.DEP_ATTR_INCLUDE)
             version = pkg_ref.get(cs.DEP_ATTR_VERSION)
 

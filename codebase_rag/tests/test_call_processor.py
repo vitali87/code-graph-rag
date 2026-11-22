@@ -1531,13 +1531,12 @@ class TestCombinedQueryCompilationExceptionPaths:
         self,
         parsers_and_queries: tuple,
     ) -> None:
-        from tree_sitter import Query as RealQuery
-
         from codebase_rag.parser_loader import (
             COMBINED_FUNC_CLASS_IMPORT_QUERIES,
             COMBINED_FUNC_CLASS_QUERIES,
             _create_language_queries,
         )
+        from codebase_rag.query_predicates import compile_query as real_compile
 
         parsers, queries = parsers_and_queries
         if cs.SupportedLanguage.PYTHON not in parsers:
@@ -1555,14 +1554,18 @@ class TestCombinedQueryCompilationExceptionPaths:
             call_count += 1
             if call_count <= 2:
                 raise RuntimeError("simulated combined query failure")
-            return RealQuery(language, pattern)
+            return real_compile(language, pattern)
 
         original_fc = COMBINED_FUNC_CLASS_QUERIES.get(cs.SupportedLanguage.PYTHON)
         original_fci = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(
             cs.SupportedLanguage.PYTHON
         )
         try:
-            with patch("codebase_rag.parser_loader.Query", side_effect=patched_query):
+            # Every query parser_loader builds goes through compile_query,
+            # which rewrites `#match?` predicates before constructing it.
+            with patch(
+                "codebase_rag.parser_loader.compile_query", side_effect=patched_query
+            ):
                 _create_language_queries(
                     language_obj, parser, lang_config, cs.SupportedLanguage.PYTHON
                 )

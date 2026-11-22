@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
 
@@ -11,6 +12,15 @@ from ... import constants as cs
 from ...capture import CaptureSelection
 from ...services import IngestorProtocol
 from ...types_defs import ASTCacheProtocol
+from ..dart.utils import (
+    dart_binding_name_and_rhs,
+    dart_body_node,
+    dart_call_name,
+    dart_first_string_arg,
+    dart_member_read_name,
+    dart_parameter_names,
+    dart_string_literal,
+)
 from ..import_processor import ImportProcessor
 from ..utils import cpp_declarator_name, safe_decode_text
 from .constants import (
@@ -23,10 +33,17 @@ from .constants import (
     PY_SCOPE_BOUNDARIES,
     SQL_READ_KEYWORDS,
     SQL_WRITE_KEYWORDS,
+    WRITABLE_MEMBER_KINDS,
     IODirection,
     ResourceKind,
 )
 from .descriptor import LANGUAGE_DESCRIPTORS, LanguageDescriptor
+from .env_bindings import (
+    EnvAliases,
+    destructured_pattern,
+    env_mapping_kind,
+    object_pattern_reads,
+)
 from .extract import (
     binding_targets_values,
     call_name,
@@ -34,10 +51,12 @@ from .extract import (
     first_token_arg_string,
     format_call_target,
     head_is_genuine_module,
+    is_inline_callback,
     is_require_alias,
     iter_token_tree_calls,
     literal_target,
     match_normalised,
+    mode_direction,
     normalise,
     positional_arg_node,
     python_globally_rebound_before,
@@ -55,6 +74,12 @@ from .models import (
     HandleConstructor,
     IOSink,
     UrlGrammar,
+)
+from .py_handles import (
+    inherited_python_handles,
+    inline_python_handle,
+    python_binding_from_node,
+    python_stream_target,
 )
 from .registry import (
     IO_ARG_HANDLE_SINKS,
@@ -88,6 +113,9 @@ _DIRECTION_REL = {
 _LEAN_ASSIGNMENT_TYPES = frozenset(
     {cs.TS_ASSIGNMENT_EXPRESSION, cs.TS_GO_ASSIGNMENT_STATEMENT}
 )
+_DART_BINDING_TYPES = frozenset(
+    {cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION, cs.TS_DART_ASSIGNMENT_EXPRESSION}
+)
 
 
 def _pattern_children(node: Node, descriptor: LanguageDescriptor) -> list[Node]:
@@ -120,6 +148,41 @@ def _pattern_children(node: Node, descriptor: LanguageDescriptor) -> list[Node]:
     return []
 
 
+def _always_own_pass(_node: Node) -> bool:
+    return True
+
+
+# The call hop `dart_call_name` keeps in a receiver (`File().read`).
+_DART_CALL_HOP = "()"
+
+
+def _dart_index_key(following: Node | None) -> str:
+    # The string key of the index selector right after a Dart member read
+    # (`Platform.environment['K']` -> `K`), else <dynamic>.
+    stack = [following] if following is not None else []
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_DART_INDEX_SELECTOR:
+            literal = next(
+                (c for c in node.named_children if c.type == cs.TS_DART_STRING_LITERAL),
+                None,
+            )
+            return (
+                dart_string_literal(literal, DYNAMIC_TARGET)
+                if literal is not None
+                else DYNAMIC_TARGET
+            )
+        stack.extend(node.named_children)
+    return DYNAMIC_TARGET
+
+
+# Dart nodes that wrap a binding's value chain one level deep without changing
+# which handle it yields (`await Socket.connect(...)`).
+_DART_VALUE_WRAPPERS = frozenset(
+    {cs.TS_DART_UNARY_EXPRESSION, cs.TS_DART_AWAIT_EXPRESSION}
+)
+
+
 class _LeanHandles(NamedTuple):
     # Per-caller handle state for the lean non-Python walk (issue #714): the
     # per-language constructor/wrapper/method tables plus the mutable
@@ -142,6 +205,28 @@ class _LeanHandles(NamedTuple):
     # (`userClient userv1connect.UserServiceClient`): field name -> stem.
     # Injected clients are called through these, not through a local binding.
     rpc_fields: dict[str, str]
+
+
+@contextmanager
+def _child_handle_scope(
+    lean_handles: _LeanHandles | None, unbound: Iterable[str] = ()
+) -> Generator[None]:
+    # A nested block or an inline callback walked within its caller is a child
+    # lexical scope for handles too: what it binds (`const out = {}`) is out of
+    # scope afterwards, so it must not leak to, kill or replace the enclosing
+    # bindings, and a name it binds anew (a callback parameter `out`) is not the
+    # enclosing handle inside it (mirrors the in_scope shadow set, by value).
+    if lean_handles is None:
+        yield
+        return
+    snapshot = dict(lean_handles.bindings)
+    for name in unbound:
+        lean_handles.bindings.pop(name, None)
+    try:
+        yield
+    finally:
+        lean_handles.bindings.clear()
+        lean_handles.bindings.update(snapshot)
 
 
 # The connect-go constructor: `New<Stem>Client`, qualified by a generated
@@ -348,6 +433,13 @@ class IOAccessProcessor:
         # when a long-lived processor (realtime updater) re-parses ANY file
         # of the package: a re-parsed file gets a new root id.
         self._rpc_field_cache: dict[tuple[str, tuple[int, ...]], dict[str, str]] = {}
+        # Per-caller: resolves a name standing for an env mapping (`const env =
+        # process.env`), so `env.KEY` reads KEY (issue #2753). Reset for each
+        # caller by _emit_direct_sinks; the processor walks one caller at a time.
+        self._env_aliases: EnvAliases | None = None
+        # Whether a nested inline callable gets a caller pass of its own; set
+        # per caller by process_io_for_caller (issue #2772).
+        self._has_own_pass: Callable[[Node], bool] = _always_own_pass
         # The module-level string constants of the module last asked about
         # (issue #2521). Callers arrive module by module, so one entry is
         # enough; holding the root keeps its tree alive, so a re-parsed
@@ -360,9 +452,14 @@ class IOAccessProcessor:
         caller_spec: tuple[str, str, str],
         module_qn: str,
         language: cs.SupportedLanguage,
+        has_own_pass: Callable[[Node], bool] | None = None,
     ) -> None:
         if not self._enabled:
             return
+        # An inline callback (`items.forEach(x => console.log(x))`) the call
+        # pass does not walk as its own caller runs as part of this one; without
+        # the predicate every nested callable is assumed to be walked alone.
+        self._has_own_pass = has_own_pass or _always_own_pass
         sinks = IO_SINKS.get(language, ())
         constructors = IO_HANDLE_CONSTRUCTORS.get(language, ())
         if not sinks and not constructors:
@@ -416,7 +513,7 @@ class IOAccessProcessor:
         # Drop inherited plain names rebound locally; the DFS re-adds them at the
         # assignment, so uses after it still resolve. Attribute keys (self.x) are
         # never locals, so they are unaffected.
-        handles = self._inherited_handles(caller_node, import_map, ctor_by_name)
+        handles = inherited_python_handles(caller_node, import_map, ctor_by_name)
         locally_assigned = self._locally_assigned_names(caller_node)
         for name in locally_assigned:
             if cs.SEPARATOR_DOT not in name:
@@ -427,145 +524,22 @@ class IOAccessProcessor:
             if node.type in PY_SCOPE_BOUNDARIES:
                 stack.extend(reversed(definition_header_nodes(node)))
                 continue
-            bound = self._binding_from_node(node, import_map, ctor_by_name, handles)
+            bound = python_binding_from_node(node, import_map, ctor_by_name, handles)
             if bound is not None:
                 var, binding = bound
                 handles[var] = binding
             elif node.type == cs.TS_PY_CALL:
-                self._emit_call(node, caller_spec, import_map, sink_by_name, handles)
+                self._emit_call(
+                    node, caller_spec, import_map, sink_by_name, handles, ctor_by_name
+                )
             elif node.type == cs.TS_PY_SUBSCRIPT:
                 self._emit_py_env_subscript(
                     node, caller_spec, import_map, caller_node, locally_assigned
                 )
             stack.extend(reversed(node.children))
 
-    def _binding_from_node(
-        self,
-        node: Node,
-        import_map: dict[str, str],
-        ctor_by_name: dict[str, HandleConstructor],
-        handles: dict[str, HandleBinding],
-    ) -> tuple[str, HandleBinding] | None:
-        # Both `f = open(...)` (assignment) and `with open(...) as f:` (as_pattern)
-        # bind a handle var to a constructor call.
-        if node.type == cs.TS_PY_ASSIGNMENT:
-            target = node.child_by_field_name(cs.TS_FIELD_LEFT)
-            call = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-        elif node.type == cs.TS_PY_AS_PATTERN:
-            call = next((c for c in node.children if c.type == cs.TS_PY_CALL), None)
-            alias = next(
-                (c for c in node.children if c.type == cs.TS_PY_AS_PATTERN_TARGET),
-                None,
-            )
-            target = alias.children[0] if alias and alias.children else None
-        else:
-            return None
-        # `f = open(...)` binds a plain name; `self.f = open(...)` binds an
-        # attribute: keep the full dotted text ("self.f") as the handle key so a
-        # later `self.f.write(...)` resolves against it.
-        if (
-            target is None
-            or call is None
-            or target.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE)
-            or call.type != cs.TS_PY_CALL
-            or target.text is None
-        ):
-            return None
-        raw = call_name(call)
-        target_name = target.text.decode(cs.ENCODING_UTF8)
-        ctor = registry_match(ctor_by_name, raw, import_map)
-        if ctor is None:
-            # Derive (`cur = conn.cursor()`, issue #714): a method on a bound
-            # handle that yields a same-resource sub-handle binds the target
-            # to the parent's resource.
-            derived = self._derived_python_binding(raw, handles)
-            return None if derived is None else (target_name, derived)
-        identity = literal_target(call, ctor.target_arg, ctor.target_kw)
-        return target_name, HandleBinding(kind=ctor.kind, identity=identity)
-
-    @staticmethod
-    def _derived_python_binding(
-        raw: str | None, handles: dict[str, HandleBinding]
-    ) -> HandleBinding | None:
-        if raw is None:
-            return None
-        receiver, sep, method = raw.rpartition(cs.SEPARATOR_DOT)
-        if not sep:
-            return None
-        parent = handles.get(receiver)
-        if parent is None or method not in IO_HANDLE_DERIVES.get(
-            parent.kind, frozenset()
-        ):
-            return None
-        return parent
-
-    def _inherited_handles(
-        self,
-        caller_node: Node,
-        import_map: dict[str, str],
-        ctor_by_name: dict[str, HandleConstructor],
-    ) -> dict[str, HandleBinding]:
-        # Handle bindings visible from ENCLOSING scopes, walked innermost-first so a
-        # nearer scope shadows a farther one (setdefault keeps the first seen). An
-        # enclosing class contributes its `self.<attr>` handles (set in any method);
-        # an enclosing function/module contributes its top-level local handles.
-        # Nested scopes are pruned; their locals are not visible.
-        handles: dict[str, HandleBinding] = {}
-        class_scanned = False
-        node = caller_node.parent
-        while node is not None:
-            if node.type == cs.TS_PY_CLASS_DEFINITION:
-                if not class_scanned:
-                    class_scanned = True
-                    self._collect_self_attr_handles(
-                        node, import_map, ctor_by_name, handles
-                    )
-            elif node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_MODULE):
-                self._collect_scope_var_handles(node, import_map, ctor_by_name, handles)
-            node = node.parent
-        return handles
-
     def _locally_assigned_names(self, caller_node: Node) -> set[str]:
         return python_locally_assigned_names(caller_node)
-
-    def _collect_scope_var_handles(
-        self,
-        scope_node: Node,
-        import_map: dict[str, str],
-        ctor_by_name: dict[str, HandleConstructor],
-        handles: dict[str, HandleBinding],
-    ) -> None:
-        # Top-level handle bindings of one scope's OWN body; nested defs/classes are
-        # pruned (their locals belong to their own scope, not this one).
-        stack = list(scope_seed_nodes(scope_node))
-        while stack:
-            node = stack.pop()
-            if node.type in PY_SCOPE_BOUNDARIES:
-                continue
-            bound = self._binding_from_node(node, import_map, ctor_by_name, handles)
-            if bound is not None:
-                handles.setdefault(bound[0], bound[1])
-            stack.extend(node.children)
-
-    def _collect_self_attr_handles(
-        self,
-        class_node: Node,
-        import_map: dict[str, str],
-        ctor_by_name: dict[str, HandleConstructor],
-        handles: dict[str, HandleBinding],
-    ) -> None:
-        # `self.<attr> = <constructor>()` bindings anywhere in the class body
-        # (descending method bodies, since __init__ is the usual site); nested
-        # classes are skipped because their `self` is a different object.
-        stack = list(scope_seed_nodes(class_node))
-        while stack:
-            node = stack.pop()
-            if node.type == cs.TS_PY_CLASS_DEFINITION:
-                continue
-            bound = self._binding_from_node(node, import_map, ctor_by_name, handles)
-            if bound is not None and bound[0].startswith(cs.PY_SELF_PREFIX):
-                handles.setdefault(bound[0], bound[1])
-            stack.extend(node.children)
 
     def _emit_direct_sinks(
         self,
@@ -578,6 +552,7 @@ class IOAccessProcessor:
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
         lean_handles: _LeanHandles | None,
+        inherited: frozenset[str] = frozenset(),
     ) -> None:
         # Lean non-Python walk (issue #714): find call sinks in the caller body,
         # crediting I/O to the scope that runs it. No handle/stream tracking yet.
@@ -587,7 +562,9 @@ class IOAccessProcessor:
         # blocks, never a sibling/outer use. A function/method caller exposes its
         # statements under the `body` field; the module root (top-level calls) has
         # no body field, so seed from its own children.
-        body = caller_node.child_by_field_name(cs.FIELD_BODY)
+        body = caller_node.child_by_field_name(cs.FIELD_BODY) or dart_body_node(
+            caller_node
+        )
         if body is None:
             # Module root (top-level calls): its own children are the statements.
             statements = list(caller_node.named_children)
@@ -599,9 +576,28 @@ class IOAccessProcessor:
             statements = [body]
         # Parameters are visible in every block of the function body and always
         # shadow a same-named builtin (a parameter is never an import alias).
-        params = self._param_names(caller_node, descriptor)
+        # An inline callback walked within its enclosing caller also sees the
+        # names in scope where it is written (`inherited`).
+        params = inherited | self._param_names(caller_node, descriptor)
         if descriptor.enclosing_scope_shadows:
             params |= self._enclosing_scope_names(caller_node, descriptor)
+
+        def head_is_live(head: str) -> bool:
+            return head not in params and head_is_genuine_module(
+                import_map.get(head), head
+            )
+
+        # An alias's `process` is resolved where the alias is bound, so only
+        # the imports are judged here (bot review on PR #2767).
+        self._env_aliases = EnvAliases(
+            caller_node,
+            descriptor,
+            member_reads,
+            lambda head: head_is_genuine_module(import_map.get(head), head),
+        )
+        self._emit_param_env_reads(
+            caller_node, caller_spec, member_reads, descriptor, head_is_live
+        )
         self._walk_scope(
             statements,
             frozenset(params),
@@ -801,8 +797,26 @@ class IOAccessProcessor:
         stack = [stmt]
         while stack:
             node = stack.pop()
-            # Nested function/method: its own caller, walked separately.
+            # Nested function/method: its own caller, walked separately. An
+            # inline callback the call pass never walks alone runs here, as a
+            # Python lambda does, so its I/O lands on this caller (#2772).
             if node.type in descriptor.nested_scope_types:
+                if is_inline_callback(node, descriptor, self._has_own_pass):
+                    with _child_handle_scope(
+                        lean_handles, self._param_names(node, descriptor)
+                    ):
+                        self._emit_direct_sinks(
+                            node,
+                            caller_spec,
+                            import_map,
+                            sink_by_name,
+                            macro_sinks,
+                            stream_sinks,
+                            member_reads,
+                            descriptor,
+                            lean_handles,
+                            inherited=in_scope | body_extra,
+                        )
                 continue
             if node.type == descriptor.block_scope_type:
                 self._walk_nested_block(
@@ -850,24 +864,20 @@ class IOAccessProcessor:
         lean_handles: _LeanHandles | None,
     ) -> None:
         # A nested block is a child lexical scope for handles too: a handle declared
-        # inside it is out of scope after the block, so its binding must not leak to
-        # later statements (mirrors the in_scope shadow set, passed by value).
-        snapshot = dict(lean_handles.bindings) if lean_handles is not None else None
-        self._walk_scope(
-            list(node.named_children),
-            in_scope,
-            caller_spec,
-            import_map,
-            sink_by_name,
-            macro_sinks,
-            stream_sinks,
-            member_reads,
-            descriptor,
-            lean_handles,
-        )
-        if lean_handles is not None and snapshot is not None:
-            lean_handles.bindings.clear()
-            lean_handles.bindings.update(snapshot)
+        # inside it is out of scope after the block (_child_handle_scope).
+        with _child_handle_scope(lean_handles):
+            self._walk_scope(
+                list(node.named_children),
+                in_scope,
+                caller_spec,
+                import_map,
+                sink_by_name,
+                macro_sinks,
+                stream_sinks,
+                member_reads,
+                descriptor,
+                lean_handles,
+            )
 
     def _emit_node_sinks(
         self,
@@ -895,6 +905,12 @@ class IOAccessProcessor:
                 in_scope,
                 lean_handles,
             )
+            # A Dart `selector` is a call or a member access: the
+            # `.environment` of `Platform.environment['K']` is a read.
+            if member_reads and node.type == cs.TS_DART_SELECTOR:
+                self._emit_member_read(
+                    node, caller_spec, member_reads, in_scope, import_map, descriptor
+                )
         elif descriptor.macro_type is not None and node.type == descriptor.macro_type:
             # A macro sink (`println!`) writes STDOUT AND may inline a real call
             # sink in its args (`println!("{}", env::var("X"))`); tree-sitter
@@ -927,6 +943,13 @@ class IOAccessProcessor:
         ):
             self._emit_member_read(
                 node, caller_spec, member_reads, in_scope, import_map, descriptor
+            )
+        elif node.type in descriptor.keyword_stdout_write_types:
+            # PHP `echo $x;` / `print $x`: a keyword, not a call, that writes
+            # its operands to STDOUT (issue #2761; the flow walk's
+            # _flow_keyword_write). Descend for calls in the operands.
+            self._emit(
+                caller_spec, IODirection.WRITE, ResourceKind.STDOUT, DYNAMIC_TARGET
             )
         return True
 
@@ -1073,6 +1096,44 @@ class IOAccessProcessor:
             )
         self._emit(caller_spec, sink.direction, sink.kind, identity)
 
+    def _emit_param_env_reads(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        descriptor: LanguageDescriptor,
+        head_is_live: Callable[[str], bool],
+    ) -> None:
+        # `function f({ PORT } = process.env)`: the default sits in the
+        # parameter list, which the body walk never visits (issue #2753).
+        params = caller_node.child_by_field_name(descriptor.params_field)
+        if params is None or not member_reads:
+            return
+        for param in params.named_children:
+            for slot in param.named_children:
+                self._emit_env_destructure(
+                    slot, caller_spec, member_reads, head_is_live
+                )
+
+    def _emit_env_destructure(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        head_is_live: Callable[[str], bool],
+    ) -> bool:
+        # `const { PORT, DB: url } = process.env` reads each property it names
+        # (issue #2753). True when `node` is such a destructured env mapping.
+        pattern = destructured_pattern(node)
+        if pattern is None:
+            return False
+        kind = env_mapping_kind(node, member_reads, head_is_live)
+        if kind is None:
+            return False
+        for _local, key in object_pattern_reads(pattern):
+            self._emit(caller_spec, IODirection.READ, kind, key)
+        return True
+
     def _emit_member_read(
         self,
         node: Node,
@@ -1086,22 +1147,68 @@ class IOAccessProcessor:
         # (subscript) read env var X. Match on the object prefix; skip when the prefix
         # head (`process`) is shadowed by a local binding or a non-global import,
         # mirroring the call-sink shadow rules.
-        obj = node.child_by_field_name(descriptor.object_field)
-        if obj is None or obj.text is None:
+
+        def head_is_live(head: str) -> bool:
+            return head not in in_scope and head_is_genuine_module(
+                import_map.get(head), head
+            )
+
+        if self._emit_env_destructure(node, caller_spec, member_reads, head_is_live):
             return
-        obj_text = obj.text.decode(cs.ENCODING_UTF8)
+        if (
+            self._env_aliases is not None
+            and (obj := node.child_by_field_name(descriptor.object_field)) is not None
+            and (alias_kind := self._env_aliases.kind_of(obj)) is not None
+        ):
+            # `env.KEY` where `const env = process.env` (issue #2753).
+            self._emit_member_access(node, caller_spec, alias_kind, descriptor)
+            return
+        obj_text = self._member_object_text(node, descriptor)
+        if obj_text is None:
+            return
         for prefix, kind in member_reads:
             if obj_text != prefix:
                 continue
-            head = prefix.partition(cs.SEPARATOR_DOT)[0]
-            if head in in_scope or not head_is_genuine_module(
-                import_map.get(head), head
-            ):
-                return
-            identity = self._member_identity(node, descriptor)
-            for direction in self._member_directions(node, descriptor):
-                self._emit(caller_spec, direction, kind, identity)
+            if head_is_live(prefix.partition(cs.SEPARATOR_DOT)[0]):
+                self._emit_member_access(node, caller_spec, kind, descriptor)
             return
+
+    def _emit_member_access(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        kind: ResourceKind,
+        descriptor: LanguageDescriptor,
+    ) -> None:
+        # One access of the member's key, in each direction its position
+        # gives (_member_directions): a read, a write, or both for `+=`.
+        identity = self._member_identity(node, descriptor)
+        for direction in self._member_directions(node, descriptor):
+            # Assigning `$_GET["q"]` rewrites a local copy of the request;
+            # only an environment entry outlives the assignment (children
+            # inherit it), so only that is a write of the resource.
+            if direction == IODirection.WRITE and kind not in WRITABLE_MEMBER_KINDS:
+                continue
+            self._emit(caller_spec, direction, kind, identity)
+
+    @staticmethod
+    def _member_object_text(node: Node, descriptor: LanguageDescriptor) -> str | None:
+        # The accessed object's source text (`process.env`), matched against the
+        # member-read prefixes; None when the node has no readable object.
+        if node.type == cs.TS_DART_SELECTOR:
+            # `Platform.environment['K']` is a sibling chain: the `.environment`
+            # selector names the member, a following index selector the key.
+            return dart_member_read_name(node)
+        obj = node.child_by_field_name(descriptor.object_field)
+        if obj is None and node.type == descriptor.subscript_type:
+            # PHP `$_GET["q"]` is a FIELDLESS subscript: the indexed object
+            # is the first named child, as the flow walk reads it.
+            obj = next(
+                (c for c in node.named_children if c.type != cs.TS_COMMENT), None
+            )
+        if obj is None or obj.text is None:
+            return None
+        return obj.text.decode(cs.ENCODING_UTF8)
 
     @staticmethod
     def _member_directions(
@@ -1136,12 +1243,21 @@ class IOAccessProcessor:
     def _member_identity(self, node: Node, descriptor: LanguageDescriptor) -> str:
         # The accessed key: a member's `property` (`process.env.SECRET` -> SECRET), or
         # a subscript's string index (`process.env['T']` -> T); else <dynamic>.
+        if node.type == cs.TS_DART_SELECTOR:
+            return _dart_index_key(node.next_named_sibling)
         if node.type == descriptor.member_expression_type:
             prop = node.child_by_field_name(descriptor.property_field)
             if prop is not None and prop.text is not None:
                 return prop.text.decode(cs.ENCODING_UTF8)
             return DYNAMIC_TARGET
         index = node.child_by_field_name(descriptor.subscript_index_field)
+        if index is None:
+            # Fieldless subscript (PHP `$_GET["q"]`): the key is the first
+            # string-literal child.
+            index = next(
+                (c for c in node.named_children if c.type == descriptor.string_type),
+                None,
+            )
         if index is not None and index.type == descriptor.string_type:
             return string_literal(
                 index, descriptor.string_type, descriptor.string_content_type
@@ -1214,10 +1330,26 @@ class IOAccessProcessor:
         # unwrapping the TS wrapper first.
         names: set[str] = set()
         params = caller_node.child_by_field_name(descriptor.params_field)
-        if params is not None:
+        if params is not None and params.type in (
+            descriptor.identifier_type,
+            cs.TS_CSHARP_IMPLICIT_PARAMETER,
+        ):
+            # A lone lambda parameter is the field itself: Java `x -> ...`,
+            # C# `x => ...`.
+            if params.text:
+                names.add(params.text.decode(cs.ENCODING_UTF8))
+        elif params is not None:
             for child in params.named_children:
                 target = child.child_by_field_name(cs.TS_FIELD_PATTERN) or child
                 self._pattern_names(target, descriptor, names)
+        elif caller_node.type in cs.DART_SIGNATURE_TYPES:
+            # A Dart signature's parameter list is a plain child (#2761).
+            names.update(dart_parameter_names(caller_node))
+        # A JS arrow's lone parameter has a field of its own: `x => ...`.
+        if (
+            single := caller_node.child_by_field_name(cs.TS_FIELD_PARAMETER)
+        ) is not None:
+            self._pattern_names(single, descriptor, names)
         return names
 
     def _enclosing_scope_names(
@@ -1270,6 +1402,15 @@ class IOAccessProcessor:
             return
         raw = call_name(node)
         if raw is None:
+            self._emit_dart_call(
+                node,
+                caller_spec,
+                import_map,
+                sink_by_name,
+                descriptor,
+                local_names,
+                lean_handles,
+            )
             return
         if lean_handles is not None and self._emit_lean_handle_method(
             node, caller_spec, raw, descriptor, lean_handles
@@ -1322,10 +1463,112 @@ class IOAccessProcessor:
             )
             if formatted is not None:
                 identity = formatted
+        direction = self._direct_call_direction(node, sink, descriptor)
+        self._emit(caller_spec, direction, sink.kind, identity)
+
+    def _direct_call_direction(
+        self, node: Node, sink: IOSink, descriptor: LanguageDescriptor
+    ) -> IODirection:
         direction = sink.direction
+        if sink.mode_arg is not None:
+            direction = mode_direction(node, sink, descriptor)
         if sink.method_options_arg is not None:
             direction = self._method_options_direction(node, sink, descriptor)
-        self._emit(caller_spec, direction, sink.kind, identity)
+        return direction
+
+    def _emit_dart_call(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        sink_by_name: dict[str, IOSink],
+        descriptor: LanguageDescriptor,
+        local_names: frozenset[str],
+        lean_handles: _LeanHandles | None,
+    ) -> None:
+        # Dart has no call node: a `selector` holding an `argument_part` is the
+        # call, named by its sibling chain as the flow walk names it (issue
+        # #2761). A method on a handle, bound (`f.readAsString()`) or built
+        # inline (`File(p).readAsStringSync()`), is I/O on its resource; any
+        # other call matches the sink table, keyed by its first string arg.
+        if node.type != cs.TS_DART_SELECTOR or not any(
+            c.type == cs.TS_DART_ARGUMENT_PART for c in node.named_children
+        ):
+            return
+        raw = dart_call_name(node)
+        if raw is None:
+            return
+        if lean_handles is not None and (
+            self._emit_dart_inline_handle(
+                node,
+                raw,
+                caller_spec,
+                import_map,
+                descriptor,
+                local_names,
+                lean_handles,
+            )
+            or self._emit_lean_handle_method(
+                node, caller_spec, raw, descriptor, lean_handles
+            )
+        ):
+            return
+        sink = self._resolve_sink(
+            raw,
+            import_map,
+            sink_by_name,
+            local_names,
+            descriptor.sinks_require_import,
+            descriptor.scope_separator,
+        )
+        if sink is None:
+            return
+        identity = (
+            dart_first_string_arg(node, DYNAMIC_TARGET)
+            if sink.target_arg == 0
+            else DYNAMIC_TARGET
+        )
+        self._emit(caller_spec, sink.direction, sink.kind, identity)
+
+    def _emit_dart_inline_handle(
+        self,
+        node: Node,
+        raw: str,
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        descriptor: LanguageDescriptor,
+        local_names: frozenset[str],
+        lean_handles: _LeanHandles,
+    ) -> bool:
+        # `File('a.txt').readAsStringSync()` is named `File().readAsStringSync`:
+        # the constructor's call selector sits two siblings back, past the
+        # `.readAsStringSync` member selector.
+        receiver, sep, method = raw.rpartition(cs.SEPARATOR_DOT)
+        ctor_name = receiver.removesuffix(_DART_CALL_HOP)
+        if not sep or ctor_name == receiver or _DART_CALL_HOP in ctor_name:
+            return False
+        ctor = self._resolve_sink(
+            ctor_name,
+            import_map,
+            lean_handles.ctors,
+            local_names,
+            descriptor.sinks_require_import,
+            descriptor.scope_separator,
+        )
+        if ctor is None:
+            return False
+        direction = lean_handles.methods.get(ctor.kind, {}).get(method)
+        member = node.prev_named_sibling
+        ctor_call = member.prev_named_sibling if member is not None else None
+        if direction is None or ctor_call is None:
+            return False
+        identity = (
+            dart_first_string_arg(ctor_call, DYNAMIC_TARGET)
+            if ctor.target_arg == 0
+            else DYNAMIC_TARGET
+        )
+        self._emit(caller_spec, direction, ctor.kind, identity)
+        return True
 
     def _emit_object_url_client_call(
         self,
@@ -1503,6 +1746,14 @@ class IOAccessProcessor:
         # seeded with connect-client evidence for Go (issue #912).
         descriptor = LANGUAGE_DESCRIPTORS.get(language)
         if descriptor is None:
+            return
+        # A Dart caller's body is the signature's SIBLING `function_body`. The
+        # module itself holds every function body, so, as in the flow walk, it
+        # is walked by none of its own (issue #2761).
+        if (
+            language == cs.SupportedLanguage.DART
+            and dart_body_node(caller_node) is None
+        ):
             return
         lean_handles = _lean_handles_for(language)
         if lean_handles is not None and lean_handles.rpc_clients:
@@ -1692,6 +1943,15 @@ class IOAccessProcessor:
         if lean_handles.type_ctors and node.type == cs.TS_CPP_DECLARATION:
             self._bind_type_decl_handle(node, descriptor, lean_handles)
             return
+        # A Dart assignment shares its node type with the other grammars', but
+        # its value is a flat sibling chain the generic pairing cannot read,
+        # so `f = File('b')` left `f` on its first file (#2761 review).
+        if (
+            node.type in _DART_BINDING_TYPES
+            and descriptor.declarator_type == cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION
+        ):
+            self._bind_dart_handle(node, in_scope, import_map, descriptor, lean_handles)
+            return
         if (
             node.type != descriptor.declarator_type
             and node.type not in _LEAN_ASSIGNMENT_TYPES
@@ -1703,6 +1963,61 @@ class IOAccessProcessor:
             self._apply_lean_binding(
                 name, value, in_scope, import_map, descriptor, lean_handles
             )
+
+    def _bind_dart_handle(
+        self,
+        node: Node,
+        in_scope: frozenset[str],
+        import_map: dict[str, str],
+        descriptor: LanguageDescriptor,
+        lean_handles: _LeanHandles,
+    ) -> None:
+        # `var f = File('out.txt');` binds `f` to the file, read off the value
+        # chain's last call selector (issue #2761); any other value unbinds
+        # the name, as a rebind does in the other lean grammars.
+        name, rhs = dart_binding_name_and_rhs(node)
+        if name is None:
+            return
+        # `var s = await Socket.connect(...)` wraps the chain in a unary and an
+        # await node, and the awaited value is the handle: unwrap them as the
+        # flow walk's `_dart_rhs` does, or the flow reaches a socket nothing
+        # writes.
+        while len(rhs) == 1 and rhs[0].type in _DART_VALUE_WRAPPERS:
+            rhs = [c for c in rhs[0].named_children if c.type != cs.TS_COMMENT]
+        # `var g = f;` copies f's handle, as the flow walk does (#2761 review).
+        alias = (
+            lean_handles.bindings.get(safe_decode_text(rhs[0]) or "")
+            if len(rhs) == 1 and rhs[0].type == cs.TS_DART_IDENTIFIER
+            else None
+        )
+        lean_handles.bindings.pop(name, None)
+        if alias is not None:
+            lean_handles.bindings[name] = alias
+            return
+        call = rhs[-1] if rhs else None
+        if call is None or call.type != cs.TS_DART_SELECTOR:
+            return
+        raw = dart_call_name(call)
+        ctor = (
+            None
+            if raw is None
+            else self._resolve_sink(
+                raw,
+                import_map,
+                lean_handles.ctors,
+                in_scope,
+                descriptor.sinks_require_import,
+                descriptor.scope_separator,
+            )
+        )
+        if ctor is None:
+            return
+        identity = (
+            dart_first_string_arg(call, DYNAMIC_TARGET)
+            if ctor.target_arg == 0
+            else DYNAMIC_TARGET
+        )
+        lean_handles.bindings[name] = HandleBinding(kind=ctor.kind, identity=identity)
 
     @staticmethod
     def _paired_binding_values(
@@ -2077,14 +2392,25 @@ class IOAccessProcessor:
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
         handles: dict[str, HandleBinding],
+        ctor_by_name: dict[str, HandleConstructor],
     ) -> None:
         raw = call_name(node)
         if raw is None:
             return
-        if self._emit_handle_method(node, caller_spec, raw, handles):
+        binding = self._method_receiver_handle(
+            node, raw, handles, import_map, ctor_by_name
+        )
+        if binding is not None and self._emit_handle_method(
+            node, caller_spec, raw, binding
+        ):
             return
         sink = registry_match(sink_by_name, raw, import_map)
         if sink is None:
+            return
+        if sink.stream_kw is not None:
+            stream = python_stream_target(node, sink, import_map, ctor_by_name)
+            if stream is not None:
+                self._emit(caller_spec, sink.direction, *stream)
             return
         mode = (
             literal_target(node, sink.mode_arg, sink.mode_kw)
@@ -2213,19 +2539,32 @@ class IOAccessProcessor:
             direction if left is not None and left.id == node.id else IODirection.READ
         )
 
+    @staticmethod
+    def _method_receiver_handle(
+        call_node: Node,
+        raw_name: str,
+        handles: dict[str, HandleBinding],
+        import_map: dict[str, str],
+        ctor_by_name: dict[str, HandleConstructor],
+    ) -> HandleBinding | None:
+        # The handle a method call runs on: a bound name (`p.read_text()`),
+        # or the constructor call itself (`Path("/x").read_text()`).
+        receiver, sep, _method = raw_name.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return None
+        bound = handles.get(receiver)
+        if bound is not None:
+            return bound
+        return inline_python_handle(call_node, import_map, ctor_by_name)
+
     def _emit_handle_method(
         self,
         call_node: Node,
         caller_spec: tuple[str, str, str],
         raw_name: str,
-        handles: dict[str, HandleBinding],
+        binding: HandleBinding,
     ) -> bool:
-        receiver, sep, method = raw_name.rpartition(cs.SEPARATOR_DOT)
-        if not sep:
-            return False
-        binding = handles.get(receiver)
-        if binding is None:
-            return False
+        method = raw_name.rpartition(cs.SEPARATOR_DOT)[2]
         methods = IO_HANDLE_METHODS.get(binding.kind, {})
         direction = methods.get(method)
         if direction is None:

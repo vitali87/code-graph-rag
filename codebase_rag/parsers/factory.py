@@ -166,6 +166,11 @@ class ProcessorFactory:
                 class_field_types=self.definition_processor.class_field_types,
                 class_field_guard_inner=self.definition_processor.class_field_guard_inner,
                 class_field_element_types=self.definition_processor.class_field_element_types,
+                rust_variant_payload_types=self.definition_processor.rust_variant_payload_types,
+                class_owner_module=self.definition_processor.class_owner_module,
+                rehydrated_definition_paths=(
+                    self.definition_processor.rehydrated_definition_paths
+                ),
                 method_return_types=self.definition_processor.method_return_types,
                 go_function_return_types=self.definition_processor.go_function_return_types,
                 go_package_names=self.definition_processor.go_package_names,
@@ -218,6 +223,7 @@ class ProcessorFactory:
                 cpp_out_of_class_methods=self.definition_processor.cpp_out_of_class_methods,
                 function_locations=self.definition_processor.function_locations,
                 macro_qns=self.definition_processor.macro_qns,
+                cpp_callable_fields=self.definition_processor.cpp_callable_fields,
                 ast_cache=self.ast_cache,
                 go_package_names=self.definition_processor.go_package_names,
                 sql_sources=self.definition_processor.sql_sources,

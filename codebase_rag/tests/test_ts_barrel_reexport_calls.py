@@ -299,13 +299,18 @@ def test_the_barrel_maps_record_what_each_export_names(tmp_path: Path) -> None:
     assert exports["maps.src.lib.math.index"] == {
         "times": ("maps.src.lib.math.mul.default", False)
     }
+    # `export * as math from "./math"` publishes the directory's index module
+    # under one name (issue #3249).
     assert exports["maps.src.lib.index"] == {
-        "plus": ("maps.src.lib.math.add.add", False)
+        "math": ("maps.src.lib.math.index", False),
+        "plus": ("maps.src.lib.math.add.add", False),
     }
     assert exports["maps.src.lib.math.mul"] == {
         "default": ("maps.src.lib.math.mul.mul", True)
     }
+    # An exported declaration is recorded too (PR #2965).
     assert exports["maps.src.text.pad"] == {
+        "pad": ("maps.src.text.pad.pad", True),
         "strip": ("maps.src.text.pad.trim", True),
         "default": ("maps.src.text.pad.upper", True),
     }

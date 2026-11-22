@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,6 +34,7 @@ from ..utils.path_utils import (
 )
 from ..utils.source_encoding import grammar_bytes
 from .class_ingest import ClassIngestMixin
+from .constant_nodes import PendingConstantType, emit_declared_constants
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .csharp_frontend import CallSiteKey
@@ -192,6 +193,12 @@ class DefinitionProcessor(
         # method resolves via the field's declared type. Populated at class
         # ingestion, read by the type-inference engine at call resolution.
         self.class_field_types: dict[str, dict[str, str]] = {}
+        # {name of a C++ data member a call can invoke (a function pointer, a
+        # `std::function`): the types declaring it}, so `ops->cb()` may still
+        # reach a free `cb` (#3176 review). Keyed by type so a deleted or
+        # re-parsed one takes its names with it (Greptile, PR #3220).
+        # Populated at class ingestion, read at resolution.
+        self.cpp_callable_fields: dict[str, set[str]] = {}
         # Java anonymous-class override methods: (anon_method_qn, method_name,
         # base_type_name, module_qn). An anon class `new Base(){ @Override m(){} }`
         # is not modelled as a subclass, so its overrides register under the
@@ -361,6 +368,11 @@ class DefinitionProcessor(
         # (`workers: Vec<Worker>` -> {"workers": "Worker"}), applied only when
         # an iterator adaptor's closure parameter binds the element (#1045).
         self.class_field_element_types: dict[str, dict[str, str]] = {}
+        # {enum_qn: {variant_name: payload_type}} for Rust single-field tuple
+        # variants (`Literal(LiteralStrategy)` -> {"Literal":
+        # "LiteralStrategy"}), so a match-arm binding takes the payload's
+        # type, not the variant's name (issue #2923).
+        self.rust_variant_payload_types: dict[str, dict[str, str]] = {}
         # {alias_name: underlying_bare_type} for C++ typedef/using aliases, so a
         # receiver declared with an alias resolves to the aliased class. Collected
         # across all files (an alias in a header is used in a .cc), read by the
@@ -456,6 +468,10 @@ class DefinitionProcessor(
         self.pending_type_facts: list[PendingTypeFact] = []
         self.pending_parameter_types: list[PendingParameterType] = []
         self.pending_field_types: list[PendingFieldType] = []
+        self.pending_constant_types: list[PendingConstantType] = []
+        # The queued Constants read back from the graph rather than parsed:
+        # their annotations resolve through their file's restored imports.
+        self.requeued_constant_qns: set[str] = set()
         # Registered qns that are macro definitions (Rust macro_rules!):
         # macros register as Function nodes but live in a separate namespace,
         # so Pass-3 gates macro-invocation call sites to these targets and
@@ -565,11 +581,15 @@ class DefinitionProcessor(
             f"{module_qn}{cs.SEPARATOR_DOT}{file_path.suffix.lstrip(cs.SEPARATOR_DOT)}"
         )
 
-    def emit_type_edges(self) -> int:
+    def emit_type_edges(
+        self, restore_imports: Callable[[str], None] | None = None
+    ) -> int:
         """Resolve queued return/parameter annotations into RETURNS/ACCEPTS.
 
         Runs once the registry holds every file's types (issue #1527); the
         queue empties, so a watch-mode re-parse only re-resolves its own.
+        `restore_imports` loads an unchanged module's imports, by its qn, for
+        the annotations requeued from it (#3007 review).
         """
         from .type_facts import (
             TypeReferenceResolver,
@@ -577,14 +597,17 @@ class DefinitionProcessor(
             emit_type_edges,
         )
 
-        # Every queue, not just the first: a Parameter or Field fact with no
-        # RETURNS/ACCEPTS fact beside it would otherwise be skipped outright,
-        # and OF_TYPE silently absent. A class whose only annotations are on
-        # fields is the case that reaches this (found by the Field regression).
+        # Every queue, not just the first: a Parameter, Field or Constant
+        # fact with no RETURNS/ACCEPTS fact beside it would otherwise be
+        # skipped outright, and OF_TYPE silently absent. A class whose only
+        # annotations are on fields is the case that reaches this (found by
+        # the Field regression); a module whose only annotation is on a
+        # constant is the Constant one.
         if not (
             self.pending_type_facts
             or self.pending_parameter_types
             or self.pending_field_types
+            or self.pending_constant_types
         ):
             return 0
         resolver = TypeReferenceResolver(
@@ -594,6 +617,7 @@ class DefinitionProcessor(
             self.csharp_class_generic_arity,
         )
         resolver.join_partial_groups(self.csharp_partial_groups)
+        resolver.join_unparsed(self.rehydrated_definition_paths, restore_imports)
         emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
         # Parameter OF_TYPE edges resolve in the same pass, for the same
         # reason: the annotation may name a type from a later file.
@@ -606,6 +630,14 @@ class DefinitionProcessor(
         emitted += emit_of_type_edges(
             cs.NodeLabel.FIELD, self.pending_field_types, resolver, self.ingestor
         )
+        emitted += emit_of_type_edges(
+            cs.NodeLabel.CONSTANT,
+            self.pending_constant_types,
+            resolver,
+            self.ingestor,
+            self.requeued_constant_qns,
+        )
+        self.requeued_constant_qns.clear()
         return emitted
 
     def process_file(
@@ -655,13 +687,25 @@ class DefinitionProcessor(
             ):
                 self.go_package_names[module_qn] = package_name
 
-            self._ingest_module_node(
+            module_props = self._ingest_module_node(
                 file_path,
                 relative_path,
                 module_qn,
                 language,
                 root_node,
                 structural_elements,
+            )
+
+            # Module-level constants (issue #1806). AFTER the Module node is
+            # queued: a batch flush writes nodes before relationships, so a
+            # DEFINES_CONSTANT emitted first could match nothing (#1891).
+            emit_declared_constants(
+                self.ingestor,
+                self.pending_constant_types,
+                module_qn,
+                root_node,
+                language,
+                module_props,
             )
 
             combined_captures = self._file_combined_captures(
@@ -862,7 +906,7 @@ class DefinitionProcessor(
         language: cs.SupportedLanguage,
         root_node: ASTNode,
         structural_elements: dict[Path, str | None],
-    ) -> None:
+    ) -> PropertyDict:
         relative_path_str = relative_path.as_posix()
         module_props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: module_qn,
@@ -877,6 +921,8 @@ class DefinitionProcessor(
             module_props[cs.KEY_DOCSTRING] = docstring
         if fingerprint := interface_fingerprint(root_node, language):
             module_props[cs.KEY_INTERFACE_FINGERPRINT] = fingerprint
+        if package := self.go_package_names.get(module_qn):
+            module_props[cs.KEY_GO_PACKAGE] = package
         if language == cs.SupportedLanguage.PHP and (
             namespace := declared_namespace(root_node)
         ):
@@ -913,6 +959,7 @@ class DefinitionProcessor(
             cs.RelationshipType.CONTAINS_MODULE,
             (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
         )
+        return module_props
 
     def _fold_overloads(
         self,
@@ -1028,6 +1075,7 @@ class DefinitionProcessor(
             module_qn, self._pending_direct_module_exports
         )
         self._pending_direct_module_exports = []
+        self.record_esm_default_export(root_node, module_qn)
 
     def process_dependencies(self, filepath: Path) -> None:
         logger.debug(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))

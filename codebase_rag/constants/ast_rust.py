@@ -100,6 +100,10 @@ TS_RS_VISIBILITY_MODIFIER = "visibility_modifier"
 # The syntax around a `pub(...)` restriction; what is left names its scope:
 # `crate`, `self`, `super`, or the path after `in`.
 RS_VISIBILITY_SYNTAX_TOKENS = frozenset({"pub", "(", ")", "in"})
+# The fn records whose declared visibility is their own: a `fn` item and an
+# `extern` block's declaration. A trait's signatures are methods, as
+# visible as their trait.
+RS_VISIBILITY_FN_TYPES = frozenset({TS_RS_FUNCTION_ITEM, TS_RS_FUNCTION_SIGNATURE_ITEM})
 TS_RS_FIELD_IDENTIFIER = "field_identifier"
 TS_RS_MATCH_EXPRESSION = "match_expression"
 TS_RS_MATCH_ARM = "match_arm"
@@ -456,4 +460,10 @@ TS_RS_RETURN_EXPRESSION = "return_expression"
 TS_RS_SELF = "self"
 # An enum body and its variants (issue #1807).
 TS_RS_ENUM_VARIANT_LIST = "enum_variant_list"
+TS_RS_ORDERED_FIELD_DECLARATION_LIST = "ordered_field_declaration_list"
+# Patterns that wrap a binding without changing what it names: `ref s`,
+# `ref mut s`, `mut s`, `&s` (issue #2923).
+RS_BINDING_WRAPPER_PATTERNS = frozenset(
+    {TS_RS_REF_PATTERN, TS_RS_MUT_PATTERN, TS_RS_REFERENCE_PATTERN}
+)
 TS_RS_ENUM_VARIANT = "enum_variant"

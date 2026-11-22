@@ -19,6 +19,7 @@ from codebase_rag import cli as cli_module
 from codebase_rag import constants as cs
 from codebase_rag.config import ModelConfig, settings
 from codebase_rag.providers.base import get_provider
+from codebase_rag.tests.conftest import patch_active_model
 from codebase_rag.tools.health_checker import HealthChecker
 
 
@@ -28,19 +29,19 @@ def misspelled_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "ORCHESTRATOR_MODEL", "claude-sonnet-4-5")
     monkeypatch.setattr(settings, "CYPHER_PROVIDER", "")
     monkeypatch.setattr(settings, "CYPHER_MODEL", "")
-    monkeypatch.setattr(settings, "_active_orchestrator", None)
-    monkeypatch.setattr(settings, "_active_cypher", None)
+    patch_active_model(monkeypatch, "_active_orchestrator", None)
+    patch_active_model(monkeypatch, "_active_cypher", None)
     # Even the variable the old message asked for changes nothing.
     monkeypatch.setenv("ANTROPIC_API_KEY", "sk-test")
 
 
 @pytest.mark.usefixtures("misspelled_orchestrator")
 def test_the_startup_gate_names_the_unknown_provider() -> None:
-    with patch.object(cli_module.app_context, "console") as console:
+    with patch.object(cli_module.app_context, "err_console") as err_console:
         with pytest.raises(typer.Exit) as exc_info:
             cli_module.validate_models_early()
     assert exc_info.value.exit_code == 1
-    printed = str(console.print.call_args)
+    printed = str(err_console.print.call_args)
     assert "Unknown provider 'antropic'" in printed, printed
     assert "Did you mean 'anthropic'?" in printed, printed
     assert "API_KEY" not in printed, printed
@@ -61,8 +62,8 @@ def test_the_start_flag_names_the_unknown_provider(
     suggestion: str,
 ) -> None:
     # The issue's reproduction, through the real `start` command.
-    monkeypatch.setattr(settings, "_active_orchestrator", None)
-    monkeypatch.setattr(settings, "_active_cypher", None)
+    patch_active_model(monkeypatch, "_active_orchestrator", None)
+    patch_active_model(monkeypatch, "_active_cypher", None)
     args = ["start", "--repo-path", str(tmp_path), "--no-sync", flag, value]
     result = CliRunner().invoke(cli_module.app, [*args, "-a", "hi"])
     assert result.exit_code == 1, result.output

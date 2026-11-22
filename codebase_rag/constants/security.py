@@ -136,6 +136,8 @@ CYPHER_BLOCK_COMMENT_OPEN = "/*"
 CYPHER_BLOCK_COMMENT_CLOSE = "*/"
 CYPHER_MASKED_LITERAL = "''"
 CYPHER_MASKED_COMMENT = " "
+# A backtick name, for a check that reads structure rather than names.
+CYPHER_MASKED_IDENTIFIER = "_"
 CYPHER_LINE_END = "\n"
 CYPHER_PLAN_OPERATOR_PATTERN = r"[A-Za-z]+"
 CYPHER_PLAN_PROCEDURE_PATTERN = r"CallProcedure<([^>]*)>"
@@ -1212,6 +1214,16 @@ SHELL_SYSTEM_DIRECTORIES = frozenset(
 )
 
 # Dangerous patterns for full pipeline (cross-segment patterns with pipes/operators)
+SHELL_XARGS_DESTRUCTIVE_REASON = "xargs with destructive command"
+
+# The programs the xargs pattern below names, matched on the launched argv
+# rather than the raw text: a backslash-escaped `\r\m` is the same argv to
+# exec but not the same characters to a regex. A dotted suffix (`mkfs.ext4`)
+# names the same program.
+SHELL_XARGS_DESTRUCTIVE_PROGRAMS = frozenset(
+    {"chmod", "chown", "dd", "mkfs", "mv", "rm", "rmdir"}
+)
+
 SHELL_DANGEROUS_PATTERNS_PIPELINE = (
     (r"(wget|curl)\s+.*\|\s*(sh|bash|zsh|ksh)", "remote script execution"),
     (r"(wget|curl)\s+.*>\s*.*\.sh\s*&&", "download and execute script"),
@@ -1277,7 +1289,7 @@ SHELL_DANGEROUS_PATTERNS_SEGMENT = (
     # flag, so `sed -n '/start/,/end/p'` -- an ordinary range print -- was
     # refused. _sed_exec_construct covers s///e structurally, on a skeleton
     # with the substitution bodies blanked, so nothing is lost.
-    (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", "xargs with destructive command"),
+    (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", SHELL_XARGS_DESTRUCTIVE_REASON),
     (r"xargs\s+-I.*sh", "xargs shell execution"),
     (r"xargs\s+.*bash", "xargs bash execution"),
 )
@@ -1340,3 +1352,39 @@ SENSITIVE_PARENT_FILES = frozenset(
 )
 # Everything under these directories is key material.
 SENSITIVE_DIR_NAMES = frozenset({".ssh", ".gnupg"})
+# Windows drops trailing dots and spaces from a name, so `.git.` opens `.git`.
+WINDOWS_IGNORED_NAME_TAIL = ". "
+# A worktree's git directory names the shared one, which holds the config.
+GIT_COMMONDIR_FILENAME = "commondir"
+# What git looks for to take a folder for a git directory: a HEAD file beside
+# these folders, or beside a `commondir` file.
+GIT_HEAD_FILENAME = "HEAD"
+GIT_DIR_SUBDIRS = ("objects", "refs")
+# Asks git which git directory, and which shared one, it uses for a folder.
+# `rev-parse` runs nothing a config names, and fsmonitor is switched off on
+# top. The answer must not hang on settings the project can reach (its
+# `.env` reaches the environment): bare-repository discovery and the
+# ownership check are fixed here, on the command line, which outranks every
+# config file. Needs git 2.31 for `--path-format`; an older git falls back
+# to the rules that need no git.
+GIT_LOCATE_DIR_ARGS = (
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "safe.bareRepository=all",
+    "-c",
+    "safe.directory=*",
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-dir",
+    "--git-common-dir",
+)
+GIT_LOCATE_DIR_TIMEOUT_S = 5
+GIT_CEILING_DIRECTORIES_ENV = "GIT_CEILING_DIRECTORIES"
+# Every variable git reads starts with this; none is passed on, so a
+# `GIT_DIR` or `GIT_CONFIG_PARAMETERS` the project set cannot steer or break
+# the answer. Only the repository's own config is read.
+GIT_ENV_PREFIX = "GIT_"
+GIT_CONFIG_NOSYSTEM_ENV = "GIT_CONFIG_NOSYSTEM"
+GIT_CONFIG_GLOBAL_ENV = "GIT_CONFIG_GLOBAL"
+GIT_ENV_ON = "1"

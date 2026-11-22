@@ -36,7 +36,13 @@ CODEBASE_QUERY = (
     "cross-check suspiciously short result lists with a text search."
 )
 
-DIRECTORY_LISTER = "Lists the contents of a directory to explore the codebase."
+DIRECTORY_LISTER = (
+    "Lists the names of the entries directly inside one directory of the "
+    "project, sorted, one per line. It does not recurse and does not mark "
+    "which entries are directories. `directory_path` is relative to the "
+    "project root; a path outside the project, a missing directory, or a "
+    "file is refused with an error."
+)
 
 WEB_SEARCH = (
     "Searches the web and returns ranked results with titles, URLs and summaries; "
@@ -64,17 +70,25 @@ RESEARCH = (
 )
 
 FILE_WRITER = (
-    "Creates a new file with content. IMPORTANT: Check file existence first! "
-    "Overwrites completely WITHOUT showing diff. "
-    "Use only for new files, not existing file modifications."
+    "Creates or replaces the file at `file_path` inside the project with "
+    "`content`, creating any missing parent directories. An existing file at "
+    "that path is replaced entirely "
+    "and no diff is shown, so use it for new files and change existing ones "
+    f"with `{AgenticToolName.REPLACE_CODE}`. The write may need the user's "
+    "approval first. Returns the written path, or an error."
 )
 
 SHELL_COMMAND = (
-    "Executes allowlisted shell commands; `grep` is not available, use `rg`. "
-    "Reads confined to the project (ls, rg, cat, find, wc, head, tail, sort, uniq, "
-    "cut, with no redirects or paths outside it) run without approval; anything "
-    "else asks the user first. A fallback: callers, callees, inheritance, counts, "
-    "package layout and dependencies come from `"
+    "Runs `command` as an allowlisted shell command in the project root and "
+    "returns its exit code, stdout and stderr; pipes and `&&` / `||` chains "
+    "are supported. `grep` is not available, use `rg`. Reads confined to the "
+    "project (ls, rg, cat, find, wc, head, tail, sort, uniq, cut, with no "
+    "redirects or paths outside it) run without approval; anything else needs "
+    "the user's approval, which the application asks for before running it. A "
+    "declined command, or one needing approval when no one can be asked, "
+    "returns the reason instead of running. Commands are stopped after a time "
+    "limit. A fallback: callers, callees, inheritance, counts, package layout "
+    "and dependencies come from `"
     + AgenticToolName.QUERY_GRAPH
     + "`, so ask it before reconstructing them with rg, ls or wc."
 )
@@ -96,15 +110,20 @@ GET_FUNCTION_SOURCE = (
 )
 
 FILE_READER = (
-    "Reads the content of text-based files. "
+    "Reads one text file inside the project and returns its whole content; "
+    "there is no offset or line range. Binary files and files that are not "
+    "valid text are refused with an error. `file_path` is relative to the "
+    "project root. "
     "Images and PDFs the user references are attached inline; read them directly."
 )
 
 FILE_EDITOR = (
-    "Surgically replaces specific code blocks in files. "
-    "Requires exact target code and replacement. "
-    "Only modifies the specified block, leaving rest of file unchanged. "
-    "True surgical patching."
+    "Replaces `target_code` in `file_path` with `replacement_code` and leaves "
+    "the rest of the file unchanged. `target_code` must match the file's "
+    "current text exactly and occur exactly once; the edit is refused if the "
+    "file is missing or outside the project, the block is not found, or it "
+    "occurs more than once (include more surrounding lines to make it "
+    "unique). The edit may need the user's approval first."
 )
 
 STRUCTURAL_SEARCH = (
@@ -138,7 +157,10 @@ STRUCTURAL_EDITOR = (
 # MCP tool descriptions
 MCP_LIST_PROJECTS = (
     "List all indexed projects in the knowledge graph database. "
-    "Returns a list of project names that have been indexed."
+    "Returns a list of project names that have been indexed. A server scoped "
+    "to a workspace lists the workspace's indexed projects, and names the ones "
+    "the graph does not hold in `not_indexed`, with a `hint` saying how to "
+    "index them."
 )
 
 MCP_DELETE_PROJECT = (
@@ -154,12 +176,12 @@ MCP_WIPE_DATABASE = (
 
 MCP_INDEX_REPOSITORY = (
     "WARNING: Clears all data for the current project including its embeddings. "
-    "Parse and ingest the repository into the Memgraph knowledge graph. "
+    "Parse and ingest the repository into the knowledge graph. "
     "Use update_repository for incremental updates. Only use when explicitly requested."
 )
 
 MCP_UPDATE_REPOSITORY = (
-    "Update the repository in the Memgraph knowledge graph without clearing existing data. "
+    "Update the repository in the knowledge graph without clearing existing data. "
     "Use this for incremental updates."
 )
 
@@ -184,12 +206,25 @@ MCP_PARAM_REINGEST_PATHS = (
     "Files to re-ingest, relative to the project root (created, modified, or deleted)."
 )
 MCP_PARAM_REINGEST_DELETED = (
-    "Files to remove from the graph even if a same-named file exists on disk."
+    "Files reported deleted (e.g. by a file watcher). Their old definitions "
+    "are dropped; one that exists on disk again (an editor's atomic save) is "
+    "re-parsed from its current content instead of being removed. To keep a "
+    "file out of the graph, exclude it in .cgrignore; an excluded path is "
+    "skipped here, so one already indexed keeps its definitions until "
+    "update_repository drops them."
 )
 _MCP_DETERMINISTIC_NOTE = (
     "Deterministic: fixed graph queries, no LLM, same graph gives the same "
     "JSON. Use this instead of query_code_graph whenever you know the exact "
     "name or location. "
+)
+_MCP_COLUMNS_NOTE = (
+    "`col` and `end_col` are 0-based UTF-8 byte offsets into the line; "
+    "`col_char` and `end_col_char` are the same positions in characters "
+    "(Unicode code points, what string indexing counts), absent when the file "
+    "cannot be read from this server's checkout of the project or is a Java "
+    "source of a Lombok build, which may have been parsed from its delombok "
+    "expansion. "
 )
 MCP_RESOLVE = (
     "Resolve a name or a location to qualified names in the graph. `target` is "
@@ -211,6 +246,7 @@ MCP_CALLERS = (
     "caller, file, line, column, argument count and keyword names taken from "
     "the CALLS edges; `depth` > 1 follows the callers' callers (`through` "
     "names the callee each site invokes, `callee_path` its file). "
+    + _MCP_COLUMNS_NOTE
     + _MCP_DETERMINISTIC_NOTE
 )
 MCP_CALLEES = (
@@ -218,6 +254,7 @@ MCP_CALLEES = (
     "the location of the call: `path` is the file holding the site's `line` "
     "and `col` (the caller's, named by `through`) and `callee_path` the file "
     "defining the callee; `depth` > 1 follows the callees' callees. "
+    + _MCP_COLUMNS_NOTE
     + _MCP_DETERMINISTIC_NOTE
 )
 MCP_IMPLEMENTORS = (
@@ -240,7 +277,9 @@ MCP_IMPORTERS = (
     "`through_reexports` is true: then also the modules that reach it through "
     "a re-export (a package `__init__.py`, a Rust `pub use`, an `index.ts` "
     "barrel), each row with `via`, the import statements it came through, "
-    "consumer side first (empty for a direct importer). " + _MCP_DETERMINISTIC_NOTE
+    "consumer side first (empty for a direct importer). "
+    + _MCP_COLUMNS_NOTE
+    + _MCP_DETERMINISTIC_NOTE
 )
 MCP_PARAM_ENDPOINT_TARGET = (
     "The handler's qualified name, or the endpoint identity (`GET /users/{id}`) "
@@ -319,6 +358,11 @@ MCP_GLOSSES = (
     "hash to compare) and is LOST if its name disappears (a module has no span "
     "to quote); a class, interface, enum, type or union carries a hash like a "
     "function and is graded and repaired the same way. "
+    "A note's `mentions` are anchored the same way: a mentioned definition "
+    "that is renamed or moved is followed by its hash or quote, one that "
+    "cannot be placed is listed in `mentions_lost` with no edge (still, once "
+    "another mention has taken its name), and a new definition that reuses "
+    "its name does not inherit it. "
     "A target that no longer resolves returns the error plus `orphaned`: the "
     "unattached notes written against that name. " + _MCP_DETERMINISTIC_NOTE
 )
@@ -350,7 +394,11 @@ MCP_RENAME = (
     "those occurrences as `unplanned`; `allow_heuristic` rewrites them as "
     "guessed sites. A class referenced by an inheritance or type "
     "annotation edge that carries no rewrite location refuses regardless of "
-    "`allow_heuristic`. Every rewritten file must still parse; "
+    "`allow_heuristic`. A method that overrides or implements something "
+    "outside the project (a library base, an `@Override`/`override` no "
+    "project base alone accounts for, a Python `__dunder__` method) refuses "
+    "unless "
+    "`allow_external_override` is true. Every rewritten file must still parse; "
     "otherwise nothing is written. Set `dry_run` to see the plan and diff "
     "without touching the tree. Applied edits are recorded for `cgr edits "
     "undo`, and Markdown mentions of the old name are listed for a human to "
@@ -361,9 +409,14 @@ MCP_PARAM_ALLOW_HEURISTIC = (
     "Rewrite through heuristic, overload and trace-only sites, and the unplanned "
     "occurrences the graph has no site for, too (default false)."
 )
+MCP_PARAM_ALLOW_EXTERNAL_OVERRIDE = (
+    "Rename a method even though it overrides or implements something outside "
+    "the project, so the override stops (default false)."
+)
 MCP_PARAM_RENAME_DRY_RUN = "Plan only: report the sites and diff, write nothing."
 MCP_CHANGE_SIGNATURE = (
-    "Change a Python function's or method's parameter list and rewrite every "
+    "Change a Python or JavaScript function's or method's parameter list and "
+    "rewrite every "
     "call site the graph knows, on the definition and on every override in "
     "both directions. `new_params` lists the new parameters in order (`n: int`, "
     "`limit: int = 10`, or a bare old name to carry it over unchanged). "
@@ -378,6 +431,27 @@ MCP_CHANGE_SIGNATURE = (
     "is undone when its postcondition fails. Set `dry_run` to see the plan and "
     "diff without touching the tree. Applied edits are recorded for `cgr edits "
     "undo`."
+)
+MCP_MOVE = (
+    "Move a module-level function or class to another module. The definition "
+    "(decorators, docstring, adjacent comments) is cut and pasted into "
+    "`target_module` (a dotted module name or a repo-relative path; created "
+    "when missing) with the imports it needs, every importer is rewritten, "
+    "uses through a module import (`pkg.util.helper`) follow, and the old "
+    "module keeps an import of the name when it still uses it. `keep_alias` "
+    "leaves a re-export at the old location so the old import path keeps "
+    "working. Refused before any file is touched when the move would create "
+    "an import cycle, naming the cycle. One transaction, held to the "
+    "postcondition contract; set `dry_run` to see the plan."
+)
+MCP_PARAM_TARGET_MODULE = (
+    "Destination module: a dotted module name (`pkg.core`) or a repo-relative path."
+)
+MCP_PARAM_MOVE_DRY_RUN = (
+    "Plan only: report the files, importers and copied imports, write nothing."
+)
+MCP_PARAM_KEEP_ALIAS = (
+    "Leave a re-export at the old location so the old import path still works."
 )
 MCP_PARAM_NEW_PARAMS = (
     "The new parameter list in order, one entry per parameter (`name`, "
@@ -418,10 +492,16 @@ _MCP_DELTA_NOTE = (
     "nothing, and a failed analysis appends an error note instead of a delta. "
     "Read it before the next edit."
 )
+# The two writes that know the file's content before it (issue #3232).
+_MCP_PARSE_NOTE = (
+    " A write that leaves the file unparsable leads its result with the parse "
+    "error, and the delta lists it in parse_errors."
+)
 MCP_SURGICAL_REPLACE_CODE = (
     "Surgically replace an exact code block in a file using diff-match-patch. "
     "Only modifies the exact target block, leaving the rest unchanged."
     + _MCP_DELTA_NOTE
+    + _MCP_PARSE_NOTE
 )
 
 MCP_READ_FILE = (
@@ -429,7 +509,9 @@ MCP_READ_FILE = (
 )
 
 MCP_WRITE_FILE = (
-    "Write content to a file, creating it if it doesn't exist." + _MCP_DELTA_NOTE
+    "Write content to a file, creating it if it doesn't exist."
+    + _MCP_DELTA_NOTE
+    + _MCP_PARSE_NOTE
 )
 
 MCP_LIST_DIRECTORY = "List contents of a directory in the project."
@@ -510,11 +592,23 @@ MCP_ASK_AGENT = (
 MCP_FLOW_VERDICT = (
     "Answer a source-to-sink data-flow reachability question with one of "
     "three verdicts: FOUND (a FLOWS_TO path exists, returned as qualified "
-    "names), NO_FLOW (no path, and every module of the project was inside "
-    "flow-analysis coverage), or UNKNOWN (no path found, but part of the "
-    "project sits outside coverage; the uncovered files are named). An "
-    "absent path must never be read as a verified absence when coverage "
-    "gaps exist. The path may cross a service boundary: a NETWORK resource "
+    "names), NO_FLOW (no path and no gaps: every module of the project was "
+    "inside flow-analysis coverage, and the walk followed the value "
+    "throughout), or UNKNOWN (no path found, but one cannot be ruled out; "
+    "`gaps` names the files outside coverage and the functions past which "
+    "the walk cannot follow the value). An absent path must never be read "
+    "as a verified absence when gaps exist. Either end may be a resource "
+    "(`resource::ENV::K`, `resource::STDOUT::<dynamic>`). A resource "
+    "reaches the resources its value was written to and the handler of an "
+    "endpoint it was sent to, and stops there: a resource source is "
+    "answered for resource sinks and those handlers only, and any other "
+    "function sink is UNKNOWN. A function reaches the resources its own "
+    "body wrote. No edge records which value a write carries, so a walk to "
+    "a resource sink takes no other function's writes: a handler it "
+    "entered, or a function it reached whose writes can go on to the sink, "
+    "is named in `gaps`. A walk between two functions does go on through "
+    "what every function it reaches writes. The path may cross a service "
+    "boundary: a NETWORK resource "
     "that resolves to another project's endpoint continues into that "
     "handler, `remote_hops` lists the (from, to) pairs where it does, and "
     "the coverage of every project entered counts towards the verdict. A "
@@ -529,6 +623,16 @@ MCP_PARAM_PROJECT = (
     "Optional. Restrict results to one indexed project; use list_projects for "
     "the available names. Omit to search every project."
 )
+# The tools that read one project and default to the server's own (issue
+# #2757): the graph tools, context, rename, move, change_signature and
+# find_duplicate_code. `{default}` is the project an omitted argument means,
+# so an empty answer is not read as a graph-wide one.
+MCP_PARAM_PROJECT_DEFAULT = (
+    "Optional. The indexed project to read; use list_projects for the "
+    "available names. Omitted, it is {default}, not every project."
+)
+MCP_PROJECT_DEFAULT_SERVER = "this server's own project ({project})"
+MCP_PROJECT_DEFAULT_WORKSPACE = "the workspace's default project"
 MCP_PARAM_SOURCE_QN = "Qualified name of the flow source (function/method)"
 MCP_PARAM_SINK_QN = "Qualified name of the flow sink (function/method)"
 
@@ -628,6 +732,7 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.GLOSSES: MCP_GLOSSES,
     MCPToolName.RENAME: MCP_RENAME,
     MCPToolName.CHANGE_SIGNATURE: MCP_CHANGE_SIGNATURE,
+    MCPToolName.MOVE: MCP_MOVE,
     MCPToolName.CONTEXT: MCP_CONTEXT,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,

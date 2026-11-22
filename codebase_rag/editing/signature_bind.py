@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 import symtable
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from itertools import product
 
 from tree_sitter import Node
@@ -508,6 +508,9 @@ def _render_site(
     new: Sequence[ParamSpec],
     sources: Sequence[_Source | None],
     edits: list[_Edit],
+    render: Callable[
+        [Sequence[ParamSpec], Sequence[_Source | None], Mapping[int, _Binding]], str
+    ] = _render_arguments,
 ) -> _Edit | None:
     """The site's edit, with any edit planned inside its arguments folded in.
 
@@ -516,7 +519,7 @@ def _render_site(
     """
     bound, consumed = _fold(candidate, edits)
     _refuse_dropped_effects(sources, bound)
-    text = _render_arguments(new, sources, bound)
+    text = render(new, sources, bound)
     for edit in consumed:
         edits.remove(edit)
     if not consumed and text == candidate.text:

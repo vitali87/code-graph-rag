@@ -98,6 +98,10 @@ A change that breaks existing setups (a new default, a removed option, a renamed
 
 The **Breaking Change Notes** check fails until the title, the label and the file agree.
 
+### Public surface
+
+`docs/reference/public-surface.json` records everything users and agents reach: commands and options, exit codes, MCP tools and their input schemas, settings, graph labels and relationships, the export's records, the protobuf index and the Python SDK. `test_public_surface.py` fails when the code and the file differ. A change you intend: run `uv run python scripts/public_surface.py` and commit the file, so the change shows in the pull request. A removed or renamed entry is a breaking change (above). The Rust rewrite ([RUST_REWRITE_PLAN.md](docs/reports/RUST_REWRITE_PLAN.md)) is held to this file.
+
 ### Continuous Integration
 
 All pull requests are automatically validated by our CI workflow, which runs in parallel for faster feedback:
@@ -120,6 +124,10 @@ All pull requests are automatically validated by our CI workflow, which runs in 
    - Code coverage reporting to Codecov
 
 5. **PR Title Validation** - Conventional Commits format check
+
+6. **Greptile 5/5 Gate** - Greptile reviews every push, and the check fails when it scores the PR's latest commit below 5/5. If Greptile doesn't score that commit (out of credits, paused), the check passes with a warning
+
+7. **Reference Graphs** - The graphs of pinned public repositories, one or more per language, listed in `fixtures/reference_graphs/repos.json`. The job indexes each with `cgr`, exports it, and compares it line by line with the recorded `.graph` file; it indexes each twice more, at another path under another `PYTHONHASHSEED`, and fails if any run differs. A pull request that changes what the indexer records changes these files too: run `uv run --extra treesitter-full --extra ast-grep python scripts/reference_graphs.py record` (or name the repositories it touches) and commit the result, so the difference shows in the review. The graphs are recorded and checked with every language tier installed, as the job installs them; `environment.txt` beside them says what the recording could parse, and the job stops first, naming what is missing, on a machine that parses something else. The Rust rewrite ([RUST_REWRITE_PLAN.md](docs/reports/RUST_REWRITE_PLAN.md)) is held to these graphs.
 
 All checks run in parallel and must pass before a PR can be merged. A summary job verifies all checks succeeded.
 
@@ -159,7 +167,7 @@ This project uses automated code review bots (**Greptile** and **Gemini Code Ass
 2. **Accept or push back**: For each bot suggestion, either:
    - **Accept**: Implement the suggestion and resolve the comment
    - **Push back**: Reply inline with a clear justification for why the suggestion doesn't apply
-3. **Iterate as needed**: Continue addressing new bot comments through multiple review rounds until all are resolved
+3. **Iterate as needed**: Continue addressing new bot comments through multiple review rounds until all are resolved. When Greptile scores the PR's latest commit, the score must be 5/5, or the **Greptile 5/5 Gate** check fails and blocks the merge. It reviews each push on its own; to ask it again without pushing (after answering a finding it got wrong), comment `@greptile review`, then re-run the check once the **Greptile Review** check has started
 4. **Then request human review**: Only after all bot comments are cleared, assign the PR to core maintainers for human review
 
 This process ensures that human reviewers focus on high-level design and logic rather than style and common issues that bots can catch.
@@ -216,34 +224,79 @@ Now, `pre-commit` will run automatically on `git commit`.
 
 ## Fuzzing
 
-The harnesses under `fuzz/` run continuously in CI via
-[ClusterFuzzLite](https://google.github.io/clusterfuzzlite/): `cflite_pr.yml`
-gives each one 600 seconds on every pull request, and `cflite_batch.yml` runs
-them for an hour nightly. A crash fails the job with the reproducing input
-attached.
+The harnesses under `fuzz/` run in CI via
+[ClusterFuzzLite](https://google.github.io/clusterfuzzlite/), in four
+workflows:
 
-There are three targets:
+| Workflow | When | What it does |
+| --- | --- | --- |
+| `cflite_pr.yml` | every pull request | 600 seconds of fuzzing on every core, in a job per language (the harnesses, and the Rust targets below) capped at 30 minutes so it never holds a PR for long. It fuzzes only the targets the change can reach, judged by the latest coverage report, or all of them when there is no report |
+| `cflite_batch.yml` | nightly at 03:17 UTC, or by hand | one job per harness, each fuzzing on every core for 7200 seconds (`fuzz-seconds` on a manual run) and growing the corpus the PR job starts from, and one job giving the Rust targets an hour between them |
+| `cflite_cron.yml` | nightly at 06:17 UTC, or by hand | prunes each corpus to the inputs that still add coverage (a job per harness, one for the Rust targets), then replays the harnesses' pruned corpora under coverage.py and uploads the report as the `cifuzz-coverage-latest` artifact |
+| `cflite_build.yml` | every push to `main` | uploads the harnesses' fuzz build, so a crash a PR meets that already happens on `main` is not blamed on the PR |
+
+A crash fails the job with the reproducing input attached as an artifact.
+The PR jobs and the harnesses' batch jobs also upload a SARIF report to code
+scanning, so crashes appear in the Security tab. The batch report is written
+even when nothing crashed, so an alert closes on the first night its crash
+is gone.
+
+There are five targets:
 
 | Harness | What it drives | What it asserts |
 | --- | --- | --- |
-| `fuzz_parse_source.py` | a tree-sitter parser for a fuzzer-chosen language, then the queries and name extraction over the resulting tree | the pass never raises on any input |
-| `fuzz_incremental_update.py` | `GraphUpdater.reingest` over a fuzzer-chosen edit plan | the resulting graph equals a clean full index of the same tree |
-| `fuzz_shell_command.py` | the `EXECUTE_SHELL` allowlist and dangerous-command classifier | it never raises, never calls a never-allowlisted program safe, and never lets a prefix launder a dangerous trailing segment |
+| `fuzz_parse_source.py` | a tree-sitter parse for a fuzzer-chosen language (through preprocessor recovery for C, C++ and C#, as indexing does), then every query and the name extraction over the tree | no pass raises, and no extracted name is silently truncated by an invalid byte beside it |
+| `fuzz_incremental_update.py` | `GraphUpdater.reingest` over a fuzzer-chosen edit plan: truncate, splice, rewrite, delete, recreate, new file, rename, move | the resulting graph equals a clean full index of the same tree |
+| `fuzz_shell_command.py` | the production `EXECUTE_SHELL` gates: the pre-spawn screen in default and YOLO mode, the approval gate and the non-interactive confinement gate | no gate raises; an allowed command spawns only segments allowed on their own; no prefix launders a structurally refused suffix; `xargs` never makes a refused command allowed; re-quoting never changes a verdict; non-interactive runs stay read-only and inside the project root |
+| `fuzz_cypher_guard.py` | the read-only guard on generated Cypher: masking, validation and both plan parsers | write keywords, disallowed procedures and unbounded paths are refused wherever they hide, and a plan holding a write operator is refused |
+| `fuzz_dependency_manifest.py` | `parse_dependencies` over every manifest format | exactly the declared dependencies are reported, all as strings, and none is invented from a decoy or a wrong-typed section |
 
 To run one locally:
 
 ```bash
-uv run --extra fuzz python fuzz/fuzz_parse_source.py -max_total_time=60
+uv run --extra fuzz python fuzz/fuzz_parse_source.py -max_total_time=60 \
+  -dict=fuzz/fuzz_parse_source.dict
 ```
 
-Seed corpora live in `fuzz/corpus/<harness>/` and are regenerated with
-`uv run python fuzz/build_corpus.py`. Seeds matter: starting from valid
-programs is what gets the fuzzer past the grammar's error recovery and into
-the extraction code.
+Each target ships a libFuzzer dictionary, `fuzz/<harness>.dict`, holding the
+tokens its input language is built from. The build copies it next to the
+target and smoke-runs the target with it, so a malformed dictionary fails the
+build. `codebase_rag/tests/test_fuzz_build.py` checks every dictionary the way
+libFuzzer reads it, and caps each entry at 64 bytes, because libFuzzer skips
+any longer entry without saying so.
 
-**atheris does not build on macOS.** It needs libFuzzer, which Apple Clang does
-not ship, so `uv sync --extra fuzz` fails there with `Failed to find
-libFuzzer`. Fuzz on Linux, or let CI do it; the rest of the suite is unaffected
+Seed corpora live in `fuzz/corpus/<harness>/` and are regenerated with
+`uv run python fuzz/build_corpus.py`. Seeds matter: starting from valid inputs
+is what gets the fuzzer past the grammar's error recovery and into the
+extraction code.
+
+The fuzz image installs the locked dependency set (`uv export --frozen`), and
+takes atheris, PyInstaller and coverage from `.clusterfuzzlite/requirements.txt`,
+pinned by hash, so a fuzzing run never tests a dependency set the project
+does not ship.
+
+Rules for a harness:
+
+* **No `from __future__` imports.** The coverage build prepends a coverage
+  stub to every harness, and a `__future__` import that is not the first
+  statement is a `SyntaxError`, which leaves that target out of the report.
+* **Silence logging** (`logger.disable("codebase_rag")`). One target's debug
+  output once filled a 364 MB nightly log and hid its own statistics.
+* **Assert a property, not just "does not raise"**, where the code under test
+  has one. A crash-only harness misses every bug that returns a wrong answer.
+
+**atheris on macOS.** Apple Clang ships no libFuzzer, so `uv sync --extra
+fuzz` fails with `Failed to find libFuzzer`. Homebrew's `llvm@21` has it,
+and atheris 3.0.0 is the last release with a source distribution:
+
+```bash
+L=/opt/homebrew/opt/llvm@21/bin; S=$(xcrun --show-sdk-path)
+SDKROOT=$S CFLAGS="-isysroot $S" CXXFLAGS="-isysroot $S" \
+  LDFLAGS="-isysroot $S -L$S/usr/lib" CC=$L/clang CXX=$L/clang++ \
+  CLANG_BIN=$L/clang uv pip install "atheris==3.0.0"
+```
+
+Otherwise fuzz on Linux, or let CI do it; the rest of the suite is unaffected
 either way.
 
 When fuzzing finds a crash: add a regression test under `codebase_rag/tests/`
@@ -251,8 +304,11 @@ that fails without the fix, commit the reproducer into the harness' corpus
 directory, and only then fix the bug.
 
 The Rust extension has cargo-fuzz targets of its own, in
-`rust/cgr_graph_rs/fuzz/fuzz_targets/`, and both workflows run them in a
-separate `rust` job with the same budgets. Each target's header says what it
+`rust/cgr_graph_rs/fuzz/fuzz_targets/`, and the PR, batch and cron workflows
+run them in a separate `rust` job (a build holds one language's targets).
+Coverage and the `main` build upload are the harnesses' alone:
+ClusterFuzzLite names those artifacts by sanitizer, not language, so a Rust
+one would take the Python one's place. Each target's header says what it
 drives and checks:
 
 | Target | What it drives |
@@ -261,6 +317,7 @@ drives and checks:
 | `json_string` | `json_text::push_string`, against Python's `json.dumps` |
 | `graph_algorithms` | the graph procedures and `run` on a graph and arguments the input chooses |
 | `sqlite_graph` | the bulk writer, the variable-length walk and `Graph::load`, against a model of the graph |
+| `xml_elements` | the XML project-file reader (`formats::xml`) on any bytes |
 
 To run one locally, with a nightly toolchain and `cargo install cargo-fuzz`:
 

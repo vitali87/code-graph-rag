@@ -18,6 +18,7 @@ import typer
 from codebase_rag import cli as cli_module
 from codebase_rag import constants as cs
 from codebase_rag.config import AppConfig, settings
+from codebase_rag.tests.conftest import patch_active_model
 from codebase_rag.tools import health_checker
 from codebase_rag.tools.health_checker import HealthChecker
 
@@ -109,21 +110,23 @@ def half_configured_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "ORCHESTRATOR_MODEL", "")
     monkeypatch.setattr(settings, "CYPHER_PROVIDER", "")
     monkeypatch.setattr(settings, "CYPHER_MODEL", "")
-    monkeypatch.setattr(settings, "_active_orchestrator", None)
-    monkeypatch.setattr(settings, "_active_cypher", None)
+    patch_active_model(monkeypatch, "_active_orchestrator", None)
+    patch_active_model(monkeypatch, "_active_cypher", None)
 
 
 @pytest.mark.usefixtures("half_configured_orchestrator")
 class TestSurfaces:
-    def test_startup_gate_prints_the_error_and_exits(self) -> None:
-        """`cgr start` / `cgr optimize` run this gate before anything else."""
-        with patch.object(cli_module.app_context, "console") as console:
-            with pytest.raises(typer.Exit) as exc_info:
-                cli_module.validate_models_early()
+    def test_startup_gate_prints_the_error_and_exits(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(typer.Exit) as exc_info:
+            cli_module.validate_models_early()
 
         assert exc_info.value.exit_code == 1
-        printed = str(console.print.call_args)
-        assert "ORCHESTRATOR_MODEL is not" in printed
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Startup Error:" in captured.err
+        assert "ORCHESTRATOR_MODEL is not" in captured.err
 
     def test_doctor_reports_a_failed_check_instead_of_crashing(self) -> None:
         result = HealthChecker().check_model_role(cs.ModelRole.ORCHESTRATOR)

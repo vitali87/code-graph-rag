@@ -9,6 +9,7 @@ KEY_LABELS = "labels"
 KEY_LABEL = "label"
 KEY_PROPERTIES = "properties"
 KEY_PURGED = "purged"
+KEY_EXPECTED_ROOT = "expected_root"
 KEY_FROM_ID = "from_id"
 KEY_TO_ID = "to_id"
 KEY_TYPE = "type"
@@ -36,6 +37,9 @@ KEY_MEMBER_ALIASES = "member_aliases"
 # The member names a Python class body binds to a value that is no method
 # (`run = None`), which hide a base class's `run` (issue #2620).
 KEY_NON_METHOD_MEMBERS = "non_method_members"
+# The C++ data members a call can invoke (`int (*cb)()`, `std::function`), so
+# `o->cb()` may reach a free `cb` that member syntax otherwise rules out.
+KEY_CALLABLE_FIELDS = "callable_fields"
 # The types a Go interface embeds, as written (`Reader`, `io.Writer`): its
 # method set includes theirs, so satisfying it needs them too (issue #2483).
 KEY_EMBEDS = "embeds"
@@ -47,6 +51,11 @@ KEY_IMPLEMENTERS_UNKNOWN = "implementers_unknown"
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
 KEY_IS_MACRO = "is_macro"
+# The path a Rust function's visibility is restricted to, as declared:
+# `self` for a private one, `crate`, `super` or the `in` path of a
+# `pub(...)`; absent for a plain `pub` one (PR #3242 review). A
+# `macro_rules!` macro reads `self`: no glob of its module imports it.
+KEY_RUST_VISIBILITY = "rust_visibility"
 KEY_IS_BODY_SCOPED_NAME = "is_body_scoped_name"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
@@ -85,14 +94,15 @@ KEY_END_LINE = "end_line"
 # Edge-site location properties (issue #1522). Every CALLS / REFERENCES /
 # INSTANTIATES edge records the span of the expression that produced it, and
 # every IMPORTS edge the span of its import statement, so a consumer can jump
-# to, verify, or rewrite the exact site. Lines are 1-based and columns 0-based,
-# matching the node `start_line` / `start_col` convention. Sites are stored as
+# to, verify, or rewrite the exact site. Lines are 1-based and columns 0-based
+# UTF-8 byte offsets into the line, as tree-sitter counts them, matching the
+# node `start_line` / `start_col` convention (issue #3162). Sites are stored as
 # ONE EDGE PER SITE: the site props join the MERGE key (see
 # MERGE_KEY_PROPS_BY_REL), so a caller invoking one callee twice carries two
-# parallel edges. Edges emitted without a site (libclang macro uses, Roslyn
-# facts, dynamic-trace write-back, inferred C# namespace imports) carry none of
-# these keys: a pair's site-less rows share one site-less edge beside its
-# located ones, and never write onto those (issue #2879).
+# parallel edges. Edges emitted without a site (pure-libclang macro uses,
+# Roslyn facts, dynamic-trace write-back, inferred C# namespace imports) carry
+# none of these keys: a pair's site-less rows share one site-less edge beside
+# its located ones, and never write onto those (issue #2879).
 KEY_LINE = "line"
 # Fixed-Cypher parameter names for the deterministic graph queries (#1523).
 KEY_QN = "qn"
@@ -124,7 +134,17 @@ class RenameTargetKind(StrEnum):
 KEY_UNMAPPED = "unmapped"
 KEY_VERDICT = "verdict"
 KEY_STRUCTURAL_DELTA = "structural_delta"
+KEY_CYCLE = "cycle"
 KEY_DISPATCH_LITERAL = "dispatch_literal"
+
+
+class ImportScope(StrEnum):
+    """Why an import does not run at module import time: it is inside a
+    function body, which runs when called, or under `if TYPE_CHECKING:`,
+    which never runs. Only module-time imports can make an import cycle."""
+
+    FUNCTION = "function"
+    TYPE_CHECKING_BLOCK = "type_checking"
 
 
 class EdgeResolution(StrEnum):
@@ -175,6 +195,12 @@ KEY_SUFFIX = "suffix"
 KEY_VARIANT_PREFIX = "variant_prefix"
 KEY_COL = "col"
 KEY_END_COL = "end_col"
+# What `cgr graph` and its MCP tools answer beside `col` and `end_col`: the same
+# position counted in characters (Unicode code points) of the line, the column
+# an editor or a `str` index uses. Derived from the file when the answer is
+# read and never stored (issue #3162).
+KEY_COL_CHAR = "col_char"
+KEY_END_COL_CHAR = "end_col_char"
 KEY_ARG_COUNT = "arg_count"
 KEY_KWARG_NAMES = "kwarg_names"
 # Call-site flags, present (true) only when the argument list unpacks a
@@ -195,6 +221,9 @@ KEY_VIA_PARAM = "via_param"
 # the symbol's own name. A whole-module import has no `imported_name`.
 KEY_ALIAS = "alias"
 KEY_IMPORTED_NAME = "imported_name"
+# On an IMPORTS edge whose statement does not run when its module is imported
+# (issue #2685); absent on one that does. Values are `ImportScope`.
+KEY_IMPORT_SCOPE = "import_scope"
 # `imported_name` of a wildcard import (`from x import *`, `export * from`).
 IMPORTED_NAME_WILDCARD = "*"
 KEY_PATH = "path"
@@ -268,6 +297,8 @@ KEY_LONGER_PROJECT_PREFIXES = "longer_project_prefixes"
 KEY_VERSION_SPEC = "version_spec"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
+# The residual-node count `cgr prune` reads back after a purge (#2479).
+KEY_RESIDUAL_NODES = "residual"
 # Registered projects whose names extend this one (`svc.v2` under `svc`).
 KEY_NESTED_PROJECTS = "nested_projects"
 # The incomplete-run marker's phase (#1705 review): whether the run it records
@@ -406,6 +437,12 @@ class NodeLabel(StrEnum):
     # A named constant a Module declares (issue #1806). Python module
     # scope only for now; a class-level member is a Field (#1805).
     CONSTANT = "Constant"
+
+
+# Synthetic qualified name for a Resource node: resource::<kind>::<identity>.
+# Kept here rather than with the IO parsers so a graph reader can recognise a
+# resource qn without importing the parser stack, which the CLI defers.
+RESOURCE_QN_FORMAT = "resource::{kind}::{identity}"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -856,6 +893,16 @@ GRAPH_MAX_SOURCE_LINE = 2**31 - 1
 # languages the extractor does not read (the positional_params rule).
 KEY_RETURN_TYPE = "return_type"
 KEY_PARAM_TYPES = "param_types"
+# The type names a Go definition's result binds, as the call pass reads them:
+# the FIRST result's (`b, err := NewBox()` types `b`) and the single result's
+# that a chained call dispatches on (`MakeBox().Size()`). Stored so a re-parsed
+# caller in an incremental run still reads them from unchanged files, which
+# would otherwise have to be parsed again to give them (issue #3272).
+KEY_FIRST_RETURN_TYPE = "first_return_type"
+KEY_CHAIN_RETURN_TYPE = "chain_return_type"
+# A Go file's `package` clause, on its Module: same-package visibility reads
+# it for both ends, and an unchanged file is not parsed to give it (#3272).
+KEY_GO_PACKAGE = "go_package"
 # A `main` the language's launcher starts, judged by the parser because the
 # graph cannot say it otherwise (issue #2527). For Java, the method the JVM
 # launch protocol would pick from its class body (JLS 12.1.4, JEP 512);
@@ -921,6 +968,11 @@ KEY_CALL_QUALIFIER = "call_qualifier"
 # file module win over another target's gate (src/lib.rs gating what
 # src/main.rs compiles for real).
 KEY_RUST_CFG_TEST_MODS = "rust_cfg_test_mods"
+# A type's field types (`mode\tMode`; a Rust guard field adds its inner type,
+# `state\tMutex\tState`), read back on an incremental run so a re-parsed
+# file's `args.mode.update()` still types the field (issue #3004).
+KEY_FIELD_TYPES = "field_types"
+FIELD_TYPE_SEPARATOR = "\t"
 KEY_RUST_UNGATED_MODS = "rust_ungated_mods"
 KEY_MODIFIERS = "modifiers"
 # The namespace a C# type is declared in, kept apart from the qualified
@@ -1004,23 +1056,33 @@ MILVUS_IDS_EXPR = "{field} in {ids}"
 # Milvus answers a delete with the deleted keys or with this count.
 MILVUS_DELETE_COUNT_KEY = "delete_count"
 
+# The tail of the module and project deletes: `owned` lists every node the
+# delete removes. A resource-to-resource FLOWS_TO joins two shared Resource
+# nodes, so detaching the owned nodes never reaches it; the flows whose
+# `scope` names an owned node go first (issue #2746).
+CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS = (
+    "WITH owned, [n IN owned | n.qualified_name] AS owners "
+    f"OPTIONAL MATCH (:{NodeLabel.RESOURCE.value})-[rf:{RelationshipType.FLOWS_TO.value}]->"
+    f"(:{NodeLabel.RESOURCE.value}) "
+    "WHERE rf.scope IN owners "
+    "WITH owned, collect(rf) AS flows "
+    "FOREACH (r IN flows | DELETE r) "
+    "FOREACH (n IN owned | DETACH DELETE n)"
+)
 # The ownership relations a Module's subtree hangs off, walked by the
-# re-parse delete and by the lookup of files that attach members to it.
+# re-parse delete, by the inbound-edge capture that mirrors it (so the two
+# cannot disagree on what goes, issue #2918) and by the lookup of files that
+# attach members to it.
 MODULE_SUBTREE_REL_PATTERN = (
     "DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
     "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT"
     "|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY"
 )
-CYPHER_DELETE_MODULE = (
-    # Scoped to the project: two projects in the shared graph can hold the
-    # same relative path, and a path-only match would take the sibling's
-    # module subtree with it. A repository-root __init__.py's module qn IS
-    # the bare project name (no trailing dot), so the prefix test alone
-    # would miss it.
-    # `svc.` also prefixes `svc.v2`'s modules, so a registered project whose
-    # name extends this one is excluded: a module belongs to the LONGEST
-    # registered name it sits under (issue #1985).
-    "MATCH (m:Module {path: $path}) "
+# Which matched Module `m` this project owns. `svc.` also prefixes
+# `svc.v2`'s modules, so a registered project whose name extends this one is
+# excluded: a module belongs to the LONGEST registered name it sits under
+# (issue #1985).
+_CYPHER_OWN_MODULE = (
     "WHERE (m.qualified_name = $project_name "
     "OR m.qualified_name STARTS WITH $project_prefix) "
     "AND NOT any(p IN $nested_projects WHERE m.qualified_name = p "
@@ -1036,6 +1098,18 @@ CYPHER_DELETE_MODULE = (
     "AND (m.qualified_name = nested.name "
     "OR m.qualified_name STARTS WITH (nested.name + '.')) "
     "WITH m, nested WHERE nested IS NULL "
+)
+# This project's Module at `$path` and the subtree its re-parse delete
+# removes, bound to `c`: shared by the delete and by the read of the resource
+# flows it takes, so the two cannot disagree on what goes.
+_CYPHER_MODULE_SUBTREE = (
+    # Scoped to the project: two projects in the shared graph can hold the
+    # same relative path, and a path-only match would take the sibling's
+    # module subtree with it. A repository-root __init__.py's module qn IS
+    # the bare project name (no trailing dot), so the prefix test alone
+    # would miss it.
+    "MATCH (m:Module {path: $path}) "
+    + _CYPHER_OWN_MODULE
     # CONTAINS_SECTION is in the walk because document headings hang off the
     # Module through it, not DEFINES; without it a re-indexed document keeps
     # every Section from its previous parse (issue #1426).
@@ -1050,8 +1124,39 @@ CYPHER_DELETE_MODULE = (
     # re-parse stripped its edge and left the node: an orphan per re-parse
     # after a sync that drops the `findings` capture group, or per finding
     # the edited source no longer matches (issue #2536).
-    f"OPTIONAL MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*0..]->(c) "
-    "DETACH DELETE m, c"
+    + f"OPTIONAL MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*0..]->(c) "
+)
+CYPHER_DELETE_MODULE = (
+    _CYPHER_MODULE_SUBTREE
+    # The walk starts at length 0, so `owned` includes the module itself.
+    + "WITH m, collect(DISTINCT c) AS owned "
+    + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
+)
+# The resource flows CYPHER_DELETE_MODULE is about to take, read first: a
+# flow composed through a callee in a file the run does not re-parse cannot
+# be rebuilt from the caller alone, so the flow walk puts it back while the
+# caller still makes that call (review of PR #2759).
+CYPHER_MODULE_RESOURCE_FLOWS = (
+    _CYPHER_MODULE_SUBTREE
+    + "WITH collect(DISTINCT c.qualified_name) AS owners "
+    + f"MATCH (a:{NodeLabel.RESOURCE.value})-[rf:{RelationshipType.FLOWS_TO.value}]->"
+    + f"(b:{NodeLabel.RESOURCE.value}) "
+    + "WHERE rf.scope IN owners "
+    + "RETURN rf.scope AS scope, a.qualified_name AS src, a.name AS src_name, "
+    + "a.kind AS src_kind, b.qualified_name AS dst, b.name AS dst_name, "
+    + "b.kind AS dst_kind, rf.through AS through"
+)
+# The functions a composed flow came through, a list column of the read.
+PRIOR_FLOW_THROUGH = "through"
+# Its text columns, in PriorResourceFlow's field order.
+PRIOR_FLOW_COLUMNS = (
+    "scope",
+    "src",
+    "src_name",
+    "src_kind",
+    "dst",
+    "dst_name",
+    "dst_kind",
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
 # projects, and a path-only delete would take the sibling's node (issue #897).
@@ -1229,6 +1334,16 @@ CYPHER_PROJECT_CONSTANT_TYPES = (
     "RETURN c.qualified_name AS qualified_name, c.type_name AS type_name, "
     "c.path AS path"
 )
+# The type edges each definition already has, for an incremental run's
+# requeued annotations: a name one of them reaches stays as resolved (#3007).
+# By relationship, so a parameter's target never settles the return type.
+CYPHER_PROJECT_TYPE_EDGE_TARGETS = (
+    "MATCH (f)-[r:RETURNS|ACCEPTS]->(t) WHERE (f:Function OR f:Method) "
+    "AND f.qualified_name STARTS WITH $project_prefix "
+    "RETURN f.qualified_name AS qualified_name, type(r) AS rel_type, "
+    "t.qualified_name AS target_qn"
+)
+
 CYPHER_ALL_DEFINITION_QNS = (
     "MATCH (n) WHERE (n:Function OR n:Method OR n:Class OR n:Interface "
     "OR n:Enum OR n:Type OR n:Union) "
@@ -1237,19 +1352,24 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.name AS name, "
     "n.is_property AS is_property, n.is_macro AS is_macro, "
     "n.is_body_scoped_name AS is_body_scoped_name, n.path AS path, "
-    "n.start_line AS start_line, n.end_line AS end_line, "
+    "n.start_line AS start_line, n.start_col AS start_col, "
+    "n.end_line AS end_line, "
     "n.member_aliases AS member_aliases, "
     "n.non_method_members AS non_method_members, "
+    "n.callable_fields AS callable_fields, "
     "n.modifiers AS modifiers, n.decorators AS decorators, "
     "n.return_type AS return_type, n.param_types AS param_types, "
+    "n.first_return_type AS first_return_type, "
+    "n.chain_return_type AS chain_return_type, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "
     "n.signature AS signature, n.declared_in_class AS declared_in_class, "
     "n.generic_arity AS generic_arity, "
-    "n.is_exported AS is_exported, "
+    "n.is_exported AS is_exported, n.rust_visibility AS rust_visibility, "
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
     "n.extension_receiver_arity AS extension_receiver_arity, "
-    "n.embeds AS embeds"
+    "n.embeds AS embeds, "
+    "n.field_types AS field_types"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
@@ -1259,7 +1379,7 @@ CYPHER_ALL_MODULE_QNS = (
     "MATCH (n) WHERE (n:Module OR n:ModuleInterface) "
     "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
-    "n.php_namespace AS php_namespace"
+    "n.go_package AS go_package, n.php_namespace AS php_namespace"
 )
 
 # Inbound reference edges (from unchanged files) into symbols defined in one
@@ -1302,12 +1422,25 @@ CYPHER_INBOUND_EDGES = (
     # leaving the note orphaned for the next sweep to delete.
     # LINKS_TO joins it too (issue #2458): a document re-parsed only because
     # it links into an edited one recreates its own Sections, and the links
-    # other documents hold into those Sections come back from here. A
-    # captured link into a File is skipped on restore: the File outlives the
-    # re-parse, and so does the edge.
+    # other documents hold into those Sections come back from here.
+    # The targets are what CYPHER_DELETE_MODULE is about to delete: this
+    # project's modules at those paths, found through the Module(path)
+    # index, and the same subtree walk. Matching `target.path IN $paths`
+    # over every edge scanned the whole shared database, once per sync, and
+    # returned other projects' edges into their own same-path files (issue
+    # #2918). A target outside the subtree is not deleted, so its edges
+    # never needed restoring (a link into a File among them: the File
+    # outlives the re-parse, and so does the edge), and a nested project's
+    # module is not deleted either, so the capture applies the delete's
+    # ownership filter too.
+    "UNWIND $paths AS path "
+    "MATCH (m:Module {path: path}) "
+    + _CYPHER_OWN_MODULE
+    + f"MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*0..]->(target) "
+    "WITH DISTINCT target "
     "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES"
     "|RETURNS|ACCEPTS|ANNOTATES|MENTIONS|LINKS_TO]->(target) "
-    "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
+    "WHERE caller.qualified_name IS NOT NULL "
     "AND (caller.path IS NULL OR NOT caller.path IN $paths) "
     "RETURN head(labels(caller)) AS caller_label, "
     "caller.qualified_name AS caller_qn, type(r) AS rel, "
@@ -1506,6 +1639,84 @@ CYPHER_ALL_INHERITS = (
     "r.base_index AS base_index "
     "ORDER BY child_qn, base_index"
 )
+# Dispatch dependents for an incremental sync (issue #3338): a new subclass
+# override or Protocol conformer changes which CALLS edges unchanged callers
+# must hold, without any edge pointing at the new file and without leaving
+# an unresolved reference, so the affected-caller lookup never finds those
+# callers. These queries read the OLD graph, before the changed files'
+# subtrees are deleted: the hierarchy and method sets the new source is
+# judged against, and the CALLS edges whose targets the dispatch set
+# gained or lost. All six are emulated in evals/cgr_graph.py; a structural
+# edit here without a matching case there fails closed in the unit suite.
+# Every class and interface node the project owns. Base resolution
+# trusts only a project-prefixed base guess that names a class here or
+# in this run's scan: an import-resolved guess for an external base has
+# no node, and comparing it with the persisted bases invents a change
+# for a comment-only edit (issue #3338).
+CYPHER_DISPATCH_CLASS_QNS = (
+    "MATCH (n) "
+    "WHERE n.qualified_name STARTS WITH $project_prefix "
+    "AND ANY(label IN labels(n) WHERE label IN ['Class', 'Interface']) "
+    "RETURN n.qualified_name AS qualified_name"
+)
+# The classes a Protocol declares, with the methods each declares: a
+# Protocol is a class whose direct base is named Protocol, the same test
+# CallResolver._protocol_classes applies to the rehydrated hierarchy.
+CYPHER_DISPATCH_PROTOCOL_METHODS = (
+    "MATCH (p:Class)-[:INHERITS]->(proto) "
+    "WHERE proto.qualified_name IS NOT NULL "
+    "AND (proto.qualified_name ENDS WITH '.Protocol' "
+    "OR proto.qualified_name = 'Protocol') "
+    "AND p.qualified_name STARTS WITH $project_prefix "
+    "MATCH (p)-[:DEFINES_METHOD]->(m:Method) "
+    "RETURN p.qualified_name AS class_qn, m.qualified_name AS method_qn"
+)
+# Every method of the given names a project class defines. The caller
+# filters by leaf name in Python; the query keeps only the rows whose
+# qualified name ends at that leaf, plus the `@line` duplicate variants,
+# which a CALLS edge can also target.
+CYPHER_DISPATCH_CLASS_METHODS = (
+    "MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method) "
+    "WHERE c.qualified_name STARTS WITH $project_prefix "
+    "AND ANY(name IN $names WHERE m.qualified_name ENDS WITH ('.' + name) "
+    "OR m.qualified_name CONTAINS ('.' + name + '@')) "
+    "RETURN c.qualified_name AS class_qn, m.qualified_name AS method_qn"
+)
+# Every method the named classes define, plus the `@line` duplicate
+# variants, which a CALLS edge can also target. Read only for the
+# hierarchy components of classes that changed bases: a descendant
+# override's name is not among the changed or Protocol method names
+# the filtered query above can ask for, and without it the detached
+# override's callers are never queued (issue #3338).
+CYPHER_DISPATCH_METHODS_FOR_CLASSES = (
+    "MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method) "
+    "WHERE c.qualified_name IN $qns "
+    "RETURN c.qualified_name AS class_qn, m.qualified_name AS method_qn"
+)
+# Files holding a CALLS edge into one of the dispatch targets, plus the
+# `@line` variants of those targets. Files already in the re-parse set
+# ($paths) are excluded: they re-parse anyway. The target prefixes are
+# `ClassQn.method` strings; a target whose qualified name merely shares a
+# prefix (`Foo.getaway` for prefix `Foo.get`) never matches, because the
+# remainder after the prefix must be empty or a duplicate marker.
+CYPHER_DISPATCH_CALLER_PATHS = (
+    "MATCH (caller)-[:CALLS]->(target) "
+    "WHERE caller.path IS NOT NULL AND NOT caller.path IN $paths "
+    "AND caller.qualified_name STARTS WITH $project_prefix "
+    "AND target.qualified_name STARTS WITH $project_prefix "
+    "AND ANY(prefix IN $target_prefixes WHERE target.qualified_name = prefix "
+    "OR target.qualified_name STARTS WITH (prefix + '@')) "
+    "RETURN DISTINCT caller.path AS caller_path"
+)
+# The files defining the base classes a new subclass extends: the
+# base-defining file re-parses with the subclass, so a self-dispatch call
+# it holds is re-derived against the new hierarchy even when no CALLS edge
+# of its own names a dispatch target (issue #3338).
+CYPHER_DISPATCH_BASE_PATHS = (
+    "MATCH (base:Class) "
+    "WHERE base.qualified_name IN $qns AND base.path IS NOT NULL "
+    "RETURN DISTINCT base.path AS caller_path"
+)
 # Implementer -> interface/trait pairs for incremental runs (issue #2403):
 # parsing records them only for the files it reads, and the sole-implementer
 # dispatch and the override walk need every implementer.
@@ -1603,6 +1814,8 @@ CYPHER_ALL_METHOD_LOCATIONS = (
 KEY_CHILD_QN = "child_qn"
 KEY_BASE_QN = "base_qn"
 KEY_BASE_INDEX = "base_index"
+KEY_CLASS_QN = "class_qn"
+KEY_METHOD_QN = "method_qn"
 # Result columns of the location-rehydration and module-count queries. Named
 # so the readers and the eval double cannot drift apart on the spelling, which
 # is the failure these queries were already prone to (issue #1716).
@@ -1612,6 +1825,7 @@ KEY_COUNT = "count"
 
 CYPHER_PARAM_PATHS = "paths"
 CYPHER_PARAM_MODULE_NAMES = "module_names"
+CYPHER_PARAM_TARGET_PREFIXES = "target_prefixes"
 KEY_CALLER_PATH = "caller_path"
 KEY_CALLER_LABEL = "caller_label"
 KEY_CALLER_QN = "caller_qn"
@@ -1654,6 +1868,25 @@ KEY_TARGET_HASH = "target_hash"
 KEY_ANCHOR_STATE = "anchor_state"
 KEY_MENTIONS = "mentions"
 KEY_MENTION_QNS = "mention_qns"
+# Each mention's anchors, recorded at write time beside `mention_qns` and in
+# its order, so a renamed or moved mention is followed the way the subject is
+# (issue #3230). An empty string stands for "none": the wire carries string
+# lists, not lists with nulls. `mentions_lost` names the mentions the repair
+# could not place; they stay in `mention_qns` with no edge. One name can hold a
+# live entry and lost ones (`a` deleted, then `b` renamed to `a`): each keeps
+# its own slot and anchors, the live one first, and `mentions_lost` repeats
+# the name once per lost entry. Before that, names were unique and read the
+# same way.
+KEY_MENTION_HASHES = "mention_hashes"
+KEY_MENTION_QUOTES = "mention_quotes"
+KEY_MENTIONS_LOST = "mentions_lost"
+KEY_ATTACHED = "attached"
+KEY_ATTACH_QNS = "attach_qns"
+KEY_ATTACH_KEYS = "attach_keys"
+KEY_KEY_SEPARATOR = "key_separator"
+# Joins a followed mention's new name to the hash it was followed by, in one
+# string the write compares as a whole; a qualified name never holds it.
+GLOSS_MENTION_KEY_SEPARATOR = "\x1f"
 KEY_ANCHOR_HASH = "anchor_hash"
 # Written by the repair tiers (issue #1808, stage four). `moved_from` is the
 # name a MOVED gloss was written against, kept so the move stays visible;
@@ -1721,6 +1954,14 @@ class GlossAnchorState(StrEnum):
     LOST = "LOST"
 
 
+# Anchor states in which a gloss is attached to no definition on purpose: its
+# name is gone and nothing, or more than one thing, carries its hash. Such a
+# note is retained with no ANNOTATES edge, so the structural audit must not
+# read it as an orphan (issue #2652).
+GLOSS_UNATTACHED_STATES = frozenset(
+    {GlossAnchorState.AMBIGUOUS.value, GlossAnchorState.LOST.value}
+)
+
 REL_TYPE_CALLS = "CALLS"
 # How many lost rows of one flushed relationship batch the warning names, and
 # the words it names their missing endpoints with (issue #2438).
@@ -1733,9 +1974,10 @@ REL_ENDPOINT_JOINER = " and "
 # same node pair; these props join the MERGE key so parallel edges are not
 # collapsed at write time (issue #722). Props absent from a batch's rows are
 # dropped from the key at flush time, so resource-level FLOWS_TO (no `via`)
-# still dedups on endpoints.
+# dedups on its endpoints and its `scope`: one edge per function that
+# produced the flow, so each goes away with its own owner (issue #2746).
 MERGE_KEY_PROPS_BY_REL: dict[str, tuple[str, ...]] = {
-    RelationshipType.FLOWS_TO.value: ("via", "kind"),
+    RelationshipType.FLOWS_TO.value: ("via", "kind", "scope"),
     # One edge per call/reference/instantiation site (issue #1522); a row
     # without a site lands on the pair's site-less edge (issue #2879).
     RelationshipType.CALLS.value: (KEY_LINE, KEY_COL),
@@ -1762,6 +2004,10 @@ NODE_NAME_INDEXES: tuple[str, ...] = tuple(
     for label, key in _NODE_LABEL_UNIQUE_KEYS.items()
     if key is not UniqueKeyType.NAME
 )
+# Module(path) serves the per-file module delete and the inbound-edge
+# capture, which find a re-parsed file's Module by its relative path; without
+# it each lookup scans every node of the shared database (issue #2918).
+NODE_PATH_INDEXES: tuple[str, ...] = (NodeLabel.MODULE.value,)
 
 # Superseded unique constraints that must be dropped from existing shared
 # databases; a leftover Folder/File path constraint would keep rejecting the

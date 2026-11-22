@@ -24,6 +24,7 @@ pub mod cypher;
 pub mod deadline;
 #[cfg(feature = "python")]
 mod decode;
+pub mod formats;
 pub mod ingest;
 pub mod json_text;
 #[cfg(feature = "python")]
@@ -550,6 +551,7 @@ pub(crate) mod python {
         crate::ingest::python::register(m)?;
         crate::decode::register(m)?;
         crate::trees::python::register(m)?;
+        crate::formats::python::register(m)?;
         Ok(())
     }
 }

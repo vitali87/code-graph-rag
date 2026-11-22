@@ -171,6 +171,7 @@ def test_empty_container_declarations_must_be_unique_and_match_metadata(
         sites=(),
         imports={},
         module_paths={},
+        eager_imports={},
     )
     after = before._replace(
         definitions={
