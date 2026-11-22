@@ -130,11 +130,6 @@ def _enclosing_function(
     while current is not None:
         if current.type in function_types:
             return current
-        # A JS class's `static { ... }` block runs its own statements, whose
-        # `var`s no function's map holds: a callback in it may read those, so
-        # nothing around the block is taken as captured (Greptile on #3331).
-        if current.type == cs.TS_CLASS_STATIC_BLOCK:
-            return None
         current = current.parent
     return None
 
@@ -146,14 +141,18 @@ _JS_TS_NAMED_CLASS_TYPES = frozenset(
 
 
 def _js_ts_class_names_between(node: ASTNode, stop: ASTNode | None) -> set[str]:
-    # The names of the classes around `node` below `stop`: inside
+    # The names the classes around `node` below `stop` bind there: inside
     # `return class r { static cb() { return r.reset(); } }` the `r` is the
-    # class, not a captured `r` of the function around it (Greptile on
-    # #3331).
+    # class, not a captured `r` of the function around it, and a class's
+    # `static { var r; ... }` block is a scope of its own whose `r` is not
+    # the function's (Greptile on #3331). Every other name a static block
+    # reads is still the function's around it.
     names: set[str] = set()
     current = node.parent
     while current is not None and (stop is None or current.id != stop.id):
-        if current.type in _JS_TS_NAMED_CLASS_TYPES and (
+        if current.type == cs.TS_CLASS_STATIC_BLOCK:
+            names |= js_ts_utils.js_ts_own_scope_names(current)
+        elif current.type in _JS_TS_NAMED_CLASS_TYPES and (
             name := safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
         ):
             names.add(name)
@@ -190,6 +189,34 @@ def _python_class_context(
             qn = head
         node = node.parent
     return None
+
+
+def _spans_around(bindings: _ScopeBindings, pos: int) -> list[tuple[int, int]]:
+    # Only the spans around the caller, innermost first: a block's `let r`
+    # hides the `r` of the block around it, and one in a sibling block is
+    # another variable the caller never reads.
+    return sorted(
+        (span for span in bindings if span[0] <= pos < span[1]),
+        key=lambda span: (-span[0], span[1]),
+    )
+
+
+def _take_captured(
+    bindings: _ScopeBindings,
+    around: list[tuple[int, int]],
+    hidden: set[str],
+    captured: dict[str, str],
+) -> None:
+    # Types each name the spans around the caller hold, unless a nearer
+    # scope already bound it; each span then hides its names further out.
+    for span in around:
+        for name, type_name in bindings[span].items():
+            if (
+                type_name is not None
+                and name.split(cs.SEPARATOR_DOT, 1)[0] not in hidden
+            ):
+                captured.setdefault(name, type_name)
+        hidden.update(bindings[span])
 
 
 def _shared[T](value: T | None, empty: Callable[[], T]) -> T:
@@ -675,35 +702,9 @@ class TypeInferenceEngine:
                 if python
                 else None,
             )
-            # Only the spans around the caller, innermost first: a block's
-            # `let r` hides the `r` of the block around it, and one in a
-            # sibling block is another variable the caller never reads.
-            around = sorted(
-                (span for span in bindings if span[0] <= pos < span[1]),
-                key=lambda span: (-span[0], span[1]),
-            )
-            for span in around:
-                for name, type_name in bindings[span].items():
-                    if (
-                        type_name is not None
-                        and name.split(cs.SEPARATOR_DOT, 1)[0] not in hidden
-                    ):
-                        captured.setdefault(name, type_name)
-                hidden.update(bindings[span])
-            own = self._own_scope_names(scope, language)
-            if not python:
-                # A `let r` in a block of `scope` the caller is not in is
-                # another variable: it hides nothing from the caller, unless
-                # `scope` also assigns `r` (Greptile on #3331).
-                held = {name for span in around for name in bindings[span]}
-                elsewhere = {
-                    name
-                    for span, names in bindings.items()
-                    if not span[0] <= pos < span[1]
-                    for name in names
-                }
-                own -= (elsewhere - held) - js_ts_utils.js_ts_assigned_names(scope)
-            hidden |= own
+            around = _spans_around(bindings, pos)
+            _take_captured(bindings, around, hidden, captured)
+            hidden |= self._names_scope_hides(scope, bindings, around, pos, language)
             outer = _enclosing_function(scope, language)
             if not python:
                 hidden |= _js_ts_class_names_between(scope, outer)
@@ -717,6 +718,32 @@ class TypeInferenceEngine:
         if language == cs.SupportedLanguage.PYTHON:
             return own_scope_names(func_node)
         return js_ts_utils.js_ts_own_scope_names(func_node)
+
+    @classmethod
+    def _names_scope_hides(
+        cls,
+        scope: ASTNode,
+        bindings: _ScopeBindings,
+        around: list[tuple[int, int]],
+        pos: int,
+        language: cs.SupportedLanguage,
+    ) -> frozenset[str]:
+        # The names `scope` binds itself, which no function further out may
+        # type for the caller.
+        own = cls._own_scope_names(scope, language)
+        if language == cs.SupportedLanguage.PYTHON:
+            return own
+        # A `let r` in a block of `scope` the caller is not in is another
+        # variable: it hides nothing from the caller, unless `scope` also
+        # assigns `r` (Greptile on #3331).
+        held = {name for span in around for name in bindings[span]}
+        elsewhere = {
+            name
+            for span, names in bindings.items()
+            if not span[0] <= pos < span[1]
+            for name in names
+        }
+        return own - ((elsewhere - held) - js_ts_utils.js_ts_assigned_names(scope))
 
     def _scope_variable_types(
         self,

@@ -204,6 +204,17 @@ _CAPTURED = {
         "c.outer.inner",
         "c.Range.reset",
     ),
+    "js-class-static-block-reads-the-outer-variable": (
+        # A static block hides only what it declares itself: its callback
+        # still reads `outer`'s `r` (Greptile on #3331).
+        "a.js",
+        _JS_CLASSES
+        + "function outer() {\n  const r = new Range();\n  class C {\n    static {\n"
+        "      const cb = () => r.reset();\n      this.cb = cb;\n    }\n  }\n"
+        "  return C;\n}\n",
+        "a.outer.C.cb",
+        "a.Range.reset",
+    ),
     "js-let-in-a-sibling-block-of-the-middle-function": (
         # `mid`'s block `r` is another variable, which `inner` never reads
         # (Greptile on #3331).
