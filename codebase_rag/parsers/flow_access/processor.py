@@ -357,6 +357,15 @@ def _py_handle_key(name: str) -> str:
     return f"{_PY_HANDLE_KEY}{name}"
 
 
+def _py_hide_handles(clause: Node, state: _TaintMap, hidden: _TaintMap) -> None:
+    # Move the handle each loop variable of a comprehension's `for` clause
+    # would read from an outer name out of `state`, into `hidden`.
+    for name in _py_target_names(clause.child_by_field_name(cs.TS_FIELD_LEFT)):
+        key = _py_handle_key(name)
+        if (held := state.pop(key, None)) is not None:
+            hidden.setdefault(key, held)
+
+
 def _py_pattern_names(target: Node) -> list[str]:
     # The names and `self.<attr>` targets an unpacking target binds
     # (`f, (g, *rest) = ...`); a subscript target binds no name.
@@ -1302,6 +1311,10 @@ class FlowProcessor:
         # The comprehension loop variables in scope where a value is read,
         # whose reads come from the comprehension's scope, not that record.
         self._py_shadowed: frozenset[str] = frozenset()
+        # The handles each comprehension being walked hides from its clauses
+        # and body behind its loop variables, outermost first: its first
+        # iterable, which a walrus inside re-reads, still sees them.
+        self._py_hidden_handles: list[_TaintMap] = []
 
     def process_flow_for_caller(
         self,
@@ -1375,16 +1388,7 @@ class FlowProcessor:
         # Seed from the caller's own scope; on a nested def descend into its
         # header only (default args/decorators/bases run in THIS scope, its
         # body is a separate caller). Same scoping as io_access.
-        tainted: _TaintMap = {}
-        # Handles bound in enclosing scopes (`self.conn` set in __init__, a
-        # module-level `f`) are visible here unless this body rebinds the
-        # plain name, which makes it local for the whole body (as io_access).
-        local_names = python_locally_assigned_names(caller_node)
-        for name, binding in inherited_python_handles(
-            caller_node, ctx.import_map, self._py_handle_ctors
-        ).items():
-            if name not in local_names:
-                tainted[_py_handle_key(name)] = Taint(frozenset({binding}), frozenset())
+        tainted: _TaintMap = self._py_inherited_handles(caller_node, ctx)
         # Seed each parameter as a pseudo-origin so a sink or callee hand-off it
         # reaches becomes a parameter-taint summary composed at finalize (#1142).
         # Every parameter (including keyword-only) is seeded so it can be matched
@@ -4110,18 +4114,17 @@ class FlowProcessor:
         # Its `for f in buffers` hides the handle an outer `f` holds from
         # what runs after that clause (Greptile, PR #2770).
         hidden: _TaintMap = {}
-        for child in node.children:
-            if body is None or child.id != body.id:
-                state = self._walk_stmt(child, state, ctx)
-            if child.type == cs.TS_PY_FOR_IN_CLAUSE:
-                for name in _py_target_names(
-                    child.child_by_field_name(cs.TS_FIELD_LEFT)
-                ):
-                    key = _py_handle_key(name)
-                    if (held := state.pop(key, None)) is not None:
-                        hidden.setdefault(key, held)
-        if body is not None:
-            state = self._walk_stmt(body, state, ctx)
+        self._py_hidden_handles.append(hidden)
+        try:
+            for child in node.children:
+                if body is None or child.id != body.id:
+                    state = self._walk_stmt(child, state, ctx)
+                if child.type == cs.TS_PY_FOR_IN_CLAUSE:
+                    _py_hide_handles(child, state, hidden)
+            if body is not None:
+                state = self._walk_stmt(body, state, ctx)
+        finally:
+            self._py_hidden_handles.pop()
         state.update(hidden)
         return state
 
@@ -4558,7 +4561,13 @@ class FlowProcessor:
             parent = parent.parent
         if not comprehensions:
             return None
+        # The first iterable runs where the outermost comprehension stands,
+        # so it reads the handles its loop variables hide (Greptile, PR
+        # #2770): `[(last := cur) for cur in cur.fetchall()]`.
         scope = dict(state)
+        for hidden in self._py_hidden_handles:
+            for key, held in hidden.items():
+                scope.setdefault(key, held)
         local: frozenset[str] = frozenset()
         for comprehension in reversed(comprehensions):
             # The body runs after every clause, but a filter or a later
@@ -4860,18 +4869,7 @@ class FlowProcessor:
                 if via != stream_via:
                     self._flow_taint_into_sink(taint, kind, dst_identity, ctx)
             return
-        if writes := [
-            binding
-            for binding, direction in self._py_handle_accesses(node, tainted, ctx)
-            if direction in (IODirection.WRITE, IODirection.READ_WRITE)
-        ]:
-            # `f.write(token)`, `sock.send(data)`: what the handle method is
-            # given is written to each resource the handle may be (#2751).
-            for binding in writes:
-                for taint, _via in arg_taints:
-                    self._flow_taint_into_sink(
-                        taint, binding.kind, binding.identity, ctx
-                    )
+        if self._flow_into_py_handles(node, tainted, arg_taints, ctx):
             return
         callee = self._resolve(
             raw,
@@ -4885,6 +4883,39 @@ class FlowProcessor:
             return
         for taint, via in arg_taints:
             self._flow_arg_into_callee(taint, via, callee, node, ctx)
+
+    def _flow_into_py_handles(
+        self,
+        node: Node,
+        tainted: _TaintMap,
+        arg_taints: list[tuple[Taint, str]],
+        ctx: _FlowCtx,
+    ) -> bool:
+        # `f.write(token)`, `sock.send(data)`: what the handle method is given
+        # is written to each resource the handle may be (#2751). Whether the
+        # call writes through a handle at all.
+        writes = [
+            binding
+            for binding, direction in self._py_handle_accesses(node, tainted, ctx)
+            if direction in (IODirection.WRITE, IODirection.READ_WRITE)
+        ]
+        for binding in writes:
+            for taint, _via in arg_taints:
+                self._flow_taint_into_sink(taint, binding.kind, binding.identity, ctx)
+        return bool(writes)
+
+    def _py_inherited_handles(self, caller_node: Node, ctx: _FlowCtx) -> _TaintMap:
+        # Handles bound in enclosing scopes (`self.conn` set in __init__, a
+        # module-level `f`) are visible here unless this body rebinds the
+        # plain name, which makes it local for the whole body (as io_access).
+        local_names = python_locally_assigned_names(caller_node)
+        return {
+            _py_handle_key(name): Taint(frozenset({binding}), frozenset())
+            for name, binding in inherited_python_handles(
+                caller_node, ctx.import_map, self._py_handle_ctors
+            ).items()
+            if name not in local_names
+        }
 
     def _bind_py_handle(
         self,

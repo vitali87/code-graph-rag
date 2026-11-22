@@ -223,6 +223,20 @@ def comprehension_write(buffers):
 def comprehension_read(files):
     f = open("/etc/compread.txt")
     print([f.read() for f in files])
+
+
+def comprehension_walrus():
+    conn = sqlite3.connect("/var/walrus.db")
+    cur = conn.cursor()
+    [(last := cur) for cur in cur.fetchall()]
+    print(last)
+
+
+def comprehension_walrus_filter():
+    conn = sqlite3.connect("/var/walrus_filter.db")
+    cur = conn.cursor()
+    [0 for cur in cur.fetchall() if (kept := cur)]
+    print(kept)
 """
 
 
@@ -286,12 +300,18 @@ def test_a_handle_read_or_write_is_a_flow_end(
         ("resource::ENV::EITHER_TOKEN", "resource::FILE::/tmp/a.txt"),
         ("resource::ENV::EITHER_TOKEN", "resource::FILE::/tmp/b.txt"),
         ("resource::DATABASE::/var/returned.db", STDOUT),
+        ("resource::DATABASE::/var/walrus.db", STDOUT),
+        ("resource::DATABASE::/var/walrus_filter.db", STDOUT),
     ],
     ids=[
         "read-on-the-right-of-its-rebinding",
         "if-branch",
         "else-branch",
         "returned-read",
+        # Greptile, PR #2770: the first iterable a walrus re-reads still
+        # sees the handle its loop variable hides.
+        "comprehension-walrus",
+        "comprehension-walrus-filter",
     ],
 )
 def test_a_handle_the_path_may_hold_is_a_flow_end(
