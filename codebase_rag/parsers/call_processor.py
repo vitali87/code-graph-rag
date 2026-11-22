@@ -579,7 +579,7 @@ def _calls_own_member(language: cs.SupportedLanguage | None, call_node: Node) ->
         case cs.SupportedLanguage.CPP:
             callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
             return callee is not None and (
-                callee.type == cs.TS_IDENTIFIER
+                _cpp_bare_callee(callee) is not None
                 or (
                     callee.type == cs.TS_CPP_FIELD_EXPRESSION
                     and _is_this_receiver(callee)
@@ -628,7 +628,17 @@ def _chain_root_call(
             root = node
     if root is None:
         return None
-    return root, safe_decode_text(root.child_by_field_name(cs.TS_FIELD_FUNCTION)) or ""
+    callee = root.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    return root, safe_decode_text(_cpp_bare_callee(callee) or callee) or ""
+
+
+def _cpp_bare_callee(callee: Node | None) -> Node | None:
+    # The name a bare C++ call names: `make` in `make()` and in `make<int>()`,
+    # whose template arguments do not change which `make` is found (Greptile
+    # on PR #3240).
+    if callee is not None and callee.type == cs.TS_CPP_TEMPLATE_FUNCTION:
+        callee = callee.child_by_field_name(cs.FIELD_NAME)
+    return callee if callee is not None and callee.type == cs.TS_IDENTIFIER else None
 
 
 def _is_this_receiver(member: Node) -> bool:
@@ -7525,8 +7535,10 @@ class CallProcessor:
             return True
         point = call_node.start_byte
         if ctx.language == cs.SupportedLanguage.CPP:
-            callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-            if callee is None or callee.type != cs.TS_IDENTIFIER:
+            if (
+                _cpp_bare_callee(call_node.child_by_field_name(cs.TS_FIELD_FUNCTION))
+                is None
+            ):
                 return True
             return not any(
                 name == call_name and start <= point < end

@@ -677,6 +677,18 @@ class Visibility extends Base {
 """,
     },
     "cpp": {
+        # `make<int>()` names the inherited template method, not the free
+        # template beside it (Greptile on PR #3240).
+        "template.cpp": """\
+class A { public: int label() { return 1; } };
+class B { public: int label() { return 2; } };
+template <typename T> B* make() { return nullptr; }
+class Base { public: template <typename T> A* make() { return nullptr; } };
+class Kid : public Base {
+ public:
+  int chain() { return make<int>()->label(); }
+};
+""",
         "chain.cpp": """\
 class A { public: int label() { return 1; } };
 class Z { public: int label() { return 2; } };
@@ -763,8 +775,14 @@ def test_a_parameter_or_local_hides_an_inherited_chain_root(
         ("cpp", "chain.Kid.plain", "chain.A.label"),
         ("dart", "lib.chain.Kid.plain", "lib.chain.A.label"),
         ("dart", "lib.chain.Kid.explicit", "lib.chain.A.label"),
+        ("cpp", "template.Kid.chain", "template.A.label"),
     ],
-    ids=["cpp-unhidden-chain", "dart-unhidden-chain", "dart-this-chain"],
+    ids=[
+        "cpp-unhidden-chain",
+        "dart-unhidden-chain",
+        "dart-this-chain",
+        "cpp-template-chain",
+    ],
 )
 def test_an_unhidden_inherited_chain_root_still_types_the_chain(
     round3: dict[str, _Calls], grammar: str, caller: str, callee: str
