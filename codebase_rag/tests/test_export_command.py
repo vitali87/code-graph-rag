@@ -8,8 +8,10 @@ graph had been read, as several screens of traceback with local variables.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
+import sys
 from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -23,11 +25,13 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 from codebase_rag import cli
+from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
 from codebase_rag.config import settings
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.types_defs import GraphData, GraphMetadata, ResultRow
+from codebase_rag.utils.path_utils import unwritable_output_reason
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo, save_workspace
 
 GRAPH = GraphData(
@@ -289,6 +293,70 @@ def test_a_directory_without_write_access_fails_before_the_graph_is_read(
     assert str(locked) in result.output
 
 
+# A component over the file name limit. Windows reports such a name as
+# missing, so only POSIX reaches the probe that raised (issue #3688).
+_TOO_LONG = "A" * 300
+
+
+@pytest.mark.skipif(
+    sys.platform == cs.PLATFORM_WINDOWS, reason="Windows reports the name as missing"
+)
+@pytest.mark.parametrize(
+    "output",
+    [f"{_TOO_LONG}.json", f"{_TOO_LONG}/graph.json"],
+    ids=["file", "directory"],
+)
+def test_a_name_over_the_file_name_limit_fails_before_the_graph_is_read(
+    connect: MagicMock, tmp_path: Path, output: str
+) -> None:
+    result = _run(["-q", "export", "-o", str(tmp_path / output)])
+
+    assert result.exit_code == 1
+    connect.assert_not_called()
+    assert len(_lines(result)) == 1, result.output
+    assert "Traceback" not in result.output
+    assert str(tmp_path / output) in result.output
+    assert os.strerror(errno.ENAMETOOLONG) in result.output
+
+
+@pytest.mark.skipif(
+    sys.platform == cs.PLATFORM_WINDOWS or os.geteuid() == 0,
+    reason="POSIX file modes, which root ignores",
+)
+def test_an_output_under_an_unsearchable_directory_fails_before_the_graph_is_read(
+    connect: MagicMock, tmp_path: Path
+) -> None:
+    # Probing `sealed/reports` needs search permission on `sealed`, which is
+    # another stat failure that is not "missing".
+    sealed = tmp_path / "sealed"
+    (sealed / "reports").mkdir(parents=True)
+    sealed.chmod(0)
+    try:
+        result = _run(["-q", "export", "-o", str(sealed / "reports" / "graph.json")])
+    finally:
+        sealed.chmod(0o700)
+
+    assert result.exit_code == 1
+    connect.assert_not_called()
+    assert len(_lines(result)) == 1, result.output
+    assert "Traceback" not in result.output
+    assert os.strerror(errno.EACCES) in result.output
+
+
+def test_a_failing_probe_is_the_reason_whatever_the_os_says(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def is_dir(self: Path, *args: object, **kwargs: object) -> bool:
+        raise OSError(errno.EIO, os.strerror(errno.EIO), str(self))
+
+    monkeypatch.setattr(Path, "is_dir", is_dir)
+    output = tmp_path / "graph.json"
+
+    assert unwritable_output_reason(output) == cs.CLI_ERR_OUTPUT_UNUSABLE.format(
+        reason=os.strerror(errno.EIO), path=output
+    )
+
+
 def test_a_failed_export_is_one_line_without_a_traceback(
     connect: MagicMock, tmp_path: Path
 ) -> None:
@@ -336,6 +404,31 @@ def test_start_checks_its_output_before_indexing(tmp_path: Path) -> None:
     assert result.exit_code == 1
     update.assert_not_called()
     assert str(tmp_path) in result.output
+
+
+@pytest.mark.skipif(
+    sys.platform == cs.PLATFORM_WINDOWS, reason="Windows reports the name as missing"
+)
+def test_start_checks_a_name_over_the_file_name_limit_before_indexing(
+    tmp_path: Path,
+) -> None:
+    with patch("codebase_rag.cli._start_update_graph") as update:
+        result = _run(
+            [
+                "start",
+                "--repo-path",
+                str(tmp_path),
+                "--update-graph",
+                "--no-start-stack",
+                "-o",
+                str(tmp_path / f"{_TOO_LONG}.json"),
+            ]
+        )
+
+    assert result.exit_code == 1
+    update.assert_not_called()
+    assert "Traceback" not in result.output
+    assert os.strerror(errno.ENAMETOOLONG) in result.output
 
 
 def test_a_failed_export_after_a_sync_exits_outside_the_connection(
