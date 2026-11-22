@@ -22,7 +22,12 @@ from .. import native_trees
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import get_cached_query, safe_decode_text, sorted_captures
 from .definition_index import PythonDefinitionIndexes
-from .utils import call_head, python_literal_type, unshadowed_literal_type
+from .utils import (
+    annotation_text,
+    call_head,
+    python_literal_type,
+    unshadowed_literal_type,
+)
 from .utils import split_top_level as _split_top_level
 from .with_analyzer import WithTarget
 
@@ -2304,7 +2309,7 @@ class PythonAstAnalyzerMixin(_AstBase):
                 continue
             if var_name in local_var_types and var_name not in written:
                 continue
-            annotation = safe_decode_text(type_node) or ""
+            annotation = annotation_text(type_node) or ""
             if annotated := self._type_of_annotated_name(annotation, module_qn):
                 local_var_types[var_name] = annotated
                 written.add(var_name)
@@ -2474,7 +2479,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         if type_node is None:
             return []
         return self._tuple_elements_from_text(
-            safe_decode_text(type_node) or "", callee_qn, module_qn
+            annotation_text(type_node) or "", callee_qn, module_qn
         )
 
     def _tuple_elements_from_text(
@@ -2721,7 +2726,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         if type_node is None or type_node.text is None:
             return None
         return self._annotation_type_from_text(
-            safe_decode_text(type_node) or "", method_qn, module_qn
+            annotation_text(type_node) or "", method_qn, module_qn
         )
 
     def _annotation_type_from_text(

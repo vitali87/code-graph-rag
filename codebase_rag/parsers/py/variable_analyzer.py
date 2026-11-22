@@ -24,6 +24,7 @@ from ..utils import get_cached_query, safe_decode_text, sorted_captures
 from .ast_analyzer import _homogeneous_element
 from .forward_refs import unquote_forward_refs
 from .utils import (
+    annotation_text,
     python_literal_type,
     reduce_optional_annotation,
     resolve_class_name,
@@ -439,7 +440,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             and param_name_node.text
             and param_type_node.text
             and (param_name := safe_decode_text(param_name_node))
-            and (param_type := safe_decode_text(param_type_node))
+            and (param_type := annotation_text(param_type_node))
         ):
             return
         # `Optional[Repo]` and `"Repo"` type the parameter as `Repo`, as the
@@ -461,7 +462,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             and param_name_node.text
             and param_type_node.text
             and (param_name := safe_decode_text(param_name_node))
-            and (param_type := safe_decode_text(param_type_node))
+            and (param_type := annotation_text(param_type_node))
         ):
             return
         # `Optional[Repo]` and `"Repo"` type the parameter as `Repo`, as the
@@ -654,7 +655,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
             return
         annotation_node = assignment.child_by_field_name(cs.TS_FIELD_TYPE)
         if annotation_node is not None:
-            annotation = safe_decode_text(annotation_node)
+            # Through any `Annotated[T, ...]` to `T`, as the other annotation
+            # readers are (issue #2873).
+            annotation = annotation_text(annotation_node)
             if annotation:
                 annotation = unquote_forward_refs(annotation)
                 # The shared normalizer accepts optional pipe unions, but not
@@ -888,12 +891,11 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 name_node
                 and (name_text := name_node.text)
                 and return_node
-                and (return_text := return_node.text)
+                and (return_type := annotation_text(return_node))
             ):
                 continue
             # The return_type field wraps a type node; only a bare class name (not
             # a union, subscripted generic, or string forward ref) seeds a type.
-            return_type = return_text.decode(cs.ENCODING_UTF8)
             if return_type.isidentifier():
                 out.setdefault(
                     f"{cs.PY_SELF_PREFIX}{name_text.decode(cs.ENCODING_UTF8)}",
@@ -929,7 +931,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 and left_node.type == cs.TS_PY_IDENTIFIER
                 and type_node
                 and (name := safe_decode_text(left_node))
-                and (raw_type := safe_decode_text(type_node))
+                and (raw_type := annotation_text(type_node))
                 and (type_text := _attribute_annotation_type(raw_type))
             ):
                 continue

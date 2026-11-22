@@ -5,6 +5,8 @@ from collections.abc import Iterator, Mapping
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from tree_sitter import QueryCursor
+
 from ... import constants as cs
 from ...constants import (
     CHAR_COMMA,
@@ -16,10 +18,15 @@ from ...constants import (
     TS_PY_IDENTIFIER,
 )
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
-from ..utils import follow_reexports
+from ..utils import (
+    follow_reexports,
+    get_cached_query,
+    safe_decode_text,
+    sorted_captures,
+)
 
 if TYPE_CHECKING:
-    from tree_sitter import Node
+    from tree_sitter import Language, Node
 
     from ..import_processor import ImportProcessor
 
@@ -404,3 +411,103 @@ def _reduce_optional_once(text: str) -> str:
         members = split_top_level(union.group("inner"))
     non_none = [member for member in members if member and member != cs.PY_NONE]
     return non_none[0] if len(non_none) == 1 else text
+
+
+def annotation_text(type_node: Node) -> str | None:
+    """An annotation's text, read through any `Annotated[T, ...]` to `T`.
+
+    `Annotated[T, metadata]` is `T` to a type checker (PEP 593), so the name
+    it annotates has type `T`. A quoted `T` (FastAPI's
+    `Annotated["APIRouter", Doc(...)]`) is read unquoted (issue #2873).
+    """
+    subject = type_node
+    while (inner := _annotated_subject(subject)) is not None:
+        subject = inner
+    if subject is type_node:
+        return safe_decode_text(type_node)
+    subject = _type_expression(subject)
+    if subject.type == cs.TS_PY_STRING:
+        content = next(
+            (c for c in subject.named_children if c.type == cs.TS_PY_STRING_CONTENT),
+            None,
+        )
+        return safe_decode_text(content)
+    return safe_decode_text(subject)
+
+
+def _type_expression(node: Node) -> Node:
+    # A `type` node wraps the one expression it spells.
+    if node.type == cs.TS_PY_TYPE and node.named_child_count == 1:
+        return node.named_children[0]
+    return node
+
+
+def _annotated_subject(node: Node) -> Node | None:
+    # The first argument of an `Annotated[...]`, else None. A bare head parses
+    # as a `generic_type`, a dotted one (`typing.Annotated`) as a `subscript`.
+    node = _type_expression(node)
+    if node.type == cs.TS_PY_GENERIC_TYPE:
+        head = node.named_children[0] if node.named_children else None
+        parameters = next(
+            (c for c in node.named_children if c.type == cs.TS_PY_TYPE_PARAMETER),
+            None,
+        )
+        arguments = parameters.named_children if parameters is not None else []
+    elif node.type == cs.TS_PY_SUBSCRIPT:
+        head = node.child_by_field_name(cs.FIELD_VALUE)
+        arguments = node.children_by_field_name(cs.TS_PY_FIELD_SUBSCRIPT)
+    else:
+        return None
+    if not arguments or safe_decode_text(head) not in cs.PY_ANNOTATED_NAMES:
+        return None
+    return arguments[0]
+
+
+def unrun_annotation_spans(
+    caller_node: Node, language: Language
+) -> list[tuple[int, int]]:
+    """The byte spans of annotations inside `caller_node` that do not run
+    when the caller is called (issue #2873).
+
+    The caller's own parameter and return annotations run once, when its
+    `def` does, in the enclosing scope, which is where a call in them is
+    recorded. A local variable's annotation never runs at all. A nested
+    `def`'s signature and a class body's annotations do run inside the
+    caller, so they are not listed. Read from the caller's own fields and
+    one query, never by walking up from each call: `Node.parent` itself
+    walks down from the root, so a per-call ancestor walk is quadratic on a
+    deep file.
+    """
+    spans: list[tuple[int, int]] = []
+    if (parameters := caller_node.child_by_field_name(cs.FIELD_PARAMETERS)) is not None:
+        for parameter in parameters.named_children:
+            if parameter.type in (
+                cs.TS_PY_TYPED_PARAMETER,
+                cs.TS_PY_TYPED_DEFAULT_PARAMETER,
+            ) and (annotation := parameter.child_by_field_name(cs.TS_FIELD_TYPE)):
+                spans.append((annotation.start_byte, annotation.end_byte))
+    if (returns := caller_node.child_by_field_name(cs.FIELD_RETURN_TYPE)) is not None:
+        spans.append((returns.start_byte, returns.end_byte))
+    if (body := caller_node.child_by_field_name(cs.FIELD_BODY)) is not None:
+        cursor = QueryCursor(
+            get_cached_query(language, cs.PY_ANNOTATED_ASSIGNMENT_QUERY)
+        )
+        captures = sorted_captures(cursor, body)
+        for annotation in captures.get(cs.CAPTURE_PY_ANNOTATION, []):
+            if (
+                annotation.parent is not None
+                and _nearest_scope_type(annotation.parent)
+                == cs.TS_PY_FUNCTION_DEFINITION
+            ):
+                spans.append((annotation.start_byte, annotation.end_byte))
+    return spans
+
+
+def _nearest_scope_type(node: Node) -> str | None:
+    scope = node.parent
+    while scope is not None and scope.type not in (
+        cs.TS_PY_FUNCTION_DEFINITION,
+        cs.TS_PY_CLASS_DEFINITION,
+    ):
+        scope = scope.parent
+    return scope.type if scope is not None else None
