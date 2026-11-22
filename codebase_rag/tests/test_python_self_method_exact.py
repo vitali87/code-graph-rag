@@ -159,7 +159,8 @@ FILES = {
         "    def run(self):\n        return self.c5()\n"
     ),
     # A lambda or nested def taking its own `self` names that parameter, not
-    # the instance; one that takes other parameters leaves `self` alone.
+    # the instance, and so does a lambda whose body binds `self` with `:=`;
+    # one that takes or binds other names leaves `self` alone.
     "nested_self.py": (
         "class NHolder:\n    def nm(self):\n        return 1\n\n"
         "    def run(self):\n        return (lambda self: self.nm())(None)\n\n"
@@ -173,7 +174,11 @@ FILES = {
         "    def run_comp_iter(self):\n"
         "        return [self.nm() for self in self.pool()]\n\n"
         "    def run_comp_attr(self, items):\n"
-        "        return [self.nm() for self.slot in items]\n"
+        "        return [self.nm() for self.slot in items]\n\n"
+        "    def run_lambda_walrus(self, make):\n"
+        "        return (lambda: ((self := make()), self.nm()))()\n\n"
+        "    def run_lambda_walrus_other(self, make):\n"
+        "        return (lambda: ((x := make()), self.nm()))()\n"
     ),
     # A static method's `self` is whatever its caller passed.
     "static_untyped.py": (
@@ -242,6 +247,7 @@ def _calls(graph: RecordedGraph, caller: str) -> dict[str, str]:
         ("nested_self.NHolder.run_other", "nested_self.NHolder.nm"),
         ("nested_self.NHolder.run_comp_iter", "nested_self.NHolder.pool"),
         ("nested_self.NHolder.run_comp_attr", "nested_self.NHolder.nm"),
+        ("nested_self.NHolder.run_lambda_walrus_other", "nested_self.NHolder.nm"),
     ],
 )
 def test_a_self_call_on_the_enclosing_class_is_exact(
@@ -356,6 +362,7 @@ def test_an_annotation_naming_the_class_still_dispatches_to_overrides(
         ("nested_self.NHolder.run_def.inner", "nested_self.NHolder.nm"),
         ("nested_self.NHolder.run_comp", "nested_self.NHolder.nm"),
         ("nested_self.NHolder.run_comp_iter", "nested_self.NHolder.nm"),
+        ("nested_self.NHolder.run_lambda_walrus", "nested_self.NHolder.nm"),
     ],
     ids=[
         "later-rebinding",
@@ -372,6 +379,7 @@ def test_an_annotation_naming_the_class_still_dispatches_to_overrides(
         "nested-def-own-self",
         "comprehension-target-self",
         "comprehension-target-self-past-its-iterable",
+        "lambda-walrus-self",
     ],
 )
 def test_a_self_call_the_class_may_not_answer_is_not_exact(

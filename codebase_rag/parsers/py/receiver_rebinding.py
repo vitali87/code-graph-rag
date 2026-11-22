@@ -21,7 +21,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
-from .ast_analyzer import _parameter_names
+from .ast_analyzer import _parameter_names, _walrus_nodes_under, _walrus_parts
 
 # Scopes whose assignments bind their own locals, not the method's receiver.
 _NESTED_SCOPES = frozenset(
@@ -142,8 +142,9 @@ def bound_receiver(caller: Node) -> str | None:
 def receiver_hidden_spans(caller: Node, receiver: str) -> tuple[tuple[int, int], ...]:
     """The byte spans inside `caller` where `receiver` names something
     else: the body of a nested def or lambda taking a parameter of that name
-    (`(lambda self: self.name)(None)`), and a comprehension whose `for`
-    binds it. A nested class holds its own."""
+    (`(lambda self: self.name)(None)`) or of a lambda binding it with `:=`,
+    and a comprehension whose `for` binds it. A nested class holds its
+    own."""
     spans: list[tuple[int, int]] = []
     stack = list(caller.named_children)
     while stack:
@@ -152,8 +153,8 @@ def receiver_hidden_spans(caller: Node, receiver: str) -> tuple[tuple[int, int],
             continue
         if (
             node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA)
-            and receiver in set(_parameter_names(node))
             and (body := node.child_by_field_name(cs.FIELD_BODY)) is not None
+            and _scope_binds(node, body, receiver)
         ):
             spans.append((body.start_byte, body.end_byte))
             continue
@@ -163,6 +164,18 @@ def receiver_hidden_spans(caller: Node, receiver: str) -> tuple[tuple[int, int],
             spans.extend(hidden)
         stack.extend(node.named_children)
     return tuple(sorted(spans))
+
+
+def _scope_binds(scope: Node, body: Node, receiver: str) -> bool:
+    # A def or lambda taking a parameter of the name, or a lambda whose body
+    # binds it with `:=` (`lambda: ((self := make()), self.m())`), which makes
+    # it the lambda's own name throughout that body (Greptile, PR #2908). A
+    # nested def is its own caller, whose scope facts read its body's binds.
+    if receiver in set(_parameter_names(scope)):
+        return True
+    return scope.type == cs.TS_PY_LAMBDA and any(
+        _walrus_parts(walrus)[0] == receiver for walrus in _walrus_nodes_under(body)
+    )
 
 
 def _comprehension_hides(comprehension: Node, receiver: str) -> list[tuple[int, int]]:
