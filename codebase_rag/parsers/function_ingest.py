@@ -261,6 +261,44 @@ class _DeferredCppContainment(NamedTuple):
     class_lookup: CppClassLookup
     method_name: str
     module_qn: str
+    # A lambda also gets the creation-site REFERENCES from the method.
+    is_lambda: bool = False
+    # The enclosing method's span: an overload registers under a suffixed qn
+    # (`Widget.run@8`) that the class and method names alone cannot rebuild.
+    parent_span: FunctionSpanKey | None = None
+
+
+# Where a C++ declaration stops being a statement in a function body: the
+# scopes that make it a namespace- or file-scope declaration instead.
+_CPP_DECLARATION_SCOPES = frozenset(
+    {
+        cs.TS_CPP_TRANSLATION_UNIT,
+        cs.TS_NAMESPACE_DEFINITION,
+        cs.TS_CPP_LINKAGE_SPECIFICATION,
+    }
+)
+_CPP_BODY_OWNERS = frozenset(
+    {cs.TS_CPP_FUNCTION_DEFINITION, cs.TS_CPP_LAMBDA_EXPRESSION}
+)
+
+
+def _is_cpp_block_declaration(node: Node) -> bool:
+    """A C++ `declaration` that is a statement in a function or lambda body.
+
+    The C++ spec lists `declaration` as a module boundary (a namespace-scope
+    one is), so the parent walk stopped at `auto sq = [...]` inside a
+    function and gave the lambda the module as its parent (issue #2732).
+    """
+    if node.type != cs.TS_CPP_DECLARATION:
+        return False
+    current = node.parent
+    while current is not None:
+        if current.type in _CPP_BODY_OWNERS:
+            return True
+        if current.type in _CPP_DECLARATION_SCOPES:
+            return False
+        current = current.parent
+    return False
 
 
 # Go node labels a receiver type can resolve to (struct -> Class, defined
@@ -1947,6 +1985,10 @@ class FunctionIngestMixin:
         parent_type, parent_qn, parent_span = self._determine_function_parent(
             func_node, resolution.qualified_name, module_qn, lang_config, language
         )
+        # A C++ lambda is a value used where it is written, like a Rust
+        # closure below: an algorithm's comparator, a thread body, `auto sq =
+        # ...`. Its creation-site REFERENCES waits with the DEFINES for the
+        # parent's registered identity (issue #2732).
         self._emit_or_defer_defines(
             parent_type,
             parent_qn,
@@ -1954,6 +1996,10 @@ class FunctionIngestMixin:
             resolution.qualified_name,
             module_qn,
             parent_span=parent_span,
+            reference_child=(
+                language == cs.SupportedLanguage.CPP
+                and func_node.type == cs.TS_CPP_LAMBDA_EXPRESSION
+            ),
         )
 
         # A Rust closure is a value constructed at its definition site (a `.map`
@@ -2319,8 +2365,14 @@ class FunctionIngestMixin:
         # Mirrors _determine_function_parent's walk: first function-like ancestor,
         # stopping at the module boundary.
         current = func_node.parent
-        while current is not None and current.type not in lang_config.module_node_types:
-            if current.type in lang_config.function_node_types:
+        while current is not None and (
+            current.type not in lang_config.module_node_types
+            or _is_cpp_block_declaration(current)
+        ):
+            if (
+                current.type in lang_config.function_node_types
+                and not _is_cpp_block_declaration(current)
+            ):
                 return current
             current = current.parent
         return None
@@ -2349,6 +2401,8 @@ class FunctionIngestMixin:
                 class_lookup=out_of_line.class_lookup(enclosing, class_name),
                 method_name=method_name,
                 module_qn=module_qn,
+                is_lambda=func_node.type == cs.TS_CPP_LAMBDA_EXPRESSION,
+                parent_span=function_span_key(module_qn, enclosing),
             )
         )
         return True
@@ -2363,6 +2417,7 @@ class FunctionIngestMixin:
         fallback_label: str | None = None,
         fallback_qn: str | None = None,
         parent_span: FunctionSpanKey | None = None,
+        reference_child: bool = False,
     ) -> None:
         # Module nodes always exist, so module-parented edges emit directly. Any
         # other parent may be registered by a later pass (methods land after
@@ -2386,6 +2441,7 @@ class FunctionIngestMixin:
                 fallback_label=fallback_label,
                 fallback_qn=fallback_qn,
                 parent_span=parent_span,
+                reference_child=reference_child,
             )
         )
 
@@ -2492,6 +2548,12 @@ class FunctionIngestMixin:
                 rel_type,
                 (entry.child_label, cs.KEY_QUALIFIED_NAME, entry.child_qn),
             )
+            if entry.reference_child and parent_spec[0] != cs.NodeLabel.MODULE:
+                self.ingestor.ensure_relationship_batch(
+                    parent_spec,
+                    cs.RelationshipType.REFERENCES,
+                    (entry.child_label, cs.KEY_QUALIFIED_NAME, entry.child_qn),
+                )
             emitted += 1
         self._deferred_parent_links = []
         return emitted
@@ -2515,7 +2577,24 @@ class FunctionIngestMixin:
                 cs.KEY_QUALIFIED_NAME,
                 entry.module_qn,
             )
+            recorded = (
+                self.function_locations.get(entry.parent_span)
+                if entry.parent_span is not None
+                else None
+            )
             if (
+                recorded is not None
+                and recorded.label == cs.NodeLabel.METHOD.value
+                and recorded.qualified_name in self.function_registry
+            ):
+                # The method pass recorded the enclosing body's own identity,
+                # an overload's suffix included (bot review on PR #2745).
+                parent_spec = (
+                    cs.NodeLabel.METHOD,
+                    cs.KEY_QUALIFIED_NAME,
+                    recorded.qualified_name,
+                )
+            elif (
                 class_qn := self._resolve_cpp_definition_class(
                     entry.class_lookup, entry.module_qn
                 )
@@ -2532,6 +2611,12 @@ class FunctionIngestMixin:
                 cs.RelationshipType.DEFINES,
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, entry.child_qn),
             )
+            if entry.is_lambda and parent_spec[0] == cs.NodeLabel.METHOD:
+                self.ingestor.ensure_relationship_batch(
+                    parent_spec,
+                    cs.RelationshipType.REFERENCES,
+                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, entry.child_qn),
+                )
             emitted += 1
         self._deferred_cpp_containment = []
         return emitted
@@ -2617,7 +2702,7 @@ class FunctionIngestMixin:
         # identity.
         span = (
             function_span_key(module_qn, current)
-            if language == cs.SupportedLanguage.CSHARP
+            if language in (cs.SupportedLanguage.CSHARP, cs.SupportedLanguage.CPP)
             else None
         )
         return parent_label, parent_qn, span
@@ -2635,7 +2720,18 @@ class FunctionIngestMixin:
             return cs.NodeLabel.MODULE, module_qn, None
 
         file_path = self.module_qn_to_file_path.get(module_qn)
-        while current and current.type not in lang_config.module_node_types:
+        while current and (
+            current.type not in lang_config.module_node_types
+            or (
+                language == cs.SupportedLanguage.CPP
+                and _is_cpp_block_declaration(current)
+            )
+        ):
+            if language == cs.SupportedLanguage.CPP and _is_cpp_block_declaration(
+                current
+            ):
+                current = current.parent
+                continue
             if current.type in lang_config.function_node_types:
                 parent = self._enclosing_function_parent(
                     current, func_qn, module_qn, lang_config, language, file_path
