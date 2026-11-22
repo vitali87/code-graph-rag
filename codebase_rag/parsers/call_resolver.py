@@ -2146,8 +2146,6 @@ class CallResolver:
         # answers are caller-independent.
         if self._is_python_local_name(call) or self._is_js_parameter_name(call):
             return None
-        if (result := self._resolve_python_self_method(call)) is not None:
-            return result
 
         cache_key = self._resolution_cache_key(call)
         if cache_key is not None and cache_key in self._simple_resolution_cache:
@@ -2335,11 +2333,20 @@ class CallResolver:
             self._resolve_receiver_shadow,
             self._resolve_rust_block_scope,
             self._resolve_caller_scope,
+            self._resolve_python_self_stage,
         ):
             handled, result = stage(call)
             if handled:
                 return True, result
         return False, None
+
+    def _resolve_python_self_stage(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # `self.m()` answered from the enclosing class; a dotted name, so it
+        # never meets the local-name checks after these stages.
+        result = self._resolve_python_self_method(call)
+        return result is not None, result
 
     def _resolve_receiver_shadow(
         self, call: _CallSite

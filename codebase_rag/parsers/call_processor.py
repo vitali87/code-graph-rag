@@ -7010,23 +7010,9 @@ class CallProcessor:
             call_var_types = self._overlay_span_binding(
                 call_name, call_node, ctx.local_var_types, ctx.span_bindings
             )
-        if (
-            call_var_types
-            and (rebinding := self._receiver_rebinding_at(ctx, call_node, call_name))
-            and not rebinding.sometimes
-        ):
-            # No `self = Other()` can run before this call, so the method-wide
-            # type of `self` does not apply to it (issue #2620). An annotated
-            # `self: Entry` holds from the def's entry, so that type does
-            # (CodeRabbit, PR #2951).
-            receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
-            call_var_types = {
-                name: var_type
-                for name, var_type in call_var_types.items()
-                if name != receiver
-            }
-            if annotated := receiver_annotation(call_node, receiver):
-                call_var_types[receiver] = annotated
+        call_var_types = self._receiver_types_before_rebinding(
+            ctx, call_node, call_name, call_var_types
+        )
 
         if ctx.is_cpp:
             self._emit_cpp_template_dispatch(ctx, call_name, call_var_types)
@@ -8405,6 +8391,32 @@ class CallProcessor:
                 ),
             )
         return callee_info
+
+    def _receiver_types_before_rebinding(
+        self,
+        ctx: _CallScanContext,
+        call_node: Node,
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> dict[str, str] | None:
+        if (
+            call_var_types
+            and (rebinding := self._receiver_rebinding_at(ctx, call_node, call_name))
+            and not rebinding.sometimes
+        ):
+            # No `self = Other()` can run before this call, so the method-wide
+            # type of `self` does not apply to it (issue #2620). An annotated
+            # `self: Entry` holds from the def's entry, so that type does
+            # (CodeRabbit, PR #2951).
+            receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
+            call_var_types = {
+                name: var_type
+                for name, var_type in call_var_types.items()
+                if name != receiver
+            }
+            if annotated := receiver_annotation(call_node, receiver):
+                call_var_types[receiver] = annotated
+        return call_var_types
 
     @staticmethod
     def _receiver_uncertain(
@@ -13214,12 +13226,15 @@ class CallProcessor:
             in PythonTypeInferenceEngine._receiver_parameter_names(caller_node)
             and not self._python_lambda_rebinds(node, caller_node, receiver)
         ):
+            # Nor may the resolver's `self.m()` shortcut bind such a receiver
+            # to the enclosing class.
             return self._resolver.resolve_function_call(
                 attr_text,
                 module_qn,
                 local_var_types,
                 class_context,
                 caller_qn,
+                receiver_uncertain=receiver in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS),
             )
         if PythonTypeInferenceEngine.receiver_is_the_class(caller_node):
             # `cls.name` hands back the property object: no getter runs.
