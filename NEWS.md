@@ -11,12 +11,14 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **Improved Code Analysis**: Refined how query captures are read, how calls are judged, and how dead code is identified and handled.
+- **Surface Definition**: Introduced a mechanism to record and enforce the public surface of code, with CI failures for deviations.
+<!-- latest-release-end -->
 - **Improved I/O Handling**: Enhanced how the toolchain interacts with input and output streams, including inline reads, standard stream writes, and environment variable management.
 - **Credential Management**: Introduced a dedicated credential word list for each hardcoded secret within a pack, improving security.
 - **Enhanced Code Analysis**: Improved the accuracy of code analysis by considering binding contexts, structural tiers, and the order of query captures.
 - **Refined Error Reporting**: Improved the clarity and detail of error messages, particularly for dead code, duplicates, and missing dependencies.
 - **Surface and Renaming Improvements**: Enhanced the recording and management of public surfaces and improved the handling of renaming operations.
-<!-- latest-release-end -->
 - **Security Fix**: Addressed a potential issue with parameter defaults.
 - **Stack Handling**: Improved stack management for Qdrant and Memgraph.
 - **Copilot Feedback**: Improved handling of review expectations and editing feedback from Copilot.
