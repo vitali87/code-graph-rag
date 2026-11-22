@@ -23,7 +23,7 @@ Scoped to: php-diff
 ┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
 ┃ Relationship Type   ┃ Count ┃
 ┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
-│ CALLS               │   309 │
+│ CALLS               │   308 │
 │ DEFINES_METHOD      │   206 │
 │ IMPORTS             │    95 │
 │ CONTAINS_FILE       │    66 │
@@ -38,7 +38,7 @@ Scoped to: php-diff
 │ DEPENDS_ON_EXTERNAL │     2 │
 │ REFERENCES          │     1 │
 ├─────────────────────┼───────┤
-│ Total Relationships │   930 │
+│ Total Relationships │   929 │
 └─────────────────────┴───────┘
 --- stderr
 Fetching graph statistics...

@@ -364,6 +364,7 @@ class CallResolver:
         "go_package_names",
         "_php_class_namespaces",
         "_php_cased_index",
+        "_php_fqcn_bases_cache",
         "_js_return_class_cache",
     )
 
@@ -519,6 +520,9 @@ class CallResolver:
         # read off each file's declarations on first use (issue #2466).
         self._php_class_namespaces: dict[str, dict[str, PhpClassPath]] = {}
         self._php_cased_index: _PhpCasedIndex | None = None
+        # {PHP class qn: the dotted-FQCN bases in `_subclass_map` that name
+        # it}, built on first use.
+        self._php_fqcn_bases_cache: dict[str, list[str]] | None = None
         # {JS/TS callable qn: the class a call to it returns}, read off its
         # declaration on first use (issue #2468).
         self._js_return_class_cache: dict[tuple[str, bool], str | None] = {}
@@ -745,6 +749,7 @@ class CallResolver:
         # Or a re-parsed Python one assign other instance attributes.
         self._py_instance_attrs_memo.clear()
         self._php_cased_index = None
+        self._php_fqcn_bases_cache = None
         # A re-parsed TS file may declare a different return.
         self._js_return_class_cache.clear()
         # The rel-path -> module qn inverse rebuilds only when its size
@@ -3764,6 +3769,12 @@ class CallResolver:
         php_imports = self.import_processor.php_function_imports.get(module_qn)
         if php_imports and call_name in php_imports:
             return False
+        # PHP keeps functions apart from classes and constants, so a bare call
+        # never names what a class `use` or a `use const` brings in, grouped
+        # (`use Vendor\{const helper}`) or not: `helper()` still looks its
+        # namespace up, as with no import of the name (Greptile on PR #3652).
+        if language == cs.SupportedLanguage.PHP:
+            return False
         # A JS/TS import with a non-standard scheme (deno `ext:deno_node/x`) does
         # not resolve to a file-path module qn, so its target is unregistered and
         # looks external even though it aliases first-party code. Defer to the
@@ -4716,7 +4727,7 @@ class CallResolver:
             )
 
         return self._resolve_multi_part_call(
-            parts, call_name, import_map, module_qn, local_var_types
+            parts, call_name, import_map, module_qn, local_var_types, language
         )
 
     def _try_resolve_csharp_qualified_call(
@@ -6308,6 +6319,12 @@ class CallResolver:
         )
         for method_qn in method_qns:
             if method_qn in self.function_registry:
+                if language in cs.JS_TS_LANGUAGES and self._js_static_only(
+                    class_qn, method_name
+                ):
+                    # The receiver is an instance of the class, and its
+                    # prototype chain never holds a static member (#3672).
+                    return self._js_instance_member(class_qn, method_name)
                 logger.debug(
                     ls.CALL_TYPE_INFERRED,
                     call_name=call_name,
@@ -6325,8 +6342,53 @@ class CallResolver:
                 obj=object_name,
                 var_type=var_type,
             )
+            if language in cs.JS_TS_LANGUAGES and self._js_static_only(
+                inherited[1].rpartition(cs.SEPARATOR_DOT)[0], method_name
+            ):
+                return self._js_instance_member(class_qn, method_name)
             return inherited
         return None
+
+    def _js_static_only(self, class_qn: str, method: str) -> bool:
+        """Whether a JS/TS class declares `method` as a static member only."""
+        return self.type_inference.js_member_sides(class_qn, method) == (False, True)
+
+    def _js_instance_member(self, class_qn: str, method: str) -> tuple[str, str] | None:
+        """`(label, qn)` of the `method` an instance of the class runs: the
+        nearest class along its chain declaring `method` for its instances.
+        A static member lives on the class object, which an instance never
+        reaches, so it hides nothing. An instance field hides every base's
+        method and names none to bind."""
+        queue: deque[str] = deque([class_qn])
+        seen = {class_qn}
+        while queue:
+            owner = self._follow_reexports(queue.popleft())
+            member_qn = f"{owner}{cs.SEPARATOR_DOT}{method}"
+            registered = member_qn in self.function_registry
+            if self._js_declares_for_instances(owner, method, registered):
+                return (
+                    (self.function_registry[member_qn], member_qn)
+                    if registered
+                    else None
+                )
+            for base in self.class_inheritance.get(owner, []):
+                if base not in seen:
+                    seen.add(base)
+                    queue.append(base)
+        return None
+
+    def _js_declares_for_instances(
+        self, class_qn: str, method: str, registered: bool
+    ) -> bool:
+        # As a method, accessor, field or signature in the body; or, with no
+        # declaration there, through a registration from outside it (a
+        # prototype write, a merged interface). With no class body to read,
+        # the registered member is the declaration.
+        sides = self.type_inference.js_member_sides(class_qn, method)
+        if sides is None:
+            return registered
+        instance, static = sides
+        return instance or (registered and not static)
 
     def _try_resolve_via_import(
         self,
@@ -6615,58 +6677,84 @@ class CallResolver:
         import_map: dict[str, str],
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         class_name = parts[0]
         method_name = cs.SEPARATOR_DOT.join(parts[1:])
 
-        if class_name in import_map:
-            class_qn = import_map[class_name]
-            method_qn = f"{class_qn}.{method_name}"
-            if method_qn in self.function_registry:
-                logger.debug(
-                    ls.CALL_IMPORT_QUALIFIED,
-                    call_name=call_name,
-                    method_qn=method_qn,
-                )
-                return self.function_registry[method_qn], method_qn
-            # `import pkg.util` is recorded as `pkg -> proj.pkg.util`, so a
-            # call spelled `pkg.util.helper` repeats the module's tail; the
-            # import names the module exactly, so the call is exact too and
-            # must not fall to the name-only trie (issue #1526).
-            if module_qn_hit := self._import_tail_qualified(class_qn, parts, call_name):
-                return module_qn_hit
+        if class_name in import_map and (
+            imported := self._import_qualified_method(
+                import_map[class_name], parts, method_name, call_name
+            )
+        ):
+            return imported
 
         if local_var_types and class_name in local_var_types:
             var_type = local_var_types[class_name]
             if class_qn := self._resolve_class_qn_from_type(
                 var_type, import_map, module_qn
             ):
-                method_qn = f"{class_qn}.{method_name}"
-                if method_qn in self.function_registry:
-                    logger.debug(
-                        ls.CALL_INSTANCE_QUALIFIED,
-                        call_name=call_name,
-                        method_qn=method_qn,
-                        class_name=class_name,
-                        var_type=var_type,
-                    )
-                    return self.function_registry[method_qn], method_qn
-
-                if inherited_method := self._resolve_inherited_method(
-                    class_qn, method_name
+                if language in cs.JS_TS_LANGUAGES and len(parts) == 2:
+                    # The typed lookup answered for this instance already,
+                    # nothing when a field hides the method (issue #3672).
+                    return self._js_instance_member(class_qn, method_name)
+                if typed := self._typed_local_method(
+                    class_qn, method_name, call_name, class_name, var_type
                 ):
-                    logger.debug(
-                        ls.CALL_INSTANCE_INHERITED,
-                        call_name=call_name,
-                        method_qn=inherited_method[1],
-                        class_name=class_name,
-                        var_type=var_type,
-                    )
-                    return inherited_method
+                    return typed
 
         return self._resolve_field_hop_method(
             parts, call_name, import_map, module_qn, local_var_types
         )
+
+    def _import_qualified_method(
+        self, class_qn: str, parts: list[str], method_name: str, call_name: str
+    ) -> tuple[str, str] | None:
+        """`method_name` on the module or class the call's first part imports."""
+        method_qn = f"{class_qn}.{method_name}"
+        if method_qn in self.function_registry:
+            logger.debug(
+                ls.CALL_IMPORT_QUALIFIED,
+                call_name=call_name,
+                method_qn=method_qn,
+            )
+            return self.function_registry[method_qn], method_qn
+        # `import pkg.util` is recorded as `pkg -> proj.pkg.util`, so a
+        # call spelled `pkg.util.helper` repeats the module's tail; the
+        # import names the module exactly, so the call is exact too and
+        # must not fall to the name-only trie (issue #1526).
+        return self._import_tail_qualified(class_qn, parts, call_name)
+
+    def _typed_local_method(
+        self,
+        class_qn: str,
+        method_name: str,
+        call_name: str,
+        class_name: str,
+        var_type: str,
+    ) -> tuple[str, str] | None:
+        """`method_name` on a typed local's class, or inherited by it."""
+        method_qn = f"{class_qn}.{method_name}"
+        if method_qn in self.function_registry:
+            logger.debug(
+                ls.CALL_INSTANCE_QUALIFIED,
+                call_name=call_name,
+                method_qn=method_qn,
+                class_name=class_name,
+                var_type=var_type,
+            )
+            return self.function_registry[method_qn], method_qn
+
+        if inherited_method := self._resolve_inherited_method(class_qn, method_name):
+            logger.debug(
+                ls.CALL_INSTANCE_INHERITED,
+                call_name=call_name,
+                method_qn=inherited_method[1],
+                class_name=class_name,
+                var_type=var_type,
+            )
+            return inherited_method
+        return None
 
     def _import_tail_qualified(
         self, class_qn: str, parts: list[str], call_name: str
@@ -8397,6 +8485,41 @@ class CallResolver:
             found.add(current)
             stack.extend(subclass_map.get(current, ()))
         return found
+
+    def php_concrete_subclasses(self, class_qn: str) -> set[str]:
+        """`_concrete_subclasses` for a PHP class.
+
+        `class Child extends Base` under `use App\\Base` in another file can
+        keep its parent as the dotted FQCN the import recorded (`App.Base`),
+        which no class qn in `_subclass_map` matches, so `new static` and
+        `static::m()` left Child out (PR #3652 review). Such a base counts
+        for the one class the FQCN index names, as `parent::` reads it.
+        Other languages keep `_concrete_subclasses` as it is.
+        """
+        subclass_map = self._subclass_map()
+        fqcn_bases = self._php_fqcn_bases()
+        found: set[str] = set()
+        stack = [class_qn]
+        while stack:
+            current = stack.pop()
+            for base in (current, *fqcn_bases.get(current, ())):
+                for subclass_qn in subclass_map.get(base, ()):
+                    if subclass_qn not in found:
+                        found.add(subclass_qn)
+                        stack.append(subclass_qn)
+        return found
+
+    def _php_fqcn_bases(self) -> dict[str, list[str]]:
+        if self._php_fqcn_bases_cache is None:
+            # Deferred: the PHP module imports this one.
+            from .php.references import php_class_for_base
+
+            bases: dict[str, list[str]] = {}
+            for base in self._subclass_map():
+                if (named := php_class_for_base(self, base)) not in (None, base):
+                    bases.setdefault(named, []).append(base)
+            self._php_fqcn_bases_cache = bases
+        return self._php_fqcn_bases_cache
 
     def _binding_aware_mro(self, class_qn: str, member: str) -> list[str] | None:
         """class_qn's C3 MRO when a class body in it binds `member` by assignment.

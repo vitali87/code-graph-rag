@@ -1,4 +1,53 @@
 > tools/call get_function_source {"node_id": "<node_id:php-diff.src.Parser.Parser.parse>"}
 isError: false
 --- text
-Could not retrieve source code for node ID <node_id>. The node may not exist or source file may be unavailable.
+Source code for node ID <node_id>:
+
+```
+public function parse(string $string): array
+    {
+        $lines = preg_split('(\r\n|\r|\n)', $string);
+
+        if (!empty($lines) && $lines[count($lines) - 1] === '') {
+            array_pop($lines);
+        }
+
+        $lineCount = count($lines);
+        $diffs     = [];
+        $diff      = null;
+        $collected = [];
+
+        for ($i = 0; $i < $lineCount; $i++) {
+            if (preg_match('#^---\h+"?(?P<file>[^\\v\\t"]+)#', $lines[$i], $fromMatch) &&
+                preg_match('#^\\+\\+\\+\\h+"?(?P<file>[^\\v\\t"]+)#', $lines[$i + 1], $toMatch)) {
+                if ($diff !== null) {
+                    $this->parseFileDiff($diff, $collected);
+
+                    $diffs[]   = $diff;
+                    $collected = [];
+                }
+
+                assert(!empty($fromMatch['file']));
+                assert(!empty($toMatch['file']));
+
+                $diff = new Diff($fromMatch['file'], $toMatch['file']);
+
+                $i++;
+            } else {
+                if (preg_match('/^(?:diff --git |index [\da-f.]+|[+-]{3} [ab])/', $lines[$i])) {
+                    continue;
+                }
+
+                $collected[] = $lines[$i];
+            }
+        }
+
+        if ($diff !== null && count($collected)) {
+            $this->parseFileDiff($diff, $collected);
+
+            $diffs[] = $diff;
+        }
+
+        return $diffs;
+    }
+```
