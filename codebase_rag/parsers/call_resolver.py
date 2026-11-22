@@ -6317,22 +6317,12 @@ class CallResolver:
         class_name = parts[0]
         method_name = cs.SEPARATOR_DOT.join(parts[1:])
 
-        if class_name in import_map:
-            class_qn = import_map[class_name]
-            method_qn = f"{class_qn}.{method_name}"
-            if method_qn in self.function_registry:
-                logger.debug(
-                    ls.CALL_IMPORT_QUALIFIED,
-                    call_name=call_name,
-                    method_qn=method_qn,
-                )
-                return self.function_registry[method_qn], method_qn
-            # `import pkg.util` is recorded as `pkg -> proj.pkg.util`, so a
-            # call spelled `pkg.util.helper` repeats the module's tail; the
-            # import names the module exactly, so the call is exact too and
-            # must not fall to the name-only trie (issue #1526).
-            if module_qn_hit := self._import_tail_qualified(class_qn, parts, call_name):
-                return module_qn_hit
+        if class_name in import_map and (
+            imported := self._import_qualified_method(
+                import_map[class_name], parts, method_name, call_name
+            )
+        ):
+            return imported
 
         if local_var_types and class_name in local_var_types:
             var_type = local_var_types[class_name]
@@ -6343,32 +6333,63 @@ class CallResolver:
                     # The typed lookup answered for this instance already,
                     # nothing when a field hides the method (issue #3672).
                     return self._js_instance_member(class_qn, method_name)
-                method_qn = f"{class_qn}.{method_name}"
-                if method_qn in self.function_registry:
-                    logger.debug(
-                        ls.CALL_INSTANCE_QUALIFIED,
-                        call_name=call_name,
-                        method_qn=method_qn,
-                        class_name=class_name,
-                        var_type=var_type,
-                    )
-                    return self.function_registry[method_qn], method_qn
-
-                if inherited_method := self._resolve_inherited_method(
-                    class_qn, method_name
+                if typed := self._typed_local_method(
+                    class_qn, method_name, call_name, class_name, var_type
                 ):
-                    logger.debug(
-                        ls.CALL_INSTANCE_INHERITED,
-                        call_name=call_name,
-                        method_qn=inherited_method[1],
-                        class_name=class_name,
-                        var_type=var_type,
-                    )
-                    return inherited_method
+                    return typed
 
         return self._resolve_field_hop_method(
             parts, call_name, import_map, module_qn, local_var_types
         )
+
+    def _import_qualified_method(
+        self, class_qn: str, parts: list[str], method_name: str, call_name: str
+    ) -> tuple[str, str] | None:
+        """`method_name` on the module or class the call's first part imports."""
+        method_qn = f"{class_qn}.{method_name}"
+        if method_qn in self.function_registry:
+            logger.debug(
+                ls.CALL_IMPORT_QUALIFIED,
+                call_name=call_name,
+                method_qn=method_qn,
+            )
+            return self.function_registry[method_qn], method_qn
+        # `import pkg.util` is recorded as `pkg -> proj.pkg.util`, so a
+        # call spelled `pkg.util.helper` repeats the module's tail; the
+        # import names the module exactly, so the call is exact too and
+        # must not fall to the name-only trie (issue #1526).
+        return self._import_tail_qualified(class_qn, parts, call_name)
+
+    def _typed_local_method(
+        self,
+        class_qn: str,
+        method_name: str,
+        call_name: str,
+        class_name: str,
+        var_type: str,
+    ) -> tuple[str, str] | None:
+        """`method_name` on a typed local's class, or inherited by it."""
+        method_qn = f"{class_qn}.{method_name}"
+        if method_qn in self.function_registry:
+            logger.debug(
+                ls.CALL_INSTANCE_QUALIFIED,
+                call_name=call_name,
+                method_qn=method_qn,
+                class_name=class_name,
+                var_type=var_type,
+            )
+            return self.function_registry[method_qn], method_qn
+
+        if inherited_method := self._resolve_inherited_method(class_qn, method_name):
+            logger.debug(
+                ls.CALL_INSTANCE_INHERITED,
+                call_name=call_name,
+                method_qn=inherited_method[1],
+                class_name=class_name,
+                var_type=var_type,
+            )
+            return inherited_method
+        return None
 
     def _import_tail_qualified(
         self, class_qn: str, parts: list[str], call_name: str
