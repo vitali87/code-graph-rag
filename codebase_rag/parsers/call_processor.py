@@ -6451,7 +6451,7 @@ class CallProcessor:
             )
         if language == cs.SupportedLanguage.PHP:
             php_references.ingest_php_callable_values(
-                self, caller_node, caller_spec, module_qn, class_context
+                self, caller_node, caller_spec, class_context
             )
         if language in _JS_TS_LANGUAGES:
             self._ingest_jsx_component_references(

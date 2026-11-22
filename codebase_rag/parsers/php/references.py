@@ -21,6 +21,15 @@ from . import class_names as php_class_names
 _CLASS_LABELS = frozenset(
     {NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM, NodeType.TYPE}
 )
+# The declarations whose body can `use` a trait.
+_TRAIT_USERS = frozenset(
+    {
+        cs.TS_CLASS_DECLARATION,
+        cs.TS_PHP_TRAIT_DECLARATION,
+        cs.TS_ENUM_DECLARATION,
+        cs.TS_PHP_ANONYMOUS_CLASS,
+    }
+)
 
 
 class _PhpEmitter(Protocol):
@@ -58,9 +67,18 @@ def ingest_php_call(host: _PhpEmitter, ctx: _CallView, call_node: Node) -> bool:
     scoped = php_callables.relative_scoped_call(call_node)
     if scoped is None:
         return False
-    host._site_node = call_node
     scope, method = scoped
-    _emit_methods(host, ctx.caller_spec, _scope_methods(host, ctx, scope, method))
+    methods = _scope_methods_of(host, ctx.class_context, scope, method, call_node)
+    if not methods and scope != cs.PhpRelativeScope.PARENT:
+        # Nothing the index knows declares it on the class, such as a method
+        # a parent's trait supplies: the name lookup stands, as it did before
+        # relative calls were bound (Greptile on #3652). An unresolved
+        # `parent::m()` keeps no edge: the name lookup would bind the
+        # caller's own `m`, as `parent::__construct()` under a vendor parent
+        # did.
+        return False
+    host._site_node = call_node
+    _emit_methods(host, ctx.caller_spec, methods)
     return True
 
 
@@ -68,7 +86,6 @@ def ingest_php_callable_values(
     host: _PhpEmitter,
     caller_node: Node,
     caller_spec: tuple[str, str, str],
-    module_qn: str,
     class_context: str | None,
 ) -> None:
     stack = list(caller_node.children)
@@ -77,7 +94,7 @@ def ingest_php_callable_values(
         if php_callables.value_walk_stop(node.type):
             continue
         if php_callables.in_value_position(node) and _emit_value(
-            host, caller_spec, module_qn, class_context, node
+            host, caller_spec, class_context, node
         ):
             # The method-name literal is not a second callable.
             if node.type == cs.TS_PHP_ARRAY_CREATION_EXPRESSION:
@@ -104,7 +121,6 @@ def _ingest_new(host: _PhpEmitter, ctx: _CallView, call_node: Node) -> bool:
 def _emit_value(
     host: _PhpEmitter,
     caller_spec: tuple[str, str, str],
-    module_qn: str,
     class_context: str | None,
     node: Node,
 ) -> bool:
@@ -115,7 +131,7 @@ def _emit_value(
         _emit_methods(
             host,
             caller_spec,
-            _receiver_methods(host, module_qn, class_context, receiver, method),
+            _receiver_methods(host, class_context, receiver, method),
         )
         return True
     parsed = php_callables.string_callable(node)
@@ -134,7 +150,6 @@ def _emit_value(
 
 def _receiver_methods(
     host: _PhpEmitter,
-    module_qn: str,
     class_context: str | None,
     receiver: Node,
     method: str,
@@ -145,7 +160,7 @@ def _receiver_methods(
             relative = php_callables.relative_scope(safe_text(scope))
             if relative is None:
                 return []
-            return _scope_methods_of(host, class_context, relative, method)
+            return _scope_methods_of(host, class_context, relative, method, receiver)
         return _methods_on_classes(host, _classes_for_type(host, scope), method)
     if receiver.type == cs.TS_PHP_VARIABLE_NAME:
         if safe_text(receiver) == cs.PHP_THIS:
@@ -164,17 +179,12 @@ def _receiver_methods(
     return []
 
 
-def _scope_methods(
-    host: _PhpEmitter, ctx: _CallView, scope: cs.PhpRelativeScope, method: str
-) -> list[str]:
-    return _scope_methods_of(host, ctx.class_context, scope, method)
-
-
 def _scope_methods_of(
     host: _PhpEmitter,
     class_context: str | None,
     scope: cs.PhpRelativeScope,
     method: str,
+    site: Node,
 ) -> list[str]:
     if not class_context:
         return []
@@ -182,8 +192,7 @@ def _scope_methods_of(
         parent = _parent_class(host._resolver, class_context)
         found = _method_qn(host._resolver, parent, method) if parent else None
         return [found] if found else []
-    found = _method_qn(host._resolver, class_context, method)
-    methods = [found] if found else []
+    methods = _class_methods(host, class_context, method, site)
     if scope != cs.PhpRelativeScope.STATIC:
         return methods
     for subclass in host._resolver.php_concrete_subclasses(class_context):
@@ -191,6 +200,46 @@ def _scope_methods_of(
         if declared is not None:
             methods.append(declared)
     return methods
+
+
+def _class_methods(
+    host: _PhpEmitter, class_qn: str, method: str, site: Node
+) -> list[str]:
+    # PHP's order for the class around `site`: its own method, then one a
+    # trait it uses supplies (PHP copies those in, ahead of an inherited
+    # one), then an inherited one (Greptile on #3652).
+    resolver = host._resolver
+    declared = _declared_method(resolver, class_qn, method)
+    if declared is not None:
+        return [declared]
+    if traits := _trait_methods(host, site, method):
+        return traits
+    found = _method_qn(resolver, class_qn, method)
+    return [found] if found else []
+
+
+def _trait_methods(host: _PhpEmitter, site: Node, method: str) -> list[str]:
+    # The `method` each trait in the `use T;` lines of the class around
+    # `site` declares. Only those lines are read: a trait's own `use` and a
+    # parent's are left to the name lookup.
+    owner = site.parent
+    while owner is not None and owner.type not in _TRAIT_USERS:
+        owner = owner.parent
+    body = owner.child_by_field_name(cs.FIELD_BODY) if owner is not None else None
+    if body is None:
+        return []
+    names = [
+        name
+        for use in body.named_children
+        if use.type == cs.TS_PHP_USE_DECLARATION
+        for name in use.named_children
+    ]
+    return [
+        qn
+        for name in names
+        for trait_qn in _classes_for_type(host, name)
+        if (qn := _declared_method(host._resolver, trait_qn, method)) is not None
+    ]
 
 
 def _relative_classes(

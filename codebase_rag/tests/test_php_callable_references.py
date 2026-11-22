@@ -1334,3 +1334,114 @@ class Wire
     handler_run = f"{_PROJECT}.src.Wire.Handler.run"
     assert (f"{wire}.rebound", handler_run) not in refs, sorted(refs)
     assert (f"{wire}.kept", handler_run) in refs, sorted(refs)
+
+
+def test_relative_calls_reach_the_methods_a_trait_supplies(tmp_path: Path) -> None:
+    # `use T;` copies T's methods into the class, ahead of an inherited one:
+    # `self::hidden()` is T's, `self::pick()` T's rather than Base's, and a
+    # private trait method so called is not dead (Greptile on #3652).
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Traits/Hides.php": r"""<?php
+namespace App\Traits;
+
+trait Hides
+{
+    private static function imported(): void {}
+}
+""",
+            "src/Uses.php": r"""<?php
+namespace App;
+
+use App\Traits\Hides;
+
+class Base
+{
+    public static function pick(): void {}
+}
+
+trait T
+{
+    private static function hidden(): void {}
+
+    public static function pick(): void {}
+}
+
+class C extends Base
+{
+    use T, Hides;
+
+    public function early(): void
+    {
+        self::hidden();
+    }
+
+    public function late(): void
+    {
+        static::hidden();
+    }
+
+    public function across(): void
+    {
+        self::imported();
+    }
+
+    public function overridden(): void
+    {
+        self::pick();
+    }
+}
+""",
+        },
+    )
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    c = f"{_PROJECT}.src.Uses.C"
+    hidden = f"{_PROJECT}.src.Uses.T.hidden"
+    imported = f"{_PROJECT}.src.Traits.Hides.Hides.imported"
+    assert (f"{c}.early", hidden) in calls, sorted(calls)
+    assert (f"{c}.late", hidden) in calls, sorted(calls)
+    assert (f"{c}.across", imported) in calls, sorted(calls)
+    assert (f"{c}.overridden", f"{_PROJECT}.src.Uses.T.pick") in calls, sorted(calls)
+    assert (f"{c}.overridden", f"{_PROJECT}.src.Uses.Base.pick") not in calls, sorted(
+        calls
+    )
+    dead = _dead(ingestor)
+    assert hidden not in dead, sorted(dead)
+    assert imported not in dead, sorted(dead)
+
+
+def test_a_relative_call_nothing_known_declares_keeps_the_name_lookup(
+    tmp_path: Path,
+) -> None:
+    # A parent's trait is not read at the call site: the name lookup still
+    # links `self::hidden()`, as it did before relative calls were bound.
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Parent.php": r"""<?php
+namespace App;
+
+trait T
+{
+    private static function hidden(): void {}
+}
+
+class P
+{
+    use T;
+}
+
+class C extends P
+{
+    public function run(): void
+    {
+        self::hidden();
+    }
+}
+""",
+        },
+    )
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    pair = (f"{_PROJECT}.src.Parent.C.run", f"{_PROJECT}.src.Parent.T.hidden")
+    assert pair in calls, sorted(calls)
