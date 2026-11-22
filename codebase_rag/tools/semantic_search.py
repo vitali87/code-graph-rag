@@ -9,6 +9,7 @@ from pydantic_ai import Tool
 from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
+from .. import tool_errors as te
 from ..cypher_queries import (
     CYPHER_GET_FUNCTION_SOURCE_LOCATION,
     CYPHER_LIST_PROJECTS,
@@ -173,7 +174,16 @@ def get_function_source_code(
             return None
         file_path_obj = located.path
 
-        return extract_source_lines(file_path_obj, start_line, end_line)
+        source = extract_source_lines(file_path_obj, start_line, end_line)
+        if source is None:
+            return None
+        # The text `get_code_snippet` returns for the same span: it reads in
+        # text mode, whose universal newlines fold "\r\n" and a lone "\r" to
+        # "\n", while the shared reader keeps the file's own endings. Fold
+        # "\r\n" first, or each CRLF break would become two.
+        return source.replace(cs.CRLF, cs.LINE_FEED).replace(
+            cs.CARRIAGE_RETURN, cs.LINE_FEED
+        )
 
     except Exception as e:
         logger.error(ls.SEMANTIC_SOURCE_FAILED.format(id=node_id, error=e))
@@ -237,7 +247,9 @@ def create_get_function_source_tool(
         )
 
         if source_code is None:
-            return cs.MSG_SEMANTIC_SOURCE_UNAVAILABLE.format(id=node_id)
+            # A ToolFailure, so the MCP server reports it with `isError:
+            # true`; an agent reads the same text (issue #3677).
+            return te.ToolFailure(cs.MSG_SEMANTIC_SOURCE_UNAVAILABLE.format(id=node_id))
 
         if read_record is not None:
             # Feed the egress taint gate (issue #1128).
