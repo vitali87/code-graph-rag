@@ -59,6 +59,7 @@ class RecordedGraph:
             cs.KEY_PATH: n.get(cs.KEY_PATH),
             cs.KEY_START_LINE: n.get(cs.KEY_START_LINE),
             cs.KEY_END_LINE: n.get(cs.KEY_END_LINE),
+            cs.KEY_START_COL: n.get(cs.KEY_START_COL),
             cs.KEY_DOCSTRING: n.get(cs.KEY_DOCSTRING),
             cs.KEY_NAME_START_LINE: n.get(cs.KEY_NAME_START_LINE),
             cs.KEY_NAME_START_COL: n.get(cs.KEY_NAME_START_COL),
@@ -81,6 +82,79 @@ class RecordedGraph:
             return []
         if query == cq.CYPHER_GRAPH_DEFINITION:
             return [self._node_row(qn)] if qn in self.nodes else []
+        if query == cq.CYPHER_RENAME_OVERRIDE_FACTS:
+            if qn not in self.nodes:
+                return []
+            node = self.nodes[qn]
+            owners = {
+                src
+                for src, rel, dst, _props in self.edges
+                if rel == "DEFINES_METHOD" and dst == qn
+            }
+            prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
+            return [
+                {
+                    cs.KEY_LABEL: node[cs.KEY_LABEL],
+                    cs.KEY_QUALIFIED_NAME: qn,
+                    cs.KEY_NAME: node.get(cs.KEY_NAME),
+                    cs.KEY_PATH: node.get(cs.KEY_PATH),
+                    cs.KEY_OVERRIDES_EXTERNAL: node.get(cs.KEY_OVERRIDES_EXTERNAL),
+                    cs.KEY_DECORATORS: node.get(cs.KEY_DECORATORS),
+                    cs.KEY_MODIFIERS: node.get(cs.KEY_MODIFIERS),
+                    cs.RENAME_FACT_BASES: sum(
+                        rel == "OVERRIDES" and src == qn
+                        for src, rel, _dst, _props in self.edges
+                    ),
+                    cs.RENAME_FACT_OUTSIDE_SUPERTYPES: sorted(
+                        {
+                            dst
+                            for src, rel, dst, _props in self.edges
+                            if src in owners
+                            and rel in ("INHERITS", "IMPLEMENTS")
+                            and (
+                                not dst.startswith(prefix)
+                                or cs.NodeLabel.EXTERNAL_MODULE.value
+                                in self.labels.get(dst, set())
+                            )
+                        }
+                    ),
+                    cs.RENAME_FACT_OWNER: min(owners) if owners else None,
+                }
+            ]
+        if query == cq.CYPHER_RENAME_SUPERTYPES:
+            prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
+            wanted = {str(q) for q in p.get(cs.KEY_QNS) or []}
+            return [
+                {
+                    cs.KEY_QUALIFIED_NAME: src,
+                    cs.RENAME_FACT_SUPERTYPE: dst,
+                    cs.KEY_LABELS: sorted(self.labels.get(dst, set())),
+                }
+                for src, dst in sorted(
+                    {
+                        (src, dst)
+                        for src, rel, dst, _props in self.edges
+                        if src in wanted
+                        and src.startswith(prefix)
+                        and rel in ("INHERITS", "IMPLEMENTS")
+                    }
+                )
+            ]
+        if query == cq.CYPHER_RENAME_SUBTYPES:
+            prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
+            wanted = {str(q) for q in p.get(cs.KEY_QNS) or []}
+            return [
+                {cs.KEY_QUALIFIED_NAME: src}
+                for src in sorted(
+                    {
+                        src
+                        for src, rel, dst, _props in self.edges
+                        if dst in wanted
+                        and src.startswith(prefix)
+                        and rel in ("INHERITS", "IMPLEMENTS")
+                    }
+                )
+            ]
         if query == cq.CYPHER_GRAPH_RESOLVE_NAME:
             # The rename's cross-check asks for the symbol's namesakes, whose
             # sites are theirs and not unplanned occurrences (issue #2564).
@@ -436,8 +510,10 @@ def test_heuristic_site_refuses_and_changes_nothing(
     _write(temp_repo, "pkg/__init__.py", "")
     _write(temp_repo, "pkg/util.py", "def lonely():\n    return 1\n")
     _write(
-        temp_repo, "pkg/app.py", "def run():\n    return lonely()\n"
-    )  # not imported: name-only match
+        temp_repo,
+        "pkg/app.py",
+        "from .util import *\n\n\ndef run():\n    return lonely()\n",
+    )  # a star import: name-only match
     graph = _index(temp_repo, mock_ingestor)
     before = (temp_repo / "pkg" / "app.py").read_bytes()
     with pytest.raises(RenameRefused) as excinfo:

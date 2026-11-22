@@ -18,6 +18,7 @@ import yaml
 
 from codebase_rag.config import settings
 from codebase_rag.mcp import server as mcp_server
+from codebase_rag.tests.conftest import patch_active_model
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -167,10 +168,10 @@ class TestMcpServerSmokeCheck:
     ) -> None:
         # The check selects offline model roles on the process-wide settings;
         # restoring them keeps later tests on their own configuration.
-        monkeypatch.setattr(
-            settings, "_active_orchestrator", settings._active_orchestrator
+        patch_active_model(
+            monkeypatch, "_active_orchestrator", settings._active_orchestrator
         )
-        monkeypatch.setattr(settings, "_active_cypher", settings._active_cypher)
+        patch_active_model(monkeypatch, "_active_cypher", settings._active_cypher)
         monkeypatch.setenv("TARGET_REPO_PATH", str(tmp_path))
 
     def test_the_check_runs_in_the_wheel_job(self, smoke_module: ModuleType) -> None:
@@ -218,8 +219,8 @@ class TestMcpServerSmokeCheck:
     ) -> None:
         # Negative test. The wheel job has no model endpoint; the default
         # local provider would probe Ollama while the server is built (#2518).
-        monkeypatch.setattr(settings, "_active_orchestrator", None)
-        monkeypatch.setattr(settings, "_active_cypher", None)
+        patch_active_model(monkeypatch, "_active_orchestrator", None)
+        patch_active_model(monkeypatch, "_active_cypher", None)
         monkeypatch.setattr(settings, "OLLAMA_BASE_URL", "http://127.0.0.1:9")
 
         smoke_module.check_mcp_server_lists_tools()

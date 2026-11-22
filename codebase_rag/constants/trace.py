@@ -52,6 +52,9 @@ TRACE_DEFAULT_OUTPUT = "cgr-trace.jsonl"
 
 # Python runtime qualname markers.
 TRACE_QUALNAME_LOCALS = "<locals>"
+# Python compiles every identifier NFKC-normalized (PEP 3131): `def 𝐊()` runs
+# with the co_qualname `K`.
+TRACE_IDENTIFIER_NORMAL_FORM = "NFKC"
 TRACE_QUALNAME_MODULE = "<module>"
 TRACE_SYNTHETIC_PREFIX = "<"
 
@@ -74,6 +77,13 @@ TRACE_DOTNET_NESTED_MARKER = "+"
 
 # Xdebug computerized-trace markers (trace_format=1, file format 4).
 TRACE_ERR_BAD_PPROF = "{path} is not a pprof CPU profile."
+# A run shorter than one sampling period writes a well-formed profile with no
+# samples; calling it malformed sent users after a format problem (#2887).
+TRACE_ERR_PPROF_NO_SAMPLES = (
+    "{path} is a valid pprof profile but has no samples: the workload ended "
+    "before the profiler's first sample, one sampling period in (10 ms at Go's "
+    "default 100 Hz). Profile a longer run, or raise the sampling rate."
+)
 # A gzipped pprof is inflated in bounded chunks: a few MB of compressed zeros
 # would otherwise expand to gigabytes in memory (#2263). The cap matches the
 # `cgr trace pull` download cap, which counts compressed bytes only.
@@ -197,6 +207,16 @@ TRACE_CONFIRMED_PROPS = (
 )
 
 
+class TraceAgent(StrEnum):
+    """The tracers that run inside the traced program, by `cgr trace agent`
+    name (issue #2684)."""
+
+    C = "c"
+    LUA = "lua"
+    DART = "dart"
+    JVM = "jvm"
+
+
 class TraceUnresolvedReason(StrEnum):
     """Why a traced frame could not be mapped to a graph node."""
 
@@ -205,6 +225,9 @@ class TraceUnresolvedReason(StrEnum):
     UNKNOWN_PATH = "unknown_path"
     NO_MATCH = "no_match"
     AMBIGUOUS = "ambiguous"
+    # A call into a lambda body, anonymous function or closure that resolves to
+    # the node running it (issue #2709).
+    INTRA_NODE = "intra_node"
 
 
 # Said instead of handing back an empty result that reads as "the graph does

@@ -27,6 +27,13 @@ class JsExport(NamedTuple):
     local: bool
 
 
+class JsNamespaceExport(JsExport):
+    """`export * as ns from "./x"`: the whole `x` module, whose qn may also
+    spell another module's export, so the walk stops there (PR #3282)."""
+
+    __slots__ = ()
+
+
 def follow_js_reexports(
     qn: str,
     import_mapping: Mapping[str, Mapping[str, str]],
@@ -41,8 +48,6 @@ def follow_js_reexports(
     sources exporting it, a cycle, or `<module>.default` for a default export
     known by no name.
     """
-    if qn in function_registry:
-        return qn
     return _ReexportWalk(
         import_mapping, exports, module_paths, function_registry
     ).follow(qn)[0]
@@ -66,10 +71,11 @@ def js_ts_module_qn(module_qn: str, module_paths: Mapping[str, Path]) -> str | N
 
 class _Step(NamedTuple):
     """A qn the walk reached: a module's export, or (`local`) one of its own
-    bindings."""
+    bindings, or (`module`) a whole module a namespace export names."""
 
     qn: str
     local: bool
+    module: bool = False
 
 
 class _ReexportWalk:
@@ -109,11 +115,15 @@ class _ReexportWalk:
     def follow(self, qn: str) -> tuple[str, bool]:
         # `qn` names a module's export, then possibly one of its own bindings
         # (`local`). Also says whether a cycle cut the walk short: a cut walk
-        # depends on the path that reached it, so it is never settled.
+        # depends on the path that reached it, so it is never settled. A
+        # registered export the module publishes for another binding does
+        # not end it.
         step = _Step(qn, local=False)
         entered: list[_Step] = []
         cut = False
-        while step.qn not in self._registry:
+        while step.qn not in self._registry or (
+            not step.local and self._exported_as_another(step.qn)
+        ):
             if step in self._settled:
                 step = _Step(self._settled[step], local=False)
                 break
@@ -127,10 +137,33 @@ class _ReexportWalk:
             if following is None:
                 break
             step = following
+            if step.module:
+                # A namespace (`export * as math from "./ops"`) has reached
+                # its module. Walked on, `src.lib.ops` read as the `ops`
+                # export of `src/lib/index.ts`, which may name another
+                # module (bot review on PR #3282). Only a namespace stops
+                # the walk: a named re-export landing on a qn that also
+                # spells a file goes on.
+                break
         self._path.difference_update(entered)
         if not cut:
             self._settled.update(dict.fromkeys(entered, step.qn))
         return step.qn, cut
+
+    def _exported_as_another(self, qn: str) -> bool:
+        """Whether the module publishes `qn`'s name for another binding.
+
+        `export { beta as renamed }` or `module.exports = { renamed: beta }`
+        beside a local `renamed`: an importer of `renamed` gets `beta`, so
+        the registered local of that name must not end the walk (bot review
+        on PR #2994).
+        """
+        module_qn, separator, name = qn.rpartition(cs.SEPARATOR_DOT)
+        barrel = js_ts_module_qn(module_qn, self._modules) if separator else None
+        if barrel is None:
+            return False
+        export = self._exports.get(barrel, {}).get(name)
+        return export is not None and export.target != qn
 
     def _next(self, step: _Step) -> tuple[_Step | None, bool]:
         if step.local:
@@ -139,16 +172,37 @@ class _ReexportWalk:
 
     def _export(self, qn: str) -> tuple[_Step | None, bool]:
         module_qn, separator, name = qn.rpartition(cs.SEPARATOR_DOT)
-        barrel = js_ts_module_qn(module_qn, self._modules) if separator else None
-        if barrel is None:
+        if not separator:
             return None, False
+        barrel = js_ts_module_qn(module_qn, self._modules)
+        if barrel is None:
+            # `math.add` where `math` is a namespace a barrel re-exports
+            # (`export * as math from "./math"`): the member is looked up in
+            # the module the namespace names (issue #3249).
+            namespace, cut = self.follow(module_qn)
+            if (
+                namespace == module_qn
+                or js_ts_module_qn(namespace, self._modules) is None
+            ):
+                return None, cut
+            return _Step(f"{namespace}{cs.SEPARATOR_DOT}{name}", local=False), cut
         if (export := self._exports.get(barrel, {}).get(name)) is not None:
-            return _Step(export.target, export.local), False
+            return (
+                _Step(
+                    export.target,
+                    export.local,
+                    module=isinstance(export, JsNamespaceExport),
+                ),
+                False,
+            )
         # `export *` passes on every name a source exports except `default`.
         if name == cs.TS_EXPORT_DEFAULT:
             return None, False
         star, cut = self._star_source(barrel, name)
-        return (_Step(star, local=False) if star is not None else None), cut
+        if star is None:
+            return None, cut
+        # A namespace another module exports, passed on by `export *`.
+        return _Step(star, local=False, module=star in self._modules), cut
 
     def _binding(self, qn: str) -> _Step | None:
         # A binding the module exports but does not define is an import of
@@ -162,16 +216,22 @@ class _ReexportWalk:
         # through further barrels. Two that reach different definitions make
         # the name ambiguous, and TypeScript exports neither, so nothing is
         # guessed; one reached along two paths is one binding. A declaration
-        # its module does not export is never passed on.
+        # its module does not export is never passed on. A namespace a source
+        # exports (`export * as math`) reaches a module, which is passed on
+        # too; a name no export moved stays put even where it spells one.
         reached: set[str] = set()
         cut = False
         for key, source in self._imports.get(barrel, {}).items():
             if not key.startswith(cs.IMPORTED_NAME_WILDCARD):
                 continue
-            target, branch_cut = self.follow(f"{source}{cs.SEPARATOR_DOT}{name}")
+            exported = f"{source}{cs.SEPARATOR_DOT}{name}"
+            target, branch_cut = self.follow(exported)
             cut = cut or branch_cut
-            if target in self._registry and not self._registry.is_module_private(
-                target
+            if (
+                target in self._registry
+                and not self._registry.is_module_private(target)
+            ) or (
+                target != exported and js_ts_module_qn(target, self._modules) == target
             ):
                 reached.add(target)
         return (reached.pop() if len(reached) == 1 else None), cut

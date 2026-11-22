@@ -15,6 +15,7 @@ class CLICommandName(StrEnum):
     DEAD_CODE = "dead-code"
     DUPLICATES = "duplicates"
     DELETE_PROJECT = "delete-project"
+    PRUNE = "prune"
     DAEMON = "daemon"
     WORKSPACE = "workspace"
     TRACE = "trace"
@@ -23,6 +24,7 @@ class CLICommandName(StrEnum):
     CHECK = "check"
     RENAME = "rename"
     CHANGE_SIGNATURE = "change-signature"
+    MOVE = "move"
     CONTEXT = "context"
     PORT = "port"
     STOP = "stop"
@@ -143,9 +145,21 @@ CMD_GRAPH_TESTS_REACHING = (
 )
 EPILOG_GRAPH = (
     "Run 'cgr help graph COMMAND' for command-specific help.\n\n"
+    "A command that takes a qualified name also takes anything 'resolve' "
+    "does (a bare name, a dotted suffix, path:line) that names exactly one "
+    "definition.\n\n"
     "Exit status: 0 with the JSON answer, where [] means the name is in the "
     "graph and nothing matches it; 3 when the project is not indexed; 4 when "
-    "a qualified name is not in the graph."
+    "a name is not in the graph; 5 when it names several definitions."
+)
+EPILOG_GRAPH_COLUMNS = (
+    "Columns: col and end_col are 0-based UTF-8 byte offsets into the line, as "
+    "the graph stores them. col_char and end_col_char are the same positions "
+    "counted in characters (Unicode code points), read from the file under "
+    "--repo-path when the project was indexed from it; they are left out when "
+    "the file cannot be read there, when it is a Java source of a Lombok build "
+    "(which may have been parsed from its delombok expansion), or when the "
+    "offset does not fall on a character of that line."
 )
 HELP_GRAPH_PROJECT = "Project name in the graph (default: derived from --repo-path)."
 HELP_GRAPH_REPO_PATH = (
@@ -198,9 +212,14 @@ HELP_RENAME_ALLOW_HEURISTIC = (
     "Rewrite through heuristic, overload and trace-only sites, and through "
     "occurrences of the old name the graph has no site for, as well."
 )
+HELP_RENAME_ALLOW_EXTERNAL_OVERRIDE = (
+    "Rename a method that overrides a base outside the project, carries an "
+    "unmatched @Override/override, or is a Python protocol method."
+)
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
 CMD_CHANGE_SIGNATURE = (
-    "Change a Python definition's parameter list and rewrite every call site "
+    "Change a Python or JavaScript definition's parameter list and rewrite "
+    "every call site "
     "the graph knows; sites the mapping cannot complete are listed, not touched; "
     "refuses on a graph a stopped sync left partial."
 )
@@ -225,6 +244,22 @@ HELP_CHANGE_SIGNATURE_ALLOW_HEURISTIC = (
     "a trace as well, instead of listing them as unmapped."
 )
 HELP_CHANGE_SIGNATURE_DRY_RUN = "Print the plan and diff without writing anything."
+CMD_MOVE = (
+    "Move a module-level definition to another module: importers rewritten, "
+    "needed imports carried, refused when it would create an import cycle."
+)
+EXAMPLES_MOVE = (
+    "Examples:\n  cgr move myproj.pkg.util.helper pkg.core --dry-run\n"
+    "  cgr move myproj.pkg.util.helper pkg/core.py --keep-alias"
+)
+HELP_MOVE_QN = "Qualified name of the module-level definition to move."
+HELP_MOVE_DRY_RUN = (
+    "Print the plan (files, importers, copied imports) without writing anything."
+)
+HELP_MOVE_TARGET = "Destination module: dotted name (pkg.core) or repo-relative path."
+HELP_MOVE_KEEP_ALIAS = (
+    "Leave a re-export at the old location so the old import path still works."
+)
 CMD_CONTEXT = (
     "Print a graph-ranked context slice for a symbol, location or task within "
     "a token budget: source, caller lines, callee signatures, types, tests, docs."
@@ -448,6 +483,15 @@ EXAMPLES_TRACE_PULL = (
     "      --header Authorization=Bearer $TOKEN\n\n"
     "  cgr trace ingest cgr-trace.jsonl --repo-path ./my-repo"
 )
+CMD_TRACE_AGENT = (
+    "Print where the installed tracer for a language is: the C/C++ shim, the "
+    "Lua module, or the Dart collector or JVM agent source directory."
+)
+EXAMPLES_TRACE_AGENT = (
+    "EXAMPLE\n\n"
+    '  cc -pthread -finstrument-functions -g -O0 main.c "$(cgr trace agent c)" -o app\n\n'
+    '  LUA_PATH="$(dirname "$(cgr trace agent lua)")/?.lua;;" lua -l cgr_trace main.lua'
+)
 ERR_TRACE_CONVERT_BAD_FORMAT = "Unknown --format '{format}'; supported: ebpf."
 ERR_TRACE_CONVERT_BAD_PATH_MAP = (
     "Invalid --path-map '{value}'; expected BUILD_PREFIX=REPO_PREFIX."
@@ -648,7 +692,8 @@ HELP_SCAN_REPO_PATH = (
     "(default: the current directory)."
 )
 HELP_DEADCODE_ENTRY_POINT = (
-    "Mark symbols ending with this qualified-name suffix as entry points. Repeatable."
+    "Mark symbols whose qualified name ends with these whole dotted segments "
+    "(main, cli.run) as entry points. Repeatable."
 )
 HELP_DEADCODE_DECORATOR_ROOT = (
     "Mark symbols with this decorator as entry points. Extends the built-in set."
@@ -675,7 +720,8 @@ HELP_DEADCODE_ENDPOINT_ROOTS = (
     "(RESOLVES_TO into it, or a direct READS_FROM/WRITES_TO for RPC and "
     "dispatch resources), so an endpoint nobody calls is reported. A handler "
     "registered by a call (Go HandleFunc, Express app.get) stays live "
-    "through that call."
+    "through that call. Endpoints are recorded only by the io capture group: "
+    "index the project with --capture io first, or the command refuses."
 )
 HELP_DEADCODE_MIN_RESOLUTION = (
     "Ignore call edges below this confidence when deciding liveness: "
@@ -724,6 +770,10 @@ HELP_DELETE_PROJECT_REPO_PATH = (
     "Repository whose project to delete when --project is not given. Its "
     "local hash cache is removed too."
 )
+HELP_PRUNE_DRY_RUN = "List the projects that would be pruned without deleting anything."
+HELP_PRUNE_YES = "Prune without asking for confirmation."
+CMD_PRUNE = "Prune projects whose repository root no longer exists"
+EXAMPLES_PRUNE = "EXAMPLE\n\n  cgr prune --dry-run\n\n  cgr prune --yes"
 HELP_COMMAND = "Command path to document, such as 'start' or 'daemon logs'."
 
 CMD_VERIFY_INDEX = "Verify a protobuf index against its provenance manifest"
@@ -741,6 +791,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.DEAD_CODE: CMD_DEAD_CODE,
     CLICommandName.DUPLICATES: CMD_DUPLICATES,
     CLICommandName.DELETE_PROJECT: CMD_DELETE_PROJECT,
+    CLICommandName.PRUNE: CMD_PRUNE,
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DAEMON: CMD_DAEMON,
     CLICommandName.TRACE: CMD_TRACE,
@@ -749,6 +800,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.CHECK: CMD_CHECK,
     CLICommandName.RENAME: CMD_RENAME,
     CLICommandName.CHANGE_SIGNATURE: CMD_CHANGE_SIGNATURE,
+    CLICommandName.MOVE: CMD_MOVE,
     CLICommandName.CONTEXT: CMD_CONTEXT,
     CLICommandName.PORT: CMD_PORT,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,

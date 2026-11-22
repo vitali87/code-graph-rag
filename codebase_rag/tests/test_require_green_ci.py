@@ -26,11 +26,12 @@ GATE_SCRIPT = "scripts/require_green_ci.py"
 RELEASE_TAG_REF = (
     "${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}"
 )
-# The actions that put something where users install it from.
+# The actions and commands that put something where users install it from.
 SHIPPING_ACTIONS = (
     "pypa/gh-action-pypi-publish",
     "docker/build-push-action",
     "softprops/action-gh-release",
+    "mcp-publisher publish",
 )
 
 # The files of the real v0.3.11 bump, as GitHub's commit API returns them.

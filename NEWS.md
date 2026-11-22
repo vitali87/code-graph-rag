@@ -11,8 +11,44 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
-- **MiniMax Models Added**: Current MiniMax text models have been included.
+- **Improved Code Analysis**: Refined how query captures are read, how calls are judged, and how dead code is identified and handled.
+- **Surface Definition**: Introduced a mechanism to record and enforce the public surface of code, with CI failures for deviations.
 <!-- latest-release-end -->
+- **Improved I/O Handling**: Enhanced how the toolchain interacts with input and output streams, including inline reads, standard stream writes, and environment variable management.
+- **Credential Management**: Introduced a dedicated credential word list for each hardcoded secret within a pack, improving security.
+- **Enhanced Code Analysis**: Improved the accuracy of code analysis by considering binding contexts, structural tiers, and the order of query captures.
+- **Refined Error Reporting**: Improved the clarity and detail of error messages, particularly for dead code, duplicates, and missing dependencies.
+- **Surface and Renaming Improvements**: Enhanced the recording and management of public surfaces and improved the handling of renaming operations.
+- **Security Fix**: Addressed a potential issue with parameter defaults.
+- **Stack Handling**: Improved stack management for Qdrant and Memgraph.
+- **Copilot Feedback**: Improved handling of review expectations and editing feedback from Copilot.
+- **Minor Fixes**: Resolved a parameter default mutation and improved stack handling for Qdrant and Memgraph.
+- **Infrastructure Improvements**: Updated several actions and tools used in the CI/CD pipeline.
+- **Cleanup**: Ensured proper EXPOSES cleanup in incremental runs.
+- **Import Resolution**: Enhanced resolution of imports, particularly for CommonJS renamed properties and path-qualified functions.
+- **Incremental Builds**: Ensured unchanged classes retain their field types across incremental syncs.
+- **Python Property Access**: Scoped Python property reads to their respective receivers.
+- **Cross-Language Imports**: Rejected cross-language internal import targets to improve clarity.
+- **Constructor Initialisation**: Correctly handled attribute field initializers in TS/JS, Java and C# constructors.
+- **Type Handling**: Improved handling of type context managers, walrus operators, and match binding targets in both Python and TypeScript.
+- **Rename Refinement**: Prevented Go renames from unexporting names used by other packages.
+- **Profile Naming**: Corrected the naming of pprof profiles to avoid "malformed" errors when no samples are present.
+- **Output Budget**: Increased the Anthropic output budget to improve the default thinking experience.
+- **Module Resolution**: Resolved issues with module resolution in various scenarios, including ES module default imports and bare name bindings.
+- **Dead Code Elimination**: Removed dead code roots associated with IPython rich-display methods.
+- **Incremental Refresh**: Improved incremental refresh to ensure callers are updated when dispatch targets change.
+- **Continuous Integration Improvements**: Enhanced release cadence tracking and ensured accurate green status for deferred releases.
+- **Code Quality & Clarity**: Resolved several code style and correctness issues including foreach loop variable typing and Python method receiver handling.
+- **Build Process Refinement**: Reduced the default install package count and improved makefile functionality for host/port watching.
+- **Feature Control**: Prevented the use of `--no-endpoint-roots` when endpoint data is absent.
+- **Rust Upgrade**: Updated Rust to version 1.99.1-slim-trixie.
+- **Signature Functionality**: Added support for reading and writing JavaScript headers for change signatures, including the ability to change the signature of JavaScript functions or methods.
+- **macOS Compatibility**: The build now leaves macOS-14 support.
+- **Quiet Mode Enhancement**: The `--quiet` flag for the CLI now suppresses the scanning line for dead code and duplicates, providing a cleaner output.
+- **Context Budget Fix**: The system now correctly handles cases where a target doesn't fit within the allocated budget, preventing unexpected behaviour.
+- **Code Quality**: Changes have been made to report decorator and modifier changes that affect method calls and to ensure submodule grammars are loaded correctly.
+- **CGR Prune Feature**: A new `cgr prune` functionality has been added to remove projects where the root no longer exists.
+- **MiniMax Models Added**: Current MiniMax text models have been included.
 - **CLI and MCP Enhancements**: The `change_signature` operation is now accessible via the CLI and MCP, with improved handling for partial graphs and classification as a destructive writer.
 - **Fuzzing Improvements**: The Graph-RS project now includes additional fuzz targets for more comprehensive testing.
 - **Model Updates**: Current MiniMax text models have been added.

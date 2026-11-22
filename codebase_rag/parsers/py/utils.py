@@ -1,14 +1,68 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
-from ...constants import SEPARATOR_DOT
+from tree_sitter import QueryCursor
+
+from ... import constants as cs
+from ...constants import (
+    CHAR_COMMA,
+    SEPARATOR_DOT,
+    TS_FIELD_FUNCTION,
+    TS_FIELD_OBJECT,
+    TS_PY_ATTRIBUTE,
+    TS_PY_CALL,
+    TS_PY_IDENTIFIER,
+)
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
-from ..utils import follow_reexports
+from ..utils import (
+    follow_reexports,
+    get_cached_query,
+    safe_decode_text,
+    sorted_captures,
+)
 
 if TYPE_CHECKING:
+    from tree_sitter import Language, Node
+
     from ..import_processor import ImportProcessor
+
+
+def call_head(node: Node) -> Node | None:
+    """The identifier a call's callee starts with: `Thing` for `Thing()`,
+    `pkg` for `pkg.make()`, None for anything else. A scope that binds
+    that name itself calls its own binding, not the module's."""
+    if node.type != TS_PY_CALL:
+        return None
+    head = node.child_by_field_name(TS_FIELD_FUNCTION)
+    while head is not None and head.type == TS_PY_ATTRIBUTE:
+        head = head.child_by_field_name(TS_FIELD_OBJECT)
+    return head if head is not None and head.type == TS_PY_IDENTIFIER else None
+
+
+def split_top_level(inner: str, separator: str = CHAR_COMMA) -> list[str]:
+    """Split `A, dict[str, B], C` on the separators outside any brackets --
+    the commas between positions, or the `|` between union members, which a
+    plain `str.split` would also find INSIDE `tuple[Widget | None, Banner]`."""
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for char in inner:
+        if char in "[(":
+            depth += 1
+        elif char in "])":
+            depth = max(0, depth - 1)
+        if char == separator and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts
 
 
 def resolve_dotted_class(
@@ -36,18 +90,21 @@ def resolve_dotted_class(
     bases = (
         [own_class]
         if own_class_rebinds
-        else _dotted_head_bases(head, module_qn, import_mapping.get(module_qn, {}))
+        else dotted_head_bases(head, module_qn, import_mapping.get(module_qn, {}))
     )
     for base in bases:
         qn = follow_reexports(
-            f"{base}{SEPARATOR_DOT}{rest}", import_mapping, function_registry
+            f"{base}{SEPARATOR_DOT}{rest}",
+            import_mapping,
+            function_registry,
+            import_processor.python_star_rules,
         )
         if function_registry.get(qn) == NodeType.CLASS:
             return qn
     return None
 
 
-def _dotted_head_bases(
+def dotted_head_bases(
     head: str, module_qn: str, import_map: dict[str, str]
 ) -> Iterator[str]:
     """What the first name of a dotted path can refer to, most specific first.
@@ -215,3 +272,129 @@ def external_stdlib_base_method_names(parent_qns: list[str]) -> frozenset[str]:
         if isinstance(base, type):
             names.update(dir(base))
     return frozenset(names)
+
+
+def reduce_optional_annotation(text: str) -> str:
+    """`T` for an annotation that says "a T or None": `Optional[T]`,
+    `typing.Optional[T]`, `Union[T, None]`, `T | None`, any of them quoted as
+    a forward reference. Anything else (a container, a union of two classes)
+    keeps its text, so the type readers downstream see what they did before.
+    """
+    current = text.strip()
+    while (reduced := _reduce_optional_once(current)) != current:
+        current = reduced
+    return current
+
+
+def _reduce_optional_once(text: str) -> str:
+    text = text.strip().strip(cs.PY_ANNOTATION_QUOTES).strip()
+    members = split_top_level(text, cs.PY_UNION_SEPARATOR)
+    if len(members) == 1:
+        if optional := re.match(cs.PY_OPTIONAL_PATTERN, text):
+            return optional.group("inner")
+        union = re.match(cs.PY_UNION_PATTERN, text)
+        if union is None:
+            return text
+        members = split_top_level(union.group("inner"))
+    non_none = [member for member in members if member and member != cs.PY_NONE]
+    return non_none[0] if len(non_none) == 1 else text
+
+
+def annotation_text(type_node: Node) -> str | None:
+    """An annotation's text, read through any `Annotated[T, ...]` to `T`.
+
+    `Annotated[T, metadata]` is `T` to a type checker (PEP 593), so the name
+    it annotates has type `T`. A quoted `T` (FastAPI's
+    `Annotated["APIRouter", Doc(...)]`) is read unquoted (issue #2873).
+    """
+    subject = type_node
+    while (inner := _annotated_subject(subject)) is not None:
+        subject = inner
+    if subject is type_node:
+        return safe_decode_text(type_node)
+    subject = _type_expression(subject)
+    if subject.type == cs.TS_PY_STRING:
+        content = next(
+            (c for c in subject.named_children if c.type == cs.TS_PY_STRING_CONTENT),
+            None,
+        )
+        return safe_decode_text(content)
+    return safe_decode_text(subject)
+
+
+def _type_expression(node: Node) -> Node:
+    # A `type` node wraps the one expression it spells.
+    if node.type == cs.TS_PY_TYPE and node.named_child_count == 1:
+        return node.named_children[0]
+    return node
+
+
+def _annotated_subject(node: Node) -> Node | None:
+    # The first argument of an `Annotated[...]`, else None. A bare head parses
+    # as a `generic_type`, a dotted one (`typing.Annotated`) as a `subscript`.
+    node = _type_expression(node)
+    if node.type == cs.TS_PY_GENERIC_TYPE:
+        head = node.named_children[0] if node.named_children else None
+        parameters = next(
+            (c for c in node.named_children if c.type == cs.TS_PY_TYPE_PARAMETER),
+            None,
+        )
+        arguments = parameters.named_children if parameters is not None else []
+    elif node.type == cs.TS_PY_SUBSCRIPT:
+        head = node.child_by_field_name(cs.FIELD_VALUE)
+        arguments = node.children_by_field_name(cs.TS_PY_FIELD_SUBSCRIPT)
+    else:
+        return None
+    if not arguments or safe_decode_text(head) not in cs.PY_ANNOTATED_NAMES:
+        return None
+    return arguments[0]
+
+
+def unrun_annotation_spans(
+    caller_node: Node, language: Language
+) -> list[tuple[int, int]]:
+    """The byte spans of annotations inside `caller_node` that do not run
+    when the caller is called (issue #2873).
+
+    The caller's own parameter and return annotations run once, when its
+    `def` does, in the enclosing scope, which is where a call in them is
+    recorded. A local variable's annotation never runs at all. A nested
+    `def`'s signature and a class body's annotations do run inside the
+    caller, so they are not listed. Read from the caller's own fields and
+    one query, never by walking up from each call: `Node.parent` itself
+    walks down from the root, so a per-call ancestor walk is quadratic on a
+    deep file.
+    """
+    spans: list[tuple[int, int]] = []
+    if (parameters := caller_node.child_by_field_name(cs.FIELD_PARAMETERS)) is not None:
+        for parameter in parameters.named_children:
+            if parameter.type in (
+                cs.TS_PY_TYPED_PARAMETER,
+                cs.TS_PY_TYPED_DEFAULT_PARAMETER,
+            ) and (annotation := parameter.child_by_field_name(cs.TS_FIELD_TYPE)):
+                spans.append((annotation.start_byte, annotation.end_byte))
+    if (returns := caller_node.child_by_field_name(cs.FIELD_RETURN_TYPE)) is not None:
+        spans.append((returns.start_byte, returns.end_byte))
+    if (body := caller_node.child_by_field_name(cs.FIELD_BODY)) is not None:
+        cursor = QueryCursor(
+            get_cached_query(language, cs.PY_ANNOTATED_ASSIGNMENT_QUERY)
+        )
+        captures = sorted_captures(cursor, body)
+        for annotation in captures.get(cs.CAPTURE_PY_ANNOTATION, []):
+            if (
+                annotation.parent is not None
+                and _nearest_scope_type(annotation.parent)
+                == cs.TS_PY_FUNCTION_DEFINITION
+            ):
+                spans.append((annotation.start_byte, annotation.end_byte))
+    return spans
+
+
+def _nearest_scope_type(node: Node) -> str | None:
+    scope = node.parent
+    while scope is not None and scope.type not in (
+        cs.TS_PY_FUNCTION_DEFINITION,
+        cs.TS_PY_CLASS_DEFINITION,
+    ):
+        scope = scope.parent
+    return scope.type if scope is not None else None
