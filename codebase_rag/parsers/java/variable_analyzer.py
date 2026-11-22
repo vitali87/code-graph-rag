@@ -1219,24 +1219,37 @@ class JavaVariableAnalyzerMixin:
         seen: set[str] = set()
         while class_qn and class_qn not in seen:
             seen.add(class_qn)
-            if located := self._locate_class(class_qn):
-                root_node, class_path, target_module_qn = located
-                if inherited_only and self._java_field_not_inherited(
-                    root_node,
-                    class_path,
-                    field_name,
-                    self._declared_java_package(target_module_qn)
-                    == self._declared_java_package(module_qn),
-                ):
-                    return None
-                if field_type := self._find_field_type_in_nested_class(
-                    root_node, class_path, field_name, target_module_qn
-                ):
-                    return field_type
+            found, field_type = self._java_field_declared_by(
+                class_qn, field_name, module_qn, inherited_only
+            )
+            if found:
+                return field_type
             parents = self.class_inheritance.get(class_qn)
             class_qn = parents[0] if parents else None
 
         return None
+
+    def _java_field_declared_by(
+        self, class_qn: str, field_name: str, module_qn: str, inherited_only: bool
+    ) -> tuple[bool, str | None]:
+        # Whether `class_qn` itself decides `field_name`, and the type it
+        # gives: a declaration the subclass does not inherit decides too, as
+        # no type, since it hides any farther one.
+        if (located := self._locate_class(class_qn)) is None:
+            return False, None
+        root_node, class_path, target_module_qn = located
+        if inherited_only and self._java_field_not_inherited(
+            root_node,
+            class_path,
+            field_name,
+            self._declared_java_package(target_module_qn)
+            == self._declared_java_package(module_qn),
+        ):
+            return True, None
+        field_type = self._find_field_type_in_nested_class(
+            root_node, class_path, field_name, target_module_qn
+        )
+        return bool(field_type), field_type
 
     def _locate_class(self, class_qn: str) -> tuple[ASTNode, list[str], str] | None:
         # The file module is the longest registered prefix of the class qn; the rest

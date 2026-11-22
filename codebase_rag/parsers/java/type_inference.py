@@ -350,6 +350,14 @@ class JavaTypeInferenceEngine(
             ):
                 self._process_java_variable_declaration(decl, types, module_qn)
         self._analyze_java_class_fields(enclosing, types, module_qn)
+        self._bind_clause_names_around(enclosing, site, types, module_qn)
+        return types
+
+    def _bind_clause_names_around(
+        self, enclosing: ASTNode, site: ASTNode, types: dict[str, str], module_qn: str
+    ) -> None:
+        # The names a statement or clause of `enclosing` around `site` binds,
+        # each nearer than the fields and the method's own names.
         for loop in _nodes_of_type(enclosing, cs.TS_ENHANCED_FOR_STATEMENT):
             if _encloses(loop, site):
                 self._process_enhanced_for_statement(loop, types, module_qn)
@@ -368,7 +376,6 @@ class JavaTypeInferenceEngine(
         for lam in _nodes_of_type(enclosing, cs.TS_JAVA_LAMBDA_EXPRESSION):
             if _encloses(lam, site):
                 self._bind_lambda_parameters(lam, types, module_qn)
-        return types
 
     def _bind_lambda_parameters(
         self, lam: ASTNode, types: dict[str, str], module_qn: str
