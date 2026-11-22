@@ -68,7 +68,9 @@ def _ingest(tmp_path: Path, language: str, records, graph: _FakeGraph):
 
 
 def _pairs(graph: _FakeGraph) -> set[tuple[str, str]]:
-    return {(frm[2], to[2]) for frm, _rel, to, _props in graph.edges}
+    # A runtime-only pair is a relationship row; a confirmed one is written
+    # onto its static edges through the confirm write (issue #2879).
+    return set(graph.observed())
 
 
 def test_the_issue_repro_writes_only_the_real_call(tmp_path: Path) -> None:

@@ -1,0 +1,36 @@
+$ cgr -q graph implementors scopt.shared.src.main.scala.scopt.OEffect.OEffect --project scopt
+status: 0
+--- stdout
+[
+  {
+    "label": "Class",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffect.DisplayToErr",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffect.DisplayToOut",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffect.ReportError",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffect.ReportWarning",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffect.Terminate",
+    "relationship": "INHERITS"
+  }
+]
+--- stderr

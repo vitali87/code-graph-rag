@@ -1,0 +1,12 @@
+$ cgr -q graph overrides scopt.shared.src.main.scala.scopt.OEffect.OEffectSetup.terminate --project scopt
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.DefaultOEffectSetup.terminate",
+    "relationship": "OVERRIDES"
+  }
+]
+--- stderr

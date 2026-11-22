@@ -1,0 +1,9 @@
+> tools/call list_projects {}
+isError: false
+--- text
+{
+  "projects": [
+    "example-jl"
+  ],
+  "count": 1
+}

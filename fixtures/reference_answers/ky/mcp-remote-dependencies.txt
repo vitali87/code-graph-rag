@@ -1,0 +1,6 @@
+> tools/call remote_dependencies {}
+isError: true
+--- text
+{
+  "error": "remote_dependencies has nothing to read for project 'ky': its last sync did not capture the `io` group (READS_FROM, WRITES_TO), so an empty list here would not mean there are none. Re-index with `cgr start --repo-path <root> --update-graph --capture io`, or run update_repository on a server started with CGR_CAPTURE=io."
+}

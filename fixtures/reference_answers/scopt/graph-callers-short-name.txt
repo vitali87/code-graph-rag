@@ -1,0 +1,96 @@
+$ cgr -q graph callers usageColumn1 --project scopt
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 1,
+    "callee_path": "shared/src/main/scala/scopt/ORunner.scala",
+    "col": 12,
+    "depth": 1,
+    "end_col": 27,
+    "end_line": 146,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 146,
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.renderTwoColumnsUsage",
+    "resolution": "exact",
+    "through": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageColumn1"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "shared/src/main/scala/scopt/ORunner.scala",
+    "col": 45,
+    "depth": 1,
+    "end_col": 64,
+    "end_line": 122,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 122,
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageTwoColumn",
+    "resolution": "exact",
+    "through": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageColumn1"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "shared/src/main/scala/scopt/ORunner.scala",
+    "col": 57,
+    "depth": 1,
+    "end_col": 76,
+    "end_line": 123,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 123,
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageTwoColumn",
+    "resolution": "exact",
+    "through": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageColumn1"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "shared/src/main/scala/scopt/ORunner.scala",
+    "col": 57,
+    "depth": 1,
+    "end_col": 76,
+    "end_line": 124,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 124,
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageTwoColumn",
+    "resolution": "exact",
+    "through": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageColumn1"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "shared/src/main/scala/scopt/ORunner.scala",
+    "col": 57,
+    "depth": 1,
+    "end_col": 76,
+    "end_line": 125,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 125,
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageTwoColumn",
+    "resolution": "exact",
+    "through": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageColumn1"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "shared/src/main/scala/scopt/ORunner.scala",
+    "col": 57,
+    "depth": 1,
+    "end_col": 76,
+    "end_line": 126,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 126,
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageTwoColumn",
+    "resolution": "exact",
+    "through": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageColumn1"
+  }
+]
+--- stderr

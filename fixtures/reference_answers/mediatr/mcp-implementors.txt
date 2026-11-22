@@ -1,0 +1,107 @@
+> tools/call implementors {"qualified_name": "mediatr.src.MediatR.INotificationHandler.INotificationHandler"}
+isError: false
+--- text
+[
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.samples.MediatR.Examples.GenericHandler.GenericHandler",
+    "path": "samples/MediatR.Examples/GenericHandler.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PingedHandler.ConstrainedPingedHandler",
+    "path": "samples/MediatR.Examples/PingedHandler.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PingedHandler.PingedAlsoHandler",
+    "path": "samples/MediatR.Examples/PingedHandler.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PingedHandler.PingedHandler",
+    "path": "samples/MediatR.Examples/PingedHandler.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PingedHandler.PongedHandler",
+    "path": "samples/MediatR.Examples/PingedHandler.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.AsyncPingedHandler.AsyncPingedHandler",
+    "path": "samples/MediatR.Examples.PublishStrategies/AsyncPingedHandler.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.SyncPingedHandler.SyncPingedHandler",
+    "path": "samples/MediatR.Examples.PublishStrategies/SyncPingedHandler.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.src.MediatR.INotificationHandler.NotificationHandler",
+    "path": "src/MediatR/INotificationHandler.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.test.MediatR.Benchmarks.Pinged.PingedHandler",
+    "path": "test/MediatR.Benchmarks/Pinged.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.Handlers.MediatR.Extensions.Microsoft.DependencyInjection.Tests.GenericHandler",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/Handlers.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.Handlers.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PingedAlsoHandler",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/Handlers.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.Handlers.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PingedAlsoOpenHandler",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/Handlers.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.Handlers.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PingedHandler",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/Handlers.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.test.MediatR.Tests.NotificationPublisherTests.NotificationPublisherTests.FirstHandler",
+    "path": "test/MediatR.Tests/NotificationPublisherTests.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.test.MediatR.Tests.NotificationPublisherTests.NotificationPublisherTests.SecondHandler",
+    "path": "test/MediatR.Tests/NotificationPublisherTests.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.PongHandler",
+    "path": "test/MediatR.Tests/PublishTests.cs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.PungHandler",
+    "path": "test/MediatR.Tests/PublishTests.cs",
+    "relationship": "IMPLEMENTS"
+  }
+]

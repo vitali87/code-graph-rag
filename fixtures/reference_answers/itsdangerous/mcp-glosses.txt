@@ -1,0 +1,14 @@
+> tools/call glosses {"target": "itsdangerous.src.itsdangerous.encoding.want_bytes"}
+isError: false
+--- text
+{
+  "target": {
+    "label": "Function",
+    "qualified_name": "itsdangerous.src.itsdangerous.encoding.want_bytes",
+    "path": "src/itsdangerous/encoding.py",
+    "start_line": 11,
+    "end_line": 17
+  },
+  "annotating": [],
+  "mentioning": []
+}

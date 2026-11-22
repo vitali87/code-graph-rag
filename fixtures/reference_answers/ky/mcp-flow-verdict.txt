@@ -1,0 +1,46 @@
+> tools/call flow_verdict {"sink_qualified_name": "ky.source.utils.merge.validateAndMerge", "source_qualified_name": "ky.source.index.createInstance"}
+isError: false
+--- text
+{
+  "verdict": "UNKNOWN",
+  "path": [],
+  "gaps": [
+    ".github/security.md",
+    "readme.md",
+    "source/core/Ky.ts",
+    "source/core/constants.ts",
+    "source/errors/HTTPError.ts",
+    "source/errors/TimeoutError.ts",
+    "source/index.ts",
+    "source/types/ResponsePromise.ts",
+    "source/types/common.ts",
+    "source/types/hooks.ts",
+    "source/types/ky.ts",
+    "source/types/options.ts",
+    "source/types/request.ts",
+    "source/types/response.ts",
+    "source/types/retry.ts",
+    "source/utils/delay.ts",
+    "source/utils/is.ts",
+    "source/utils/merge.ts",
+    "source/utils/normalize.ts",
+    "source/utils/options.ts",
+    "source/utils/timeout.ts",
+    "source/utils/types.ts",
+    "test/browser.ts",
+    "test/fetch.ts",
+    "test/headers.ts",
+    "test/helpers/create-http-test-server.ts",
+    "test/helpers/index.ts",
+    "test/helpers/parse-body.ts",
+    "test/helpers/with-page.ts",
+    "test/helpers/with-performance.ts",
+    "test/hooks.ts",
+    "test/http-error.ts",
+    "test/main.ts",
+    "test/methods.ts",
+    "test/prefix-url.ts",
+    "test/retry.ts"
+  ],
+  "remote_hops": []
+}

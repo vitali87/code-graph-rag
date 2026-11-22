@@ -221,6 +221,20 @@ class JsTsModuleSystemMixin:
         except Exception as e:
             logger.debug(ls.JS_COMMONJS_VAR_DECLARATOR_FAILED, error=e)
 
+    def _bound_by_parse_imports(
+        self, local_name: str, module_qn: str, source_module: str
+    ) -> bool:
+        # `parse_imports` ran first and bound the name to the module at its
+        # statement, so the pair's IMPORTS edge is queued with that site. A
+        # second row without one would keep a site-less edge of its own
+        # (issue #2879), which `importers` reads as an import of the whole
+        # module.
+        bound = self.import_processor.import_mapping.get(module_qn, {}).get(local_name)
+        return isinstance(bound, str) and (
+            bound == source_module
+            or bound.startswith(f"{source_module}{cs.SEPARATOR_DOT}")
+        )
+
     def _process_commonjs_import(
         self,
         imported_name: str,
@@ -235,6 +249,10 @@ class JsTsModuleSystemMixin:
             resolved_source_module = self.import_processor._resolve_js_module_path(
                 module_name, module_qn, require=True
             )
+            if self._bound_by_parse_imports(
+                imported_name, module_qn, resolved_source_module
+            ):
+                return
 
             import_key = f"{module_qn}->{resolved_source_module}"
             if import_key not in self._processed_imports:

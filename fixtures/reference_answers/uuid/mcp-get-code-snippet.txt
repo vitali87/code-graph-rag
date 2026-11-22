@@ -1,0 +1,13 @@
+> tools/call get_code_snippet {"qualified_name": "uuid.uuid.UUID.String"}
+isError: false
+--- text
+{
+  "qualified_name": "uuid.uuid.UUID.String",
+  "source_code": "func (uuid UUID) String() string {\n\tvar buf [36]byte\n\tencodeHex(buf[:], uuid)\n\treturn string(buf[:])\n}\n",
+  "file_path": "uuid.go",
+  "line_start": 244,
+  "line_end": 248,
+  "docstring": "String returns the string form of uuid, xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\n, or \"\" if uuid is invalid.",
+  "found": true,
+  "error_message": null
+}

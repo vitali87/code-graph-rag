@@ -1,0 +1,14 @@
+$ cgr -q dead-code --project itsdangerous --no-public-roots --format json
+status: 0
+--- stdout
+[
+  {
+    "label": "Function",
+    "name": "__getattr__",
+    "qualified_name": "itsdangerous.src.itsdangerous.__getattr__",
+    "path": "src/itsdangerous/__init__.py",
+    "start_line": 24,
+    "end_line": 38
+  }
+]
+--- stderr

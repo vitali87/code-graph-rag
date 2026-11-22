@@ -1,0 +1,18 @@
+$ cgr -q graph definition leveldb.include.leveldb.status.leveldb.Status.ToString --project leveldb --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "decorators": [],
+  "docstring": null,
+  "end_line": 75,
+  "found": true,
+  "label": "Method",
+  "name": "ToString",
+  "name_line": 38,
+  "path": "util/status.cc",
+  "qualified_name": "leveldb.include.leveldb.status.leveldb.Status.ToString",
+  "source": "std::string Status::ToString() const {\n  if (state_ == nullptr) {\n    return \"OK\";\n  } else {\n    char tmp[30];\n    const char* type;\n    switch (code()) {\n      case kOk:\n        type = \"OK\";\n        break;\n      case kNotFound:\n        type = \"NotFound: \";\n        break;\n      case kCorruption:\n        type = \"Corruption: \";\n        break;\n      case kNotSupported:\n        type = \"Not implemented: \";\n        break;\n      case kInvalidArgument:\n        type = \"Invalid argument: \";\n        break;\n      case kIOError:\n        type = \"IO error: \";\n        break;\n      default:\n        std::snprintf(tmp, sizeof(tmp),\n                      \"Unknown code(%d): \", static_cast<int>(code()));\n        type = tmp;\n        break;\n    }\n    std::string result(type);\n    uint32_t length;\n    std::memcpy(&length, state_, sizeof(length));\n    result.append(state_ + 5, length);\n    return result;\n  }\n}",
+  "start_col": 0,
+  "start_line": 38
+}
+--- stderr

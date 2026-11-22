@@ -1,0 +1,55 @@
+$ cgr -q graph resolve initialize --project cjson
+status: 0
+--- stdout
+[
+  {
+    "end_line": 29,
+    "label": "Function",
+    "path": "tests/unity/auto/colour_prompt.rb",
+    "qualified_name": "cjson.tests.unity.auto.colour_prompt_rb.initialize",
+    "start_line": 23
+  },
+  {
+    "end_line": 94,
+    "label": "Function",
+    "path": "tests/unity/auto/generate_module.rb",
+    "qualified_name": "cjson.tests.unity.auto.generate_module_rb.initialize",
+    "start_line": 47
+  },
+  {
+    "end_line": 19,
+    "label": "Function",
+    "path": "tests/unity/auto/generate_test_runner.rb",
+    "qualified_name": "cjson.tests.unity.auto.generate_test_runner_rb.initialize",
+    "start_line": 10
+  },
+  {
+    "end_line": 26,
+    "label": "Function",
+    "path": "tests/unity/auto/parse_output.rb",
+    "qualified_name": "cjson.tests.unity.auto.parse_output_rb.initialize",
+    "start_line": 20
+  },
+  {
+    "end_line": 75,
+    "label": "Function",
+    "path": "tests/unity/auto/stylize_as_junit.rb",
+    "qualified_name": "cjson.tests.unity.auto.stylize_as_junit_rb.initialize",
+    "start_line": 72
+  },
+  {
+    "end_line": 21,
+    "label": "Function",
+    "path": "tests/unity/auto/test_file_filter.rb",
+    "qualified_name": "cjson.tests.unity.auto.test_file_filter_rb.initialize",
+    "start_line": 11
+  },
+  {
+    "end_line": 25,
+    "label": "Function",
+    "path": "tests/unity/auto/unity_test_summary.rb",
+    "qualified_name": "cjson.tests.unity.auto.unity_test_summary_rb.initialize",
+    "start_line": 20
+  }
+]
+--- stderr

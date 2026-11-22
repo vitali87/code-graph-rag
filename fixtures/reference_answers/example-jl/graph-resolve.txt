@@ -1,0 +1,13 @@
+$ cgr -q graph resolve domath --project example-jl
+status: 0
+--- stdout
+[
+  {
+    "end_line": 16,
+    "label": "Function",
+    "path": "src/Example.jl",
+    "qualified_name": "example-jl.src.Example.Example.domath",
+    "start_line": 16
+  }
+]
+--- stderr

@@ -1,0 +1,66 @@
+$ cgr -q graph callers diffToArray --project php-diff
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 3,
+    "callee_path": "src/Differ.php",
+    "col": 23,
+    "depth": 1,
+    "end_col": 52,
+    "end_line": 51,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 51,
+    "path": "src/Differ.php",
+    "qualified_name": "php-diff.src.Differ.Differ.diff",
+    "resolution": "exact",
+    "through": "php-diff.src.Differ.Differ.diffToArray"
+  },
+  {
+    "arg_count": 3,
+    "callee_path": "src/Differ.php",
+    "col": 52,
+    "depth": 1,
+    "end_col": 130,
+    "end_line": 344,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 344,
+    "path": "tests/DifferTest.php",
+    "qualified_name": "php-diff.tests.DifferTest.DifferTest.testArrayRepresentationOfDiffCanBeRenderedUsingMemoryEfficientLcsImplementation",
+    "resolution": "heuristic",
+    "through": "php-diff.src.Differ.Differ.diffToArray"
+  },
+  {
+    "arg_count": 3,
+    "callee_path": "src/Differ.php",
+    "col": 52,
+    "depth": 1,
+    "end_col": 128,
+    "end_line": 332,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 332,
+    "path": "tests/DifferTest.php",
+    "qualified_name": "php-diff.tests.DifferTest.DifferTest.testArrayRepresentationOfDiffCanBeRenderedUsingTimeEfficientLcsImplementation",
+    "resolution": "heuristic",
+    "through": "php-diff.src.Differ.Differ.diffToArray"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "src/Differ.php",
+    "col": 75,
+    "depth": 1,
+    "end_col": 98,
+    "end_line": 143,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 143,
+    "path": "tests/Output/AbstractChunkOutputBuilderTest.php",
+    "qualified_name": "php-diff.tests.Output.AbstractChunkOutputBuilderTest.AbstractChunkOutputBuilderTest.testGetCommonChunks",
+    "resolution": "exact",
+    "through": "php-diff.src.Differ.Differ.diffToArray"
+  }
+]
+--- stderr

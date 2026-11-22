@@ -1,0 +1,5 @@
+$ cgr -q graph callers parse --project body-parser
+status: 5
+--- stdout
+--- stderr
+'parse' names 4 definitions: body-parser.lib.types.json.json.parse, body-parser.lib.types.raw.raw.parse, body-parser.lib.types.text.text.parse, body-parser.lib.types.urlencoded.urlencoded.parse. Pass one of their qualified names.

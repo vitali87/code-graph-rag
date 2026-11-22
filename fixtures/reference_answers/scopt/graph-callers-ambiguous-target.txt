@@ -1,0 +1,5 @@
+$ cgr -q graph callers reportError --project scopt
+status: 5
+--- stdout
+--- stderr
+'reportError' names 4 definitions: scopt.shared.src.main.scala.scopt.OEffect.DefaultOEffectSetup.reportError, scopt.shared.src.main.scala.scopt.OEffect.OEffectSetup.reportError, scopt.shared.src.main.scala.scopt.ORunner.ORunner.reportError, scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.reportError. Pass one of their qualified names.

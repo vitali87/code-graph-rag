@@ -1,0 +1,41 @@
+> tools/call importers {"module_qualified_name": "scopt.shared.src.main.scala.scopt.OParser"}
+isError: false
+--- text
+[
+  {
+    "module": "scopt.jvm.src.test.scala.scopt.MonadicParserSpecJVM",
+    "path": "jvm/src/test/scala/scopt/MonadicParserSpecJVM.scala",
+    "line": 5,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 5,
+    "end_col": 20,
+    "end_col_char": 20,
+    "alias": "OParser",
+    "imported_name": "OParser"
+  },
+  {
+    "module": "scopt.shared.src.test.scala.scopttest.Issue264",
+    "path": "shared/src/test/scala/scopttest/Issue264.scala",
+    "line": 11,
+    "col": 4,
+    "col_char": 4,
+    "end_line": 11,
+    "end_col": 24,
+    "end_col_char": 24,
+    "alias": "OParser",
+    "imported_name": "OParser"
+  },
+  {
+    "module": "scopt.shared.src.test.scala.scopttest.MonadicParserSpec",
+    "path": "shared/src/test/scala/scopttest/MonadicParserSpec.scala",
+    "line": 4,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 4,
+    "end_col": 20,
+    "end_col_char": 20,
+    "alias": "OParser",
+    "imported_name": "OParser"
+  }
+]

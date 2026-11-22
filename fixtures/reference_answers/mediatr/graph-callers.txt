@@ -1,0 +1,96 @@
+$ cgr -q graph callers 'mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.FindInterfacesThatClose(Type, Type)' --project mediatr
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 1,
+    "callee_path": "src/MediatR/Registration/ServiceRegistrar.cs",
+    "col": 62,
+    "depth": 1,
+    "end_col": 115,
+    "end_line": 167,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 167,
+    "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+    "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddBehavior(Type, ServiceLifetime)",
+    "resolution": "exact",
+    "through": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.FindInterfacesThatClose(Type, Type)"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/MediatR/Registration/ServiceRegistrar.cs",
+    "col": 62,
+    "depth": 1,
+    "end_col": 119,
+    "end_line": 437,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 437,
+    "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+    "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPostProcessor(Type, ServiceLifetime)",
+    "resolution": "exact",
+    "through": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.FindInterfacesThatClose(Type, Type)"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/MediatR/Registration/ServiceRegistrar.cs",
+    "col": 62,
+    "depth": 1,
+    "end_col": 117,
+    "end_line": 352,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 352,
+    "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+    "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPreProcessor(Type, ServiceLifetime)",
+    "resolution": "exact",
+    "through": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.FindInterfacesThatClose(Type, Type)"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/MediatR/Registration/ServiceRegistrar.cs",
+    "col": 62,
+    "depth": 1,
+    "end_col": 121,
+    "end_line": 266,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 266,
+    "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+    "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddStreamBehavior(Type, ServiceLifetime)",
+    "resolution": "exact",
+    "through": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.FindInterfacesThatClose(Type, Type)"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/MediatR/Registration/ServiceRegistrar.cs",
+    "col": 36,
+    "depth": 1,
+    "end_col": 79,
+    "end_line": 79,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 79,
+    "path": "src/MediatR/Registration/ServiceRegistrar.cs",
+    "qualified_name": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.AddMediatRClasses(IServiceCollection, MediatRServiceConfiguration, CancellationToken)",
+    "resolution": "heuristic",
+    "through": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.FindInterfacesThatClose(Type, Type)"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/MediatR/Registration/ServiceRegistrar.cs",
+    "col": 44,
+    "depth": 1,
+    "end_col": 89,
+    "end_line": 107,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 107,
+    "path": "src/MediatR/Registration/ServiceRegistrar.cs",
+    "qualified_name": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.ConnectImplementationsToTypesClosing(Type, IServiceCollection, IEnumerable, bool, MediatRServiceConfiguration, CancellationToken)",
+    "resolution": "heuristic",
+    "through": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.FindInterfacesThatClose(Type, Type)"
+  }
+]
+--- stderr

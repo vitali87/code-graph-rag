@@ -1,0 +1,5 @@
+> tools/call find_duplicate_code {}
+isError: false
+--- text
+No duplicated functions or methods found in project 'example-jl' (threshold 0.8, min size 15).
+2 symbol(s) had no structural fingerprint and were not analyzed.

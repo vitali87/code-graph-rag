@@ -1,0 +1,177 @@
+> tools/call context {"budget_tokens": 1500, "target": "anyhow.src.error.Error.downcast"}
+isError: false
+--- text
+{
+  "target": "anyhow.src.error.Error.downcast",
+  "resolved": "anyhow.src.error.Error.downcast",
+  "budget_tokens": 1500,
+  "used_tokens": 1484,
+  "pieces": [
+    {
+      "qualified_name": "anyhow.src.error.Error.downcast",
+      "file": "src/error.rs",
+      "span": [
+        501,
+        533
+      ],
+      "why_included": "target",
+      "source": "pub fn downcast<E>(mut self) -> Result<E, Self>\n    where\n        E: Display + Debug + Send + Sync + 'static,\n    {\n        let target = TypeId::of::<E>();\n        let inner = self.inner.by_mut();\n        unsafe {\n            // Use vtable to find NonNull<()> which points to a value of type E\n            // somewhere inside the data structure.\n            #[cfg(not(anyhow_no_ptr_addr_of))]\n            let addr = match (vtable(inner.ptr).object_downcast)(inner.by_ref(), target) {\n                Some(addr) => addr.by_mut().extend(),\n                None => return Err(self),\n            };\n            #[cfg(anyhow_no_ptr_addr_of)]\n            let addr = match (vtable(inner.ptr).object_downcast_mut)(inner, target) {\n                Some(addr) => addr.extend(),\n                None => return Err(self),\n            };\n\n            // Prepare to read E out of the data structure. We'll drop the rest\n            // of the data structure separately so that E is not dropped.\n            let outer = ManuallyDrop::new(self);\n\n            // Read E from where the vtable found it.\n            let error = addr.cast::<E>().read();\n\n            // Drop rest of the data structure outside of E.\n            (vtable(outer.inner.ptr).object_drop_rest)(outer.inner, target);\n\n            Ok(error)\n        }\n    }",
+      "tokens": 393
+    },
+    {
+      "qualified_name": "anyhow.src.error.vtable",
+      "file": "src/error.rs",
+      "span": [
+        942,
+        942
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "unsafe fn vtable(p: NonNull<ErrorImpl>) -> &'static ErrorVTable {",
+      "tokens": 86
+    },
+    {
+      "qualified_name": "anyhow.src.lib.Ok",
+      "file": "src/lib.rs",
+      "span": [
+        648,
+        648
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "#[allow(non_snake_case)]",
+      "tokens": 73
+    },
+    {
+      "qualified_name": "anyhow.src.lib.Result",
+      "file": "src/lib.rs",
+      "span": [
+        468,
+        468
+      ],
+      "why_included": "type it returns",
+      "source": "pub type Result<T, E = Error> = core::result::Result<T, E>;",
+      "tokens": 83
+    },
+    {
+      "qualified_name": "anyhow.src.ptr.Mut.by_ref",
+      "file": "src/ptr.rs",
+      "span": [
+        166,
+        166
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "#[cfg(not(anyhow_no_ptr_addr_of))]",
+      "tokens": 80
+    },
+    {
+      "qualified_name": "anyhow.src.ptr.Mut.cast",
+      "file": "src/ptr.rs",
+      "span": [
+        159,
+        159
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "pub fn cast<U: CastTo>(self) -> Mut<'a, U::Target> {",
+      "tokens": 89
+    },
+    {
+      "qualified_name": "anyhow.src.ptr.Own.by_mut",
+      "file": "src/ptr.rs",
+      "span": [
+        55,
+        55
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "pub fn by_mut(&mut self) -> Mut<T> {",
+      "tokens": 83
+    },
+    {
+      "qualified_name": "anyhow.tests.test_context.test_downcast_high",
+      "file": "tests/test_context.rs",
+      "span": [
+        124,
+        124
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "let err = err.downcast::<HighLevel>().unwrap();",
+      "tokens": 84
+    },
+    {
+      "qualified_name": "anyhow.tests.test_context.test_downcast_low",
+      "file": "tests/test_context.rs",
+      "span": [
+        148,
+        148
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "let err = err.downcast::<LowLevel>().unwrap();",
+      "tokens": 84
+    },
+    {
+      "qualified_name": "anyhow.tests.test_context.test_downcast_mid",
+      "file": "tests/test_context.rs",
+      "span": [
+        136,
+        136
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "let err = err.downcast::<MidLevel>().unwrap();",
+      "tokens": 84
+    },
+    {
+      "qualified_name": "anyhow.tests.test_context.test_unsuccessful_downcast",
+      "file": "tests/test_context.rs",
+      "span": [
+        160,
+        160
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "let err = err.downcast::<String>().unwrap_err();",
+      "tokens": 85
+    },
+    {
+      "qualified_name": "anyhow.tests.test_downcast.test_downcast_mut",
+      "file": "tests/test_downcast.rs",
+      "span": [
+        76,
+        76
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "assert_eq!(bailed.downcast::<String>().unwrap(), \"clobber\");",
+      "tokens": 91
+    },
+    {
+      "qualified_name": "anyhow.tests.test_downcast.test_drop",
+      "file": "tests/test_downcast.rs",
+      "span": [
+        83,
+        83
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "drop(error.downcast::<DetectDrop>().unwrap());",
+      "tokens": 82
+    },
+    {
+      "qualified_name": "anyhow.tests.test_downcast.test_unsuccessful_downcast",
+      "file": "tests/test_downcast.rs",
+      "span": [
+        122,
+        122
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "assert!(error.downcast::<&str>().is_err());",
+      "tokens": 87
+    }
+  ],
+  "omitted": [
+    "anyhow.tests.test_ensure.E (type it returns)",
+    "anyhow.tests.test_context.test_downcast_high (test reaching it at depth 1 through anyhow.src.error.Error.downcast)",
+    "anyhow.tests.test_context.test_downcast_low (test reaching it at depth 1 through anyhow.src.error.Error.downcast)",
+    "anyhow.tests.test_context.test_downcast_mid (test reaching it at depth 1 through anyhow.src.error.Error.downcast)",
+    "anyhow.tests.test_context.test_unsuccessful_downcast (test reaching it at depth 1 through anyhow.src.error.Error.downcast)",
+    "anyhow.tests.test_downcast.test_downcast_mut (test reaching it at depth 1 through anyhow.src.error.Error.downcast)",
+    "anyhow.tests.test_downcast.test_drop (test reaching it at depth 1 through anyhow.src.error.Error.downcast)",
+    "anyhow.tests.test_downcast.test_unsuccessful_downcast (test reaching it at depth 1 through anyhow.src.error.Error.downcast)"
+  ],
+  "omitted_count": 8,
+  "truncated": false
+}

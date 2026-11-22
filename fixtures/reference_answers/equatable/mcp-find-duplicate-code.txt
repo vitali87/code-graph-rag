@@ -1,0 +1,33 @@
+> tools/call find_duplicate_code {}
+isError: false
+--- text
+Found 7 duplicate group(s) in project 'equatable' (largest first; each function is in one group; 'exact' groups are certain copies, 'similar' groups link near-copies and carry a score range):
+1. exact (100% similar):
+   - equatable.test.custom_list.CustomList.add  test/custom_list.dart:172-175
+   - equatable.test.custom_list.CustomList.addAll  test/custom_list.dart:178-181
+   - equatable.test.custom_list.CustomList.sort  test/custom_list.dart:184-187
+   - equatable.test.custom_list.CustomList.shuffle  test/custom_list.dart:190-193
+   - equatable.test.custom_list.CustomList.removeWhere  test/custom_list.dart:238-241
+   - equatable.test.custom_list.CustomList.retainWhere  test/custom_list.dart:244-247
+2. exact (100% similar):
+   - equatable.test.custom_list.CustomList.insert  test/custom_list.dart:202-205
+   - equatable.test.custom_list.CustomList.insertAll  test/custom_list.dart:208-211
+   - equatable.test.custom_list.CustomList.setAll  test/custom_list.dart:214-217
+   - equatable.test.custom_list.CustomList.removeRange  test/custom_list.dart:256-259
+3. exact (100% similar):
+   - equatable.test.custom_list.CustomList.length@148  test/custom_list.dart:148-151
+   - equatable.test.custom_list.CustomList.first@160  test/custom_list.dart:160-163
+   - equatable.test.custom_list.CustomList.last@166  test/custom_list.dart:166-169
+4. exact (100% similar):
+   - equatable.test.equatable_mixin_test.Credentials.fromJson  test/equatable_mixin_test.dart:72-77
+   - equatable.test.equatable_test.Credentials.fromJson  test/equatable_test.dart:76-81
+5. exact (100% similar):
+   - equatable.lib.src.equatable.Equatable.toString  lib/src/equatable.dart:56-61
+   - equatable.lib.src.equatable_mixin.EquatableMixin.toString  lib/src/equatable_mixin.dart:32-37
+6. exact (100% similar):
+   - equatable.test.custom_list.CustomList.fillRange  test/custom_list.dart:262-265
+   - equatable.test.custom_list.CustomList.replaceRange  test/custom_list.dart:268-271
+7. exact (100% similar):
+   - equatable.test.custom_list.CustomList.remove  test/custom_list.dart:220-223
+   - equatable.test.custom_list.CustomList.removeAt  test/custom_list.dart:226-229
+31 symbol(s) had no structural fingerprint and were not analyzed.

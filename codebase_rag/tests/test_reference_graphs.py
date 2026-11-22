@@ -26,9 +26,9 @@ from scripts import reference_graphs
 from scripts.reference_graphs import (
     REFERENCE_DIR,
     ExportRecord,
-    _command,
     _index_env,
     canonical,
+    cgr_command,
     difference,
     environment_path,
     graph_path,
@@ -560,11 +560,11 @@ def test_reading_the_setting_names_leaves_the_environment_alone(
 
 
 def test_a_relative_cgr_program_is_made_absolute() -> None:
-    program, *rest = _command("./target/release/cgr --flag")
+    program, *rest = cgr_command("./target/release/cgr --flag")
 
     assert Path(program).is_absolute()
     assert rest == ["--flag"]
-    assert _command("cgr") == ["cgr"]
+    assert cgr_command("cgr") == ["cgr"]
 
 
 def test_no_recorded_graph_names_a_directory_outside_its_checkout() -> None:

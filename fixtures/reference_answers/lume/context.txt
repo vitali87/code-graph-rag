@@ -1,0 +1,169 @@
+$ cgr -q context lume.lume.lume.count --budget 1500 --project lume --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "target": "lume.lume.lume.count",
+  "resolved": "lume.lume.lume.count",
+  "budget_tokens": 1500,
+  "used_tokens": 1448,
+  "pieces": [
+    {
+      "qualified_name": "lume.lume.lume.count",
+      "file": "lume.lua",
+      "span": [
+        380,
+        395
+      ],
+      "why_included": "target",
+      "source": "function lume.count(t, fn)\n  local count = 0\n  local iter = getiter(t)\n  if fn then\n    fn = iteratee(fn)\n    for _, v in iter(t) do\n      if fn(v) then count = count + 1 end\n    end\n  else\n    if lume.isarray(t) then\n      return #t\n    end\n    for _ in iter(t) do count = count + 1 end\n  end\n  return count\nend",
+      "tokens": 174
+    },
+    {
+      "qualified_name": "lume.lume.getiter",
+      "file": "lume.lua",
+      "span": [
+        42,
+        42
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "local getiter = function(x)",
+      "tokens": 73
+    },
+    {
+      "qualified_name": "lume.lume.iteratee",
+      "file": "lume.lua",
+      "span": [
+        51,
+        51
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "local iteratee = function(x)",
+      "tokens": 73
+    },
+    {
+      "qualified_name": "lume.lume.iteratee@55",
+      "file": "lume.lua",
+      "span": [
+        55,
+        55
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "return function(z)",
+      "tokens": 72
+    },
+    {
+      "qualified_name": "lume.lume.iteratee@62",
+      "file": "lume.lua",
+      "span": [
+        62,
+        62
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "return function(z) return z[x] end",
+      "tokens": 78
+    },
+    {
+      "qualified_name": "lume.lume.lume.fn",
+      "file": "lume.lua",
+      "span": [
+        453,
+        453
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "function lume.fn(fn, ...)",
+      "tokens": 75
+    },
+    {
+      "qualified_name": "lume.lume.lume.isarray",
+      "file": "lume.lua",
+      "span": [
+        145,
+        145
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "function lume.isarray(x)",
+      "tokens": 75
+    },
+    {
+      "qualified_name": "lume.test.test.anonymous_334_22",
+      "file": "test/test.lua",
+      "span": [
+        337,
+        337
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "testeq( lume.count(t), 5 )",
+      "tokens": 83
+    },
+    {
+      "qualified_name": "lume.test.test.anonymous_334_22",
+      "file": "test/test.lua",
+      "span": [
+        338,
+        338
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "testeq( lume.count(t, function(x) return x % 2 == 0 end ), 3 )",
+      "tokens": 96
+    },
+    {
+      "qualified_name": "lume.test.test.anonymous_334_22",
+      "file": "test/test.lua",
+      "span": [
+        340,
+        340
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "testeq( lume.count(a), #a )",
+      "tokens": 83
+    },
+    {
+      "qualified_name": "lume.test.test.anonymous_334_22",
+      "file": "test/test.lua",
+      "span": [
+        342,
+        342
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "testeq( lume.count(t, { n = 20 }),  2 )",
+      "tokens": 90
+    },
+    {
+      "qualified_name": "lume.test.test.anonymous_334_22",
+      "file": "test/test.lua",
+      "span": [
+        343,
+        343
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "testeq( lume.count(t, { n = 30 }),  1 )",
+      "tokens": 90
+    },
+    {
+      "qualified_name": "lume.test.test.anonymous_334_22",
+      "file": "test/test.lua",
+      "span": [
+        344,
+        344
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "testeq( lume.count(t, { n = 50 }),  0 )",
+      "tokens": 90
+    },
+    {
+      "qualified_name": "lume.test.test.anonymous_334_22",
+      "file": "test/test.lua",
+      "span": [
+        335,
+        345
+      ],
+      "why_included": "test reaching it at depth 1 through lume.lume.lume.count",
+      "source": "tests[\"lume.count\"] = function()\n  local t = { a = 1, b = 2, c = 5, [13] = 22, z = 8 }\n  testeq( lume.count(t), 5 )\n  testeq( lume.count(t, function(x) return x % 2 == 0 end ), 3 )\n  local a = { 5, 6, 7, 8, 9 }\n  testeq( lume.count(a), #a )\n  local t = { { n = 20 }, { n = 30 }, { n = 40 }, { n = 20 } }\n  testeq( lume.count(t, { n = 20 }),  2 )\n  testeq( lume.count(t, { n = 30 }),  1 )\n  testeq( lume.count(t, { n = 50 }),  0 )\nend",
+      "tokens": 296
+    }
+  ],
+  "omitted": [],
+  "omitted_count": 0,
+  "truncated": false
+}
+--- stderr

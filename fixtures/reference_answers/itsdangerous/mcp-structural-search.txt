@@ -1,0 +1,23 @@
+> tools/call structural_search {"language": "python", "pattern": "want_bytes($X)"}
+isError: false
+--- text
+src/itsdangerous/encoding.py:24:13  want_bytes(string)
+src/itsdangerous/serializer.py:213:19  want_bytes(salt)
+src/itsdangerous/serializer.py:278:15  want_bytes(self.serializer.dumps(obj, **self.serializer_kwargs))
+src/itsdangerous/serializer.py:316:18  want_bytes(self.dump_payload(obj))
+src/itsdangerous/serializer.py:336:12  want_bytes(s)
+src/itsdangerous/signer.py:71:16  want_bytes(secret_key)
+src/itsdangerous/signer.py:73:12  want_bytes(s)
+src/itsdangerous/signer.py:144:26  want_bytes(sep)
+src/itsdangerous/signer.py:154:19  want_bytes(salt)
+src/itsdangerous/signer.py:198:25  want_bytes(secret_key)
+src/itsdangerous/signer.py:217:16  want_bytes(value)
+src/itsdangerous/signer.py:224:16  want_bytes(value)
+src/itsdangerous/signer.py:234:16  want_bytes(value)
+src/itsdangerous/signer.py:246:23  want_bytes(signed_value)
+src/itsdangerous/timed.py:47:16  want_bytes(value)
+src/itsdangerous/timed.py:49:14  want_bytes(self.sep)
+src/itsdangerous/timed.py:95:14  want_bytes(self.sep)
+src/itsdangerous/timed.py:199:12  want_bytes(s)
+tests/test_itsdangerous/test_encoding.py:13:10  want_bytes(value)
+tests/test_itsdangerous/test_encoding.py:22:18  want_bytes(value)

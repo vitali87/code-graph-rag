@@ -1,0 +1,6 @@
+> tools/call callers {"project": "no-such-project", "qualified_name": "base64_encode"}
+isError: true
+--- text
+{
+  "error": "Project 'no-such-project' is not in workspace 'reference'. Workspace projects: itsdangerous"
+}

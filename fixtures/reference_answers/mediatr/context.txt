@@ -1,0 +1,136 @@
+$ cgr -q context 'mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.FindInterfacesThatClose(Type, Type)' --budget 1500 --project mediatr --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "target": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.FindInterfacesThatClose(Type, Type)",
+  "resolved": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.FindInterfacesThatClose(Type, Type)",
+  "budget_tokens": 1500,
+  "used_tokens": 1485,
+  "pieces": [
+    {
+      "qualified_name": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.FindInterfacesThatClose(Type, Type)",
+      "file": "src/MediatR/Registration/ServiceRegistrar.cs",
+      "span": [
+        341,
+        344
+      ],
+      "why_included": "target",
+      "source": "internal static IEnumerable<Type> FindInterfacesThatClose(this Type pluggedType, Type templateType)\n    {\n        return FindInterfacesThatClosesCore(pluggedType, templateType).Distinct();\n    }",
+      "tokens": 128
+    },
+    {
+      "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddBehavior(Type, ServiceLifetime)",
+      "file": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+      "span": [
+        167,
+        167
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "var implementedGenericInterfaces = implementationType.FindInterfacesThatClose(typeof(IPipelineBehavior<,>)).ToList();",
+      "tokens": 127
+    },
+    {
+      "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPostProcessor(Type, ServiceLifetime)",
+      "file": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+      "span": [
+        437,
+        437
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "var implementedGenericInterfaces = implementationType.FindInterfacesThatClose(typeof(IRequestPostProcessor<,>)).ToList();",
+      "tokens": 130
+    },
+    {
+      "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPreProcessor(Type, ServiceLifetime)",
+      "file": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+      "span": [
+        352,
+        352
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "var implementedGenericInterfaces = implementationType.FindInterfacesThatClose(typeof(IRequestPreProcessor<>)).ToList();",
+      "tokens": 128
+    },
+    {
+      "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddStreamBehavior(Type, ServiceLifetime)",
+      "file": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+      "span": [
+        266,
+        266
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "var implementedGenericInterfaces = implementationType.FindInterfacesThatClose(typeof(IStreamPipelineBehavior<,>)).ToList();",
+      "tokens": 129
+    },
+    {
+      "qualified_name": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.AddMediatRClasses(IServiceCollection, MediatRServiceConfiguration, CancellationToken)",
+      "file": "src/MediatR/Registration/ServiceRegistrar.cs",
+      "span": [
+        79,
+        79
+      ],
+      "why_included": "direct caller: the call line",
+      "source": ".Where(type => type.FindInterfacesThatClose(multiOpenInterface).Any())",
+      "tokens": 112
+    },
+    {
+      "qualified_name": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.ConnectImplementationsToTypesClosing(Type, IServiceCollection, IEnumerable, bool, MediatRServiceConfiguration, CancellationToken)",
+      "file": "src/MediatR/Registration/ServiceRegistrar.cs",
+      "span": [
+        107,
+        107
+      ],
+      "why_included": "direct caller: the call line",
+      "source": ".Where(t => t.IsConcrete() && t.FindInterfacesThatClose(openRequestInterface).Any())",
+      "tokens": 124
+    },
+    {
+      "qualified_name": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.FindInterfacesThatClosesCore(Type, Type)",
+      "file": "src/MediatR/Registration/ServiceRegistrar.cs",
+      "span": [
+        346,
+        346
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "private static IEnumerable<Type> FindInterfacesThatClosesCore(Type pluggedType, Type templateType)",
+      "tokens": 109
+    },
+    {
+      "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_exceptions_from_behaviors",
+      "file": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+      "span": [
+        534,
+        553
+      ],
+      "why_included": "test reaching it at depth 3 through mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddBehavior(ServiceLifetime)@154",
+      "source": "[Fact]\n    public void Should_handle_exceptions_from_behaviors()\n    {\n        var output = new Logger();\n        IServiceCollection services = new ServiceCollection();\n        services.AddSingleton(output);\n        services.AddMediatR(cfg =>\n        {\n            cfg.RegisterServicesFromAssembly(typeof(Ping).Assembly);\n            cfg.AddBehavior<ThrowingBehavior>();\n        });\n        var provider = services.BuildServiceProvider();\n\n        var mediator = provider.GetRequiredService<IMediator>();\n\n        Should.Throw<Exception>(async () => await mediator.Send(new Ping {Message = \"Ping\"}));\n\n        output.Messages.ShouldContain(\"Ping Logged by Generic Type\");\n        output.Messages.ShouldContain(\"Logging generic exception\");\n    }",
+      "tokens": 303
+    },
+    {
+      "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.TypeResolutionTests",
+      "file": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs",
+      "span": [
+        17,
+        23
+      ],
+      "why_included": "test reaching it at depth 4 through mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration)",
+      "source": "public TypeResolutionTests()\n    {\n        IServiceCollection services = new ServiceCollection();\n        services.AddSingleton(new Logger());\n        services.AddMediatR(cfg => cfg.RegisterServicesFromAssemblyContaining(typeof(Ping)));\n        _provider = services.BuildServiceProvider();\n    }",
+      "tokens": 195
+    }
+  ],
+  "omitted": [
+    "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_constrained_generics (test reaching it at depth 3 through mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPostProcessor(ServiceLifetime)@426)",
+    "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_behavior_registration (test reaching it at depth 3 through mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddBehavior(ServiceLifetime)@154)",
+    "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_post_processor_registration (test reaching it at depth 3 through mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPostProcessor(ServiceLifetime)@426)",
+    "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_pre_processor_registration (test reaching it at depth 3 through mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPreProcessor(ServiceLifetime)@340)",
+    "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_stream_behavior_registration (test reaching it at depth 3 through mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddStreamBehavior(ServiceLifetime)@255)",
+    "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_register_correctly (test reaching it at depth 3 through mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddBehavior(ServiceLifetime)@154)",
+    "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_register_pre_and_post_processors (test reaching it at depth 3 through mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPostProcessor(ServiceLifetime)@426)",
+    "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_wrap_with_behavior (test reaching it at depth 3 through mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddBehavior(ServiceLifetime)@154)",
+    "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.StreamPipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.StreamPipelineTests.Should_register_and_wrap_with_behavior (test reaching it at depth 3 through mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddStreamBehavior(ServiceLifetime)@255)",
+    "mediatr.test.MediatR.Tests.GenericRequestHandlerTests.GenericRequestHandlerTests.ShouldNotRegisterGenericHandlersWhenOptingOut (test reaching it at depth 4 through mediatr.src.MediatR.MicrosoftExtensionsDI.ServiceCollectionExtensions.Microsoft.Extensions.DependencyInjection.ServiceCollectionExtensions.AddMediatR(IServiceCollection, MediatRServiceConfiguration))"
+  ],
+  "omitted_count": 28,
+  "truncated": false
+}
+--- stderr

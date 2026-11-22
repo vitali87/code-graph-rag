@@ -1,0 +1,66 @@
+$ cgr -q graph callers SanitizeOptions --project leveldb
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 4,
+    "callee_path": "db/db_impl.cc",
+    "col": 15,
+    "depth": 1,
+    "end_col": 69,
+    "end_line": 131,
+    "kwarg_names": [],
+    "label": "Module",
+    "line": 130,
+    "path": "db/db_impl.cc",
+    "qualified_name": "leveldb.db.db_impl",
+    "resolution": "heuristic",
+    "through": "leveldb.db.db_impl.leveldb.SanitizeOptions"
+  },
+  {
+    "arg_count": 4,
+    "callee_path": "db/db_impl.cc",
+    "col": 15,
+    "depth": 1,
+    "end_col": 69,
+    "end_line": 131,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 130,
+    "path": "db/db_impl.cc",
+    "qualified_name": "leveldb.db.db_impl.h.leveldb.DBImpl.DBImpl",
+    "resolution": "heuristic",
+    "through": "leveldb.db.db_impl.leveldb.SanitizeOptions"
+  },
+  {
+    "arg_count": 4,
+    "callee_path": "db/db_impl.cc",
+    "col": 17,
+    "depth": 1,
+    "end_col": 68,
+    "end_line": 52,
+    "kwarg_names": [],
+    "label": "Module",
+    "line": 52,
+    "path": "db/repair.cc",
+    "qualified_name": "leveldb.db.repair",
+    "resolution": "heuristic",
+    "through": "leveldb.db.db_impl.leveldb.SanitizeOptions"
+  },
+  {
+    "arg_count": 4,
+    "callee_path": "db/db_impl.cc",
+    "col": 17,
+    "depth": 1,
+    "end_col": 68,
+    "end_line": 52,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 52,
+    "path": "db/repair.cc",
+    "qualified_name": "leveldb.db.repair.leveldb.Repairer.Repairer",
+    "resolution": "heuristic",
+    "through": "leveldb.db.db_impl.leveldb.SanitizeOptions"
+  }
+]
+--- stderr

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
+from functools import lru_cache
 from typing import TYPE_CHECKING
+
+from tree_sitter import QueryCursor
 
 from ... import constants as cs
 from ...constants import (
@@ -15,12 +18,129 @@ from ...constants import (
     TS_PY_IDENTIFIER,
 )
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
-from ..utils import follow_reexports
+from ..utils import (
+    follow_reexports,
+    get_cached_query,
+    safe_decode_text,
+    sorted_captures,
+)
 
 if TYPE_CHECKING:
-    from tree_sitter import Node
+    from tree_sitter import Language, Node
 
     from ..import_processor import ImportProcessor
+
+_LITERAL_RECEIVER_START = re.compile(cs.PY_LITERAL_RECEIVER_RE)
+
+
+def python_literal_type(
+    node: Node, types: Mapping[str, str] = cs.PY_LITERAL_BUILTIN_TYPES
+) -> str | None:
+    """The builtin a literal node evaluates to, or None for any other node.
+
+    A string is `bytes` when its prefix says so (`b"x"`, `rb'x'`); a
+    concatenation takes its first part's. Parentheses and a sign on a number
+    keep its type (`(1)`, `-1`, `(-1)`; bot review on PR #2912).
+    """
+    if node.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
+        inner = node.named_children
+        return python_literal_type(inner[0], types) if len(inner) == 1 else None
+    if node.type == cs.TS_PY_UNARY_OPERATOR:
+        operand = node.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+        builtin = None if operand is None else python_literal_type(operand, types)
+        return builtin if builtin in (cs.PY_TYPE_INT, cs.PY_TYPE_FLOAT) else None
+    builtin = types.get(node.type)
+    if builtin != cs.PY_TYPE_STR:
+        return builtin
+    return _string_literal_type(node)
+
+
+def _string_literal_type(node: Node) -> str:
+    """`bytes` when the string's prefix (a concatenation's first part's) says
+    so, else `str`."""
+    first = (
+        node.named_children[0]
+        if node.type == cs.TS_PY_CONCATENATED_STRING and node.named_children
+        else node
+    )
+    start = first.children[0] if first.children else None
+    prefix = (
+        start.text.decode(cs.ENCODING_UTF8, errors="replace")
+        if start is not None and start.type == cs.TS_PY_STRING_START and start.text
+        else ""
+    )
+    return (
+        cs.PY_TYPE_BYTES
+        if cs.PY_BYTES_PREFIX_CHAR in prefix.lower()
+        else cs.PY_TYPE_STR
+    )
+
+
+def module_binds_name(
+    module_qn: str,
+    name: str,
+    import_processor: ImportProcessor,
+    function_registry: FunctionRegistryTrieProtocol,
+) -> bool:
+    """Whether a module binds `name` itself, by an import or a definition, so
+    the name there is that binding and not a builtin it shadows
+    (`from lib import Bag as dict`; Greptile, PR #2912)."""
+    return (
+        name in import_processor.import_mapping.get(module_qn, {})
+        or f"{module_qn}{SEPARATOR_DOT}{name}" in function_registry
+    )
+
+
+def unshadowed_literal_type(
+    node: Node,
+    module_qn: str,
+    import_processor: ImportProcessor,
+    function_registry: FunctionRegistryTrieProtocol,
+) -> str | None:
+    """The builtin a literal node evaluates to, unless the module binds that
+    builtin's name itself.
+
+    The type map holds a name, and a name the module binds is read as the
+    binding: under `from lib import Bag as dict`, typing `d = {}` as `dict`
+    made `d.get` an exact `Bag.get`. Such a literal types nothing, as before
+    literals were typed (CodeRabbit, PR #2912).
+    """
+    builtin = python_literal_type(node)
+    if builtin is None or module_binds_name(
+        module_qn, builtin, import_processor, function_registry
+    ):
+        return None
+    return builtin
+
+
+@lru_cache(maxsize=4096)
+def python_literal_text_type(text: str) -> str | None:
+    """The builtin a receiver written as a literal evaluates to.
+
+    A call reaches resolution as text (`"-".join`, `{}.get`), so the
+    receiver is parsed back; only text that can open a literal is.
+    """
+    if not _LITERAL_RECEIVER_START.match(text):
+        return None
+    # Local import: parser_loader pulls in the language grammars.
+    from ...parser_loader import load_parsers
+
+    parsers, _ = load_parsers()
+    parser = parsers.get(cs.SupportedLanguage.PYTHON)
+    if parser is None:
+        return None
+    root = parser.parse(text.encode(cs.ENCODING_UTF8)).root_node
+    if root.has_error or len(root.named_children) != 1:
+        return None
+    statement = root.named_children[0]
+    if (
+        statement.type != cs.TS_PY_EXPRESSION_STATEMENT
+        or len(statement.named_children) != 1
+    ):
+        return None
+    return python_literal_type(
+        statement.named_children[0], cs.PY_RECEIVER_LITERAL_TYPES
+    )
 
 
 def call_head(node: Node) -> Node | None:
@@ -291,3 +411,103 @@ def _reduce_optional_once(text: str) -> str:
         members = split_top_level(union.group("inner"))
     non_none = [member for member in members if member and member != cs.PY_NONE]
     return non_none[0] if len(non_none) == 1 else text
+
+
+def annotation_text(type_node: Node) -> str | None:
+    """An annotation's text, read through any `Annotated[T, ...]` to `T`.
+
+    `Annotated[T, metadata]` is `T` to a type checker (PEP 593), so the name
+    it annotates has type `T`. A quoted `T` (FastAPI's
+    `Annotated["APIRouter", Doc(...)]`) is read unquoted (issue #2873).
+    """
+    subject = type_node
+    while (inner := _annotated_subject(subject)) is not None:
+        subject = inner
+    if subject is type_node:
+        return safe_decode_text(type_node)
+    subject = _type_expression(subject)
+    if subject.type == cs.TS_PY_STRING:
+        content = next(
+            (c for c in subject.named_children if c.type == cs.TS_PY_STRING_CONTENT),
+            None,
+        )
+        return safe_decode_text(content)
+    return safe_decode_text(subject)
+
+
+def _type_expression(node: Node) -> Node:
+    # A `type` node wraps the one expression it spells.
+    if node.type == cs.TS_PY_TYPE and node.named_child_count == 1:
+        return node.named_children[0]
+    return node
+
+
+def _annotated_subject(node: Node) -> Node | None:
+    # The first argument of an `Annotated[...]`, else None. A bare head parses
+    # as a `generic_type`, a dotted one (`typing.Annotated`) as a `subscript`.
+    node = _type_expression(node)
+    if node.type == cs.TS_PY_GENERIC_TYPE:
+        head = node.named_children[0] if node.named_children else None
+        parameters = next(
+            (c for c in node.named_children if c.type == cs.TS_PY_TYPE_PARAMETER),
+            None,
+        )
+        arguments = parameters.named_children if parameters is not None else []
+    elif node.type == cs.TS_PY_SUBSCRIPT:
+        head = node.child_by_field_name(cs.FIELD_VALUE)
+        arguments = node.children_by_field_name(cs.TS_PY_FIELD_SUBSCRIPT)
+    else:
+        return None
+    if not arguments or safe_decode_text(head) not in cs.PY_ANNOTATED_NAMES:
+        return None
+    return arguments[0]
+
+
+def unrun_annotation_spans(
+    caller_node: Node, language: Language
+) -> list[tuple[int, int]]:
+    """The byte spans of annotations inside `caller_node` that do not run
+    when the caller is called (issue #2873).
+
+    The caller's own parameter and return annotations run once, when its
+    `def` does, in the enclosing scope, which is where a call in them is
+    recorded. A local variable's annotation never runs at all. A nested
+    `def`'s signature and a class body's annotations do run inside the
+    caller, so they are not listed. Read from the caller's own fields and
+    one query, never by walking up from each call: `Node.parent` itself
+    walks down from the root, so a per-call ancestor walk is quadratic on a
+    deep file.
+    """
+    spans: list[tuple[int, int]] = []
+    if (parameters := caller_node.child_by_field_name(cs.FIELD_PARAMETERS)) is not None:
+        for parameter in parameters.named_children:
+            if parameter.type in (
+                cs.TS_PY_TYPED_PARAMETER,
+                cs.TS_PY_TYPED_DEFAULT_PARAMETER,
+            ) and (annotation := parameter.child_by_field_name(cs.TS_FIELD_TYPE)):
+                spans.append((annotation.start_byte, annotation.end_byte))
+    if (returns := caller_node.child_by_field_name(cs.FIELD_RETURN_TYPE)) is not None:
+        spans.append((returns.start_byte, returns.end_byte))
+    if (body := caller_node.child_by_field_name(cs.FIELD_BODY)) is not None:
+        cursor = QueryCursor(
+            get_cached_query(language, cs.PY_ANNOTATED_ASSIGNMENT_QUERY)
+        )
+        captures = sorted_captures(cursor, body)
+        for annotation in captures.get(cs.CAPTURE_PY_ANNOTATION, []):
+            if (
+                annotation.parent is not None
+                and _nearest_scope_type(annotation.parent)
+                == cs.TS_PY_FUNCTION_DEFINITION
+            ):
+                spans.append((annotation.start_byte, annotation.end_byte))
+    return spans
+
+
+def _nearest_scope_type(node: Node) -> str | None:
+    scope = node.parent
+    while scope is not None and scope.type not in (
+        cs.TS_PY_FUNCTION_DEFINITION,
+        cs.TS_PY_CLASS_DEFINITION,
+    ):
+        scope = scope.parent
+    return scope.type if scope is not None else None

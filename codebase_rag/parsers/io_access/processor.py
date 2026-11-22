@@ -31,8 +31,6 @@ from .constants import (
     HTTP_WRITE_VERBS,
     KEY_KIND,
     PY_SCOPE_BOUNDARIES,
-    SQL_READ_KEYWORDS,
-    SQL_WRITE_KEYWORDS,
     WRITABLE_MEMBER_KINDS,
     IODirection,
     ResourceKind,
@@ -80,6 +78,7 @@ from .py_handles import (
     inline_python_handle,
     python_binding_from_node,
     python_stream_target,
+    sql_direction,
 )
 from .registry import (
     IO_ARG_HANDLE_SINKS,
@@ -1925,7 +1924,7 @@ class IOAccessProcessor:
             and binding.kind == ResourceKind.DATABASE
         ):
             # java.sql `execute(sql)`: refine by the SQL first keyword.
-            direction = self._sql_direction(call_node, direction, descriptor)
+            direction = sql_direction(call_node, direction, descriptor)
         self._emit(caller_spec, direction, binding.kind, binding.identity)
         return True
 
@@ -2570,36 +2569,9 @@ class IOAccessProcessor:
         if direction is None:
             return False
         if binding.kind == ResourceKind.DATABASE and method.startswith("execute"):
-            direction = self._sql_direction(call_node, direction)
+            direction = sql_direction(call_node, direction)
         self._emit(caller_spec, direction, binding.kind, binding.identity)
         return True
-
-    def _sql_direction(
-        self,
-        call_node: Node,
-        fallback: IODirection,
-        descriptor: LanguageDescriptor | None = None,
-    ) -> IODirection:
-        # ponytail: first-keyword heuristic only; a full SQL parse is the
-        # upgrade path if execute() direction precision ever matters.
-        if descriptor is not None:
-            sql = literal_target(
-                call_node,
-                0,
-                string_type=descriptor.string_type,
-                content_type=descriptor.string_content_type,
-                keyword_arg_type=descriptor.keyword_arg_type,
-            )
-        else:
-            sql = literal_target(call_node, 0)
-        if sql == DYNAMIC_TARGET:
-            return fallback
-        head = sql.strip().split(maxsplit=1)[0].upper() if sql.strip() else ""
-        if head in SQL_READ_KEYWORDS:
-            return IODirection.READ
-        if head in SQL_WRITE_KEYWORDS:
-            return IODirection.WRITE
-        return fallback
 
     def _emit(
         self,

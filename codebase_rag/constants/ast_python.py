@@ -101,6 +101,17 @@ TS_PY_NONLOCAL_STATEMENT = "nonlocal_statement"
 # `typing` names a literal-versus-annotation check understands.
 PY_TYPING_OPTIONAL = "Optional"
 PY_TYPING_UNION = "Union"
+# `Annotated[T, metadata]` (PEP 593), however it is imported: its type is `T`
+# and the rest is metadata (issue #2873).
+PY_ANNOTATED_NAMES = frozenset(
+    {"Annotated", "typing.Annotated", "typing_extensions.Annotated"}
+)
+TS_PY_GENERIC_TYPE = "generic_type"
+TS_PY_TYPE_PARAMETER = "type_parameter"
+# The annotation of an annotated assignment (`v: T = x`), which a function
+# body never evaluates (issue #2873).
+CAPTURE_PY_ANNOTATION = "annotation"
+PY_ANNOTATED_ASSIGNMENT_QUERY = f"(assignment type: (type) @{CAPTURE_PY_ANNOTATION})"
 # The first parameter of a method that names the instance or class; a
 # signature change keeps it in place and never remaps it.
 PY_RECEIVER_NAMES = frozenset({"self", "cls"})
@@ -198,6 +209,10 @@ PY_OVERLOAD_MODULES = frozenset({"typing", "typing_extensions"})
 TS_PY_CONDITIONAL_EXPRESSION = "conditional_expression"
 TS_PY_BOOLEAN_OPERATOR = "boolean_operator"
 TS_PY_BINARY_OPERATOR = "binary_operator"
+# The shapes of an optional annotation (`Optional[X]`; `X | None` is a
+# binary operator over TS_PY_NONE, inside a TS_PY_TYPE wrapper).
+TS_PY_GENERIC_TYPE = "generic_type"
+TS_PY_TYPE_PARAMETER = "type_parameter"
 TS_PY_NOT_OPERATOR = "not_operator"
 TS_FIELD_CONDITION = "condition"
 TS_FIELD_CONSEQUENCE = "consequence"
@@ -537,6 +552,49 @@ PY_RECEIVER_PARAM_NAMES: frozenset[str] = frozenset({PY_KEYWORD_SELF, PY_KEYWORD
 PY_PARAM_NAME_MIN_CLASS_LEN = 3
 
 TYPE_INFERENCE_LIST = "list"
+# The builtin a Python literal evaluates to (issue #2859): a method called on
+# one is the builtin's (`"-".join` is `str.join`), never a first-party method
+# that shares its name. A list comprehension is left out of assignment typing,
+# which types it by its element for loop inference.
+TS_PY_STRING_START = "string_start"
+PY_TYPE_BYTES = "bytes"
+PY_TYPE_DICT = "dict"
+PY_TYPE_SET = "set"
+PY_TYPE_TUPLE = "tuple"
+PY_TYPE_INT = "int"
+PY_TYPE_FLOAT = "float"
+PY_BYTES_PREFIX_CHAR = "b"
+PY_LITERAL_BUILTIN_TYPES: dict[str, str] = {
+    TS_PY_STRING: PY_TYPE_STR,
+    TS_PY_CONCATENATED_STRING: PY_TYPE_STR,
+    TS_PY_DICTIONARY: PY_TYPE_DICT,
+    TS_PY_DICTIONARY_COMPREHENSION: PY_TYPE_DICT,
+    TS_PY_LIST: TYPE_INFERENCE_LIST,
+    TS_PY_SET: PY_TYPE_SET,
+    TS_PY_SET_COMPREHENSION: PY_TYPE_SET,
+    TS_PY_TUPLE: PY_TYPE_TUPLE,
+    TS_PY_INTEGER: PY_TYPE_INT,
+    TS_PY_FLOAT: PY_TYPE_FLOAT,
+}
+# A receiver literal written inline (`"-".join`, `[x for x in y].count`) is
+# its builtin too, a list comprehension included.
+PY_RECEIVER_LITERAL_TYPES: dict[str, str] = {
+    **PY_LITERAL_BUILTIN_TYPES,
+    TS_PY_LIST_COMPREHENSION: TYPE_INFERENCE_LIST,
+}
+PY_BUILTIN_VALUE_TYPES = frozenset(PY_LITERAL_BUILTIN_TYPES.values()) | {PY_TYPE_BYTES}
+# The operators a builtin answers for any right operand, so the right
+# operand's reflected method never runs: `"%s" % obj` is string formatting
+# whatever `obj` is, and stays a `str` (Greptile, PR #2912).
+PY_BUILTIN_TOTAL_OPERATORS: dict[str, frozenset[str]] = {
+    PY_TYPE_STR: frozenset({PY_BINARY_OPERATOR_DUNDERS["%"]}),
+    PY_TYPE_BYTES: frozenset({PY_BINARY_OPERATOR_DUNDERS["%"]}),
+}
+# Opens a generic annotation's arguments: `dict[str, int]` names `dict`.
+PY_GENERIC_ARGS_OPEN = "["
+# Only these can open a literal receiver's text: a quote, a bracket, a digit,
+# or a string prefix (`b"`, `rf'`). Anything else is never parsed.
+PY_LITERAL_RECEIVER_RE = r"""(?:[rRbBuUfF]{1,2})?["']|[\[{(0-9]"""
 TYPE_INFERENCE_BASE_MODEL = "BaseModel"
 
 ATTR_TYPE_INFERENCE_IN_PROGRESS = "_type_inference_in_progress"

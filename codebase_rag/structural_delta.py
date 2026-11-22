@@ -20,7 +20,8 @@ from __future__ import annotations
 import ast
 import re
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
@@ -271,6 +272,20 @@ class StaleImporter(TypedDict):
     line: int
 
 
+class ParseError(TypedDict):
+    """A touched file that parsed at the base and no longer does (#3232)."""
+
+    path: str
+    line: int
+    col: int
+    message: str
+    # Definitions the base held in the file that the broken tree lost while
+    # the edited text still declares them: tree-sitter's recovery dropped them,
+    # not the edit, so they are not `removed` and nothing calling them is
+    # dangling.
+    unreliable: list[str]
+
+
 class StructuralDelta(TypedDict):
     paths: list[str]
     reparsed: list[str]
@@ -289,6 +304,9 @@ class StructuralDelta(TypedDict):
     stale_importers: list[StaleImporter]
     tests_reaching: list[TestReach]
     call_sites: SiteCounts
+    # Filled by `observe` when the caller can read the base version of each
+    # file; empty otherwise.
+    parse_errors: list[ParseError]
     reingest_ms: float
     delta_ms: float
 
@@ -931,21 +949,50 @@ def _still_names(
 _NAMED = r"(?<![\w$]){name}(?![\w$])"
 
 
+def _gone_for_callers(
+    before: Snapshot, gone: set[str], still: _AfterBindings
+) -> Callable[[str], bool]:
+    """Whether `qn` is gone and its own module no longer binds its name.
+
+    A move that leaves `from new_home import name` behind, or a rename that
+    keeps `old = new`, leaves every caller reaching the name through that
+    module working, whether it imported the name, the module, or sits in
+    the module itself (issue #3248). A method is reached through its class,
+    which no module binding stands in for.
+    """
+    answers: dict[str, bool] = {}
+
+    def fails(qn: str) -> bool:
+        if qn not in gone:
+            return False
+        if qn not in answers:
+            module, _sep, name = qn.rpartition(cs.SEPARATOR_DOT)
+            answers[qn] = module in before.definitions or not still.binds(
+                module, before.definitions[qn].path, name, for_callers=True
+            )
+        return answers[qn]
+
+    return fails
+
+
 def _dangling(
     before: Snapshot,
     after: Snapshot,
     symbols: SymbolDelta,
     repo_root: Path | None,
+    still: _AfterBindings,
 ) -> list[DanglingCaller]:
     gone = set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]}
     renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
     after_pairs = {(site.caller, site.callee) for site in after.sites}
     held = _held(before.sites)
+    # A caller reaching a gone name its module still binds keeps working.
+    dangles = _gone_for_callers(before, gone, still)
     trees: dict[str, _WorkingTree | None] = {}
     out: list[DanglingCaller] = []
     seen: set[tuple[str, str, int | None, int | None]] = set()
     for site in before.sites:
-        if site.callee not in gone:
+        if not dangles(site.callee):
             continue
         callee = before.definitions[site.callee]
         # Only a caller the edit touched is in the after-snapshot to read.
@@ -1122,11 +1169,33 @@ class _SourceNames(NamedTuple):
     # with one built at run time, which `star_unknown` tells apart.
     star: frozenset[str] | None = None
     star_unknown: bool = False
+    # Names only ever assigned a value no call can run on (`slug = None`):
+    # importable, but a caller of the function they replace fails.
+    inert: frozenset[str] = frozenset()
+    # The (first, last) lines of each branch only type checkers read (an
+    # `if TYPE_CHECKING:` body, the `else` of `if not TYPE_CHECKING:`),
+    # whose imports bind nothing at run time.
+    typing_only: tuple[tuple[int, int], ...] = ()
 
 
 # The statement lists of a compound statement, walked as the module's own
 # top level; every other field is an expression that may bind a name.
 _PY_BLOCK_FIELDS = frozenset({"body", "orelse", "finalbody", "handlers", "cases"})
+
+# Values that are never callable: a literal, an f-string, a display or a
+# comprehension.
+_PY_INERT_VALUES = (
+    ast.Constant,
+    ast.JoinedStr,
+    ast.List,
+    ast.Tuple,
+    ast.Set,
+    ast.Dict,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+)
 
 
 def _stored_names(node: ast.AST) -> Iterator[str]:
@@ -1218,10 +1287,19 @@ def _names_bound_by(node: ast.AST, pending: list[ast.AST]) -> Iterator[str]:
     if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
         yield from _definition_bindings(node)
         return
+    if (branches := _type_checking_branches(node)) is not None:
+        # One branch runs for type checkers only; the other runs instead.
+        pending.extend(branches[1])
+        return
     if isinstance(node, ast.Import):
         for alias in node.names:
             yield alias.asname or alias.name.partition(cs.SEPARATOR_DOT)[0]
         return
+    yield from _field_bindings(node, pending)
+
+
+def _field_bindings(node: ast.AST, pending: list[ast.AST]) -> Iterator[str]:
+    """What a statement's own expressions bind; its statement lists are queued."""
     for field, value in ast.iter_fields(node):
         if field in _PY_BLOCK_FIELDS:
             pending.extend(value)
@@ -1262,20 +1340,83 @@ def _python_top_level_names(text: str) -> _SourceNames | None:
         return None
     own: set[str] = set()
     imported: set[str] = set()
+    inert: set[str] = set()
+    live: set[str] = set()
+    typing_only: list[tuple[int, int]] = []
     pending: list[ast.AST] = list(tree.body)
     while pending:
         node = pending.pop()
         if isinstance(node, ast.ImportFrom):
             imported.update(alias.asname or alias.name for alias in node.names)
-        else:
-            own.update(_names_bound_by(node, pending))
+            continue
+        if (span := _typing_only_span(node)) is not None:
+            typing_only.append(span)
+        bound = set(_names_bound_by(node, pending))
+        assigned_inert = _inert_targets(node)
+        own.update(bound)
+        inert.update(assigned_inert)
+        live.update(bound - assigned_inert)
     star, star_unknown = _star_names(tree.body)
     return _SourceNames(
         own=frozenset(own),
         imported=frozenset(imported),
         star=star,
         star_unknown=star_unknown,
+        inert=frozenset(inert - live - imported),
+        typing_only=tuple(typing_only),
     )
+
+
+def _is_type_checking(test: ast.expr) -> bool:
+    """`TYPE_CHECKING` or `typing.TYPE_CHECKING`, true for type checkers only."""
+    match test:
+        case ast.Name(id=cs.PY_TYPE_CHECKING) | ast.Attribute(attr=cs.PY_TYPE_CHECKING):
+            return True
+    return False
+
+
+def _type_checking_branches(
+    node: ast.AST,
+) -> tuple[list[ast.stmt], list[ast.stmt]] | None:
+    """(The branch only type checkers read, the one that runs) of a guard.
+
+    `if TYPE_CHECKING:` runs its `else`; `if not TYPE_CHECKING:` runs its
+    body, and its `else` is the branch type checkers read. Any other
+    statement is no such guard.
+    """
+    if not isinstance(node, ast.If):
+        return None
+    if _is_type_checking(node.test):
+        return node.body, node.orelse
+    match node.test:
+        case ast.UnaryOp(op=ast.Not(), operand=operand) if _is_type_checking(operand):
+            return node.orelse, node.body
+    return None
+
+
+def _typing_only_span(node: ast.AST) -> tuple[int, int] | None:
+    """The (first, last) lines of the branch of a guard that never runs."""
+    branches = _type_checking_branches(node)
+    if branches is None or not branches[0]:
+        return None
+    first, last = branches[0][0], branches[0][-1]
+    return first.lineno, last.end_lineno or last.lineno
+
+
+def _inert_targets(node: ast.AST) -> frozenset[str]:
+    """The names `name = <literal>` binds to a value no call can run on."""
+    match node:
+        case ast.Assign(targets=targets, value=value) if isinstance(
+            value, _PY_INERT_VALUES
+        ) and all(isinstance(target, ast.Name) for target in targets):
+            return frozenset(
+                target.id for target in targets if isinstance(target, ast.Name)
+            )
+        case ast.AnnAssign(target=ast.Name(id=name), value=value) if isinstance(
+            value, _PY_INERT_VALUES
+        ):
+            return frozenset({name})
+    return frozenset()
 
 
 def _in_source_order(
@@ -1391,6 +1532,7 @@ class _AfterBindings:
         }
         self._sources: dict[str, str | None] = {}
         self._names: dict[str, _SourceNames | None] = {}
+        self._exports: dict[str, _JsExports] = {}
 
     def source(self, path: str) -> str | None:
         if path not in self._sources:
@@ -1416,6 +1558,8 @@ class _AfterBindings:
         path: str,
         name: str,
         seen: frozenset[tuple[str, str]] = frozenset(),
+        *,
+        for_callers: bool = False,
     ) -> bool:
         """Whether `module` (in file `path`) still binds `name` to something.
 
@@ -1424,7 +1568,14 @@ class _AfterBindings:
         `app.core` keeps every `from app.core import helper` working, while
         `from app.empty import helper` keeps nothing when `app.empty` has no
         `helper`. A chain of re-exports is followed, into modules the edit
-        left alone too; a cycle in it binds nothing.
+        left alone too; a cycle in it binds nothing. An import under `if
+        TYPE_CHECKING:`, or in the `else` of `if not TYPE_CHECKING:`, never
+        runs, so it binds nothing.
+
+        `for_callers` asks for a binding a call from another module still
+        works through: a name only assigned a literal (`helper = None`)
+        cannot be called, and a JS/TS module shares a name, declared or
+        imported, only by exporting it.
         """
         if (module, name) in seen:
             return False
@@ -1435,36 +1586,610 @@ class _AfterBindings:
             # nothing to check the name against, so the import is taken
             # at its word unless it names a symbol the edit removed.
             return qn not in self._gone
-        definitions, bindings = self._facts(path)
+        bindings = self._facts(path)[1]
         names = self._source_names(path)
-        if qn in definitions or (names is not None and _binds_itself(names, name)):
+        if self._defines(path, qn, name, names, for_callers):
             return True
-        own = [binding for binding in bindings if binding.importer == module]
-        if any(self._resolves(binding, name, seen) for binding in own):
+        own = [
+            binding
+            for binding in bindings
+            if binding.importer == module and not _typing_only(names, binding.line)
+        ]
+        shared = [b for b in own if not for_callers or self._shares(b)]
+        if any(self._resolves(binding, name, seen, for_callers) for binding in shared):
             return True
-        return names is not None and _unfollowed_import(names, name, own)
+        if self._exports_locally(module, path, name, own, seen, for_callers):
+            return True
+        return names is not None and _unfollowed_import(names, name, shared)
+
+    def _defines(
+        self,
+        path: str,
+        qn: str,
+        name: str,
+        names: _SourceNames | None,
+        for_callers: bool,
+    ) -> bool:
+        """Whether the module at `path` binds `name` by a definition of its own.
+
+        A Python module's source says which of its definitions run: the
+        graph also holds a `def` under `if TYPE_CHECKING:`, which binds
+        nothing at run time. An ES module shares a declaration with a caller
+        elsewhere only by exporting it, which `_exports_locally` reads; a
+        CommonJS one publishes through `module.exports`, taken at its word.
+        """
+        if names is not None:
+            return _binds_itself(names, name, for_callers)
+        if qn not in self._facts(path)[0]:
+            return False
+        return (
+            not for_callers
+            or _language(path) not in cs.JS_TS_LANGUAGES
+            or self._js_exports(path).commonjs
+        )
 
     def _resolves(
-        self, binding: ImportBinding, name: str, seen: frozenset[tuple[str, str]]
+        self,
+        binding: ImportBinding,
+        name: str,
+        seen: frozenset[tuple[str, str]],
+        for_callers: bool,
     ) -> bool:
         if binding.imported_name == cs.IMPORTED_NAME_WILDCARD:
             return _star_takes(
                 self._source_names(binding.module_path), name
-            ) and self.binds(binding.module, binding.module_path, name, seen)
+            ) and self.binds(
+                binding.module,
+                binding.module_path,
+                name,
+                seen,
+                for_callers=for_callers,
+            )
         return binding.bound == name and (
             _imports_the_module_itself(binding, self._gone)
             or self.binds(
-                binding.module, binding.module_path, binding.imported_name, seen
+                binding.module,
+                binding.module_path,
+                binding.imported_name,
+                seen,
+                for_callers=for_callers,
             )
         )
+
+    def _shares(self, binding: ImportBinding) -> bool:
+        """Whether another module can reach the name an import binds here.
+
+        Any module-level name of a Python module can be imported. A JS/TS
+        module shares only what it exports: `export { slug } from "./text"`
+        shares `slug`, `import { slug } from "./text"` keeps it to itself
+        unless an `export { slug }` names it (`_exports_locally`), and a
+        type-only export (`export type { slug }`) is erased from the emitted
+        JavaScript. Another language's import is not taken to re-export
+        anything.
+        """
+        language = _language(binding.importer_path)
+        if language == cs.SupportedLanguage.PYTHON:
+            return True
+        if language not in cs.JS_TS_LANGUAGES:
+            return False
+        return self._js_exports(binding.importer_path).exports(binding)
+
+    def _exports_locally(
+        self,
+        module: str,
+        path: str,
+        name: str,
+        bindings: list[ImportBinding],
+        seen: frozenset[tuple[str, str]],
+        for_callers: bool,
+    ) -> bool:
+        """Whether a JS/TS module exports a binding of its own as `name`.
+
+        `export function name`, `export default name` (as `default`) and a
+        clause without `from` export one: its declaration, or a name it
+        imports, so `import { slug } from "./text"; export { slug };` shares
+        `slug` as `export { slug } from "./text"` does, and `export { s as
+        slug }` shares the `s` it imports under that name. The graph records
+        no edge for such an export. An `import type { slug }` binds no value
+        for it to export. Any other `export default` value (`export default
+        class { }`, an arrow, `new Slugger()`) is the module's own `default`,
+        though a literal serves no caller.
+        """
+        exports = self._js_exports(path)
+        local = exports.local.get(name)
+        if local is None:
+            return False
+        if local == cs.JS_DEFAULT_EXPORT_NAME:
+            return not (for_callers and name in exports.inert)
+        return self._js_local_value(
+            module, path, local, bindings, seen, for_callers, frozenset()
+        )
+
+    def _js_local_value(
+        self,
+        module: str,
+        path: str,
+        local: str,
+        bindings: list[ImportBinding],
+        seen: frozenset[tuple[str, str]],
+        for_callers: bool,
+        followed: frozenset[str],
+    ) -> bool:
+        """Whether the module's binding `local` holds a value: a definition,
+        a name it imports, a top-level alias of one, or a global."""
+        exports = self._js_exports(path)
+        if f"{module}{cs.SEPARATOR_DOT}{local}" in self._facts(path)[0]:
+            return True
+        # `import * as ns` binds a module object, never one of its names.
+        if any(
+            binding.imported_name != cs.IMPORTED_NAME_WILDCARD
+            and not exports.erased(binding)
+            and self._resolves(binding, local, seen, for_callers)
+            for binding in bindings
+        ):
+            return True
+        # `const slug = String;` holds what the name it is bound to holds
+        # (Greptile review on PR #3312); a cycle of aliases holds nothing.
+        if (target := exports.aliases.get(local)) is not None:
+            return target not in followed and self._js_local_value(
+                module,
+                path,
+                target,
+                bindings,
+                seen,
+                for_callers,
+                followed | {local},
+            )
+        # A global no import or declaration of the module shadows (`export
+        # default String;`) is there to export whatever the edit did, though
+        # a namespace object (`JSON`, `Math`) serves no caller (Greptile
+        # reviews on PR #3312).
+        if (
+            local not in cs.JS_GLOBAL_VALUE_NAMES
+            or local in exports.declared
+            or any(binding.bound == local for binding in bindings)
+        ):
+            return False
+        return not (for_callers and local in cs.JS_GLOBAL_NAMESPACE_NAMES)
+
+    def _js_exports(self, path: str) -> _JsExports:
+        if path not in self._exports:
+            language = _language(path)
+            text = None
+            if language in cs.JS_TS_LANGUAGES and self._repo_root is not None:
+                text = _read_source(self._repo_root, path)
+            self._exports[path] = (
+                _JsExports()
+                if text is None or language is None
+                else _js_exports(text, language)
+            )
+        return self._exports[path]
 
 
 # A module-level `__getattr__` (PEP 562) can answer for any name.
 _PY_MODULE_GETATTR = "__getattr__"
 
 
-def _binds_itself(names: _SourceNames, name: str) -> bool:
-    return name in names.own or _PY_MODULE_GETATTR in names.own
+def _binds_itself(names: _SourceNames, name: str, for_callers: bool = False) -> bool:
+    if _PY_MODULE_GETATTR in names.own:
+        return True
+    return name in names.own and not (for_callers and name in names.inert)
+
+
+def _typing_only(names: _SourceNames | None, line: int | None) -> bool:
+    """Whether a statement at `line` sits in an `if TYPE_CHECKING:` body."""
+    return (
+        names is not None
+        and line is not None
+        and any(first <= line <= last for first, last in names.typing_only)
+    )
+
+
+class _JsExports(NamedTuple):
+    """What a JS/TS module's top-level import and export statements share.
+
+    Statements are keyed by the (1-based line, byte column) they start at,
+    where the graph puts the IMPORTS edge of each name they bind.
+    """
+
+    # Where each export statement starts that exports a value, not a type.
+    starts: frozenset[tuple[int, int]] = frozenset()
+    # (line, col, None) for a type-only statement (`export type { T }`,
+    # `import type { T }`), (line, col, name) for a type-only specifier
+    # (`export { type T }`) binding `name`: TypeScript erases both.
+    type_only: frozenset[tuple[int, int, str | None]] = frozenset()
+    # `{exported: local}` for each value the module exports of its own:
+    # `export { local as exported }` without `from` (a clause with `from` is
+    # an IMPORTS edge in the graph), `export function local`, and `export
+    # default local` as `default`. A default no local name holds maps
+    # `default` to itself, which no identifier can be.
+    local: dict[str, str] = {}
+    # The exported names bound to a literal (`export default { ... }`).
+    inert: frozenset[str] = frozenset()
+    # Whether the module publishes through `module.exports` alone.
+    commonjs: bool = False
+    # The names the module's own top-level declarations bind, exported or
+    # not: one of them is no global (`const JSON = String`).
+    declared: frozenset[str] = frozenset()
+    # `{alias: name}` for each top-level `const alias = name` (under its
+    # wrappers) taken once the name holds its value: the alias holds what
+    # the name holds.
+    aliases: dict[str, str] = {}
+
+    def erased(self, binding: ImportBinding) -> bool:
+        if binding.line is None or binding.col is None:
+            return False
+        at = (binding.line, binding.col)
+        return (*at, None) in self.type_only or (*at, binding.bound) in self.type_only
+
+    def exports(self, binding: ImportBinding) -> bool:
+        return (binding.line, binding.col) in self.starts and not self.erased(binding)
+
+
+def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
+    """Read a JS/TS module's top-level statements for what they export."""
+    # Local import: `codebase_rag.parsers` stays out of the CLI's startup.
+    from .parsers.js_ts.commonjs_exports import is_commonjs_module
+
+    parser = load_parsers()[0].get(language)
+    if parser is None:
+        return _JsExports()
+    root = parser.parse(text.encode(cs.ENCODING_UTF8)).root_node
+    starts: set[tuple[int, int]] = set()
+    type_only: set[tuple[int, int, str | None]] = set()
+    local: dict[str, str] = {}
+    inert: set[str] = set()
+    declared: set[str] = set()
+    aliases = _JsAliases()
+    for statement in root.children:
+        aliases.read(statement, declared)
+        declared.update(_js_declared_names(statement))
+        if statement.type not in (cs.TS_EXPORT_STATEMENT, cs.TS_IMPORT_STATEMENT):
+            continue
+        at = (statement.start_point[0] + 1, statement.start_point[1])
+        if _has_type_token(statement):
+            type_only.add((*at, None))
+            continue
+        if statement.type == cs.TS_EXPORT_STATEMENT:
+            starts.add(at)
+            local.update(_js_declared_exports(statement))
+            inert.update(_js_literal_exports(statement))
+        # Only an `export { ... }` without `from` shares the module's own
+        # bindings: an import, like a re-export, always names its source.
+        shares_own = statement.child_by_field_name(cs.FIELD_SOURCE) is None
+        for name, bound, erased in _js_specifiers(statement):
+            if erased:
+                type_only.add((*at, bound))
+            elif shares_own:
+                local[bound] = name
+    return _JsExports(
+        starts=frozenset(starts),
+        type_only=frozenset(type_only),
+        local=local,
+        inert=frozenset(inert),
+        commonjs=is_commonjs_module(root),
+        declared=frozenset(declared),
+        aliases=aliases.held(declared),
+    )
+
+
+class _JsAliases:
+    """The top-level `const alias = name` statements of a module, read in
+    order, and what tells whether each alias holds what its name holds."""
+
+    def __init__(self) -> None:
+        # `{alias: name}` for every alias read.
+        self.names: dict[str, str] = {}
+        # Aliases taken before the module declared their name.
+        self.early: set[str] = set()
+        # Names a function declaration binds before the module runs.
+        self.hoisted: set[str] = set()
+        # Names an earlier statement writes, and the aliases taken of one:
+        # the alias may hold what the write left (Greptile review on PR
+        # #3312).
+        self.written: set[str] = set()
+        self.overwritten: set[str] = set()
+
+    def read(self, statement: Node, declared: set[str]) -> None:
+        """Read one top-level statement; `declared` holds the names the
+        statements before it declare."""
+        for alias, name, settled in _js_aliases(statement, declared):
+            self.names[alias] = name
+            if not settled:
+                self.early.add(alias)
+            if name in self.written:
+                self.overwritten.add(alias)
+        self.hoisted.update(_js_hoisted_names(statement))
+        self.written.update(_js_written_names(statement))
+
+    def held(self, declared: set[str]) -> dict[str, str]:
+        """The aliases that hold what their name holds. One taken before a
+        name the module declares later holds `undefined`, or throws
+        (Greptile review on PR #3312); a name it never declares is a global
+        or an import, and one a function declaration binds is hoisted, both
+        there from the start."""
+        return {
+            alias: name
+            for alias, name in self.names.items()
+            if alias not in self.overwritten
+            and (
+                alias not in self.early or name not in declared or name in self.hoisted
+            )
+        }
+
+
+_JS_VALUE_DECLARATIONS = frozenset(
+    {
+        cs.TS_LEXICAL_DECLARATION,
+        cs.TS_VARIABLE_DECLARATION,
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+        cs.TS_CLASS_DECLARATION,
+    }
+)
+
+_JS_HOISTED_DECLARATIONS = frozenset(
+    {cs.TS_FUNCTION_DECLARATION, cs.TS_GENERATOR_FUNCTION_DECLARATION}
+)
+
+
+def _js_aliases(statement: Node, declared: set[str]) -> Iterator[tuple[str, str, bool]]:
+    """(alias, name, settled) for each declarator of a top-level `const
+    alias = name`, through `export` and the value's wrappers: settled when
+    `declared` or an earlier declarator of the statement already binds
+    `name`. A `let` or `var` alias may be written again (Greptile review on
+    PR #3312), so only a `const` holds its first value."""
+    if statement.type == cs.TS_EXPORT_STATEMENT:
+        statement = statement.child_by_field_name(cs.FIELD_DECLARATION) or statement
+    kind = statement.child_by_field_name(cs.FIELD_KIND)
+    if (
+        statement.type != cs.TS_LEXICAL_DECLARATION
+        or kind is None
+        or kind.type != cs.JS_CONST_KEYWORD
+    ):
+        return
+    bound = set(declared)
+    for declarator in statement.named_children:
+        target = declarator.child_by_field_name(cs.FIELD_NAME)
+        if (
+            declarator.type != cs.TS_VARIABLE_DECLARATOR
+            or target is None
+            or target.type != cs.TS_IDENTIFIER
+        ):
+            continue
+        value = declarator.child_by_field_name(cs.FIELD_VALUE)
+        if value is not None and (value := _js_unwrapped(value)).type == (
+            cs.TS_IDENTIFIER
+        ):
+            name = _node_text(value)
+            yield _node_text(target), name, name in bound
+        bound.add(_node_text(target))
+
+
+_JS_WRITES = frozenset(
+    {cs.TS_JS_ASSIGNMENT_EXPRESSION, cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION}
+)
+
+
+def _js_written_names(statement: Node) -> Iterator[str]:
+    """The names a statement assigns or updates (`impl = null`, `impl++`)
+    as the module runs it. A function's body runs only when called, so its
+    writes count only in a function called where it is defined (`(() => {
+    ... })()`); a class's static block runs with the class. `impl = impl`
+    leaves the name holding what it held (Greptile review on PR #3312)."""
+    pending = [statement]
+    while pending:
+        node = pending.pop()
+        if node.type in cs.JS_TS_FUNCTION_NODES:
+            continue
+        if (name := _js_written_name(node)) is not None:
+            yield name
+        if node.type == cs.TS_CALL_EXPRESSION:
+            pending.extend(_js_called_body(node))
+        pending.extend(node.named_children)
+
+
+def _js_written_name(node: Node) -> str | None:
+    """The name an assignment or an update writes, unless it assigns the
+    name to itself."""
+    if node.type in _JS_WRITES:
+        target = node.child_by_field_name(cs.FIELD_LEFT)
+    elif node.type == cs.TS_JS_UPDATE_EXPRESSION:
+        target = node.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+    else:
+        return None
+    if target is None or (target := _js_unwrapped(target)).type != cs.TS_IDENTIFIER:
+        return None
+    name = _node_text(target)
+    value = node.child_by_field_name(cs.FIELD_RIGHT)
+    if (
+        node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION
+        and value is not None
+        and (value := _js_unwrapped(value)).type == cs.TS_IDENTIFIER
+        and _node_text(value) == name
+    ):
+        return None
+    return name
+
+
+def _js_called_body(call: Node) -> Iterator[Node]:
+    """The body of the function a call defines and runs at once."""
+    function = call.child_by_field_name(cs.FIELD_FUNCTION)
+    if function is not None and (function := _js_unwrapped(function)).type in (
+        cs.JS_TS_FUNCTION_NODES
+    ):
+        body = function.child_by_field_name(cs.FIELD_BODY)
+        if body is not None:
+            yield body
+
+
+def _js_hoisted_names(statement: Node) -> Iterator[str]:
+    """The name a top-level function declaration binds, through `export`:
+    JavaScript initializes it before the module runs, unlike a `let`,
+    `const` or `class` name, which holds nothing until its statement runs,
+    or a `var`, which holds `undefined` (Greptile review on PR #3312)."""
+    if statement.type == cs.TS_EXPORT_STATEMENT:
+        statement = statement.child_by_field_name(cs.FIELD_DECLARATION) or statement
+    if statement.type in _JS_HOISTED_DECLARATIONS:
+        yield from _js_value_names(statement)
+
+
+def _js_declared_names(statement: Node) -> Iterator[str]:
+    """The names a top-level statement declares, through `export`."""
+    if statement.type == cs.TS_EXPORT_STATEMENT:
+        declaration = statement.child_by_field_name(cs.FIELD_DECLARATION)
+        if declaration is None:
+            return
+        statement = declaration
+    if statement.type in _JS_VALUE_DECLARATIONS:
+        yield from _js_value_names(statement)
+
+
+def _js_specifiers(statement: Node) -> Iterator[tuple[str, str, bool]]:
+    """(name, name bound, type-only) for each `{ ... }` specifier of a statement.
+
+    A comment between the braces has no name and is skipped.
+    """
+    for specifier in _js_specifier_nodes(statement):
+        name = _field_text(specifier, cs.FIELD_NAME)
+        if name:
+            bound = _field_text(specifier, cs.FIELD_ALIAS) or name
+            yield name, bound, _has_type_token(specifier)
+
+
+def _js_specifier_nodes(statement: Node) -> Iterator[Node]:
+    for child in statement.named_children:
+        if child.type == cs.TS_EXPORT_CLAUSE:
+            yield from child.named_children
+        elif child.type == cs.TS_IMPORT_CLAUSE:
+            for part in child.named_children:
+                if part.type == cs.TS_NAMED_IMPORTS:
+                    yield from part.named_children
+
+
+def _js_declared_exports(statement: Node) -> Iterator[tuple[str, str]]:
+    """(exported, local) for each value an export statement declares.
+
+    `export function slug` exports `slug`. Every `export default` exports
+    `default`: `export default function slug` and `export default slug;` as
+    the local `slug`, any other value as `default` itself. A type
+    (`interface`, `type`) or an ambient declaration (`declare function`)
+    exports no value.
+    """
+    declaration = statement.child_by_field_name(cs.FIELD_DECLARATION)
+    if declaration is None:
+        yield from _js_default_value_export(statement)
+        return
+    if declaration.type in _TS_DECLARATIONS_WITHOUT_VALUES:
+        return
+    names = _js_value_names(declaration)
+    if not _js_is_default(statement):
+        yield from ((local, local) for local in names)
+        return
+    yield cs.JS_DEFAULT_EXPORT_NAME, next(names, cs.JS_DEFAULT_EXPORT_NAME)
+
+
+def _js_default_value_export(statement: Node) -> Iterator[tuple[str, str]]:
+    """`default` for `export default <expression>`, with the local it names.
+
+    Under its wrappers (`(slug as Fn)`), an identifier names a binding of
+    the module; any other value is the module's own, held by `default` only.
+    """
+    value = _js_default_value(statement)
+    if value is None:
+        return
+    is_name = value.type == cs.TS_IDENTIFIER
+    yield (
+        cs.JS_DEFAULT_EXPORT_NAME,
+        (_node_text(value) if is_name else cs.JS_DEFAULT_EXPORT_NAME),
+    )
+
+
+def _js_literal_exports(statement: Node) -> Iterator[str]:
+    """`default`, when `export default` takes a value no call can run on."""
+    value = _js_default_value(statement)
+    if value is not None and _js_is_inert(value):
+        yield cs.JS_DEFAULT_EXPORT_NAME
+
+
+def _js_default_value(statement: Node) -> Node | None:
+    """The value `export default <expression>` exports, under its wrappers."""
+    value = statement.child_by_field_name(cs.FIELD_VALUE)
+    if value is None or not _js_is_default(statement):
+        return None
+    return _js_unwrapped(value)
+
+
+def _js_unwrapped(node: Node) -> Node:
+    """The operand an expression evaluates to, through every wrapper.
+
+    `(x)`, `x as T`, `x satisfies T`, `x!` and `f<T>` evaluate to their
+    first operand; `<T>x`, `(a, x)` and `y = x` to their last.
+    """
+    while (index := cs.JS_VALUE_WRAPPER_OPERAND.get(node.type)) is not None:
+        # A comment between the parentheses is a node of its own.
+        operands = [c for c in node.named_children if c.type != cs.TS_COMMENT]
+        if not operands:
+            break
+        node = operands[index]
+    return node
+
+
+def _js_is_inert(node: Node) -> bool:
+    """Whether a value is a literal or a primitive, which no call runs on.
+
+    A unary or update operator always yields a primitive (`-1`, `void 0`),
+    as does a binary one but `&&`, `||` and `??`, which yield an operand.
+    Any other value (a conditional, an `await`) may be callable, so it is
+    taken as exported, as an unresolved binding is elsewhere in this check.
+    """
+    if node.type in cs.JS_INERT_VALUE_TYPES:
+        return True
+    operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+    return (
+        node.type == cs.TS_BINARY_EXPRESSION
+        and operator is not None
+        and operator.type not in cs.JS_OPERAND_OPERATORS
+    )
+
+
+def _js_is_default(statement: Node) -> bool:
+    return any(child.type == cs.TS_EXPORT_DEFAULT for child in statement.children)
+
+
+def _js_value_names(node: Node) -> Iterator[str]:
+    """The names a declaration, or an identifier, binds at run time."""
+    if node.type == cs.TS_IDENTIFIER:
+        yield _node_text(node)
+        return
+    if name := _field_text(node, cs.FIELD_NAME):
+        yield name
+        return
+    # `export const slug = ..., other = ...`: one name per declarator.
+    for declarator in node.named_children:
+        target = declarator.child_by_field_name(cs.FIELD_NAME)
+        if (
+            declarator.type == cs.TS_VARIABLE_DECLARATOR
+            and target is not None
+            and target.type == cs.TS_IDENTIFIER
+        ):
+            yield _node_text(target)
+
+
+_TS_DECLARATIONS_WITHOUT_VALUES = cs.TS_TYPE_ONLY_EXPORT_DECLARATIONS | {
+    cs.TS_AMBIENT_DECLARATION
+}
+
+
+def _has_type_token(node: Node) -> bool:
+    """Whether `node` carries TypeScript's `type` modifier as its own child."""
+    return any(child.type == cs.TS_TYPE_ONLY_TOKEN for child in node.children)
+
+
+def _field_text(node: Node, field: str) -> str:
+    """The text of `node`'s `field` child, empty when it has none."""
+    child = node.child_by_field_name(field)
+    return _node_text(child) if child is not None else ""
 
 
 def _unfollowed_import(
@@ -1885,9 +2610,6 @@ _PY_BOUND_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
 @lru_cache(maxsize=cs.DELTA_PARSED_SOURCES_KEPT)
 def _python_tree(path: str, mtime_ns: int, size: int) -> Tree | None:
     """One parse per version of a source file, shared by every site in it."""
-    # Local import: parser_loader pulls in the language grammars.
-    from .parser_loader import load_parsers
-
     parser = load_parsers()[0].get(cs.SupportedLanguage.PYTHON)
     if parser is None:
         return None
@@ -3678,7 +4400,27 @@ def structural_delta(
     touched = fresh | {
         qn for qn, d in after.definitions.items() if d.path in after.paths
     }
-    dangling = _dangling(before, after, symbols, repo_root)
+    load = _module_loader(
+        fetch_all,
+        {
+            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+            cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
+        },
+    )
+    dangling = _dangling(
+        before,
+        after,
+        symbols,
+        repo_root,
+        # What the project's modules still bind after the edit, read
+        # lazily, as the importer check reads it.
+        _AfterBindings(
+            after,
+            set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]},
+            load,
+            repo_root,
+        ),
+    )
     gone_callers = {
         d["caller"]: _GoneCaller(target=d["target"], path=d["path"]) for d in dangling
     }
@@ -3689,19 +4431,7 @@ def structural_delta(
         removed_files=list(report.removed) if report else [],
         symbols=symbols,
         dangling_callers=dangling,
-        dangling_importers=_dangling_importers(
-            before,
-            after,
-            symbols,
-            repo_root,
-            _module_loader(
-                fetch_all,
-                {
-                    cs.KEY_PROJECT_PREFIX: _prefix(project_name),
-                    cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
-                },
-            ),
-        ),
+        dangling_importers=_dangling_importers(before, after, symbols, repo_root, load),
         signature_changes=_signature_changes(
             before, after, symbols, repo_root, fetch_all, project_name
         ),
@@ -3715,6 +4445,7 @@ def structural_delta(
         )
         if touched or gone_callers
         else [],
+        parse_errors=[],
         call_sites=SiteCounts(
             before=_inbound_calls(before), after=_inbound_calls(after)
         ),
@@ -3818,12 +4549,15 @@ def observe(
     apply: Callable[[], ReingestReport],
     repo_root: Path | None = None,
     declared_renames: frozenset[tuple[str, str]] = frozenset(),
+    base_source: Callable[[str], bytes | None] | None = None,
     reshaped_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
     """Snapshot `paths`, run `apply` (the scoped re-ingest), snapshot, diff.
 
     The caller holds whatever lock serialises graph writes; both reads and
-    the re-ingest must see one generation of the graph.
+    the re-ingest must see one generation of the graph. `base_source` reads
+    a path's content before the edit (None for a file that had none): with
+    it, a file the edit left unparsable is reported in `parse_errors`.
     """
     path_list = sorted(set(paths))
     started = time.perf_counter()
@@ -3855,6 +4589,18 @@ def observe(
         longer_project_prefixes=longer_prefixes,
         reshaped_renames=reshaped_renames,
     )
+    if base_source is not None and repo_root is not None:
+        # A path the re-ingest skipped under the project's exclusions is not
+        # in the graph, so its syntax is nothing the check measures.
+        skipped = set(report.skipped)
+        indexed = [path for path in path_list if path not in skipped]
+        _report_parse_errors(
+            delta,
+            before,
+            new_parse_errors(repo_root, indexed, base_source),
+            repo_root,
+            base_source,
+        )
     # The re-ingest's own clock covers only its inner work; the caller sees
     # the wall time of the whole apply step, and `delta_ms` is everything
     # this function added on top of it: both snapshots and the diff.
@@ -3864,10 +4610,285 @@ def observe(
     return delta
 
 
+def new_parse_errors(
+    repo_root: Path, paths: Iterable[str], base_source: Callable[[str], bytes | None]
+) -> list[ParseError]:
+    """The files among `paths` that no longer parse, though their base did.
+
+    A file whose base did not parse either (an older break, or syntax the
+    grammar does not know) is no finding of this edit; a file with no base
+    is held to parsing like any other.
+    """
+    # Deferred: the parser package would load at CLI start-up through
+    # editing -> structural_delta (issue #2253).
+    from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
+
+    parsers, _queries = load_parsers()
+    errors: list[ParseError] = []
+    for path in sorted(set(paths)):
+        language = get_language_for_extension(Path(path).suffix)
+        if not isinstance(language, cs.SupportedLanguage):
+            continue
+        parser = parsers.get(language)
+        if parser is None:
+            continue
+        try:
+            content = (repo_root / path).read_bytes()
+        except OSError:
+            continue
+        # Parsed as ingestion parses it: a C++ annotation macro or a
+        # conditional directive the plain grammar splits on is recovered.
+        root = parse_with_preproc_recovery(
+            parser, grammar_bytes(content, language, repo_root / path), language
+        ).root_node
+        if not root.has_error:
+            continue
+        base = base_source(path)
+        if (
+            base is not None
+            and parse_with_preproc_recovery(
+                parser, grammar_bytes(base, language, repo_root / path), language
+            ).root_node.has_error
+        ):
+            continue
+        node = _first_error(root)
+        line, col = node.start_point[0] + 1, node.start_point[1]
+        detail = (
+            cs.DELTA_PARSE_MISSING.format(token=node.type)
+            if node.is_missing
+            else cs.DELTA_PARSE_UNEXPECTED.format(
+                token=(node.text or b"")
+                .decode(cs.ENCODING_UTF8, errors="replace")
+                .split("\n", 1)[0][: cs.DELTA_PARSE_TOKEN_CHARS]
+            )
+        )
+        errors.append(
+            ParseError(
+                path=path,
+                line=line,
+                col=col,
+                message=cs.DELTA_PARSE_ERROR.format(
+                    path=path, line=line, col=col, detail=detail
+                ),
+                unreliable=[],
+            )
+        )
+    return errors
+
+
+def _first_error(node: Node) -> Node:
+    """The first MISSING node, or the first stray token of the first ERROR.
+
+    The outermost ERROR is where the parse broke; what nests inside it is
+    the recovery's guess at the rest. It can also swallow whole definitions
+    before the break (`def g()` without its colon wraps the file from line
+    1), so the position is its first child that is not one of them.
+    """
+    while not node.is_missing:
+        if node.is_error:
+            return next(
+                (c for c in node.children if not (c.is_named and not c.has_error)),
+                node,
+            )
+        broken = next((c for c in node.children if c.has_error or c.is_missing), None)
+        if broken is None:
+            return node
+        node = broken
+    return node
+
+
+def _report_parse_errors(
+    delta: StructuralDelta,
+    before: Snapshot,
+    errors: list[ParseError],
+    repo_root: Path,
+    base_source: Callable[[str], bytes | None],
+) -> None:
+    """Attach `errors`, and stop blaming the edit for what they hid."""
+    broken = {error["path"]: error for error in errors}
+    removed = {
+        qn: definition
+        for qn in delta["symbols"]["removed"]
+        if (definition := before.definitions.get(qn)) is not None
+        and definition.path in broken
+    }
+    edits = {
+        path: _edit_of(repo_root, path, base_source(path))
+        for path in {definition.path for definition in removed.values()}
+    }
+    # A definition whose declaration the edit erased from the text was
+    # deleted, not lost to the recovery, even with a call to it left behind:
+    # its callers dangle as any removal's do.
+    lost = set(removed) - _erased_by_the_edit(removed, edits)
+    for qn in sorted(lost):
+        broken[removed[qn].path]["unreliable"].append(qn)
+    delta["symbols"]["removed"] = [
+        qn for qn in delta["symbols"]["removed"] if qn not in lost
+    ]
+    delta["dangling_callers"] = [
+        c for c in delta["dangling_callers"] if c["target"] not in lost
+    ]
+    delta["dangling_importers"] = [
+        i for i in delta["dangling_importers"] if i["target"] not in lost
+    ]
+    delta["parse_errors"] = errors
+
+
+def _read_or_none(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+class _Edit(NamedTuple):
+    """A broken file's base, both texts with every comment and string
+    blanked, and the line diff from the base to the edited text."""
+
+    base: bytes
+    base_code: bytes
+    code: bytes
+    code_lines: list[bytes]
+    opcodes: Sequence[tuple[str, int, int, int, int]]
+
+
+def _edit_of(repo_root: Path, path: str, base: bytes | None) -> _Edit | None:
+    """The edit of `path` against `base`, both as the grammar reads them;
+    None when either text cannot be read."""
+    edited = _read_or_none(repo_root / path)
+    if edited is None or base is None:
+        return None
+    language = get_language_for_extension(Path(path).suffix)
+    base_code, code = base, edited
+    if isinstance(language, cs.SupportedLanguage):
+        edited = grammar_bytes(edited, language, repo_root / path)
+        base = grammar_bytes(base, language, repo_root / path)
+        base_code, code = _code_only(base, language), _code_only(edited, language)
+    # Split as tree-sitter counts rows, which only `\n` ends.
+    opcodes = SequenceMatcher(
+        None, base.split(b"\n"), edited.split(b"\n"), autojunk=False
+    ).get_opcodes()
+    return _Edit(base, base_code, code, code.split(b"\n"), opcodes)
+
+
+def _code_only(source: bytes, language: cs.SupportedLanguage) -> bytes:
+    """`source` with every comment and string blanked, its lines kept.
+
+    The broken tree's shape is not trusted, but comments and strings are
+    tokens the lexer reads before any recovery: a declaration commented out
+    or spelled in a string declares nothing (Greptile review on PR #3307).
+    """
+    parser = load_parsers()[0].get(language)
+    if parser is None:
+        return source
+    code = bytearray(source)
+    stack = [parser.parse(source).root_node]
+    while stack:
+        node = stack.pop()
+        if any(word in node.type for word in cs.DELTA_NON_CODE_NODE_WORDS):
+            code[node.start_byte : node.end_byte] = re.sub(
+                rb"[^\n]", b" ", source[node.start_byte : node.end_byte]
+            )
+            continue
+        stack.extend(node.children)
+    return bytes(code)
+
+
+def _erased_by_the_edit(
+    removed: Mapping[str, Definition], edits: Mapping[str, _Edit | None]
+) -> set[str]:
+    """The removed definitions whose declaration the edit took out.
+
+    No parse is trusted here: the edited tree is the broken one. A
+    declaration is gone when the edited text spells it fewer times than the
+    base, comments and strings aside: a commented-out `def run` is gone,
+    and a `def run` another class keeps does not stand in for a deleted
+    `A.run` (Greptile review on PR #3307). When fewer declarations went
+    than definitions were removed, those whose line the edit left as it was
+    are still there. A name no source spells (`anonymous_3_4`), or a text
+    that cannot be read, is left to the recovery.
+    """
+    groups: dict[tuple[str, bytes], list[tuple[str, int | None]]] = {}
+    patterns: dict[tuple[str, bytes], tuple[_Edit, re.Pattern[bytes]]] = {}
+    for qn, definition in removed.items():
+        edit = edits.get(definition.path)
+        if edit is None:
+            continue
+        declared, row = _declaration(definition, edit.base)
+        key = (definition.path, declared.pattern)
+        patterns[key] = (edit, declared)
+        groups.setdefault(key, []).append((qn, row))
+    erased: set[str] = set()
+    for key, members in groups.items():
+        edit, declared = patterns[key]
+        dropped = sum(1 for _ in declared.finditer(edit.base_code)) - sum(
+            1 for _ in declared.finditer(edit.code)
+        )
+        if dropped <= 0:
+            continue
+        # As many declarations gone as definitions removed: each of them is
+        # one, whatever line the diff paired it with.
+        if dropped >= len(members):
+            erased.update(qn for qn, _row in members)
+            continue
+        erased.update(qn for qn, row in members if not _kept(edit, declared, row))
+    return erased
+
+
+def _kept(edit: _Edit, declared: re.Pattern[bytes], row: int | None) -> bool:
+    """Whether the edit left the base line `row` as it was, still declaring."""
+    if row is None:
+        return False
+    for tag, i1, i2, j1, _j2 in edit.opcodes:
+        if tag == "equal" and i1 <= row < i2:
+            return declared.search(edit.code_lines[j1 + row - i1]) is not None
+    return False
+
+
+def _declaration(
+    definition: Definition, base: bytes
+) -> tuple[re.Pattern[bytes], int | None]:
+    """How the base declares `definition`, as a pattern for the edited text.
+
+    The name as the first of its graph lines in the base spells it, with
+    the word and marks before it there (`def f`, `function f`, `func f`,
+    `class C`, `void m`, `T) m` for a Go method), or opening a line when
+    nothing precedes it: a call left behind (`return f(`, `t.m(`) declares
+    nothing. The bare word when those lines do not spell it. With the
+    pattern, the 0-based row of the base line that spells it, None for the
+    bare word.
+    """
+    name = re.escape(definition.name.encode(cs.ENCODING_UTF8)) + rb"(?!\w)"
+    word = re.compile(rb"(?<!\w)" + name)
+    # Split as tree-sitter counts rows, which only `\n` ends.
+    first = max(definition.start_line - 1, 0)
+    lines = base.split(b"\n")[first : definition.end_line]
+    spelt = next(
+        (
+            (row, line, m)
+            for row, line in enumerate(lines, first)
+            if (m := word.search(line))
+        ),
+        None,
+    )
+    if spelt is None:
+        return word, None
+    row, line, match = spelt
+    lead = re.search(cs.DELTA_DECLARATION_LEAD_PATTERN, line[: match.start()])
+    if lead is None:
+        return re.compile(cs.DELTA_DECLARATION_LINE_START_PATTERN + name), row
+    marks = [re.escape(bytes([c])) for c in lead[2] if not bytes([c]).isspace()]
+    joint = rb"\s*" + rb"\s*".join(marks) + rb"\s*" if marks else rb"\s+"
+    return re.compile(rb"(?<!\w)" + re.escape(lead[1]) + joint + name), row
+
+
 def has_findings(delta: StructuralDelta) -> bool:
     """True when the delta reports something an author should look at."""
     return bool(
-        delta["dangling_callers"]
+        # A file the edit left unparsable is re-ingested from whatever the
+        # recovery kept, so it outranks everything else (issue #3232).
+        delta["parse_errors"]
+        or delta["dangling_callers"]
         # An import of a removed name fails when the importing module loads,
         # with or without a call site to go with it (issue #2516).
         or delta["dangling_importers"]

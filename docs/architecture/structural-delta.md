@@ -77,6 +77,7 @@ value elsewhere (`h = helper; h(x)`).
   "new_duplicates": [],
   "new_import_cycles": [],
   "stale_importers": [],
+  "parse_errors": [],
   "tests_reaching": [
     {"qualified_name": "proj.tests.test_app.test_run", "path": "tests/test_app.py",
      "depth": 2, "through": "proj.pkg.app.run"}
@@ -99,6 +100,26 @@ value elsewhere (`h = helper; h(x)`).
 | `new_import_cycles`  | Strongly connected components of the module import graph that contain an edited module and did not exist before the edit. |
 | `stale_importers`    | Modules that still import a module every moved symbol left empty. Only a move (a rename across modules) produces one; the `move` operation's contract reads it. |
 | `tests_reaching`     | Test functions from which any symbol of the edited files is reachable through the call graph, with the shortest distance and the symbol it is reached through. |
+| `parse_errors`       | Files the edit left unparsable that parsed at the base (issue #3232): `path`, `line`, `col` and a `message` (`a.py:6:4: syntax error at 'return'`, `web/a.ts:3:12: missing ')'`) at the first point the parse broke. The re-ingest kept what tree-sitter recovered, so `unreliable` lists the definitions the base held there that the broken tree lost though the edited text still declares them (`def f`, `function f`, `func (t *T) m` as the base wrote it): they are not reported as `removed`, and nothing calling or importing them is `dangling`. A definition whose declaration the edit erased is a deletion like any other, even with a call to it left in the file, a commented-out copy of it, or a same-named method of another class still declaring that name. A file that did not parse at the base either is not listed, nor is any file when the caller cannot read the base (`cgr check` reads it from git, the MCP write tools from the file before writing). |
+
+A removed or renamed module-level symbol whose own module still binds its
+name after the edit leaves no dangling caller (issue #3248): a move that
+keeps `from new_home import name` behind, or a rename that keeps
+`old = new`, still serves every caller reaching the name through that
+module, whether it imported the name, imported the module, or sits in the
+module itself. The binding is read as for `dangling_importers`, following
+re-exports into modules the edit left alone. An import or a definition
+under `if TYPE_CHECKING:`, or in the `else` of `if not TYPE_CHECKING:`,
+never runs, so it binds nothing for either check. A caller needs more than
+an importable name: a name only assigned a literal (`name = None`) cannot
+be called, and a JS/TS module serves a name, declared or imported, only
+through an `export` of it: `export function name`, `export { name } from
+"./home"`, or `export { local as name }`. So a re-export of a function its
+target module never exports serves nothing. A type-only import or export
+(`export type { name }`, `export { type name }`, `import type { name }`) is
+erased from the emitted JavaScript and serves no caller. A method is reached
+through its class, which no module binding stands in for, so its callers are
+listed as before.
 
 ### Arity verdicts
 
@@ -248,10 +269,10 @@ cgr check --base origin/main --fail-on-found
 The graph is assumed to reflect `--base` (index there, then edit). Files
 that differ between the base and the working tree, untracked files
 included, are re-ingested and the delta printed as JSON. With
-`--fail-on-found` the command exits 1 when the delta reports dangling
-callers, dangling importers, `too_many`, `too_few` or `unexpected_keyword`
-arity findings, a call site written for a calling convention its callee
-left, new duplicates or new import cycles.
+`--fail-on-found` the command exits 1 when the delta reports a file that
+no longer parses, dangling callers, dangling importers, `too_many`,
+`too_few` or `unexpected_keyword` arity findings, a call site written for
+a calling convention its callee left, new duplicates or new import cycles.
 A project that is not indexed is refused: a scoped re-ingest completes a
 graph, it cannot stand in for the first index.
 
