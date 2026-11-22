@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from abc import abstractmethod
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterable, Iterator
 from typing import TYPE_CHECKING
 
@@ -848,6 +848,31 @@ def _pattern_bound_receivers(scope: Node) -> set[str]:
                 and (name := safe_decode_text(identifier)) in cs.PY_RECEIVER_NAMES
             )
     return names
+
+
+def own_scope_names(function: Node) -> frozenset[str]:
+    """Every name a def binds itself, and so does not read from the def
+    around it: its parameters, whatever its own statements bind, and what it
+    declares `global` or `nonlocal` (a name it may rebind, whose type is no
+    longer the enclosing one's to lend). Unlike `_locally_bound_names`, the
+    enclosing defs' names are not included: they are what a closure
+    captures (issue #3200)."""
+    facts = scope_facts(function)
+    return frozenset((*facts.params, *facts.bound, *facts.declared))
+
+
+def names_bound_more_than_once(function: Node) -> frozenset[str]:
+    """The names a def binds at more than one place, a parameter counting
+    as one: a nested def may run after any of them, so the one type the
+    def's flat map settles on is not the captured variable's (Greptile on
+    #3331)."""
+    counts = Counter(_parameter_names(function))
+    counts.update(
+        name
+        for _binder, identifier in _bindings_in(function)
+        if (name := safe_decode_text(identifier))
+    )
+    return frozenset(name for name, count in counts.items() if count > 1)
 
 
 def _inner_scope_bindings(scope: Node) -> set[str]:
