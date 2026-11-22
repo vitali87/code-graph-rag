@@ -23,7 +23,7 @@ Scoped to: itsdangerous
 ┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
 ┃ Relationship Type   ┃ Count ┃
 ┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
-│ CALLS               │   169 │
+│ CALLS               │   168 │
 │ IMPORTS             │   125 │
 │ DEFINES_METHOD      │    91 │
 │ CONTAINS_FILE       │    60 │
@@ -39,7 +39,7 @@ Scoped to: itsdangerous
 │ CONTAINS_SECTION    │     3 │
 │ CONTAINS_PACKAGE    │     3 │
 ├─────────────────────┼───────┤
-│ Total Relationships │   614 │
+│ Total Relationships │   613 │
 └─────────────────────┴───────┘
 --- stderr
 Fetching graph statistics...
