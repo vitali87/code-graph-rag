@@ -162,6 +162,7 @@ def _delta(renamed: list[tuple[str, str]]) -> StructuralDelta:
         "new_duplicates": [],
         "new_import_cycles": [],
         "stale_importers": [],
+        "parse_errors": [],
         "tests_reaching": [],
         "call_sites": {"before": 1, "after": 1},
         "reingest_ms": 1.0,
