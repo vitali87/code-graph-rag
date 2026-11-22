@@ -267,6 +267,23 @@ def test_difference_is_empty_only_when_the_answers_agree() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("recorded", "answered"),
+    [
+        ("a\r\nb\n", "a\nb\n"),
+        ("a\nb\n", "a\nb"),
+        ("a\u2028b\n", "a\nb\n"),
+    ],
+    ids=["carriage-return", "last-newline", "line-separator"],
+)
+def test_a_line_end_alone_is_a_difference(recorded: str, answered: str) -> None:
+    # read_file answers keep a file's own line ends, so they must count.
+    diff = difference(recorded, answered)
+
+    assert diff
+    assert all("\r" not in line for line in diff)
+
+
 def test_an_answer_reads_back_byte_for_byte(tmp_path: Path) -> None:
     # A file the repository holds with CRLF line ends is read back with them.
     text = "> tools/call read_file {}\nisError: false\n--- text\nline\r\nnext \n"

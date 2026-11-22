@@ -545,16 +545,23 @@ def ask(
 
 
 def difference(expected: str, actual: str) -> list[str]:
-    """`expected` against `actual` as a unified diff, empty when they agree."""
-    return list(
-        difflib.unified_diff(
-            expected.splitlines(),
-            actual.splitlines(),
+    """`expected` against `actual` as a unified diff, empty only when they are
+    the same text.
+
+    Split on the one line end the answers are written with, not
+    `splitlines()`'s wider set: a carriage return, a U+2028 or a missing last
+    newline is a difference, and a carriage return is shown as `\\r`.
+    """
+    return [
+        line.replace("\r", "\\r")
+        for line in difflib.unified_diff(
+            expected.split("\n"),
+            actual.split("\n"),
             "recorded",
             "answered",
             lineterm="",
         )
-    )
+    ]
 
 
 def _report(lines: list[str], title: str, diff: Sequence[str]) -> None:
