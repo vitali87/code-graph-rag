@@ -153,6 +153,47 @@ def test_same_alias_construction_follows_the_class(tmp_path: Path) -> None:
     assert not any(dst.endswith(".Decoy.Maker") for _src, _rel, dst in edges)
 
 
+@pytest.mark.parametrize(
+    ("use", "name"),
+    [
+        ("use Vendor\\{const helper};", "helper"),
+        ("use Vendor\\{tool};", "tool"),
+        ("use const Vendor\\helper;", "helper"),
+    ],
+    ids=["grouped-const", "grouped-class", "const"],
+)
+def test_a_class_or_const_import_leaves_a_bare_function_call_to_its_namespace(
+    tmp_path: Path, use: str, name: str
+) -> None:
+    # PHP keeps functions apart from classes and constants, so `helper()`
+    # after `use Vendor\{const helper}` still calls `App\helper()`. The
+    # import's unindexed target judged the call external (Greptile on PR
+    # #3652).
+    root = tmp_path / "proj"
+    files = {
+        "src/helpers.php": (
+            "<?php\nnamespace App;\n"
+            "function helper(): int { return 1; }\n"
+            "function tool(): int { return 2; }\n"
+        ),
+        "src/caller.php": (
+            f"<?php\nnamespace App;\n{use}\n"
+            f"function call(): int {{ return {name}(); }}\n"
+        ),
+    }
+    for rel, source in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+    ingestor = _capture(root, "proj")
+    calls = {
+        str(dst)
+        for _fl, src, rel, _tl, dst in ingestor.rels
+        if rel == "CALLS" and str(src) == "proj.src.caller.call"
+    }
+    assert calls == {f"proj.src.helpers.{name}"}
+
+
 def _use_clauses(source: bytes) -> list[Node]:
     parsers, _ = load_parsers()
     if cs.SupportedLanguage.PHP not in parsers:

@@ -3448,6 +3448,12 @@ class CallResolver:
         php_imports = self.import_processor.php_function_imports.get(module_qn)
         if php_imports and call_name in php_imports:
             return False
+        # PHP keeps functions apart from classes and constants, so a bare call
+        # never names what a class `use` or a `use const` brings in, grouped
+        # (`use Vendor\{const helper}`) or not: `helper()` still looks its
+        # namespace up, as with no import of the name (Greptile on PR #3652).
+        if language == cs.SupportedLanguage.PHP:
+            return False
         # A JS/TS import with a non-standard scheme (deno `ext:deno_node/x`) does
         # not resolve to a file-path module qn, so its target is unregistered and
         # looks external even though it aliases first-party code. Defer to the
