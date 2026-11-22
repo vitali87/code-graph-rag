@@ -70,6 +70,7 @@ from .julia import utils as julia_utils
 from .lua import utils as lua_utils
 from .php import class_names as php_class_names
 from .php import utils as php_utils
+from .py import utils as py_utils
 from .py.class_aliases import scan_class_body_aliases
 from .py.flow_bindings import Binding, BindingKind, FlowBindings, call_base
 from .py.receiver_rebinding import (
@@ -5131,6 +5132,7 @@ class CallProcessor:
     def _span_bindings(
         self,
         caller_node: Node,
+        caller_qn: str,
         module_qn: str,
         class_context: str | None,
         language: cs.SupportedLanguage,
@@ -5141,7 +5143,7 @@ class CallProcessor:
         type_inference = self._resolver.type_inference
         if language == cs.SupportedLanguage.RUST:
             return type_inference.collect_rust_span_bindings(
-                caller_node, module_qn, class_context
+                caller_node, module_qn, class_context, caller_qn
             )
         if language == cs.SupportedLanguage.GO:
             # A `for k, v := range xs` variable is the loop's own, so it holds
@@ -6031,6 +6033,22 @@ class CallProcessor:
             captures = sorted_captures(cursor, caller_node)
             call_nodes = captures.get(cs.CAPTURE_CALL, [])
 
+        if language == cs.SupportedLanguage.PYTHON and (
+            spans := py_utils.unrun_annotation_spans(
+                caller_node, queries[language][cs.QUERY_LANGUAGE]
+            )
+        ):
+            # A call in the caller's own annotations runs when its `def` does,
+            # and one in a local's annotation never runs: neither is a call
+            # the caller makes (issue #2873).
+            call_nodes = [
+                node
+                for node in call_nodes
+                if not any(
+                    start <= node.start_byte and node.end_byte <= end
+                    for start, end in spans
+                )
+            ]
         if not call_nodes:
             return
 
@@ -6160,7 +6178,12 @@ class CallProcessor:
             # span-scoped bindings let each call resolve against the binding
             # containing it.
             span_bindings = self._span_bindings(
-                caller_node, module_qn, class_context, language, local_var_types
+                caller_node,
+                caller_qn,
+                module_qn,
+                class_context,
+                language,
+                local_var_types,
             )
         except Exception as e:
             # A walk that still fails on some shape costs this caller its local

@@ -64,6 +64,12 @@ TS_PY_STRING = "string"
 TS_PY_INTERPOLATION = "interpolation"
 TS_PY_DECORATED_DEFINITION = "decorated_definition"
 TS_PY_DECORATOR = "decorator"
+# `@x.setter`, `@x.getter` and `@x.deleter` add an accessor to the property
+# `x`; the decorated `def` takes the same name and so does the property.
+PY_PROPERTY_ACCESSOR_ATTRS = frozenset({"getter", "setter", "deleter"})
+# `@property`, also spelled through the module it lives in (bot review on
+# PR #2725).
+PY_PROPERTY_DECORATORS = frozenset({"property", "builtins.property"})
 TS_PY_KEYWORD_ARGUMENT = "keyword_argument"
 TS_PY_LIST_SPLAT = "list_splat"
 TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
@@ -101,6 +107,17 @@ TS_PY_NONLOCAL_STATEMENT = "nonlocal_statement"
 # `typing` names a literal-versus-annotation check understands.
 PY_TYPING_OPTIONAL = "Optional"
 PY_TYPING_UNION = "Union"
+# `Annotated[T, metadata]` (PEP 593), however it is imported: its type is `T`
+# and the rest is metadata (issue #2873).
+PY_ANNOTATED_NAMES = frozenset(
+    {"Annotated", "typing.Annotated", "typing_extensions.Annotated"}
+)
+TS_PY_GENERIC_TYPE = "generic_type"
+TS_PY_TYPE_PARAMETER = "type_parameter"
+# The annotation of an annotated assignment (`v: T = x`), which a function
+# body never evaluates (issue #2873).
+CAPTURE_PY_ANNOTATION = "annotation"
+PY_ANNOTATED_ASSIGNMENT_QUERY = f"(assignment type: (type) @{CAPTURE_PY_ANNOTATION})"
 # The first parameter of a method that names the instance or class; a
 # signature change keeps it in place and never remaps it.
 PY_RECEIVER_NAMES = frozenset({"self", "cls"})
@@ -117,6 +134,9 @@ TS_PY_NAMED_EXPRESSION = "named_expression"
 TS_PY_COMPARISON_OPERATOR = "comparison_operator"
 TS_FIELD_OPERATORS = "operators"
 TS_PY_IF_STATEMENT = "if_statement"
+# `if TYPE_CHECKING:` and `if typing.TYPE_CHECKING:` guard imports that only a
+# type checker runs (issue #2685).
+PY_TYPE_CHECKING = "TYPE_CHECKING"
 TS_PY_TRY_STATEMENT = "try_statement"
 TS_PY_GLOBAL_STATEMENT = "global_statement"
 # `del x` and `type X = ...`: both bind (or unbind) the name they hold.

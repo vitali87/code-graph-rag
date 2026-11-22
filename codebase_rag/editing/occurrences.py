@@ -1144,7 +1144,30 @@ def _scope_around(binding: Node) -> Node | None:
         scope = scope.parent
     while scope is not None and not _is_scope(scope):
         scope = scope.parent
+    if scope is not None and scope.type in cs.RENAME_C_FUNCTION_DECLARATORS:
+        return _declared_scope(scope, binding)
     return scope
+
+
+def _declared_scope(declarator: Node, binding: Node) -> Node:
+    """The scope a C/C++ parameter binds in: the function or lambda whose
+    declarator holds its list (through any pointer or reference wrapper),
+    so `int count(int count) { return count; }` uses the parameter in its
+    body. A prototype's parameter, or the declarator's own name, keeps the
+    declarator: nothing past it sees that binding."""
+    parameters = declarator.child_by_field_name(cs.FIELD_PARAMETERS)
+    if parameters is None or not (
+        parameters.start_byte <= binding.start_byte < parameters.end_byte
+    ):
+        return declarator
+    node = declarator
+    while (owner := node.parent) is not None and (
+        _field(owner, node) == cs.FIELD_DECLARATOR
+    ):
+        if _is_scope(owner):
+            return owner
+        node = owner
+    return declarator
 
 
 def _nesting(token: Node) -> tuple[str, ...] | None:

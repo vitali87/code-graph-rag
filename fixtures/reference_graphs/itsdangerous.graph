@@ -413,9 +413,9 @@ E	DEFINES_METHOD	Class	"itsdangerous.tests.test_itsdangerous.test_url_safe.TestU
 E	IMPORTS	Module	"itsdangerous..devcontainer.on-create-command_sh"	ExternalModule	".venv/bin/activate"	{}
 E	IMPORTS	Module	"itsdangerous.docs.conf"	ExternalModule	"pallets_sphinx_themes"	{"alias":"ProjectLink","col":0,"end_col":45,"end_line":2,"imported_name":"ProjectLink","line":2}
 E	IMPORTS	Module	"itsdangerous.docs.conf"	ExternalModule	"pallets_sphinx_themes.get_version"	{"alias":"get_version","col":0,"end_col":45,"end_line":1,"imported_name":"get_version","line":1}
-E	IMPORTS	Module	"itsdangerous.src.itsdangerous"	ExternalModule	"importlib.metadata"	{"alias":"importlib","col":8,"end_col":33,"end_line":26,"line":26}
+E	IMPORTS	Module	"itsdangerous.src.itsdangerous"	ExternalModule	"importlib.metadata"	{"alias":"importlib","col":8,"end_col":33,"end_line":26,"import_scope":"function","line":26}
 E	IMPORTS	Module	"itsdangerous.src.itsdangerous"	ExternalModule	"typing"	{"alias":"t","col":0,"end_col":18,"end_line":3,"line":3}
-E	IMPORTS	Module	"itsdangerous.src.itsdangerous"	ExternalModule	"warnings"	{"alias":"warnings","col":8,"end_col":23,"end_line":27,"line":27}
+E	IMPORTS	Module	"itsdangerous.src.itsdangerous"	ExternalModule	"warnings"	{"alias":"warnings","col":8,"end_col":23,"end_line":27,"import_scope":"function","line":27}
 E	IMPORTS	Module	"itsdangerous.src.itsdangerous"	Module	"itsdangerous.src.itsdangerous.encoding"	{"alias":"base64_decode","col":0,"end_col":52,"end_line":5,"imported_name":"base64_decode","line":5}
 E	IMPORTS	Module	"itsdangerous.src.itsdangerous"	Module	"itsdangerous.src.itsdangerous.encoding"	{"alias":"base64_encode","col":0,"end_col":52,"end_line":6,"imported_name":"base64_encode","line":6}
 E	IMPORTS	Module	"itsdangerous.src.itsdangerous"	Module	"itsdangerous.src.itsdangerous.encoding"	{"alias":"want_bytes","col":0,"end_col":46,"end_line":7,"imported_name":"want_bytes","line":7}
@@ -445,7 +445,7 @@ E	IMPORTS	Module	"itsdangerous.src.itsdangerous.exc"	ExternalModule	"typing"	{"a
 E	IMPORTS	Module	"itsdangerous.src.itsdangerous.serializer"	ExternalModule	"collections.abc"	{"alias":"cabc","col":0,"end_col":30,"end_line":3,"line":3}
 E	IMPORTS	Module	"itsdangerous.src.itsdangerous.serializer"	ExternalModule	"json"	{"alias":"json","col":0,"end_col":11,"end_line":4,"line":4}
 E	IMPORTS	Module	"itsdangerous.src.itsdangerous.serializer"	ExternalModule	"typing"	{"alias":"t","col":0,"end_col":18,"end_line":5,"line":5}
-E	IMPORTS	Module	"itsdangerous.src.itsdangerous.serializer"	ExternalModule	"typing_extensions"	{"alias":"te","col":4,"end_col":34,"end_line":14,"line":14}
+E	IMPORTS	Module	"itsdangerous.src.itsdangerous.serializer"	ExternalModule	"typing_extensions"	{"alias":"te","col":4,"end_col":34,"end_line":14,"import_scope":"type_checking","line":14}
 E	IMPORTS	Module	"itsdangerous.src.itsdangerous.serializer"	Module	"itsdangerous.src.itsdangerous.encoding"	{"alias":"want_bytes","col":0,"end_col":32,"end_line":7,"imported_name":"want_bytes","line":7}
 E	IMPORTS	Module	"itsdangerous.src.itsdangerous.serializer"	Module	"itsdangerous.src.itsdangerous.exc"	{"alias":"BadPayload","col":0,"end_col":27,"end_line":8,"imported_name":"BadPayload","line":8}
 E	IMPORTS	Module	"itsdangerous.src.itsdangerous.serializer"	Module	"itsdangerous.src.itsdangerous.exc"	{"alias":"BadSignature","col":0,"end_col":29,"end_line":9,"imported_name":"BadSignature","line":9}

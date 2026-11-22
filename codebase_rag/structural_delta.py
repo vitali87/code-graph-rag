@@ -20,7 +20,8 @@ from __future__ import annotations
 import ast
 import re
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
@@ -124,6 +125,10 @@ class Snapshot(NamedTuple):
     sites: tuple[CallSite, ...]
     imports: dict[str, frozenset[str]]
     module_paths: dict[str, str]
+    # The imports that run when the importing module is imported. Only these
+    # can make an import cycle: a function-local or TYPE_CHECKING import is
+    # how a cycle is avoided (issue #2685).
+    eager_imports: dict[str, frozenset[str]]
     # (importer, target, imported name) per import statement; "" for a
     # whole-module import. Tells an import of a name the module still binds
     # (a constant the graph has no node for) from one of a moved symbol.
@@ -267,6 +272,20 @@ class StaleImporter(TypedDict):
     line: int
 
 
+class ParseError(TypedDict):
+    """A touched file that parsed at the base and no longer does (#3232)."""
+
+    path: str
+    line: int
+    col: int
+    message: str
+    # Definitions the base held in the file that the broken tree lost while
+    # the edited text still declares them: tree-sitter's recovery dropped them,
+    # not the edit, so they are not `removed` and nothing calling them is
+    # dangling.
+    unreliable: list[str]
+
+
 class StructuralDelta(TypedDict):
     paths: list[str]
     reparsed: list[str]
@@ -285,6 +304,9 @@ class StructuralDelta(TypedDict):
     stale_importers: list[StaleImporter]
     tests_reaching: list[TestReach]
     call_sites: SiteCounts
+    # Filled by `observe` when the caller can read the base version of each
+    # file; empty otherwise.
+    parse_errors: list[ParseError]
     reingest_ms: float
     delta_ms: float
 
@@ -538,7 +560,39 @@ def snapshot(
     found = _definitions_by_qn(fetch_all, missing, project_name, longer_prefixes)
     callees = {qn: d for qn, d in found.items() if qn in missing_callees}
     callers = {qn: d for qn, d in found.items() if qn in missing_callers}
+    graph = _module_imports(fetch_all, params)
+    return Snapshot(
+        paths=frozenset(path_list),
+        definitions=definitions,
+        callees=callees,
+        sites=sites,
+        imports=graph.imports,
+        module_paths=graph.module_paths,
+        eager_imports=graph.eager,
+        imported=graph.imported,
+        bindings=_named_import_bindings(fetch_all, params),
+        callers=callers,
+        modules=_touched_modules(fetch_all, params),
+        module_bindings=_module_import_bindings(fetch_all, params),
+        bases=_bases_above(
+            fetch_all, params, {site.caller for site in sites} | set(chain_callers)
+        ),
+    )
+
+
+class _ModuleImports(NamedTuple):
+    imports: dict[str, frozenset[str]]
+    eager: dict[str, frozenset[str]]
+    module_paths: dict[str, str]
+    imported: frozenset[tuple[str, str, str]]
+
+
+def _module_imports(fetch_all: QueryFn, params: PropertyDict) -> _ModuleImports:
+    """The module import graph, its import-time subgraph, each importing
+    module's path, and every (importer, target, imported name). Every module
+    either graph names is a node of it."""
     imports: dict[str, set[str]] = {}
+    eager: dict[str, set[str]] = {}
     module_paths: dict[str, str] = {}
     imported: set[tuple[str, str, str]] = set()
     for row in fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTS, params):
@@ -549,22 +603,15 @@ def snapshot(
         imports.setdefault(source, set()).add(target)
         imported.add((source, target, _text(row.get(cs.KEY_IMPORTED_NAME))))
         imports.setdefault(target, set())
+        if row.get(cs.KEY_IMPORT_SCOPE) is None:
+            eager.setdefault(source, set()).add(target)
+            eager.setdefault(target, set())
         module_paths[source] = _text(row.get(cs.KEY_FROM_PATH))
-    return Snapshot(
-        paths=frozenset(path_list),
-        definitions=definitions,
-        callees=callees,
-        sites=sites,
+    return _ModuleImports(
         imports={qn: frozenset(targets) for qn, targets in imports.items()},
+        eager={qn: frozenset(targets) for qn, targets in eager.items()},
         module_paths=module_paths,
         imported=frozenset(imported),
-        bindings=_named_import_bindings(fetch_all, params),
-        callers=callers,
-        modules=_touched_modules(fetch_all, params),
-        module_bindings=_module_import_bindings(fetch_all, params),
-        bases=_bases_above(
-            fetch_all, params, {site.caller for site in sites} | set(chain_callers)
-        ),
     )
 
 
@@ -3398,7 +3445,7 @@ def import_cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
 def _new_import_cycles(before: Snapshot, after: Snapshot) -> list[list[str]]:
     touched = {qn for qn, path in after.module_paths.items() if path in after.paths}
     touched |= {qn for qn, path in before.module_paths.items() if path in before.paths}
-    fresh = _cycles(after.imports) - _cycles(before.imports)
+    fresh = _cycles(after.eager_imports) - _cycles(before.eager_imports)
     return sorted(sorted(component) for component in fresh if component & touched)
 
 
@@ -3686,6 +3733,7 @@ def structural_delta(
         )
         if touched or gone_callers
         else [],
+        parse_errors=[],
         call_sites=SiteCounts(
             before=_inbound_calls(before), after=_inbound_calls(after)
         ),
@@ -3789,12 +3837,15 @@ def observe(
     apply: Callable[[], ReingestReport],
     repo_root: Path | None = None,
     declared_renames: frozenset[tuple[str, str]] = frozenset(),
+    base_source: Callable[[str], bytes | None] | None = None,
     reshaped_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
     """Snapshot `paths`, run `apply` (the scoped re-ingest), snapshot, diff.
 
     The caller holds whatever lock serialises graph writes; both reads and
-    the re-ingest must see one generation of the graph.
+    the re-ingest must see one generation of the graph. `base_source` reads
+    a path's content before the edit (None for a file that had none): with
+    it, a file the edit left unparsable is reported in `parse_errors`.
     """
     path_list = sorted(set(paths))
     started = time.perf_counter()
@@ -3826,6 +3877,18 @@ def observe(
         longer_project_prefixes=longer_prefixes,
         reshaped_renames=reshaped_renames,
     )
+    if base_source is not None and repo_root is not None:
+        # A path the re-ingest skipped under the project's exclusions is not
+        # in the graph, so its syntax is nothing the check measures.
+        skipped = set(report.skipped)
+        indexed = [path for path in path_list if path not in skipped]
+        _report_parse_errors(
+            delta,
+            before,
+            new_parse_errors(repo_root, indexed, base_source),
+            repo_root,
+            base_source,
+        )
     # The re-ingest's own clock covers only its inner work; the caller sees
     # the wall time of the whole apply step, and `delta_ms` is everything
     # this function added on top of it: both snapshots and the diff.
@@ -3835,10 +3898,285 @@ def observe(
     return delta
 
 
+def new_parse_errors(
+    repo_root: Path, paths: Iterable[str], base_source: Callable[[str], bytes | None]
+) -> list[ParseError]:
+    """The files among `paths` that no longer parse, though their base did.
+
+    A file whose base did not parse either (an older break, or syntax the
+    grammar does not know) is no finding of this edit; a file with no base
+    is held to parsing like any other.
+    """
+    # Deferred: the parser package would load at CLI start-up through
+    # editing -> structural_delta (issue #2253).
+    from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
+
+    parsers, _queries = load_parsers()
+    errors: list[ParseError] = []
+    for path in sorted(set(paths)):
+        language = get_language_for_extension(Path(path).suffix)
+        if not isinstance(language, cs.SupportedLanguage):
+            continue
+        parser = parsers.get(language)
+        if parser is None:
+            continue
+        try:
+            content = (repo_root / path).read_bytes()
+        except OSError:
+            continue
+        # Parsed as ingestion parses it: a C++ annotation macro or a
+        # conditional directive the plain grammar splits on is recovered.
+        root = parse_with_preproc_recovery(
+            parser, grammar_bytes(content, language, repo_root / path), language
+        ).root_node
+        if not root.has_error:
+            continue
+        base = base_source(path)
+        if (
+            base is not None
+            and parse_with_preproc_recovery(
+                parser, grammar_bytes(base, language, repo_root / path), language
+            ).root_node.has_error
+        ):
+            continue
+        node = _first_error(root)
+        line, col = node.start_point[0] + 1, node.start_point[1]
+        detail = (
+            cs.DELTA_PARSE_MISSING.format(token=node.type)
+            if node.is_missing
+            else cs.DELTA_PARSE_UNEXPECTED.format(
+                token=(node.text or b"")
+                .decode(cs.ENCODING_UTF8, errors="replace")
+                .split("\n", 1)[0][: cs.DELTA_PARSE_TOKEN_CHARS]
+            )
+        )
+        errors.append(
+            ParseError(
+                path=path,
+                line=line,
+                col=col,
+                message=cs.DELTA_PARSE_ERROR.format(
+                    path=path, line=line, col=col, detail=detail
+                ),
+                unreliable=[],
+            )
+        )
+    return errors
+
+
+def _first_error(node: Node) -> Node:
+    """The first MISSING node, or the first stray token of the first ERROR.
+
+    The outermost ERROR is where the parse broke; what nests inside it is
+    the recovery's guess at the rest. It can also swallow whole definitions
+    before the break (`def g()` without its colon wraps the file from line
+    1), so the position is its first child that is not one of them.
+    """
+    while not node.is_missing:
+        if node.is_error:
+            return next(
+                (c for c in node.children if not (c.is_named and not c.has_error)),
+                node,
+            )
+        broken = next((c for c in node.children if c.has_error or c.is_missing), None)
+        if broken is None:
+            return node
+        node = broken
+    return node
+
+
+def _report_parse_errors(
+    delta: StructuralDelta,
+    before: Snapshot,
+    errors: list[ParseError],
+    repo_root: Path,
+    base_source: Callable[[str], bytes | None],
+) -> None:
+    """Attach `errors`, and stop blaming the edit for what they hid."""
+    broken = {error["path"]: error for error in errors}
+    removed = {
+        qn: definition
+        for qn in delta["symbols"]["removed"]
+        if (definition := before.definitions.get(qn)) is not None
+        and definition.path in broken
+    }
+    edits = {
+        path: _edit_of(repo_root, path, base_source(path))
+        for path in {definition.path for definition in removed.values()}
+    }
+    # A definition whose declaration the edit erased from the text was
+    # deleted, not lost to the recovery, even with a call to it left behind:
+    # its callers dangle as any removal's do.
+    lost = set(removed) - _erased_by_the_edit(removed, edits)
+    for qn in sorted(lost):
+        broken[removed[qn].path]["unreliable"].append(qn)
+    delta["symbols"]["removed"] = [
+        qn for qn in delta["symbols"]["removed"] if qn not in lost
+    ]
+    delta["dangling_callers"] = [
+        c for c in delta["dangling_callers"] if c["target"] not in lost
+    ]
+    delta["dangling_importers"] = [
+        i for i in delta["dangling_importers"] if i["target"] not in lost
+    ]
+    delta["parse_errors"] = errors
+
+
+def _read_or_none(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+class _Edit(NamedTuple):
+    """A broken file's base, both texts with every comment and string
+    blanked, and the line diff from the base to the edited text."""
+
+    base: bytes
+    base_code: bytes
+    code: bytes
+    code_lines: list[bytes]
+    opcodes: Sequence[tuple[str, int, int, int, int]]
+
+
+def _edit_of(repo_root: Path, path: str, base: bytes | None) -> _Edit | None:
+    """The edit of `path` against `base`, both as the grammar reads them;
+    None when either text cannot be read."""
+    edited = _read_or_none(repo_root / path)
+    if edited is None or base is None:
+        return None
+    language = get_language_for_extension(Path(path).suffix)
+    base_code, code = base, edited
+    if isinstance(language, cs.SupportedLanguage):
+        edited = grammar_bytes(edited, language, repo_root / path)
+        base = grammar_bytes(base, language, repo_root / path)
+        base_code, code = _code_only(base, language), _code_only(edited, language)
+    # Split as tree-sitter counts rows, which only `\n` ends.
+    opcodes = SequenceMatcher(
+        None, base.split(b"\n"), edited.split(b"\n"), autojunk=False
+    ).get_opcodes()
+    return _Edit(base, base_code, code, code.split(b"\n"), opcodes)
+
+
+def _code_only(source: bytes, language: cs.SupportedLanguage) -> bytes:
+    """`source` with every comment and string blanked, its lines kept.
+
+    The broken tree's shape is not trusted, but comments and strings are
+    tokens the lexer reads before any recovery: a declaration commented out
+    or spelled in a string declares nothing (Greptile review on PR #3307).
+    """
+    parser = load_parsers()[0].get(language)
+    if parser is None:
+        return source
+    code = bytearray(source)
+    stack = [parser.parse(source).root_node]
+    while stack:
+        node = stack.pop()
+        if any(word in node.type for word in cs.DELTA_NON_CODE_NODE_WORDS):
+            code[node.start_byte : node.end_byte] = re.sub(
+                rb"[^\n]", b" ", source[node.start_byte : node.end_byte]
+            )
+            continue
+        stack.extend(node.children)
+    return bytes(code)
+
+
+def _erased_by_the_edit(
+    removed: Mapping[str, Definition], edits: Mapping[str, _Edit | None]
+) -> set[str]:
+    """The removed definitions whose declaration the edit took out.
+
+    No parse is trusted here: the edited tree is the broken one. A
+    declaration is gone when the edited text spells it fewer times than the
+    base, comments and strings aside: a commented-out `def run` is gone,
+    and a `def run` another class keeps does not stand in for a deleted
+    `A.run` (Greptile review on PR #3307). When fewer declarations went
+    than definitions were removed, those whose line the edit left as it was
+    are still there. A name no source spells (`anonymous_3_4`), or a text
+    that cannot be read, is left to the recovery.
+    """
+    groups: dict[tuple[str, bytes], list[tuple[str, int | None]]] = {}
+    patterns: dict[tuple[str, bytes], tuple[_Edit, re.Pattern[bytes]]] = {}
+    for qn, definition in removed.items():
+        edit = edits.get(definition.path)
+        if edit is None:
+            continue
+        declared, row = _declaration(definition, edit.base)
+        key = (definition.path, declared.pattern)
+        patterns[key] = (edit, declared)
+        groups.setdefault(key, []).append((qn, row))
+    erased: set[str] = set()
+    for key, members in groups.items():
+        edit, declared = patterns[key]
+        dropped = sum(1 for _ in declared.finditer(edit.base_code)) - sum(
+            1 for _ in declared.finditer(edit.code)
+        )
+        if dropped <= 0:
+            continue
+        # As many declarations gone as definitions removed: each of them is
+        # one, whatever line the diff paired it with.
+        if dropped >= len(members):
+            erased.update(qn for qn, _row in members)
+            continue
+        erased.update(qn for qn, row in members if not _kept(edit, declared, row))
+    return erased
+
+
+def _kept(edit: _Edit, declared: re.Pattern[bytes], row: int | None) -> bool:
+    """Whether the edit left the base line `row` as it was, still declaring."""
+    if row is None:
+        return False
+    for tag, i1, i2, j1, _j2 in edit.opcodes:
+        if tag == "equal" and i1 <= row < i2:
+            return declared.search(edit.code_lines[j1 + row - i1]) is not None
+    return False
+
+
+def _declaration(
+    definition: Definition, base: bytes
+) -> tuple[re.Pattern[bytes], int | None]:
+    """How the base declares `definition`, as a pattern for the edited text.
+
+    The name as the first of its graph lines in the base spells it, with
+    the word and marks before it there (`def f`, `function f`, `func f`,
+    `class C`, `void m`, `T) m` for a Go method), or opening a line when
+    nothing precedes it: a call left behind (`return f(`, `t.m(`) declares
+    nothing. The bare word when those lines do not spell it. With the
+    pattern, the 0-based row of the base line that spells it, None for the
+    bare word.
+    """
+    name = re.escape(definition.name.encode(cs.ENCODING_UTF8)) + rb"(?!\w)"
+    word = re.compile(rb"(?<!\w)" + name)
+    # Split as tree-sitter counts rows, which only `\n` ends.
+    first = max(definition.start_line - 1, 0)
+    lines = base.split(b"\n")[first : definition.end_line]
+    spelt = next(
+        (
+            (row, line, m)
+            for row, line in enumerate(lines, first)
+            if (m := word.search(line))
+        ),
+        None,
+    )
+    if spelt is None:
+        return word, None
+    row, line, match = spelt
+    lead = re.search(cs.DELTA_DECLARATION_LEAD_PATTERN, line[: match.start()])
+    if lead is None:
+        return re.compile(cs.DELTA_DECLARATION_LINE_START_PATTERN + name), row
+    marks = [re.escape(bytes([c])) for c in lead[2] if not bytes([c]).isspace()]
+    joint = rb"\s*" + rb"\s*".join(marks) + rb"\s*" if marks else rb"\s+"
+    return re.compile(rb"(?<!\w)" + re.escape(lead[1]) + joint + name), row
+
+
 def has_findings(delta: StructuralDelta) -> bool:
     """True when the delta reports something an author should look at."""
     return bool(
-        delta["dangling_callers"]
+        # A file the edit left unparsable is re-ingested from whatever the
+        # recovery kept, so it outranks everything else (issue #3232).
+        delta["parse_errors"]
+        or delta["dangling_callers"]
         # An import of a removed name fails when the importing module loads,
         # with or without a call site to go with it (issue #2516).
         or delta["dangling_importers"]
