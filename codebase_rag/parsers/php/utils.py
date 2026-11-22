@@ -186,6 +186,14 @@ def anonymous_class_qn(node: Node, module_qn: str) -> str | None:
     """
     if node.type != cs.TS_PHP_ANONYMOUS_CLASS:
         return None
+    return type_declaration_qn(node, module_qn)
+
+
+def type_declaration_qn(node: Node, module_qn: str) -> str:
+    """The qn the definition pass registers a PHP type declaration under,
+    named or anonymous. A simple name is not enough to find a class by: two
+    namespace blocks of one file may each declare a `C` (Greptile on PR
+    #3240)."""
     parts = scoped_name_parts(
         node, LANGUAGE_FQN_SPECS[cs.SupportedLanguage.PHP], module_qn, None
     )

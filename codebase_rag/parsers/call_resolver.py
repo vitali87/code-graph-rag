@@ -31,8 +31,8 @@ from .php.class_names import ascii_fold as _php_fold
 from .php.utils import (
     PhpTraitAlias,
     PhpTraitComposition,
-    anonymous_class_qn,
     php_trait_composition,
+    type_declaration_qn,
 )
 from .py import resolve_class_name
 from .rs import utils as rs_utils
@@ -2504,6 +2504,8 @@ class CallResolver:
             name, call.module_qn
         ):
             return None
+        if self._cpp_field_may_answer(call.language, class_qn, name):
+            return None
         if call.language == cs.SupportedLanguage.PHP:
             hit = self._php_member(class_qn, name, frozenset({class_qn}))
         elif call.language in _LINEARIZED_LANGUAGES:
@@ -2513,6 +2515,17 @@ class CallResolver:
         if hit is None or hit[0] != cs.NodeLabel.METHOD.value:
             return None
         return hit
+
+    def _cpp_field_may_answer(
+        self, language: cs.SupportedLanguage | None, class_qn: str, name: str
+    ) -> bool:
+        # A function-pointer or `std::function` field of the name, on the
+        # class or a base, may be what `label()` / `this->label()` calls,
+        # wherever the method is written, so the call keeps main's name
+        # lookup (Greptile on PR #3240).
+        return self._cpp_callable_member(language, name) and not (
+            self.cpp_callable_fields[name].isdisjoint(self._mro(class_qn))
+        )
 
     def _linearized_method(self, class_qn: str, name: str) -> tuple[str, str] | None:
         # The first of the class's linearized bases defining `name`.
@@ -2579,14 +2592,16 @@ class CallResolver:
         stack = [root] if root is not None else []
         while stack:
             node = stack.pop()
-            # An anonymous class has no name: it is matched by the qn the
-            # definition pass registers it under (Greptile on PR #3240).
-            if node.type in _PHP_TYPE_DECLARATIONS and (
-                safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)) == simple
-                or (
-                    module_qn is not None
-                    and anonymous_class_qn(node, module_qn) == class_qn
-                )
+            # Matched by the qn the definition pass registers it under: an
+            # anonymous class has no name, and two namespace blocks of one
+            # file may each declare a `C` (Greptile on PR #3240). The name
+            # check only spares the scope walk for every other declaration.
+            name_node = node.child_by_field_name(cs.FIELD_NAME)
+            if (
+                node.type in _PHP_TYPE_DECLARATIONS
+                and module_qn is not None
+                and (name_node is None or safe_decode_text(name_node) == simple)
+                and type_declaration_qn(node, module_qn) == class_qn
             ):
                 found = php_trait_composition(node)
                 traits |= found.traits

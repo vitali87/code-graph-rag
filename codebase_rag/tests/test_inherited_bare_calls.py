@@ -813,3 +813,89 @@ def test_a_scala_parameter_call_never_binds_an_inherited_method_exactly(
 ) -> None:
     calls = _calls(tmp_path / "hide", _SCALA_HIDDEN, "scala")
     assert _callees(calls, "Hide.Kid.run").get("Hide.Base.make") != "exact", calls
+
+
+# Greptile on PR #3240: a function-pointer field of the name, on the class or
+# a base below the method, is what `label()` and `this->label()` call, written
+# in the class or out of it; and two namespace blocks of one file may each
+# declare a `C` that picks a different trait method.
+_FIELDS_AND_NAMESPACES = {
+    "cpp": {
+        "fields.cpp": """\
+class Other { public: int label() { return 0; } };
+class Base { public: int label() { return 1; } };
+class Kid : public Base {
+ public:
+  int (*label)();
+  int run();
+  int runThis();
+  int inThis() { return this->label(); }
+};
+int Kid::run() { return label(); }
+int Kid::runThis() { return this->label(); }
+class Mid : public Base { public: int (*label)(); };
+class Leaf : public Mid { public: int run() { return label(); } };
+""",
+    },
+    "php": {
+        "spaces.php": """\
+<?php
+namespace {
+    trait First { public function label(): string { return "1"; } }
+    trait Second { public function label(): string { return "2"; } }
+    class P { public function label(): string { return "p"; } }
+}
+namespace A {
+    class C extends \\P {
+        use \\First, \\Second { \\First::label insteadof \\Second; }
+        public function call(): string { return $this->label(); }
+    }
+}
+namespace B {
+    class C extends \\P {
+        use \\First, \\Second { \\Second::label insteadof \\First; }
+        public function call(): string { return $this->label(); }
+    }
+}
+""",
+    },
+}
+
+
+@pytest.fixture(scope="module")
+def fields_and_namespaces(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> dict[str, _Calls]:
+    return {
+        grammar: _calls(
+            tmp_path_factory.mktemp(f"{grammar}3240f") / "f", files, grammar
+        )
+        for grammar, files in _FIELDS_AND_NAMESPACES.items()
+    }
+
+
+@pytest.mark.parametrize(
+    "caller",
+    ["fields.Kid.run", "fields.Kid.runThis", "fields.Kid.inThis", "fields.Leaf.run"],
+    ids=["out-of-class", "out-of-class-this", "in-class-this", "base-field"],
+)
+def test_a_cpp_callable_field_hides_an_inherited_method(
+    fields_and_namespaces: dict[str, _Calls], caller: str
+) -> None:
+    calls = fields_and_namespaces["cpp"]
+    assert _callees(calls, caller).get("fields.Base.label") != "exact", calls
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("spaces.A.C.call", "spaces.First.label"),
+        ("spaces.B.C.call", "spaces.Second.label"),
+    ],
+    ids=["first-namespace", "second-namespace"],
+)
+def test_same_named_php_classes_in_two_namespaces_compose_apart(
+    fields_and_namespaces: dict[str, _Calls], caller: str, callee: str
+) -> None:
+    calls = fields_and_namespaces["php"]
+    assert _callees(calls, caller) == {callee: "exact"}, calls
