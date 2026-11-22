@@ -1,0 +1,60 @@
+$ cgr -q graph overrides leveldb.include.leveldb.iterator.leveldb.Iterator.Seek --project leveldb
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "path": "db/db_iter.cc",
+    "qualified_name": "leveldb.db.db_iter.leveldb.DBIter.Seek",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "db/db_test.cc",
+    "qualified_name": "leveldb.db.db_test.leveldb.ModelDB.ModelIter.Seek",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "db/memtable.cc",
+    "qualified_name": "leveldb.db.memtable.leveldb.MemTableIterator.Seek",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "db/version_set.cc",
+    "qualified_name": "leveldb.db.version_set.leveldb.Version::LevelFileNumIterator.Seek",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "table/block.cc",
+    "qualified_name": "leveldb.table.block.leveldb.Block::Iter.Seek",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "table/iterator.cc",
+    "qualified_name": "leveldb.table.iterator.leveldb.EmptyIterator.Seek",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "table/merger.cc",
+    "qualified_name": "leveldb.table.merger.leveldb.MergingIterator.Seek",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "table/table_test.cc",
+    "qualified_name": "leveldb.table.table_test.leveldb.KeyConvertingIterator.Seek",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "table/two_level_iterator.cc",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator.Seek",
+    "relationship": "OVERRIDES"
+  }
+]
+--- stderr

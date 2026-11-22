@@ -1,0 +1,120 @@
+> tools/call find_duplicate_code {}
+isError: false
+--- text
+Found 51 duplicate group(s) in project 'mediatr' (largest first; each function is in one group; 'exact' groups are certain copies, 'similar' groups link near-copies and carry a score range):
+1. exact (100% similar):
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipeLineMultiCallToConstructorTest.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineMultiCallToConstructorTests.ConstructorTestBehavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipeLineMultiCallToConstructorTest.cs:20-27
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.OuterBehavior.Handle(Ping, RequestHandlerDelegate, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:29-36
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.InnerBehavior.Handle(Ping, RequestHandlerDelegate, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:48-55
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.InnerBehavior`2.Handle(TRequest, RequestHandlerDelegate, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:108-115
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.OuterBehavior`2.Handle(TRequest, RequestHandlerDelegate, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:128-135
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.ConstrainedBehavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:149-156
+   - mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.OuterBehavior.Handle(Ping, RequestHandlerDelegate, CancellationToken)  test/MediatR.Tests/PipelineTests.cs:92-99
+   - mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.OuterVoidBehavior.Handle(VoidPing, RequestHandlerDelegate, CancellationToken)  test/MediatR.Tests/PipelineTests.cs:111-118
+   - mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.InnerBehavior.Handle(Ping, RequestHandlerDelegate, CancellationToken)  test/MediatR.Tests/PipelineTests.cs:130-137
+   - mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.InnerVoidBehavior.Handle(VoidPing, RequestHandlerDelegate, CancellationToken)  test/MediatR.Tests/PipelineTests.cs:149-156
+   - mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.InnerBehavior`2.Handle(TRequest, RequestHandlerDelegate, CancellationToken)  test/MediatR.Tests/PipelineTests.cs:169-176
+   - mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.OuterBehavior`2.Handle(TRequest, RequestHandlerDelegate, CancellationToken)  test/MediatR.Tests/PipelineTests.cs:188-195
+   - mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.ConstrainedBehavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)  test/MediatR.Tests/PipelineTests.cs:209-216
+   - mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.ConcreteBehavior.Handle(Ping, RequestHandlerDelegate, CancellationToken)  test/MediatR.Tests/PipelineTests.cs:228-235
+2. exact (100% similar):
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.FirstPreProcessor.Process(TRequest, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:167-171
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.FirstConcretePreProcessor.Process(Ping, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:182-186
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.NextPreProcessor.Process(TRequest, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:197-201
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.NextConcretePreProcessor.Process(Ping, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:212-216
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.FirstPostProcessor.Process(TRequest, TResponse, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:228-232
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.FirstConcretePostProcessor.Process(Ping, Pong, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:243-247
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.NextPostProcessor.Process(TRequest, TResponse, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:259-263
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.NextConcretePostProcessor.Process(Ping, Pong, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:274-278
+3. exact (100% similar):
+   - mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.OuterBehavior.Handle(Ping, StreamHandlerDelegate, CancellationToken)  test/MediatR.Tests/StreamPipelineTests.cs:75-83
+   - mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.InnerBehavior.Handle(Ping, StreamHandlerDelegate, CancellationToken)  test/MediatR.Tests/StreamPipelineTests.cs:95-103
+   - mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.InnerBehavior`2.Handle(TRequest, StreamHandlerDelegate, CancellationToken)  test/MediatR.Tests/StreamPipelineTests.cs:116-124
+   - mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.OuterBehavior`2.Handle(TRequest, StreamHandlerDelegate, CancellationToken)  test/MediatR.Tests/StreamPipelineTests.cs:137-145
+   - mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.ConstrainedBehavior.Handle(TRequest, StreamHandlerDelegate, CancellationToken)  test/MediatR.Tests/StreamPipelineTests.cs:158-166
+   - mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.ConcreteBehavior.Handle(Ping, StreamHandlerDelegate, CancellationToken)  test/MediatR.Tests/StreamPipelineTests.cs:178-186
+4. exact (100% similar):
+   - mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.CommonExceptionHandler.Handle(PingResource, Exception, RequestExceptionHandlerState, CancellationToken)  samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs:15-25
+   - mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.ConnectionExceptionHandler.Handle(PingResource, ConnectionException, RequestExceptionHandlerState, CancellationToken)  samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs:34-44
+   - mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.AccessDeniedExceptionHandler.Handle(PingResource, ForbiddenException, RequestExceptionHandlerState, CancellationToken)  samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs:53-63
+   - mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.ServerExceptionHandler.Handle(PingNewResource, ServerException, RequestExceptionHandlerState, CancellationToken)  samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs:72-82
+   - mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlersOverrides.MediatR.Examples.ExceptionHandler.Overrides.CommonExceptionHandler.Handle(PingResourceTimeout, Exception, RequestExceptionHandlerState, CancellationToken)  samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlersOverrides.cs:15-25
+   - mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlersOverrides.MediatR.Examples.ExceptionHandler.Overrides.ServerExceptionHandler.Handle(PingNewResource, ServerException, RequestExceptionHandlerState, CancellationToken)  samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlersOverrides.cs:34-44
+5. exact (100% similar):
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.PingPongGenericExceptionAction.Execute(Ping, Exception, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:287-292
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.PingPongApplicationExceptionAction.Execute(Ping, ApplicationException, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:301-306
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.PingPongExceptionActionForType1.Execute(Ping, SystemException, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:315-320
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.PingPongExceptionActionForType2.Execute(Ping, SystemException, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:329-334
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.FooRequestHandler.Handle(FooRequest, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:906-909
+   - mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.VoidPingHandler.Handle(VoidPing, CancellationToken)  test/MediatR.Tests/PipelineTests.cs:61-65
+6. exact (100% similar):
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.AssemblyResolutionTests.ShouldResolveMediator  test/MediatR.Tests/MicrosoftExtensionsDI/AssemblyResolutionTests.cs:26-30
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeEvaluatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeEvaluatorTests.ShouldResolveMediator  test/MediatR.Tests/MicrosoftExtensionsDI/TypeEvaluatorTests.cs:30-34
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.ShouldResolveMediator  test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs:25-29
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.ShouldResolveSender  test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs:31-35
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.ShouldResolvePublisher  test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs:37-41
+7. exact (100% similar):
+   - mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddOpenBehavior(Type, ServiceLifetime)  src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs:202-223
+   - mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddOpenStreamBehavior(Type, ServiceLifetime)  src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs:287-308
+   - mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddOpenRequestPreProcessor(Type, ServiceLifetime)  src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs:373-394
+   - mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddOpenRequestPostProcessor(Type, ServiceLifetime)  src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs:457-478
+8. exact (100% similar):
+   - mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddBehavior(Type, ServiceLifetime)  src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs:165-180
+   - mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddStreamBehavior(Type, ServiceLifetime)  src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs:264-279
+   - mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPreProcessor(Type, ServiceLifetime)  src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs:350-365
+   - mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPostProcessor(Type, ServiceLifetime)  src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs:435-449
+9. exact (100% similar):
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.OuterStreamBehavior.Handle(Ping, StreamHandlerDelegate, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:67-75
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.InnerStreamBehavior.Handle(Ping, StreamHandlerDelegate, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs:87-95
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.StreamPipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.StreamPipelineTests.OuterBehavior.Handle(StreamPing, StreamHandlerDelegate, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/StreamPipelineTests.cs:27-35
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.StreamPipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.StreamPipelineTests.InnerBehavior.Handle(StreamPing, StreamHandlerDelegate, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/StreamPipelineTests.cs:47-55
+10. exact (100% similar):
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.Handlers.MediatR.Extensions.Microsoft.DependencyInjection.Tests.ZingHandler.Handle(Zing, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/Handlers.cs:133-137
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipeLineMultiCallToConstructorTest.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineMultiCallToConstructorTests.ConstructorTestHandler.Handle(ConstructorTestRequest, CancellationToken)  test/MediatR.Tests/MicrosoftExtensionsDI/PipeLineMultiCallToConstructorTest.cs:66-70
+   - mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.PingHandler.Handle(Ping, CancellationToken)  test/MediatR.Tests/PipelineTests.cs:46-50
+   - mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.ZingHandler.Handle(Zing, CancellationToken)  test/MediatR.Tests/PipelineTests.cs:76-80
+11. exact (100% similar):
+   - mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_for_send  test/MediatR.Tests/ExceptionTests.cs:81-85
+   - mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_for_void_send  test/MediatR.Tests/ExceptionTests.cs:87-91
+   - mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_for_async_send  test/MediatR.Tests/ExceptionTests.cs:108-112
+   - mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_for_async_void_send  test/MediatR.Tests/ExceptionTests.cs:114-118
+12. exact (100% similar):
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.AssemblyResolutionTests.ShouldResolveNotificationHandlers  test/MediatR.Tests/MicrosoftExtensionsDI/AssemblyResolutionTests.cs:44-48
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.CustomMediatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.CustomMediatorTests.ShouldResolveNotificationHandlers  test/MediatR.Tests/MicrosoftExtensionsDI/CustomMediatorTests.cs:39-43
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.DuplicateAssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.DuplicateAssemblyResolutionTests.ShouldResolveNotificationHandlersOnlyOnce  test/MediatR.Tests/MicrosoftExtensionsDI/DuplicateAssemblyResolutionTests.cs:22-26
+   - mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.ShouldResolveNotificationHandlers  test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs:55-59
+13. exact (100% similar):
+   - mediatr.test.MediatR.Tests.GenericTypeConstraintsTests.GenericTypeConstraintsTests.PingHandler.Handle(Ping, CancellationToken)  test/MediatR.Tests/GenericTypeConstraintsTests.cs:82-85
+   - mediatr.test.MediatR.Tests.Pipeline.RequestPostProcessorTests.RequestPostProcessorTests.PingHandler.Handle(Ping, CancellationToken)  test/MediatR.Tests/Pipeline/RequestPostProcessorTests.cs:25-28
+   - mediatr.test.MediatR.Tests.Pipeline.RequestPreProcessorTests.RequestPreProcessorTests.PingHandler.Handle(Ping, CancellationToken)  test/MediatR.Tests/Pipeline/RequestPreProcessorTests.cs:25-28
+   - mediatr.test.MediatR.Tests.SendTests.SendTests.PingHandler.Handle(Ping, CancellationToken)  test/MediatR.Tests/SendTests.cs:47-50
+14. exact (100% similar):
+   - mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddBehavior(Type, Type, ServiceLifetime)  src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs:189-194
+   - mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddStreamBehavior(Type, Type, ServiceLifetime)  src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs:242-247
+   - mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPreProcessor(Type, Type, ServiceLifetime)  src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs:327-332
+   - mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPostProcessor(Type, Type, ServiceLifetime)  src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs:413-418
+15. exact (100% similar):
+   - mediatr.samples.MediatR.Examples.Runner.Runner.IsHandlerForSameExceptionWorks(IMediator, WrappingWriter)  samples/MediatR.Examples/Runner.cs:182-199
+   - mediatr.samples.MediatR.Examples.Runner.Runner.IsHandlerForBaseExceptionWorks(IMediator, WrappingWriter)  samples/MediatR.Examples/Runner.cs:201-218
+   - mediatr.samples.MediatR.Examples.Runner.Runner.IsHandlerForLessSpecificExceptionWorks(IMediator, WrappingWriter)  samples/MediatR.Examples/Runner.cs:220-237
+16. exact (100% similar):
+   - mediatr.test.MediatR.Tests.GenericRequestHandlerTests.GenericRequestHandlerTests.ShouldThrowExceptionWhenTypesClosingExceedsMaximum  test/MediatR.Tests/GenericRequestHandlerTests.cs:97-114
+   - mediatr.test.MediatR.Tests.GenericRequestHandlerTests.GenericRequestHandlerTests.ShouldThrowExceptionWhenGenericHandlerRegistrationsExceedsMaximum  test/MediatR.Tests/GenericRequestHandlerTests.cs:116-133
+   - mediatr.test.MediatR.Tests.GenericRequestHandlerTests.GenericRequestHandlerTests.ShouldThrowExceptionWhenGenericTypeParametersExceedsMaximum  test/MediatR.Tests/GenericRequestHandlerTests.cs:135-152
+17. exact (100% similar):
+   - mediatr.samples.MediatR.Examples.AspNetCore.Program.Program.Main(string[])  samples/MediatR.Examples.AspNetCore/Program.cs:12-17
+   - mediatr.samples.MediatR.Examples.Autofac.Program.Program.Main(string[])  samples/MediatR.Examples.Autofac/Program.cs:15-21
+   - mediatr.samples.MediatR.Examples.Stashbox.Program.Program.Main  samples/MediatR.Examples.Stashbox/Program.cs:12-17
+18. exact (100% similar):
+   - mediatr.samples.MediatR.Examples.DryIoc.Program.Program.Main  samples/MediatR.Examples.DryIoc/Program.cs:12-18
+   - mediatr.samples.MediatR.Examples.Lamar.Program.Program.Main(string[])  samples/MediatR.Examples.Lamar/Program.cs:11-17
+   - mediatr.samples.MediatR.Examples.LightInject.Program.Program.Main(string[])  samples/MediatR.Examples.LightInject/Program.cs:14-20
+19. exact (100% similar):
+   - mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.SyncStopOnException(IEnumerable, INotification, CancellationToken)  samples/MediatR.Examples.PublishStrategies/Publisher.cs:123-129
+   - mediatr.src.MediatR.NotificationPublishers.ForeachAwaitPublisher.ForeachAwaitPublisher.Publish(IEnumerable, INotification, CancellationToken)  src/MediatR/NotificationPublishers/ForeachAwaitPublisher.cs:17-23
+   - mediatr.test.MediatR.Tests.PublishTests.PublishTests.SequentialMediator.PublishCore(IEnumerable, INotification, CancellationToken)  test/MediatR.Tests/PublishTests.cs:115-121
+20. exact (100% similar):
+   - mediatr.test.MediatR.Tests.Pipeline.RequestPostProcessorTests.RequestPostProcessorTests.Should_run_postprocessors  test/MediatR.Tests/Pipeline/RequestPostProcessorTests.cs:41-63
+   - mediatr.test.MediatR.Tests.Pipeline.RequestPreProcessorTests.RequestPreProcessorTests.Should_run_preprocessors  test/MediatR.Tests/Pipeline/RequestPreProcessorTests.cs:41-63
+... 31 more group(s); raise limit to see them.
+143 symbol(s) had no structural fingerprint and were not analyzed.

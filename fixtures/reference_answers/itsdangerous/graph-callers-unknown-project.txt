@@ -1,0 +1,5 @@
+$ cgr -q graph callers base64_encode --project no-such-project
+status: 3
+--- stdout
+--- stderr
+Project 'no-such-project' is not indexed. Indexed projects: itsdangerous.

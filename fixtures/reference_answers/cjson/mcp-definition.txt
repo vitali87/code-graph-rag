@@ -1,0 +1,17 @@
+> tools/call definition {"qualified_name": "cjson.cJSON.cJSON_Parse"}
+isError: false
+--- text
+{
+  "label": "Function",
+  "qualified_name": "cjson.cJSON.cJSON_Parse",
+  "path": "cJSON.c",
+  "start_line": 1184,
+  "end_line": 1187,
+  "start_col": 0,
+  "name_line": 1184,
+  "decorators": [],
+  "name": "cJSON_Parse",
+  "docstring": null,
+  "source": "CJSON_PUBLIC(cJSON *) cJSON_Parse(const char *value)\n{\n    return cJSON_ParseWithOpts(value, 0, 0);\n}",
+  "found": true
+}

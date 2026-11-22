@@ -1,0 +1,19 @@
+> tools/call resolve {"target": "serialize"}
+isError: false
+--- text
+[
+  {
+    "label": "Function",
+    "qualified_name": "lume.lume.lume.serialize",
+    "path": "lume.lua",
+    "start_line": 575,
+    "end_line": 577
+  },
+  {
+    "label": "Function",
+    "qualified_name": "lume.lume.serialize",
+    "path": "lume.lua",
+    "start_line": 571,
+    "end_line": 573
+  }
+]

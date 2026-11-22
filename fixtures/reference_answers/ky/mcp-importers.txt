@@ -1,0 +1,173 @@
+> tools/call importers {"module_qualified_name": "ky.source.core.constants"}
+isError: false
+--- text
+[
+  {
+    "module": "ky.source.core.Ky",
+    "path": "source/core/Ky.ts",
+    "line": 17,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 25,
+    "end_col": 24,
+    "end_col_char": 24,
+    "alias": "maxSafeTimeout",
+    "imported_name": "maxSafeTimeout"
+  },
+  {
+    "module": "ky.source.core.Ky",
+    "path": "source/core/Ky.ts",
+    "line": 17,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 25,
+    "end_col": 24,
+    "end_col_char": 24,
+    "alias": "responseTypes",
+    "imported_name": "responseTypes"
+  },
+  {
+    "module": "ky.source.core.Ky",
+    "path": "source/core/Ky.ts",
+    "line": 17,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 25,
+    "end_col": 24,
+    "end_col_char": 24,
+    "alias": "stop",
+    "imported_name": "stop"
+  },
+  {
+    "module": "ky.source.core.Ky",
+    "path": "source/core/Ky.ts",
+    "line": 17,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 25,
+    "end_col": 24,
+    "end_col_char": 24,
+    "alias": "supportsAbortController",
+    "imported_name": "supportsAbortController"
+  },
+  {
+    "module": "ky.source.core.Ky",
+    "path": "source/core/Ky.ts",
+    "line": 17,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 25,
+    "end_col": 24,
+    "end_col_char": 24,
+    "alias": "supportsFormData",
+    "imported_name": "supportsFormData"
+  },
+  {
+    "module": "ky.source.core.Ky",
+    "path": "source/core/Ky.ts",
+    "line": 17,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 25,
+    "end_col": 24,
+    "end_col_char": 24,
+    "alias": "supportsRequestStreams",
+    "imported_name": "supportsRequestStreams"
+  },
+  {
+    "module": "ky.source.core.Ky",
+    "path": "source/core/Ky.ts",
+    "line": 17,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 25,
+    "end_col": 24,
+    "end_col_char": 24,
+    "alias": "supportsResponseStreams",
+    "imported_name": "supportsResponseStreams"
+  },
+  {
+    "module": "ky.source.index",
+    "path": "source/index.ts",
+    "line": 4,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 4,
+    "end_col": 57,
+    "end_col_char": 57,
+    "alias": "requestMethods",
+    "imported_name": "requestMethods"
+  },
+  {
+    "module": "ky.source.index",
+    "path": "source/index.ts",
+    "line": 4,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 4,
+    "end_col": 57,
+    "end_col_char": 57,
+    "alias": "stop",
+    "imported_name": "stop"
+  },
+  {
+    "module": "ky.source.types.hooks",
+    "path": "source/types/hooks.ts",
+    "line": 1,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 1,
+    "end_col": 47,
+    "end_col_char": 47,
+    "alias": "stop",
+    "imported_name": "stop"
+  },
+  {
+    "module": "ky.source.types.ky",
+    "path": "source/types/ky.ts",
+    "line": 1,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 1,
+    "end_col": 47,
+    "end_col_char": 47,
+    "alias": "stop",
+    "imported_name": "stop"
+  },
+  {
+    "module": "ky.source.utils.normalize",
+    "path": "source/utils/normalize.ts",
+    "line": 1,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 1,
+    "end_col": 52,
+    "end_col_char": 52,
+    "alias": "requestMethods",
+    "imported_name": "requestMethods"
+  },
+  {
+    "module": "ky.source.utils.options",
+    "path": "source/utils/options.ts",
+    "line": 1,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 1,
+    "end_col": 74,
+    "end_col_char": 74,
+    "alias": "kyOptionKeys",
+    "imported_name": "kyOptionKeys"
+  },
+  {
+    "module": "ky.source.utils.options",
+    "path": "source/utils/options.ts",
+    "line": 1,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 1,
+    "end_col": 74,
+    "end_col_char": 74,
+    "alias": "requestOptionsRegistry",
+    "imported_name": "requestOptionsRegistry"
+  }
+]

@@ -1,0 +1,146 @@
+> tools/call context {"budget_tokens": 1500, "target": "cjson.cJSON.parse_value"}
+isError: false
+--- text
+{
+  "target": "cjson.cJSON.parse_value",
+  "resolved": "cjson.cJSON.parse_value",
+  "budget_tokens": 1500,
+  "used_tokens": 1470,
+  "pieces": [
+    {
+      "qualified_name": "cjson.cJSON.parse_value",
+      "file": "cJSON.c",
+      "span": [
+        1325,
+        1377
+      ],
+      "why_included": "target",
+      "source": "static cJSON_bool parse_value(cJSON * const item, parse_buffer * const input_buffer)\n{\n    if ((input_buffer == NULL) || (input_buffer->content == NULL))\n    {\n        return false; /* no input */\n    }\n\n    /* parse the different types of values */\n    /* null */\n    if (can_read(input_buffer, 4) && (strncmp((const char*)buffer_at_offset(input_buffer), \"null\", 4) == 0))\n    {\n        item->type = cJSON_NULL;\n        input_buffer->offset += 4;\n        return true;\n    }\n    /* false */\n    if (can_read(input_buffer, 5) && (strncmp((const char*)buffer_at_offset(input_buffer), \"false\", 5) == 0))\n    {\n        item->type = cJSON_False;\n        input_buffer->offset += 5;\n        return true;\n    }\n    /* true */\n    if (can_read(input_buffer, 4) && (strncmp((const char*)buffer_at_offset(input_buffer), \"true\", 4) == 0))\n    {\n        item->type = cJSON_True;\n        item->valueint = 1;\n        input_buffer->offset += 4;\n        return true;\n    }\n    /* string */\n    if (can_access_at_index(input_buffer, 0) && (buffer_at_offset(input_buffer)[0] == '\\\"'))\n    {\n        return parse_string(item, input_buffer);\n    }\n    /* number */\n    if (can_access_at_index(input_buffer, 0) && ((buffer_at_offset(input_buffer)[0] == '-') || ((buffer_at_offset(input_buffer)[0] >= '0') && (buffer_at_offset(input_buffer)[0] <= '9'))))\n    {\n        return parse_number(item, input_buffer);\n    }\n    /* array */\n    if (can_access_at_index(input_buffer, 0) && (buffer_at_offset(input_buffer)[0] == '['))\n    {\n        return parse_array(item, input_buffer);\n    }\n    /* object */\n    if (can_access_at_index(input_buffer, 0) && (buffer_at_offset(input_buffer)[0] == '{'))\n    {\n        return parse_object(item, input_buffer);\n    }\n\n    return false;\n}",
+      "tokens": 595
+    },
+    {
+      "qualified_name": "cjson.cJSON.cJSON_ParseWithLengthOpts",
+      "file": "cJSON.c",
+      "span": [
+        1129,
+        1129
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "if (!parse_value(item, buffer_skip_whitespace(skip_utf8_bom(&buffer))))",
+      "tokens": 91
+    },
+    {
+      "qualified_name": "cjson.cJSON.parse_array",
+      "file": "cJSON.c",
+      "span": [
+        1515,
+        1515
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "if (!parse_value(current_item, input_buffer))",
+      "tokens": 80
+    },
+    {
+      "qualified_name": "cjson.cJSON.parse_array",
+      "file": "cJSON.c",
+      "span": [
+        1454,
+        1454
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "static cJSON_bool parse_array(cJSON * const item, parse_buffer * const input_buffer)",
+      "tokens": 86
+    },
+    {
+      "qualified_name": "cjson.cJSON.parse_number",
+      "file": "cJSON.c",
+      "span": [
+        307,
+        307
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "static cJSON_bool parse_number(cJSON * const item, parse_buffer * const input_buffer)",
+      "tokens": 84
+    },
+    {
+      "qualified_name": "cjson.cJSON.parse_object",
+      "file": "cJSON.c",
+      "span": [
+        1696,
+        1696
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "if (!parse_value(current_item, input_buffer))",
+      "tokens": 80
+    },
+    {
+      "qualified_name": "cjson.cJSON.parse_object",
+      "file": "cJSON.c",
+      "span": [
+        1614,
+        1614
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "static cJSON_bool parse_object(cJSON * const item, parse_buffer * const input_buffer)",
+      "tokens": 86
+    },
+    {
+      "qualified_name": "cjson.cJSON.parse_string",
+      "file": "cJSON.c",
+      "span": [
+        781,
+        781
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "static cJSON_bool parse_string(cJSON * const item, parse_buffer * const input_buffer)",
+      "tokens": 84
+    },
+    {
+      "qualified_name": "cjson.tests.parse_value.assert_parse_value",
+      "file": "tests/parse_value.c",
+      "span": [
+        51,
+        51
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "TEST_ASSERT_TRUE(parse_value(item, &buffer));",
+      "tokens": 82
+    },
+    {
+      "qualified_name": "cjson.tests.print_value.assert_print_value",
+      "file": "tests/print_value.c",
+      "span": [
+        49,
+        49
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "TEST_ASSERT_TRUE_MESSAGE(parse_value(item, &parsebuffer), \"Failed to parse value.\");",
+      "tokens": 90
+    },
+    {
+      "qualified_name": "cjson.tests.parse_value.parse_value_should_parse_array",
+      "file": "tests/parse_value.c",
+      "span": [
+        87,
+        91
+      ],
+      "why_included": "test reaching it at depth 2 through cjson.tests.parse_value.assert_parse_value",
+      "source": "static void parse_value_should_parse_array(void)\n{\n    assert_parse_value(\"[]\", cJSON_Array);\n    reset(item);\n}",
+      "tokens": 112
+    }
+  ],
+  "omitted": [
+    "cjson.tests.parse_value.assert_parse_value (test reaching it at depth 1 through cjson.cJSON.parse_value)",
+    "cjson.tests.print_value.assert_print_value (test reaching it at depth 1 through cjson.cJSON.parse_value)",
+    "cjson.tests.parse_array.assert_not_array (test reaching it at depth 2 through cjson.cJSON.parse_array)",
+    "cjson.tests.parse_array.assert_parse_array (test reaching it at depth 2 through cjson.cJSON.parse_array)",
+    "cjson.tests.parse_object.assert_not_object (test reaching it at depth 2 through cjson.cJSON.parse_object)",
+    "cjson.tests.parse_object.assert_parse_object (test reaching it at depth 2 through cjson.cJSON.parse_object)",
+    "cjson.tests.parse_value.parse_value_should_parse_false (test reaching it at depth 2 through cjson.tests.parse_value.assert_parse_value)",
+    "cjson.tests.parse_value.parse_value_should_parse_null (test reaching it at depth 2 through cjson.tests.parse_value.assert_parse_value)",
+    "cjson.tests.parse_value.parse_value_should_parse_number (test reaching it at depth 2 through cjson.tests.parse_value.assert_parse_value)",
+    "cjson.tests.parse_value.parse_value_should_parse_object (test reaching it at depth 2 through cjson.tests.parse_value.assert_parse_value)"
+  ],
+  "omitted_count": 96,
+  "truncated": false
+}

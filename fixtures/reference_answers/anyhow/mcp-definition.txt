@@ -1,0 +1,17 @@
+> tools/call definition {"qualified_name": "anyhow.src.chain.Chain.next"}
+isError: false
+--- text
+{
+  "label": "Method",
+  "qualified_name": "anyhow.src.chain.Chain.next",
+  "path": "src/chain.rs",
+  "start_line": 38,
+  "end_line": 48,
+  "start_col": 4,
+  "name_line": 38,
+  "decorators": [],
+  "name": "next",
+  "docstring": null,
+  "source": "fn next(&mut self) -> Option<Self::Item> {\n        match &mut self.state {\n            Linked { next } => {\n                let error = (*next)?;\n                *next = error.source();\n                Some(error)\n            }\n            #[cfg(any(feature = \"std\", not(anyhow_no_core_error)))]\n            Buffered { rest } => rest.next(),\n        }\n    }",
+  "found": true
+}

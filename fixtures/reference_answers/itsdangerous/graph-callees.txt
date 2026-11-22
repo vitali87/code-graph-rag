@@ -1,0 +1,66 @@
+$ cgr -q graph callees itsdangerous.src.itsdangerous.signer.Signer.__init__ --project itsdangerous
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 1,
+    "callee_path": "src/itsdangerous/encoding.py",
+    "col": 26,
+    "depth": 1,
+    "end_col": 41,
+    "end_line": 144,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 144,
+    "path": "src/itsdangerous/signer.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.encoding.want_bytes",
+    "resolution": "exact",
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.__init__"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/itsdangerous/encoding.py",
+    "col": 19,
+    "depth": 1,
+    "end_col": 35,
+    "end_line": 154,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 154,
+    "path": "src/itsdangerous/signer.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.encoding.want_bytes",
+    "resolution": "exact",
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.__init__"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/itsdangerous/signer.py",
+    "col": 24,
+    "depth": 1,
+    "end_col": 57,
+    "end_line": 171,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 171,
+    "path": "src/itsdangerous/signer.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.signer.HMACAlgorithm.__init__",
+    "resolution": "exact",
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.__init__"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/itsdangerous/signer.py",
+    "col": 40,
+    "depth": 1,
+    "end_col": 67,
+    "end_line": 143,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 143,
+    "path": "src/itsdangerous/signer.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.signer._make_keys_list",
+    "resolution": "exact",
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.__init__"
+  }
+]
+--- stderr

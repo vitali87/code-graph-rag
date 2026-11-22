@@ -1,0 +1,4 @@
+> tools/call list_directory {"directory_path": "src"}
+isError: false
+--- text
+Example.jl

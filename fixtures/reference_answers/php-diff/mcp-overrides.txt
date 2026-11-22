@@ -1,0 +1,29 @@
+> tools/call overrides {"qualified_name": "php-diff.src.Output.DiffOutputBuilderInterface.DiffOutputBuilderInterface.getDiff"}
+isError: false
+--- text
+[
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.src.Output.DiffOnlyOutputBuilder.DiffOnlyOutputBuilder.getDiff",
+    "path": "src/Output/DiffOnlyOutputBuilder.php",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.src.Output.StrictUnifiedDiffOutputBuilder.StrictUnifiedDiffOutputBuilder.getDiff",
+    "path": "src/Output/StrictUnifiedDiffOutputBuilder.php",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.src.Output.UnifiedDiffOutputBuilder.UnifiedDiffOutputBuilder.getDiff",
+    "path": "src/Output/UnifiedDiffOutputBuilder.php",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "php-diff.tests.Output.AbstractChunkOutputBuilderTest.AbstractChunkOutputBuilderTest.testGetCommonChunks.anonymous_127_22.getDiff",
+    "path": "tests/Output/AbstractChunkOutputBuilderTest.php",
+    "relationship": "OVERRIDES"
+  }
+]

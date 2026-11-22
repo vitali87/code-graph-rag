@@ -1,0 +1,1142 @@
+$ cgr -q dead-code --project mediatr --no-public-roots --format json
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "name": "ConstrainedRequestPostProcessor",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ConstrainedRequestPostProcessor.ConstrainedRequestPostProcessor.ConstrainedRequestPostProcessor(TextWriter)",
+    "path": "samples/MediatR.Examples/ConstrainedRequestPostProcessor.cs",
+    "start_line": 14,
+    "end_line": 17
+  },
+  {
+    "label": "Method",
+    "name": "Process",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ConstrainedRequestPostProcessor.ConstrainedRequestPostProcessor.Process(TRequest, TResponse, CancellationToken)",
+    "path": "samples/MediatR.Examples/ConstrainedRequestPostProcessor.cs",
+    "start_line": 19,
+    "end_line": 22
+  },
+  {
+    "label": "Method",
+    "name": "AccessDeniedExceptionHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.AccessDeniedExceptionHandler.AccessDeniedExceptionHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs",
+    "start_line": 51,
+    "end_line": 51
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.AccessDeniedExceptionHandler.Handle(PingResource, ForbiddenException, RequestExceptionHandlerState, CancellationToken)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs",
+    "start_line": 53,
+    "end_line": 63
+  },
+  {
+    "label": "Method",
+    "name": "CommonExceptionHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.CommonExceptionHandler.CommonExceptionHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs",
+    "start_line": 13,
+    "end_line": 13
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.CommonExceptionHandler.Handle(PingResource, Exception, RequestExceptionHandlerState, CancellationToken)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs",
+    "start_line": 15,
+    "end_line": 25
+  },
+  {
+    "label": "Method",
+    "name": "ConnectionExceptionHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.ConnectionExceptionHandler.ConnectionExceptionHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs",
+    "start_line": 32,
+    "end_line": 32
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.ConnectionExceptionHandler.Handle(PingResource, ConnectionException, RequestExceptionHandlerState, CancellationToken)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs",
+    "start_line": 34,
+    "end_line": 44
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.ServerExceptionHandler.Handle(PingNewResource, ServerException, RequestExceptionHandlerState, CancellationToken)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs",
+    "start_line": 72,
+    "end_line": 82
+  },
+  {
+    "label": "Method",
+    "name": "ServerExceptionHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.ServerExceptionHandler.ServerExceptionHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs",
+    "start_line": 70,
+    "end_line": 70
+  },
+  {
+    "label": "Method",
+    "name": "CommonExceptionHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlersOverrides.MediatR.Examples.ExceptionHandler.Overrides.CommonExceptionHandler.CommonExceptionHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlersOverrides.cs",
+    "start_line": 13,
+    "end_line": 13
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlersOverrides.MediatR.Examples.ExceptionHandler.Overrides.CommonExceptionHandler.Handle(PingResourceTimeout, Exception, RequestExceptionHandlerState, CancellationToken)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlersOverrides.cs",
+    "start_line": 15,
+    "end_line": 25
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlersOverrides.MediatR.Examples.ExceptionHandler.Overrides.ServerExceptionHandler.Handle(PingNewResource, ServerException, RequestExceptionHandlerState, CancellationToken)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlersOverrides.cs",
+    "start_line": 34,
+    "end_line": 44
+  },
+  {
+    "label": "Method",
+    "name": "ServerExceptionHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlersOverrides.MediatR.Examples.ExceptionHandler.Overrides.ServerExceptionHandler.ServerExceptionHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlersOverrides.cs",
+    "start_line": 32,
+    "end_line": 32
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.Handlers.PingNewResourceHandler.Handle(PingNewResource, CancellationToken)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/Handlers.cs",
+    "start_line": 25,
+    "end_line": 28
+  },
+  {
+    "label": "Method",
+    "name": "PingNewResourceHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.Handlers.PingNewResourceHandler.PingNewResourceHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/Handlers.cs",
+    "start_line": 23,
+    "end_line": 23
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.Handlers.PingProtectedResourceHandler.Handle(PingProtectedResource, CancellationToken)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/Handlers.cs",
+    "start_line": 61,
+    "end_line": 64
+  },
+  {
+    "label": "Method",
+    "name": "PingProtectedResourceHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.Handlers.PingProtectedResourceHandler.PingProtectedResourceHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/Handlers.cs",
+    "start_line": 59,
+    "end_line": 59
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.Handlers.PingResourceHandler.Handle(PingResource, CancellationToken)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/Handlers.cs",
+    "start_line": 13,
+    "end_line": 16
+  },
+  {
+    "label": "Method",
+    "name": "PingResourceHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.Handlers.PingResourceHandler.PingResourceHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/Handlers.cs",
+    "start_line": 11,
+    "end_line": 11
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.Handlers.PingResourceTimeoutHandler.Handle(PingResourceTimeout, CancellationToken)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/Handlers.cs",
+    "start_line": 37,
+    "end_line": 40
+  },
+  {
+    "label": "Method",
+    "name": "PingResourceTimeoutHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.Handlers.PingResourceTimeoutHandler.PingResourceTimeoutHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/Handlers.cs",
+    "start_line": 35,
+    "end_line": 35
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.Handlers.PingResourceTimeoutOverrideHandler.Handle(Overrides.PingResourceTimeout, CancellationToken)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/Handlers.cs",
+    "start_line": 49,
+    "end_line": 52
+  },
+  {
+    "label": "Method",
+    "name": "PingResourceTimeoutOverrideHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.Handlers.PingResourceTimeoutOverrideHandler.PingResourceTimeoutOverrideHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/Handlers.cs",
+    "start_line": 47,
+    "end_line": 47
+  },
+  {
+    "label": "Method",
+    "name": "Execute",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.LogExceptionAction.LogExceptionAction.Execute(Ping, Exception, CancellationToken)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/LogExceptionAction.cs",
+    "start_line": 15,
+    "end_line": 16
+  },
+  {
+    "label": "Method",
+    "name": "LogExceptionAction",
+    "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.LogExceptionAction.LogExceptionAction.LogExceptionAction(TextWriter)",
+    "path": "samples/MediatR.Examples/ExceptionHandler/LogExceptionAction.cs",
+    "start_line": 13,
+    "end_line": 13
+  },
+  {
+    "label": "Method",
+    "name": "GenericHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.GenericHandler.GenericHandler.GenericHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/GenericHandler.cs",
+    "start_line": 11,
+    "end_line": 14
+  },
+  {
+    "label": "Method",
+    "name": "GenericPipelineBehavior",
+    "qualified_name": "mediatr.samples.MediatR.Examples.GenericPipelineBehavior.GenericPipelineBehavior.GenericPipelineBehavior(TextWriter)",
+    "path": "samples/MediatR.Examples/GenericPipelineBehavior.cs",
+    "start_line": 11,
+    "end_line": 14
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.GenericPipelineBehavior.GenericPipelineBehavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+    "path": "samples/MediatR.Examples/GenericPipelineBehavior.cs",
+    "start_line": 16,
+    "end_line": 22
+  },
+  {
+    "label": "Method",
+    "name": "GenericRequestPostProcessor",
+    "qualified_name": "mediatr.samples.MediatR.Examples.GenericRequestPostProcessor.GenericRequestPostProcessor.GenericRequestPostProcessor(TextWriter)",
+    "path": "samples/MediatR.Examples/GenericRequestPostProcessor.cs",
+    "start_line": 12,
+    "end_line": 15
+  },
+  {
+    "label": "Method",
+    "name": "Process",
+    "qualified_name": "mediatr.samples.MediatR.Examples.GenericRequestPostProcessor.GenericRequestPostProcessor.Process(TRequest, TResponse, CancellationToken)",
+    "path": "samples/MediatR.Examples/GenericRequestPostProcessor.cs",
+    "start_line": 17,
+    "end_line": 20
+  },
+  {
+    "label": "Method",
+    "name": "GenericRequestPreProcessor",
+    "qualified_name": "mediatr.samples.MediatR.Examples.GenericRequestPreProcessor.GenericRequestPreProcessor.GenericRequestPreProcessor(TextWriter)",
+    "path": "samples/MediatR.Examples/GenericRequestPreProcessor.cs",
+    "start_line": 12,
+    "end_line": 15
+  },
+  {
+    "label": "Method",
+    "name": "Process",
+    "qualified_name": "mediatr.samples.MediatR.Examples.GenericRequestPreProcessor.GenericRequestPreProcessor.Process(TRequest, CancellationToken)",
+    "path": "samples/MediatR.Examples/GenericRequestPreProcessor.cs",
+    "start_line": 17,
+    "end_line": 20
+  },
+  {
+    "label": "Method",
+    "name": "Message",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Jing.Jing.Message",
+    "path": "samples/MediatR.Examples/Jing.cs",
+    "start_line": 5,
+    "end_line": 5
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.JingHandler.JingHandler.Handle(Jing, CancellationToken)",
+    "path": "samples/MediatR.Examples/JingHandler.cs",
+    "start_line": 16,
+    "end_line": 19
+  },
+  {
+    "label": "Method",
+    "name": "JingHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.JingHandler.JingHandler.JingHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/JingHandler.cs",
+    "start_line": 11,
+    "end_line": 14
+  },
+  {
+    "label": "Method",
+    "name": "Message",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Ping.Ping.Message",
+    "path": "samples/MediatR.Examples/Ping.cs",
+    "start_line": 5,
+    "end_line": 5
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PingHandler.PingHandler.Handle(Ping, CancellationToken)",
+    "path": "samples/MediatR.Examples/PingHandler.cs",
+    "start_line": 17,
+    "end_line": 21
+  },
+  {
+    "label": "Method",
+    "name": "PingHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PingHandler.PingHandler.PingHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/PingHandler.cs",
+    "start_line": 12,
+    "end_line": 15
+  },
+  {
+    "label": "Method",
+    "name": "ConstrainedPingedHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PingedHandler.ConstrainedPingedHandler.ConstrainedPingedHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/PingedHandler.cs",
+    "start_line": 43,
+    "end_line": 46
+  },
+  {
+    "label": "Method",
+    "name": "PingedAlsoHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PingedHandler.PingedAlsoHandler.PingedAlsoHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/PingedHandler.cs",
+    "start_line": 58,
+    "end_line": 61
+  },
+  {
+    "label": "Method",
+    "name": "PingedHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PingedHandler.PingedHandler.PingedHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/PingedHandler.cs",
+    "start_line": 12,
+    "end_line": 15
+  },
+  {
+    "label": "Method",
+    "name": "PongedHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PingedHandler.PongedHandler.PongedHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/PingedHandler.cs",
+    "start_line": 27,
+    "end_line": 30
+  },
+  {
+    "label": "Method",
+    "name": "Message",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Pong.Pong.Message",
+    "path": "samples/MediatR.Examples/Pong.cs",
+    "start_line": 5,
+    "end_line": 5
+  },
+  {
+    "label": "Method",
+    "name": "CustomMediator",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.CustomMediator.CustomMediator.CustomMediator(IServiceProvider, Func)",
+    "path": "samples/MediatR.Examples.PublishStrategies/CustomMediator.cs",
+    "start_line": 12,
+    "end_line": 13
+  },
+  {
+    "label": "Method",
+    "name": "PublishCore",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.CustomMediator.CustomMediator.PublishCore(IEnumerable, INotification, CancellationToken)",
+    "path": "samples/MediatR.Examples.PublishStrategies/CustomMediator.cs",
+    "start_line": 15,
+    "end_line": 16
+  },
+  {
+    "label": "Method",
+    "name": "AsyncContinueOnException",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.AsyncContinueOnException(IEnumerable, INotification, CancellationToken)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 87,
+    "end_line": 121
+  },
+  {
+    "label": "Method",
+    "name": "DefaultStrategy",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.DefaultStrategy",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 26,
+    "end_line": 26
+  },
+  {
+    "label": "Method",
+    "name": "ParallelNoWait",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.ParallelNoWait(IEnumerable, INotification, CancellationToken)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 77,
+    "end_line": 85
+  },
+  {
+    "label": "Method",
+    "name": "ParallelWhenAll",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.ParallelWhenAll(IEnumerable, INotification, CancellationToken)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 53,
+    "end_line": 63
+  },
+  {
+    "label": "Method",
+    "name": "ParallelWhenAny",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.ParallelWhenAny(IEnumerable, INotification, CancellationToken)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 65,
+    "end_line": 75
+  },
+  {
+    "label": "Method",
+    "name": "Publish",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.Publish(TNotification)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 28,
+    "end_line": 31
+  },
+  {
+    "label": "Method",
+    "name": "Publish",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.Publish(TNotification, CancellationToken)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 38,
+    "end_line": 41
+  },
+  {
+    "label": "Method",
+    "name": "Publish",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.Publish(TNotification, PublishStrategy)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 33,
+    "end_line": 36
+  },
+  {
+    "label": "Method",
+    "name": "Publish",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.Publish(TNotification, PublishStrategy, CancellationToken)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 43,
+    "end_line": 51
+  },
+  {
+    "label": "Method",
+    "name": "Publisher",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.Publisher(IServiceProvider)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 13,
+    "end_line": 23
+  },
+  {
+    "label": "Method",
+    "name": "SyncContinueOnException",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.SyncContinueOnException(IEnumerable, INotification, CancellationToken)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 131,
+    "end_line": 155
+  },
+  {
+    "label": "Method",
+    "name": "SyncStopOnException",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.SyncStopOnException(IEnumerable, INotification, CancellationToken)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 123,
+    "end_line": 129
+  },
+  {
+    "label": "Method",
+    "name": "Encoding",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Runner.WrappingWriter.Encoding",
+    "path": "samples/MediatR.Examples/Runner.cs",
+    "start_line": 340,
+    "end_line": 340
+  },
+  {
+    "label": "Method",
+    "name": "Write",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Runner.WrappingWriter.Write(char)",
+    "path": "samples/MediatR.Examples/Runner.cs",
+    "start_line": 328,
+    "end_line": 332
+  },
+  {
+    "label": "Method",
+    "name": "GenericStreamPipelineBehavior",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Streams.GenericStreamPipelineBehavior.MediatR.Examples.GenericStreamPipelineBehavior.GenericStreamPipelineBehavior(TextWriter)",
+    "path": "samples/MediatR.Examples/Streams/GenericStreamPipelineBehavior.cs",
+    "start_line": 13,
+    "end_line": 16
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Streams.GenericStreamPipelineBehavior.MediatR.Examples.GenericStreamPipelineBehavior.Handle(TRequest, StreamHandlerDelegate, CancellationToken)",
+    "path": "samples/MediatR.Examples/Streams/GenericStreamPipelineBehavior.cs",
+    "start_line": 18,
+    "end_line": 26
+  },
+  {
+    "label": "Method",
+    "name": "Message",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Streams.Sing.MediatR.Examples.Sing.Message",
+    "path": "samples/MediatR.Examples/Streams/Sing.cs",
+    "start_line": 5,
+    "end_line": 5
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Streams.SingHandler.MediatR.Examples.SingHandler.Handle(Sing, CancellationToken)",
+    "path": "samples/MediatR.Examples/Streams/SingHandler.cs",
+    "start_line": 18,
+    "end_line": 29
+  },
+  {
+    "label": "Method",
+    "name": "SingHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Streams.SingHandler.MediatR.Examples.SingHandler.SingHandler(TextWriter)",
+    "path": "samples/MediatR.Examples/Streams/SingHandler.cs",
+    "start_line": 13,
+    "end_line": 16
+  },
+  {
+    "label": "Method",
+    "name": "Message",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Streams.Song.MediatR.Examples.Song.Message",
+    "path": "samples/MediatR.Examples/Streams/Song.cs",
+    "start_line": 5,
+    "end_line": 5
+  },
+  {
+    "label": "Method",
+    "name": "HasOpinionAbout",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Windsor.ContravariantFilter.ContravariantFilter.HasOpinionAbout(Type)",
+    "path": "samples/MediatR.Examples.Windsor/ContravariantFilter.cs",
+    "start_line": 10,
+    "end_line": 19
+  },
+  {
+    "label": "Method",
+    "name": "SelectHandlers",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Windsor.ContravariantFilter.ContravariantFilter.SelectHandlers(Type, IHandler[])",
+    "path": "samples/MediatR.Examples.Windsor/ContravariantFilter.cs",
+    "start_line": 21,
+    "end_line": 24
+  },
+  {
+    "label": "Method",
+    "name": "CreateArraysOutOfResolvedTypeAndEnumerableInterfaceTypes",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Windsor.Program.Program.CreateArraysOutOfResolvedTypeAndEnumerableInterfaceTypes(Type, object, ServiceFactory, Type)",
+    "path": "samples/MediatR.Examples.Windsor/Program.cs",
+    "start_line": 160,
+    "end_line": 173
+  },
+  {
+    "label": "Method",
+    "name": "ResolveRequestExceptionAction",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Windsor.Program.Program.ResolveRequestExceptionAction(IKernel, Type, Type, object, Type[])",
+    "path": "samples/MediatR.Examples.Windsor/Program.cs",
+    "start_line": 125,
+    "end_line": 158
+  },
+  {
+    "label": "Method",
+    "name": "ResolveRequestExceptionHandler",
+    "qualified_name": "mediatr.samples.MediatR.Examples.Windsor.Program.Program.ResolveRequestExceptionHandler(IKernel, Type, Type, object, Type[])",
+    "path": "samples/MediatR.Examples.Windsor/Program.cs",
+    "start_line": 89,
+    "end_line": 123
+  },
+  {
+    "label": "Method",
+    "name": "CompareTo",
+    "qualified_name": "mediatr.src.MediatR.Contracts.Unit.MediatR.Unit.CompareTo(object)",
+    "path": "src/MediatR.Contracts/Unit.cs",
+    "start_line": 47,
+    "end_line": 47
+  },
+  {
+    "label": "Method",
+    "name": "Equals",
+    "qualified_name": "mediatr.src.MediatR.Contracts.Unit.MediatR.Unit.Equals(Unit)",
+    "path": "src/MediatR.Contracts/Unit.cs",
+    "start_line": 64,
+    "end_line": 64
+  },
+  {
+    "label": "Method",
+    "name": "Equals",
+    "qualified_name": "mediatr.src.MediatR.Contracts.Unit.MediatR.Unit.Equals(object)",
+    "path": "src/MediatR.Contracts/Unit.cs",
+    "start_line": 73,
+    "end_line": 73
+  },
+  {
+    "label": "Method",
+    "name": "GetHashCode",
+    "qualified_name": "mediatr.src.MediatR.Contracts.Unit.MediatR.Unit.GetHashCode",
+    "path": "src/MediatR.Contracts/Unit.cs",
+    "start_line": 55,
+    "end_line": 55
+  },
+  {
+    "label": "Method",
+    "name": "ToString",
+    "qualified_name": "mediatr.src.MediatR.Contracts.Unit.MediatR.Unit.ToString",
+    "path": "src/MediatR.Contracts/Unit.cs",
+    "start_line": 95,
+    "end_line": 95
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.IPipelineBehavior.IPipelineBehavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+    "path": "src/MediatR/IPipelineBehavior.cs",
+    "start_line": 29,
+    "end_line": 29
+  },
+  {
+    "label": "Method",
+    "name": "Publish",
+    "qualified_name": "mediatr.src.MediatR.IPublisher.IPublisher.Publish(TNotification, CancellationToken)",
+    "path": "src/MediatR/IPublisher.cs",
+    "start_line": 25,
+    "end_line": 26
+  },
+  {
+    "label": "Method",
+    "name": "Publish",
+    "qualified_name": "mediatr.src.MediatR.IPublisher.IPublisher.Publish(object, CancellationToken)",
+    "path": "src/MediatR/IPublisher.cs",
+    "start_line": 17,
+    "end_line": 17
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.IRequestHandler.IRequestHandler`1.Handle(TRequest, CancellationToken)",
+    "path": "src/MediatR/IRequestHandler.cs",
+    "start_line": 36,
+    "end_line": 36
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.IRequestHandler.IRequestHandler`2.Handle(TRequest, CancellationToken)",
+    "path": "src/MediatR/IRequestHandler.cs",
+    "start_line": 20,
+    "end_line": 20
+  },
+  {
+    "label": "Method",
+    "name": "CreateStream",
+    "qualified_name": "mediatr.src.MediatR.ISender.ISender.CreateStream(object, CancellationToken)",
+    "path": "src/MediatR/ISender.cs",
+    "start_line": 53,
+    "end_line": 53
+  },
+  {
+    "label": "Method",
+    "name": "Send",
+    "qualified_name": "mediatr.src.MediatR.ISender.ISender.Send(TRequest, CancellationToken)",
+    "path": "src/MediatR/ISender.cs",
+    "start_line": 27,
+    "end_line": 28
+  },
+  {
+    "label": "Method",
+    "name": "Send",
+    "qualified_name": "mediatr.src.MediatR.ISender.ISender.Send(object, CancellationToken)",
+    "path": "src/MediatR/ISender.cs",
+    "start_line": 36,
+    "end_line": 36
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.IStreamPipelineBehavior.IStreamPipelineBehavior.Handle(TRequest, StreamHandlerDelegate, CancellationToken)",
+    "path": "src/MediatR/IStreamPipelineBehavior.cs",
+    "start_line": 29,
+    "end_line": 29
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.IStreamRequestHandler.IStreamRequestHandler.Handle(TRequest, CancellationToken)",
+    "path": "src/MediatR/IStreamRequestHandler.cs",
+    "start_line": 20,
+    "end_line": 20
+  },
+  {
+    "label": "Method",
+    "name": "Prioritize",
+    "qualified_name": "mediatr.src.MediatR.Internal.HandlersOrderer.HandlersOrderer.Prioritize(IList, TRequest)",
+    "path": "src/MediatR/Internal/HandlersOrderer.cs",
+    "start_line": 9,
+    "end_line": 24
+  },
+  {
+    "label": "Method",
+    "name": "RemoveOverridden",
+    "qualified_name": "mediatr.src.MediatR.Internal.HandlersOrderer.HandlersOrderer.RemoveOverridden(IList)",
+    "path": "src/MediatR/Internal/HandlersOrderer.cs",
+    "start_line": 26,
+    "end_line": 49
+  },
+  {
+    "label": "Method",
+    "name": "AssemblyName",
+    "qualified_name": "mediatr.src.MediatR.Internal.ObjectDetails.ObjectDetails.AssemblyName",
+    "path": "src/MediatR/Internal/ObjectDetails.cs",
+    "start_line": 10,
+    "end_line": 10
+  },
+  {
+    "label": "Method",
+    "name": "Compare",
+    "qualified_name": "mediatr.src.MediatR.Internal.ObjectDetails.ObjectDetails.Compare(ObjectDetails, ObjectDetails)",
+    "path": "src/MediatR/Internal/ObjectDetails.cs",
+    "start_line": 31,
+    "end_line": 44
+  },
+  {
+    "label": "Method",
+    "name": "CompareByAssembly",
+    "qualified_name": "mediatr.src.MediatR.Internal.ObjectDetails.ObjectDetails.CompareByAssembly(ObjectDetails, ObjectDetails)",
+    "path": "src/MediatR/Internal/ObjectDetails.cs",
+    "start_line": 56,
+    "end_line": 73
+  },
+  {
+    "label": "Method",
+    "name": "CompareByLocation",
+    "qualified_name": "mediatr.src.MediatR.Internal.ObjectDetails.ObjectDetails.CompareByLocation(ObjectDetails, ObjectDetails)",
+    "path": "src/MediatR/Internal/ObjectDetails.cs",
+    "start_line": 119,
+    "end_line": 144
+  },
+  {
+    "label": "Method",
+    "name": "CompareByNamespace",
+    "qualified_name": "mediatr.src.MediatR.Internal.ObjectDetails.ObjectDetails.CompareByNamespace(ObjectDetails, ObjectDetails)",
+    "path": "src/MediatR/Internal/ObjectDetails.cs",
+    "start_line": 85,
+    "end_line": 107
+  },
+  {
+    "label": "Method",
+    "name": "IsOverridden",
+    "qualified_name": "mediatr.src.MediatR.Internal.ObjectDetails.ObjectDetails.IsOverridden",
+    "path": "src/MediatR/Internal/ObjectDetails.cs",
+    "start_line": 18,
+    "end_line": 18
+  },
+  {
+    "label": "Method",
+    "name": "Location",
+    "qualified_name": "mediatr.src.MediatR.Internal.ObjectDetails.ObjectDetails.Location",
+    "path": "src/MediatR/Internal/ObjectDetails.cs",
+    "start_line": 12,
+    "end_line": 12
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "mediatr.src.MediatR.Internal.ObjectDetails.ObjectDetails.Name",
+    "path": "src/MediatR/Internal/ObjectDetails.cs",
+    "start_line": 8,
+    "end_line": 8
+  },
+  {
+    "label": "Method",
+    "name": "ObjectDetails",
+    "qualified_name": "mediatr.src.MediatR.Internal.ObjectDetails.ObjectDetails.ObjectDetails(object)",
+    "path": "src/MediatR/Internal/ObjectDetails.cs",
+    "start_line": 20,
+    "end_line": 29
+  },
+  {
+    "label": "Method",
+    "name": "Type",
+    "qualified_name": "mediatr.src.MediatR.Internal.ObjectDetails.ObjectDetails.Type",
+    "path": "src/MediatR/Internal/ObjectDetails.cs",
+    "start_line": 16,
+    "end_line": 16
+  },
+  {
+    "label": "Method",
+    "name": "Value",
+    "qualified_name": "mediatr.src.MediatR.Internal.ObjectDetails.ObjectDetails.Value",
+    "path": "src/MediatR/Internal/ObjectDetails.cs",
+    "start_line": 14,
+    "end_line": 14
+  },
+  {
+    "label": "Method",
+    "name": "CreateStream",
+    "qualified_name": "mediatr.src.MediatR.Mediator.Mediator.CreateStream(object, CancellationToken)",
+    "path": "src/MediatR/Mediator.cs",
+    "start_line": 175,
+    "end_line": 199
+  },
+  {
+    "label": "Method",
+    "name": "Publish",
+    "qualified_name": "mediatr.src.MediatR.Mediator.Mediator.Publish(TNotification, CancellationToken)",
+    "path": "src/MediatR/Mediator.cs",
+    "start_line": 113,
+    "end_line": 122
+  },
+  {
+    "label": "Method",
+    "name": "Publish",
+    "qualified_name": "mediatr.src.MediatR.Mediator.Mediator.Publish(object, CancellationToken)",
+    "path": "src/MediatR/Mediator.cs",
+    "start_line": 124,
+    "end_line": 130
+  },
+  {
+    "label": "Method",
+    "name": "PublishCore",
+    "qualified_name": "mediatr.src.MediatR.Mediator.Mediator.PublishCore(IEnumerable, INotification, CancellationToken)",
+    "path": "src/MediatR/Mediator.cs",
+    "start_line": 139,
+    "end_line": 140
+  },
+  {
+    "label": "Method",
+    "name": "PublishNotification",
+    "qualified_name": "mediatr.src.MediatR.Mediator.Mediator.PublishNotification(INotification, CancellationToken)",
+    "path": "src/MediatR/Mediator.cs",
+    "start_line": 142,
+    "end_line": 152
+  },
+  {
+    "label": "Method",
+    "name": "Send",
+    "qualified_name": "mediatr.src.MediatR.Mediator.Mediator.Send(TRequest, CancellationToken)",
+    "path": "src/MediatR/Mediator.cs",
+    "start_line": 59,
+    "end_line": 75
+  },
+  {
+    "label": "Method",
+    "name": "Send",
+    "qualified_name": "mediatr.src.MediatR.Mediator.Mediator.Send(object, CancellationToken)",
+    "path": "src/MediatR/Mediator.cs",
+    "start_line": 77,
+    "end_line": 111
+  },
+  {
+    "label": "Method",
+    "name": "Execute",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.IRequestExceptionAction.IRequestExceptionAction.Execute(TRequest, TException, CancellationToken)",
+    "path": "src/MediatR/Pipeline/IRequestExceptionAction.cs",
+    "start_line": 23,
+    "end_line": 23
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.IRequestExceptionHandler.IRequestExceptionHandler.Handle(TRequest, TException, RequestExceptionHandlerState, CancellationToken)",
+    "path": "src/MediatR/Pipeline/IRequestExceptionHandler.cs",
+    "start_line": 25,
+    "end_line": 25
+  },
+  {
+    "label": "Method",
+    "name": "Process",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.IRequestPostProcessor.IRequestPostProcessor.Process(TRequest, TResponse, CancellationToken)",
+    "path": "src/MediatR/Pipeline/IRequestPostProcessor.cs",
+    "start_line": 20,
+    "end_line": 20
+  },
+  {
+    "label": "Method",
+    "name": "Process",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.IRequestPreProcessor.IRequestPreProcessor.Process(TRequest, CancellationToken)",
+    "path": "src/MediatR/Pipeline/IRequestPreProcessor.cs",
+    "start_line": 18,
+    "end_line": 18
+  },
+  {
+    "label": "Method",
+    "name": "GetActionsForException",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestExceptionActionProcessorBehavior.RequestExceptionActionProcessorBehavior.GetActionsForException(Type, TRequest)",
+    "path": "src/MediatR/Pipeline/RequestExceptionActionProcessorBehavior.cs",
+    "start_line": 70,
+    "end_line": 79
+  },
+  {
+    "label": "Method",
+    "name": "GetExceptionTypes",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestExceptionActionProcessorBehavior.RequestExceptionActionProcessorBehavior.GetExceptionTypes(Type)",
+    "path": "src/MediatR/Pipeline/RequestExceptionActionProcessorBehavior.cs",
+    "start_line": 61,
+    "end_line": 68
+  },
+  {
+    "label": "Method",
+    "name": "GetMethodInfoForAction",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestExceptionActionProcessorBehavior.RequestExceptionActionProcessorBehavior.GetMethodInfoForAction(Type)",
+    "path": "src/MediatR/Pipeline/RequestExceptionActionProcessorBehavior.cs",
+    "start_line": 81,
+    "end_line": 91
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestExceptionActionProcessorBehavior.RequestExceptionActionProcessorBehavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+    "path": "src/MediatR/Pipeline/RequestExceptionActionProcessorBehavior.cs",
+    "start_line": 26,
+    "end_line": 59
+  },
+  {
+    "label": "Method",
+    "name": "RequestExceptionActionProcessorBehavior",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestExceptionActionProcessorBehavior.RequestExceptionActionProcessorBehavior.RequestExceptionActionProcessorBehavior(IServiceProvider)",
+    "path": "src/MediatR/Pipeline/RequestExceptionActionProcessorBehavior.cs",
+    "start_line": 24,
+    "end_line": 24
+  },
+  {
+    "label": "Method",
+    "name": "GetExceptionTypes",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestExceptionProcessorBehavior.RequestExceptionProcessorBehavior.GetExceptionTypes(Type)",
+    "path": "src/MediatR/Pipeline/RequestExceptionProcessorBehavior.cs",
+    "start_line": 77,
+    "end_line": 84
+  },
+  {
+    "label": "Method",
+    "name": "GetHandlersForException",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestExceptionProcessorBehavior.RequestExceptionProcessorBehavior.GetHandlersForException(Type, TRequest)",
+    "path": "src/MediatR/Pipeline/RequestExceptionProcessorBehavior.cs",
+    "start_line": 86,
+    "end_line": 95
+  },
+  {
+    "label": "Method",
+    "name": "GetMethodInfoForHandler",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestExceptionProcessorBehavior.RequestExceptionProcessorBehavior.GetMethodInfoForHandler(Type)",
+    "path": "src/MediatR/Pipeline/RequestExceptionProcessorBehavior.cs",
+    "start_line": 97,
+    "end_line": 105
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestExceptionProcessorBehavior.RequestExceptionProcessorBehavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+    "path": "src/MediatR/Pipeline/RequestExceptionProcessorBehavior.cs",
+    "start_line": 26,
+    "end_line": 76
+  },
+  {
+    "label": "Method",
+    "name": "RequestExceptionProcessorBehavior",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestExceptionProcessorBehavior.RequestExceptionProcessorBehavior.RequestExceptionProcessorBehavior(IServiceProvider)",
+    "path": "src/MediatR/Pipeline/RequestExceptionProcessorBehavior.cs",
+    "start_line": 24,
+    "end_line": 24
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestPostProcessorBehavior.RequestPostProcessorBehavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+    "path": "src/MediatR/Pipeline/RequestPostProcessorBehavior.cs",
+    "start_line": 20,
+    "end_line": 30
+  },
+  {
+    "label": "Method",
+    "name": "RequestPostProcessorBehavior",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestPostProcessorBehavior.RequestPostProcessorBehavior.RequestPostProcessorBehavior(IEnumerable)",
+    "path": "src/MediatR/Pipeline/RequestPostProcessorBehavior.cs",
+    "start_line": 17,
+    "end_line": 18
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestPreProcessorBehavior.RequestPreProcessorBehavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+    "path": "src/MediatR/Pipeline/RequestPreProcessorBehavior.cs",
+    "start_line": 20,
+    "end_line": 28
+  },
+  {
+    "label": "Method",
+    "name": "RequestPreProcessorBehavior",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestPreProcessorBehavior.RequestPreProcessorBehavior.RequestPreProcessorBehavior(IEnumerable)",
+    "path": "src/MediatR/Pipeline/RequestPreProcessorBehavior.cs",
+    "start_line": 17,
+    "end_line": 18
+  },
+  {
+    "label": "Method",
+    "name": "Fill",
+    "qualified_name": "mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.Fill(IList, T)",
+    "path": "src/MediatR/Registration/ServiceRegistrar.cs",
+    "start_line": 381,
+    "end_line": 385
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.NotificationHandlerWrapper.NotificationHandlerWrapper.Handle(INotification, IServiceProvider, Func, CancellationToken)",
+    "path": "src/MediatR/Wrappers/NotificationHandlerWrapper.cs",
+    "start_line": 12,
+    "end_line": 14
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.NotificationHandlerWrapper.NotificationHandlerWrapperImpl.Handle(INotification, IServiceProvider, Func, CancellationToken)",
+    "path": "src/MediatR/Wrappers/NotificationHandlerWrapper.cs",
+    "start_line": 20,
+    "end_line": 29
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.RequestHandlerWrapper.RequestHandlerBase.Handle(object, IServiceProvider, CancellationToken)",
+    "path": "src/MediatR/Wrappers/RequestHandlerWrapper.cs",
+    "start_line": 11,
+    "end_line": 12
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.RequestHandlerWrapper.RequestHandlerWrapper.Handle(IRequest, IServiceProvider, CancellationToken)",
+    "path": "src/MediatR/Wrappers/RequestHandlerWrapper.cs",
+    "start_line": 23,
+    "end_line": 24
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.RequestHandlerWrapper.RequestHandlerWrapperImpl`1.Handle(IRequest, IServiceProvider, CancellationToken)",
+    "path": "src/MediatR/Wrappers/RequestHandlerWrapper.cs",
+    "start_line": 55,
+    "end_line": 71
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.RequestHandlerWrapper.RequestHandlerWrapperImpl`1.Handle(object, IServiceProvider, CancellationToken)",
+    "path": "src/MediatR/Wrappers/RequestHandlerWrapper.cs",
+    "start_line": 51,
+    "end_line": 53
+  },
+  {
+    "label": "Function",
+    "name": "Handler",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.RequestHandlerWrapper.RequestHandlerWrapperImpl`1.Handle.Handler",
+    "path": "src/MediatR/Wrappers/RequestHandlerWrapper.cs",
+    "start_line": 58,
+    "end_line": 64
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.RequestHandlerWrapper.RequestHandlerWrapperImpl`2.Handle(IRequest, IServiceProvider, CancellationToken)",
+    "path": "src/MediatR/Wrappers/RequestHandlerWrapper.cs",
+    "start_line": 34,
+    "end_line": 45
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.RequestHandlerWrapper.RequestHandlerWrapperImpl`2.Handle(object, IServiceProvider, CancellationToken)",
+    "path": "src/MediatR/Wrappers/RequestHandlerWrapper.cs",
+    "start_line": 30,
+    "end_line": 32
+  },
+  {
+    "label": "Function",
+    "name": "Handler",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.RequestHandlerWrapper.RequestHandlerWrapperImpl`2.Handle.Handler",
+    "path": "src/MediatR/Wrappers/RequestHandlerWrapper.cs",
+    "start_line": 37,
+    "end_line": 38
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.RequestHandlerWrapper.RequestHandlerWrapper`1.Handle(IRequest, IServiceProvider, CancellationToken)",
+    "path": "src/MediatR/Wrappers/RequestHandlerWrapper.cs",
+    "start_line": 17,
+    "end_line": 18
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.StreamRequestHandlerWrapper.StreamRequestHandlerBase.Handle(object, IServiceProvider, CancellationToken)",
+    "path": "src/MediatR/Wrappers/StreamRequestHandlerWrapper.cs",
+    "start_line": 14,
+    "end_line": 14
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.StreamRequestHandlerWrapper.StreamRequestHandlerWrapper.Handle(IStreamRequest, IServiceProvider, CancellationToken)",
+    "path": "src/MediatR/Wrappers/StreamRequestHandlerWrapper.cs",
+    "start_line": 19,
+    "end_line": 22
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.StreamRequestHandlerWrapper.StreamRequestHandlerWrapperImpl.Handle(IStreamRequest, IServiceProvider, CancellationToken)",
+    "path": "src/MediatR/Wrappers/StreamRequestHandlerWrapper.cs",
+    "start_line": 37,
+    "end_line": 61
+  },
+  {
+    "label": "Method",
+    "name": "Handle",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.StreamRequestHandlerWrapper.StreamRequestHandlerWrapperImpl.Handle(object, IServiceProvider, CancellationToken)",
+    "path": "src/MediatR/Wrappers/StreamRequestHandlerWrapper.cs",
+    "start_line": 29,
+    "end_line": 35
+  },
+  {
+    "label": "Function",
+    "name": "Handler",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.StreamRequestHandlerWrapper.StreamRequestHandlerWrapperImpl.Handle.Handler",
+    "path": "src/MediatR/Wrappers/StreamRequestHandlerWrapper.cs",
+    "start_line": 41,
+    "end_line": 43
+  },
+  {
+    "label": "Method",
+    "name": "NextWrapper",
+    "qualified_name": "mediatr.src.MediatR.Wrappers.StreamRequestHandlerWrapper.StreamRequestHandlerWrapperImpl.NextWrapper(IAsyncEnumerable, CancellationToken)",
+    "path": "src/MediatR/Wrappers/StreamRequestHandlerWrapper.cs",
+    "start_line": 64,
+    "end_line": 75
+  }
+]
+--- stderr

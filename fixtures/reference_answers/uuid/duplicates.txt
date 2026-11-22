@@ -1,0 +1,42 @@
+$ cgr -q duplicates --project uuid
+status: 0
+--- stdout
+                                Duplicate Code Groups (uuid)                                 
+┏━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Group ┃ Kind    ┃ Similarity ┃ Member                              ┃ Location             ┃
+┡━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩
+│ 1     │ exact   │       100% │ uuid_test.BenchmarkParse            │ uuid_test.go:640-647 │
+│       │         │            │ uuid_test.BenchmarkParseBytes       │ uuid_test.go:649-656 │
+│       │         │            │ uuid_test.BenchmarkParseBytesUnsafe │ uuid_test.go:663-670 │
+│       │         │            │ uuid_test.BenchmarkParseBytesCopy   │ uuid_test.go:677-684 │
+├───────┼─────────┼────────────┼─────────────────────────────────────┼──────────────────────┤
+│ 2     │ exact   │       100% │ null_test.TestNullUUIDMarshalText   │ null_test.go:72-102  │
+│       │         │            │ null_test.TestNullUUIDUnmarshalText │ null_test.go:104-134 │
+│       │         │            │ null_test.TestNullUUIDMarshalBinary │ null_test.go:136-166 │
+├───────┼─────────┼────────────┼─────────────────────────────────────┼──────────────────────┤
+│ 3     │ exact   │       100% │ uuid_test.TestVersion1              │ uuid_test.go:306-343 │
+│       │         │            │ uuid_test.TestVersion6              │ uuid_test.go:784-821 │
+├───────┼─────────┼────────────┼─────────────────────────────────────┼──────────────────────┤
+│ 4     │ exact   │       100% │ uuid_test.BenchmarkUUID_String      │ uuid_test.go:692-702 │
+│       │         │            │ uuid_test.BenchmarkUUID_URN         │ uuid_test.go:704-714 │
+├───────┼─────────┼────────────┼─────────────────────────────────────┼──────────────────────┤
+│ 5     │ exact   │       100% │ uuid_test.TestMD5                   │ uuid_test.go:409-415 │
+│       │         │            │ uuid_test.TestSHA1                  │ uuid_test.go:417-423 │
+├───────┼─────────┼────────────┼─────────────────────────────────────┼──────────────────────┤
+│ 6     │ exact   │       100% │ time.GetTime                        │ time.go:45-49        │
+│       │         │            │ time.ClockSequence                  │ time.go:76-80        │
+├───────┼─────────┼────────────┼─────────────────────────────────────┼──────────────────────┤
+│ 7     │ exact   │       100% │ dce.NewDCEPerson                    │ dce.go:46-48         │
+│       │         │            │ dce.NewDCEGroup                     │ dce.go:54-56         │
+├───────┼─────────┼────────────┼─────────────────────────────────────┼──────────────────────┤
+│ 8     │ exact   │       100% │ hash.NewMD5                         │ hash.go:49-51        │
+│       │         │            │ hash.NewSHA1                        │ hash.go:57-59        │
+├───────┼─────────┼────────────┼─────────────────────────────────────┼──────────────────────┤
+│ 9     │ similar │        83% │ uuid_test.TestVersion7              │ uuid_test.go:825-845 │
+│       │         │            │ uuid_test.TestVersion7_pooled       │ uuid_test.go:849-872 │
+├───────┼─────────┼────────────┼─────────────────────────────────────┼──────────────────────┤
+│ 10    │ similar │        81% │ uuid_test.TestRandomUUID            │ uuid_test.go:168-184 │
+│       │         │            │ uuid_test.TestRandomUUID_Pooled     │ uuid_test.go:186-204 │
+└───────┴─────────┴────────────┴─────────────────────────────────────┴──────────────────────┘
+10 duplicate group(s) covering 23 function(s).
+--- stderr

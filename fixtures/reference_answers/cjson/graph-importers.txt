@@ -1,0 +1,56 @@
+$ cgr -q graph importers cjson.cJSON.h --project cjson
+status: 0
+--- stdout
+[
+  {
+    "alias": "cJSON",
+    "col": 0,
+    "end_col": 0,
+    "end_line": 60,
+    "imported_name": "cJSON.h",
+    "line": 59,
+    "module": "cjson.cJSON",
+    "path": "cJSON.c"
+  },
+  {
+    "alias": "cJSON",
+    "col": 0,
+    "end_col": 0,
+    "end_line": 32,
+    "imported_name": "cJSON.h",
+    "line": 31,
+    "module": "cjson.cJSON_Utils.h",
+    "path": "cJSON_Utils.h"
+  },
+  {
+    "alias": "cJSON",
+    "col": 0,
+    "end_col": 0,
+    "end_line": 28,
+    "imported_name": "../cJSON.h",
+    "line": 27,
+    "module": "cjson.fuzzing.afl",
+    "path": "fuzzing/afl.c"
+  },
+  {
+    "alias": "cJSON",
+    "col": 0,
+    "end_col": 0,
+    "end_line": 10,
+    "imported_name": "../cJSON.h",
+    "line": 9,
+    "module": "cjson.fuzzing.cjson_read_fuzzer",
+    "path": "fuzzing/cjson_read_fuzzer.c"
+  },
+  {
+    "alias": "cJSON",
+    "col": 0,
+    "end_col": 0,
+    "end_line": 27,
+    "imported_name": "cJSON.h",
+    "line": 26,
+    "module": "cjson.test",
+    "path": "test.c"
+  }
+]
+--- stderr

@@ -1,0 +1,97 @@
+$ cgr -q graph resolve Append --project leveldb
+status: 0
+--- stdout
+[
+  {
+    "end_line": 151,
+    "label": "Method",
+    "path": "db/db_test.cc",
+    "qualified_name": "leveldb.db.db_test.leveldb.SpecialEnv.NewWritableFile.DataFile.Append",
+    "start_line": 144
+  },
+  {
+    "end_line": 178,
+    "label": "Method",
+    "path": "db/db_test.cc",
+    "qualified_name": "leveldb.db.db_test.leveldb.SpecialEnv.NewWritableFile.ManifestFile.Append",
+    "start_line": 172
+  },
+  {
+    "end_line": 185,
+    "label": "Method",
+    "path": "db/fault_injection_test.cc",
+    "qualified_name": "leveldb.db.fault_injection_test.leveldb.TestWritableFile.Append",
+    "start_line": 179
+  },
+  {
+    "end_line": 19,
+    "label": "Method",
+    "path": "db/leveldbutil.cc",
+    "qualified_name": "leveldb.db.leveldbutil.leveldb.StdoutPrinter.Append",
+    "start_line": 16
+  },
+  {
+    "end_line": 170,
+    "label": "Method",
+    "path": "db/log_test.cc",
+    "qualified_name": "leveldb.db.log_test.leveldb.log.LogTest.StringDest.Append",
+    "start_line": 167
+  },
+  {
+    "end_line": 148,
+    "label": "Method",
+    "path": "db/write_batch.cc",
+    "qualified_name": "leveldb.db.write_batch_internal.leveldb.WriteBatchInternal.Append",
+    "start_line": 144
+  },
+  {
+    "end_line": 136,
+    "label": "Method",
+    "path": "helpers/memenv/memenv.cc",
+    "qualified_name": "leveldb.helpers.memenv.memenv.leveldb.FileState.Append",
+    "start_line": 108
+  },
+  {
+    "end_line": 206,
+    "label": "Method",
+    "path": "helpers/memenv/memenv.cc",
+    "qualified_name": "leveldb.helpers.memenv.memenv.leveldb.WritableFileImpl.Append",
+    "start_line": 206
+  },
+  {
+    "end_line": 286,
+    "label": "Method",
+    "path": "include/leveldb/env.h",
+    "qualified_name": "leveldb.include.leveldb.env.leveldb.WritableFile.Append",
+    "start_line": 286
+  },
+  {
+    "end_line": 113,
+    "label": "Method",
+    "path": "db/write_batch.cc",
+    "qualified_name": "leveldb.include.leveldb.write_batch.leveldb.WriteBatch.Append",
+    "start_line": 111
+  },
+  {
+    "end_line": 103,
+    "label": "Method",
+    "path": "table/table_test.cc",
+    "qualified_name": "leveldb.table.table_test.leveldb.StringSink.Append",
+    "start_line": 100
+  },
+  {
+    "end_line": 292,
+    "label": "Method",
+    "path": "util/env_posix.cc",
+    "qualified_name": "leveldb.util.env_posix.leveldb.PosixWritableFile.Append",
+    "start_line": 265
+  },
+  {
+    "end_line": 280,
+    "label": "Method",
+    "path": "util/env_windows.cc",
+    "qualified_name": "leveldb.util.env_windows.leveldb.WindowsWritableFile.Append",
+    "start_line": 253
+  }
+]
+--- stderr

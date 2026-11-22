@@ -1,0 +1,34 @@
+$ cgr -q graph resolve parse --project body-parser
+status: 0
+--- stdout
+[
+  {
+    "end_line": 84,
+    "label": "Function",
+    "path": "lib/types/json.js",
+    "qualified_name": "body-parser.lib.types.json.json.parse",
+    "start_line": 59
+  },
+  {
+    "end_line": 38,
+    "label": "Function",
+    "path": "lib/types/raw.js",
+    "qualified_name": "body-parser.lib.types.raw.raw.parse",
+    "start_line": 36
+  },
+  {
+    "end_line": 40,
+    "label": "Function",
+    "path": "lib/types/text.js",
+    "qualified_name": "body-parser.lib.types.text.text.parse",
+    "start_line": 38
+  },
+  {
+    "end_line": 52,
+    "label": "Function",
+    "path": "lib/types/urlencoded.js",
+    "qualified_name": "body-parser.lib.types.urlencoded.urlencoded.parse",
+    "start_line": 48
+  }
+]
+--- stderr

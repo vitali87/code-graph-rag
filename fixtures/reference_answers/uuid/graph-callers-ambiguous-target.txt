@@ -1,0 +1,5 @@
+$ cgr -q graph callers String --project uuid
+status: 5
+--- stdout
+--- stderr
+'String' names 4 definitions: uuid.dce.Domain.String, uuid.uuid.UUID.String, uuid.uuid.Variant.String, uuid.uuid.Version.String. Pass one of their qualified names.

@@ -1,0 +1,11 @@
+> tools/call overrides {"qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffectSetup.terminate"}
+isError: false
+--- text
+[
+  {
+    "label": "Method",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.DefaultOEffectSetup.terminate",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "relationship": "OVERRIDES"
+  }
+]

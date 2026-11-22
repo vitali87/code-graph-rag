@@ -1,0 +1,29 @@
+> tools/call read_file {"file_path": "lib/src/equatable_utils.dart", "limit": 25, "offset": 0}
+isError: false
+--- text
+# Lines 1-25 of 119
+import 'package:collection/collection.dart';
+import 'package:equatable/equatable.dart';
+
+/// Returns a `hashCode` for [props].
+int mapPropsToHashCode(Iterable<Object?>? props) {
+  return _finish(props == null ? 0 : props.fold(0, _combine));
+}
+
+/// Determines whether two lists ([a] and [b]) are equal.
+// See https://github.com/felangel/equatable/issues/187.
+@pragma('vm:prefer-inline')
+bool equals(List<Object?>? a, List<Object?>? b) {
+  if (identical(a, b)) return true;
+  if (a == null || b == null) return false;
+  return iterableEquals(a, b);
+}
+
+/// Determines whether two iterables are equal.
+@pragma('vm:prefer-inline')
+bool iterableEquals(Iterable<Object?> a, Iterable<Object?> b) {
+  assert(
+    a is! Set && b is! Set,
+    "iterableEquals doesn't support Sets. Use setEquals instead.",
+  );
+  if (identical(a, b)) return true;

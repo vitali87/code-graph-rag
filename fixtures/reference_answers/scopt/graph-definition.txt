@@ -1,0 +1,18 @@
+$ cgr -q graph definition scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleArgument --project scopt --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "decorators": [],
+  "docstring": null,
+  "end_line": 283,
+  "found": true,
+  "label": "Function",
+  "name": "handleArgument",
+  "name_line": 268,
+  "path": "shared/src/main/scala/scopt/ORunner.scala",
+  "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleArgument",
+  "source": "def handleArgument(opt: OptionDef[_, C], arg: String): Unit = {\n      // version and help are dependent on runner results, so the actions are provided here\n      val runnerAction = opt.kind match {\n        case OptHelp    => Some(helpAction)\n        case OptVersion => Some(versionAction)\n        case _          => None\n      }\n      opt.applyArgument(arg, _config, runnerAction) match {\n        case Right(c) =>\n          _config = c\n          pushChildren(opt)\n        case Left(xs) =>\n          _error = true\n          xs foreach reportError\n      }\n    }",
+  "start_col": 4,
+  "start_line": 268
+}
+--- stderr

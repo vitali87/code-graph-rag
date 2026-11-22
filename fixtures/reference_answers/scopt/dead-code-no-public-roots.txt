@@ -1,0 +1,1278 @@
+$ cgr -q dead-code --project scopt --no-public-roots --format json
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "name": "applyArgumentExHandler",
+    "qualified_name": "scopt.js.src.main.scala.PlatformReadInstances.platform.applyArgumentExHandler",
+    "path": "js/src/main/scala/PlatformReadInstances.scala",
+    "start_line": 25,
+    "end_line": 34
+  },
+  {
+    "label": "Method",
+    "name": "exit",
+    "qualified_name": "scopt.js.src.main.scala.PlatformReadInstances.platform.exit",
+    "path": "js/src/main/scala/PlatformReadInstances.scala",
+    "start_line": 36,
+    "end_line": 36
+  },
+  {
+    "label": "Method",
+    "name": "applyArgumentExHandler",
+    "qualified_name": "scopt.jvm.src.main.scala.PlatformReadInstances.platform.applyArgumentExHandler",
+    "path": "jvm/src/main/scala/PlatformReadInstances.scala",
+    "start_line": 37,
+    "end_line": 58
+  },
+  {
+    "label": "Method",
+    "name": "exit",
+    "qualified_name": "scopt.jvm.src.main.scala.PlatformReadInstances.platform.exit",
+    "path": "jvm/src/main/scala/PlatformReadInstances.scala",
+    "start_line": 60,
+    "end_line": 60
+  },
+  {
+    "label": "Method",
+    "name": "mkParseEx",
+    "qualified_name": "scopt.jvm.src.main.scala.PlatformReadInstances.platform.mkParseEx",
+    "path": "jvm/src/main/scala/PlatformReadInstances.scala",
+    "start_line": 17,
+    "end_line": 17
+  },
+  {
+    "label": "Method",
+    "name": "applyArgumentExHandler",
+    "qualified_name": "scopt.native.src.main.scala.PlatformReadInstances.platform.applyArgumentExHandler",
+    "path": "native/src/main/scala/PlatformReadInstances.scala",
+    "start_line": 19,
+    "end_line": 26
+  },
+  {
+    "label": "Method",
+    "name": "exit",
+    "qualified_name": "scopt.native.src.main.scala.PlatformReadInstances.platform.exit",
+    "path": "native/src/main/scala/PlatformReadInstances.scala",
+    "start_line": 28,
+    "end_line": 28
+  },
+  {
+    "label": "Method",
+    "name": "mkParseEx",
+    "qualified_name": "scopt.native.src.main.scala.PlatformReadInstances.platform.mkParseEx",
+    "path": "native/src/main/scala/PlatformReadInstances.scala",
+    "start_line": 12,
+    "end_line": 12
+  },
+  {
+    "label": "Method",
+    "name": "displayToOut",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.DefaultOEffectSetup.displayToOut",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "start_line": 21,
+    "end_line": 23
+  },
+  {
+    "label": "Method",
+    "name": "terminate",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.DefaultOEffectSetup.terminate",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "start_line": 33,
+    "end_line": 38
+  },
+  {
+    "label": "Method",
+    "name": "displayToErr",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffectSetup.displayToErr",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "start_line": 14,
+    "end_line": 14
+  },
+  {
+    "label": "Method",
+    "name": "displayToOut",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffectSetup.displayToOut",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "start_line": 13,
+    "end_line": 13
+  },
+  {
+    "label": "Method",
+    "name": "reportError",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffectSetup.reportError",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "start_line": 15,
+    "end_line": 15
+  },
+  {
+    "label": "Method",
+    "name": "reportWarning",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffectSetup.reportWarning",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "start_line": 16,
+    "end_line": 16
+  },
+  {
+    "label": "Method",
+    "name": "terminate",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffectSetup.terminate",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "start_line": 17,
+    "end_line": 17
+  },
+  {
+    "label": "Method",
+    "name": "keyName",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OParser.OParser.keyName",
+    "path": "shared/src/main/scala/scopt/OParser.scala",
+    "start_line": 219,
+    "end_line": 223
+  },
+  {
+    "label": "Method",
+    "name": "apply",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OParser.OParser@257.apply",
+    "path": "shared/src/main/scala/scopt/OParser.scala",
+    "start_line": 258,
+    "end_line": 261
+  },
+  {
+    "label": "Method",
+    "name": "showTryHelp",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OParser.OParser@257.showTryHelp",
+    "path": "shared/src/main/scala/scopt/OParser.scala",
+    "start_line": 280,
+    "end_line": 280
+  },
+  {
+    "label": "Method",
+    "name": "showTryHelp",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OParser.OParser@257.showTryHelp@284",
+    "path": "shared/src/main/scala/scopt/OParser.scala",
+    "start_line": 284,
+    "end_line": 284
+  },
+  {
+    "label": "Method",
+    "name": "showUsageAsError",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OParser.OParser@257.showUsageAsError",
+    "path": "shared/src/main/scala/scopt/OParser.scala",
+    "start_line": 279,
+    "end_line": 279
+  },
+  {
+    "label": "Method",
+    "name": "showUsageAsError",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OParser.OParser@257.showUsageAsError@283",
+    "path": "shared/src/main/scala/scopt/OParser.scala",
+    "start_line": 283,
+    "end_line": 283
+  },
+  {
+    "label": "Method",
+    "name": "success",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OParser.OParserBuilder.success",
+    "path": "shared/src/main/scala/scopt/OParser.scala",
+    "start_line": 73,
+    "end_line": 73
+  },
+  {
+    "label": "Method",
+    "name": "errorOnUnknownArgument",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OParserSetup.DefaultOParserSetup.errorOnUnknownArgument",
+    "path": "shared/src/main/scala/scopt/OParserSetup.scala",
+    "start_line": 18,
+    "end_line": 18
+  },
+  {
+    "label": "Method",
+    "name": "renderingMode",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OParserSetup.DefaultOParserSetup.renderingMode",
+    "path": "shared/src/main/scala/scopt/OParserSetup.scala",
+    "start_line": 17,
+    "end_line": 17
+  },
+  {
+    "label": "Method",
+    "name": "showUsageOnError",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OParserSetup.DefaultOParserSetup.showUsageOnError",
+    "path": "shared/src/main/scala/scopt/OParserSetup.scala",
+    "start_line": 19,
+    "end_line": 19
+  },
+  {
+    "label": "Method",
+    "name": "errorOnUnknownArgument",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OParserSetup.OParserSetup.errorOnUnknownArgument",
+    "path": "shared/src/main/scala/scopt/OParserSetup.scala",
+    "start_line": 5,
+    "end_line": 5
+  },
+  {
+    "label": "Method",
+    "name": "renderingMode",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OParserSetup.OParserSetup.renderingMode",
+    "path": "shared/src/main/scala/scopt/OParserSetup.scala",
+    "start_line": 4,
+    "end_line": 4
+  },
+  {
+    "label": "Method",
+    "name": "showUsageOnError",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OParserSetup.OParserSetup.showUsageOnError",
+    "path": "shared/src/main/scala/scopt/OParserSetup.scala",
+    "start_line": 12,
+    "end_line": 12
+  },
+  {
+    "label": "Function",
+    "name": "arguments",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.arguments",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 18,
+    "end_line": 18
+  },
+  {
+    "label": "Function",
+    "name": "arguments",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.arguments@215",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 215,
+    "end_line": 215
+  },
+  {
+    "label": "Function",
+    "name": "checks",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.checks",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 217,
+    "end_line": 217
+  },
+  {
+    "label": "Function",
+    "name": "commandExample",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.commandExample",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 164,
+    "end_line": 187
+  },
+  {
+    "label": "Function",
+    "name": "commandName",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.commandName",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 165,
+    "end_line": 170
+  },
+  {
+    "label": "Function",
+    "name": "commands",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.commands",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 19,
+    "end_line": 19
+  },
+  {
+    "label": "Function",
+    "name": "commands",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.commands@216",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 216,
+    "end_line": 216
+  },
+  {
+    "label": "Function",
+    "name": "displayToErr",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.displayToErr",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 230,
+    "end_line": 230
+  },
+  {
+    "label": "Function",
+    "name": "displayToOut",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.displayToOut",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 229,
+    "end_line": 229
+  },
+  {
+    "label": "Function",
+    "name": "findCommand",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.findCommand",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 313,
+    "end_line": 316
+  },
+  {
+    "label": "Function",
+    "name": "handleArgument",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleArgument",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 268,
+    "end_line": 283
+  },
+  {
+    "label": "Function",
+    "name": "handleChecks",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleChecks",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 335,
+    "end_line": 342
+  },
+  {
+    "label": "Function",
+    "name": "handleError",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleError",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 252,
+    "end_line": 257
+  },
+  {
+    "label": "Function",
+    "name": "handleFallback",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleFallback",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 284,
+    "end_line": 299
+  },
+  {
+    "label": "Function",
+    "name": "handleOccurrence",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleOccurrence",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 300,
+    "end_line": 312
+  },
+  {
+    "label": "Function",
+    "name": "handleShortOptions",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleShortOptions",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 316,
+    "end_line": 334
+  },
+  {
+    "label": "Function",
+    "name": "heads",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.heads",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 17,
+    "end_line": 17
+  },
+  {
+    "label": "Function",
+    "name": "heads",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.heads@208",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 208,
+    "end_line": 208
+  },
+  {
+    "label": "Function",
+    "name": "indentDescription",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.indentDescription",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 55,
+    "end_line": 55
+  },
+  {
+    "label": "Function",
+    "name": "isShortOpt",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.isShortOpt",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 377,
+    "end_line": 380
+  },
+  {
+    "label": "Function",
+    "name": "itemUsage",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.itemUsage",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 53,
+    "end_line": 79
+  },
+  {
+    "label": "Function",
+    "name": "nonArgs",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.nonArgs",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 209,
+    "end_line": 214
+  },
+  {
+    "label": "Function",
+    "name": "optionsForRender",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.optionsForRender",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 26,
+    "end_line": 51
+  },
+  {
+    "label": "Function",
+    "name": "oxford",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.oxford",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 347,
+    "end_line": 350
+  },
+  {
+    "label": "Function",
+    "name": "programName",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.programName",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 21,
+    "end_line": 24
+  },
+  {
+    "label": "Function",
+    "name": "programNames",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.programNames",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 20,
+    "end_line": 20
+  },
+  {
+    "label": "Function",
+    "name": "pushChildren",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.pushChildren",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 235,
+    "end_line": 251
+  },
+  {
+    "label": "Function",
+    "name": "renderOneColumnUsage",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.renderOneColumnUsage",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 130,
+    "end_line": 138
+  },
+  {
+    "label": "Function",
+    "name": "renderTwoColumnsUsage",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.renderTwoColumnsUsage",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 140,
+    "end_line": 162
+  },
+  {
+    "label": "Function",
+    "name": "reportError",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.reportError",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 231,
+    "end_line": 231
+  },
+  {
+    "label": "Function",
+    "name": "reportWarning",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.reportWarning",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 232,
+    "end_line": 232
+  },
+  {
+    "label": "Method",
+    "name": "runEffects",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.runEffects",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 434,
+    "end_line": 442
+  },
+  {
+    "label": "Method",
+    "name": "runParser",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.runParser",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 200,
+    "end_line": 432
+  },
+  {
+    "label": "Function",
+    "name": "showTryHelp",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.showTryHelp",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 346,
+    "end_line": 356
+  },
+  {
+    "label": "Function",
+    "name": "showUsageAsError",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.showUsageAsError",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 343,
+    "end_line": 345
+  },
+  {
+    "label": "Function",
+    "name": "spaceToDesc",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.spaceToDesc",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 108,
+    "end_line": 118
+  },
+  {
+    "label": "Function",
+    "name": "terminate",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.terminate",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 233,
+    "end_line": 233
+  },
+  {
+    "label": "Function",
+    "name": "usageColumn1",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageColumn1",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 83,
+    "end_line": 107
+  },
+  {
+    "label": "Function",
+    "name": "usageExample",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageExample",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 189,
+    "end_line": 189
+  },
+  {
+    "label": "Function",
+    "name": "usageTwoColumn",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.usageTwoColumn",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 107,
+    "end_line": 128
+  },
+  {
+    "label": "Method",
+    "name": "abbr",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.abbr",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 125,
+    "end_line": 129
+  },
+  {
+    "label": "Method",
+    "name": "action",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.action",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 111,
+    "end_line": 115
+  },
+  {
+    "label": "Method",
+    "name": "action",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.action@187",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 187,
+    "end_line": 187
+  },
+  {
+    "label": "Method",
+    "name": "apply",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.apply",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 257,
+    "end_line": 269
+  },
+  {
+    "label": "Method",
+    "name": "applyArgument",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.applyArgument",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 202,
+    "end_line": 219
+  },
+  {
+    "label": "Method",
+    "name": "applyFallback",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.applyFallback",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 219,
+    "end_line": 236
+  },
+  {
+    "label": "Method",
+    "name": "argName",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.argName",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 287,
+    "end_line": 292
+  },
+  {
+    "label": "Method",
+    "name": "checks",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.checks",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 196,
+    "end_line": 196
+  },
+  {
+    "label": "Method",
+    "name": "children",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.children",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 179,
+    "end_line": 182
+  },
+  {
+    "label": "Method",
+    "name": "desc",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.desc",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 197,
+    "end_line": 197
+  },
+  {
+    "label": "Method",
+    "name": "foreach",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.foreach",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 115,
+    "end_line": 122
+  },
+  {
+    "label": "Method",
+    "name": "fullName",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.fullName",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 282,
+    "end_line": 287
+  },
+  {
+    "label": "Method",
+    "name": "getFallback",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.getFallback",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 195,
+    "end_line": 195
+  },
+  {
+    "label": "Method",
+    "name": "getMaxOccurs",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.getMaxOccurs",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 189,
+    "end_line": 189
+  },
+  {
+    "label": "Method",
+    "name": "getMinOccurs",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.getMinOccurs",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 188,
+    "end_line": 188
+  },
+  {
+    "label": "Method",
+    "name": "getParentId",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.getParentId",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 192,
+    "end_line": 192
+  },
+  {
+    "label": "Method",
+    "name": "hasFallback",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.hasFallback",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 194,
+    "end_line": 194
+  },
+  {
+    "label": "Method",
+    "name": "hasParent",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.hasParent",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 191,
+    "end_line": 191
+  },
+  {
+    "label": "Method",
+    "name": "hidden",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.hidden",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 146,
+    "end_line": 150
+  },
+  {
+    "label": "Method",
+    "name": "isHidden",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.isHidden",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 193,
+    "end_line": 193
+  },
+  {
+    "label": "Method",
+    "name": "isOptLike",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.isOptLike",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 247,
+    "end_line": 249
+  },
+  {
+    "label": "Method",
+    "name": "keyName",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.keyName",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 158,
+    "end_line": 162
+  },
+  {
+    "label": "Method",
+    "name": "keyValueName",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.keyValueName",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 162,
+    "end_line": 166
+  },
+  {
+    "label": "Method",
+    "name": "keyValueString",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.keyValueString",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 273,
+    "end_line": 275
+  },
+  {
+    "label": "Method",
+    "name": "longOptTokens",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.longOptTokens",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 243,
+    "end_line": 247
+  },
+  {
+    "label": "Method",
+    "name": "maxOccurs",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.maxOccurs",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 133,
+    "end_line": 137
+  },
+  {
+    "label": "Method",
+    "name": "minOccurs",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.minOccurs",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 129,
+    "end_line": 133
+  },
+  {
+    "label": "Method",
+    "name": "optional",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.optional",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 140,
+    "end_line": 140
+  },
+  {
+    "label": "Method",
+    "name": "read",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.read",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 103,
+    "end_line": 103
+  },
+  {
+    "label": "Method",
+    "name": "required",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.required",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 137,
+    "end_line": 137
+  },
+  {
+    "label": "Method",
+    "name": "shortDescription",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.shortDescription",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 276,
+    "end_line": 282
+  },
+  {
+    "label": "Method",
+    "name": "shortOpt",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.shortOpt",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 198,
+    "end_line": 198
+  },
+  {
+    "label": "Method",
+    "name": "shortOptOrBlank",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.shortOptOrBlank",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 190,
+    "end_line": 190
+  },
+  {
+    "label": "Method",
+    "name": "shortOptTokens",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.shortOptTokens",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 236,
+    "end_line": 243
+  },
+  {
+    "label": "Method",
+    "name": "text",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.text",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 150,
+    "end_line": 154
+  },
+  {
+    "label": "Method",
+    "name": "token",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.token",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 269,
+    "end_line": 273
+  },
+  {
+    "label": "Method",
+    "name": "tokensToRead",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.tokensToRead",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 249,
+    "end_line": 257
+  },
+  {
+    "label": "Method",
+    "name": "unbounded",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.unbounded",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 143,
+    "end_line": 143
+  },
+  {
+    "label": "Method",
+    "name": "validate",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.validate",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 166,
+    "end_line": 170
+  },
+  {
+    "label": "Method",
+    "name": "valueName",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.valueName",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 154,
+    "end_line": 158
+  },
+  {
+    "label": "Method",
+    "name": "valueName",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.valueName@199",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 199,
+    "end_line": 199
+  },
+  {
+    "label": "Method",
+    "name": "valueString",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.valueString",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 275,
+    "end_line": 275
+  },
+  {
+    "label": "Method",
+    "name": "withFallback",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.withFallback",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 170,
+    "end_line": 173
+  },
+  {
+    "label": "Method",
+    "name": "generateId",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef@294.generateId",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 305,
+    "end_line": 305
+  },
+  {
+    "label": "Method",
+    "name": "makeSuccess",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef@294.makeSuccess",
+    "path": "shared/src/main/scala/scopt/OptionDef.scala",
+    "start_line": 306,
+    "end_line": 306
+  },
+  {
+    "label": "Method",
+    "name": "arg",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.arg",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 115,
+    "end_line": 115
+  },
+  {
+    "label": "Method",
+    "name": "checkConfig",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.checkConfig",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 147,
+    "end_line": 150
+  },
+  {
+    "label": "Method",
+    "name": "cmd",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.cmd",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 120,
+    "end_line": 120
+  },
+  {
+    "label": "Function",
+    "name": "displayToErr",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.displayToErr",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 190,
+    "end_line": 190
+  },
+  {
+    "label": "Method",
+    "name": "displayToErr",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.displayToErr@91",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 91,
+    "end_line": 91
+  },
+  {
+    "label": "Function",
+    "name": "displayToOut",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.displayToOut",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 189,
+    "end_line": 189
+  },
+  {
+    "label": "Method",
+    "name": "displayToOut",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.displayToOut@90",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 90,
+    "end_line": 90
+  },
+  {
+    "label": "Function",
+    "name": "errorOnUnknownArgument",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.errorOnUnknownArgument",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 181,
+    "end_line": 181
+  },
+  {
+    "label": "Method",
+    "name": "errorOnUnknownArgument",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.errorOnUnknownArgument@83",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 83,
+    "end_line": 83
+  },
+  {
+    "label": "Method",
+    "name": "failure",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.failure",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 157,
+    "end_line": 157
+  },
+  {
+    "label": "Method",
+    "name": "head",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.head",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 94,
+    "end_line": 100
+  },
+  {
+    "label": "Method",
+    "name": "help",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.help",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 125,
+    "end_line": 125
+  },
+  {
+    "label": "Method",
+    "name": "help",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.help@131",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 131,
+    "end_line": 137
+  },
+  {
+    "label": "Method",
+    "name": "makeDef",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.makeDef",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 159,
+    "end_line": 161
+  },
+  {
+    "label": "Method",
+    "name": "note",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.note",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 110,
+    "end_line": 110
+  },
+  {
+    "label": "Method",
+    "name": "onChange",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.onChange",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 161,
+    "end_line": 161
+  },
+  {
+    "label": "Method",
+    "name": "opt",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.opt",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 100,
+    "end_line": 100
+  },
+  {
+    "label": "Method",
+    "name": "opt",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.opt@106",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 106,
+    "end_line": 110
+  },
+  {
+    "label": "Method",
+    "name": "optionsWithProgramName",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.optionsWithProgramName",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 169,
+    "end_line": 174
+  },
+  {
+    "label": "Method",
+    "name": "parse",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.parse",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 174,
+    "end_line": 199
+  },
+  {
+    "label": "Function",
+    "name": "renderingMode",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.renderingMode",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 180,
+    "end_line": 180
+  },
+  {
+    "label": "Method",
+    "name": "renderingMode",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.renderingMode@87",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 87,
+    "end_line": 87
+  },
+  {
+    "label": "Function",
+    "name": "reportError",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.reportError",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 191,
+    "end_line": 191
+  },
+  {
+    "label": "Method",
+    "name": "reportError",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.reportError@85",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 85,
+    "end_line": 85
+  },
+  {
+    "label": "Function",
+    "name": "reportWarning",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.reportWarning",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 192,
+    "end_line": 192
+  },
+  {
+    "label": "Method",
+    "name": "reportWarning",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.reportWarning@86",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 86,
+    "end_line": 86
+  },
+  {
+    "label": "Function",
+    "name": "showUsageOnError",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.showUsageOnError",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 182,
+    "end_line": 182
+  },
+  {
+    "label": "Method",
+    "name": "showUsageOnError",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.showUsageOnError@84",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 84,
+    "end_line": 84
+  },
+  {
+    "label": "Method",
+    "name": "success",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.success",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 154,
+    "end_line": 154
+  },
+  {
+    "label": "Function",
+    "name": "terminate",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.terminate",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 193,
+    "end_line": 195
+  },
+  {
+    "label": "Method",
+    "name": "terminate",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.terminate@88",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 88,
+    "end_line": 90
+  },
+  {
+    "label": "Method",
+    "name": "updateOption",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.updateOption",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 162,
+    "end_line": 167
+  },
+  {
+    "label": "Method",
+    "name": "version",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.version",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 137,
+    "end_line": 137
+  },
+  {
+    "label": "Method",
+    "name": "version",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.version@143",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 143,
+    "end_line": 147
+  },
+  {
+    "label": "Method",
+    "name": "arity",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read.arity",
+    "path": "shared/src/main/scala/scopt/Read.scala",
+    "start_line": 8,
+    "end_line": 8
+  },
+  {
+    "label": "Method",
+    "name": "tokensToRead",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read.tokensToRead",
+    "path": "shared/src/main/scala/scopt/Read.scala",
+    "start_line": 9,
+    "end_line": 9
+  },
+  {
+    "label": "Method",
+    "name": "immutableSeqRead",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read@17.immutableSeqRead",
+    "path": "shared/src/main/scala/scopt/Read.scala",
+    "start_line": 114,
+    "end_line": 116
+  },
+  {
+    "label": "Method",
+    "name": "immutableSeqTupleRead",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read@17.immutableSeqTupleRead",
+    "path": "shared/src/main/scala/scopt/Read.scala",
+    "start_line": 128,
+    "end_line": 130
+  },
+  {
+    "label": "Method",
+    "name": "mapRead",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read@17.mapRead",
+    "path": "shared/src/main/scala/scopt/Read.scala",
+    "start_line": 119,
+    "end_line": 121
+  },
+  {
+    "label": "Method",
+    "name": "optionRead",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read@17.optionRead",
+    "path": "shared/src/main/scala/scopt/Read.scala",
+    "start_line": 132,
+    "end_line": 135
+  },
+  {
+    "label": "Method",
+    "name": "reads",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read@17.reads",
+    "path": "shared/src/main/scala/scopt/Read.scala",
+    "start_line": 21,
+    "end_line": 24
+  },
+  {
+    "label": "Method",
+    "name": "seqRead",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read@17.seqRead",
+    "path": "shared/src/main/scala/scopt/Read.scala",
+    "start_line": 110,
+    "end_line": 112
+  },
+  {
+    "label": "Method",
+    "name": "seqTupleRead",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read@17.seqTupleRead",
+    "path": "shared/src/main/scala/scopt/Read.scala",
+    "start_line": 124,
+    "end_line": 126
+  },
+  {
+    "label": "Method",
+    "name": "splitKeyValue",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read@17.splitKeyValue",
+    "path": "shared/src/main/scala/scopt/Read.scala",
+    "start_line": 95,
+    "end_line": 100
+  },
+  {
+    "label": "Method",
+    "name": "tupleRead",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read@17.tupleRead",
+    "path": "shared/src/main/scala/scopt/Read.scala",
+    "start_line": 87,
+    "end_line": 94
+  },
+  {
+    "label": "Method",
+    "name": "validateValue",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.Validation.Validation.validateValue",
+    "path": "shared/src/main/scala/scopt/Validation.scala",
+    "start_line": 6,
+    "end_line": 22
+  }
+]
+--- stderr

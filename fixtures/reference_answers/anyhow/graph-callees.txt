@@ -1,0 +1,111 @@
+$ cgr -q graph callees anyhow.src.error.Error.downcast --project anyhow
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 1,
+    "callee_path": "src/error.rs",
+    "col": 30,
+    "depth": 1,
+    "end_col": 47,
+    "end_line": 511,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 511,
+    "path": "src/error.rs",
+    "qualified_name": "anyhow.src.error.vtable",
+    "resolution": "exact",
+    "through": "anyhow.src.error.Error.downcast"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/error.rs",
+    "col": 30,
+    "depth": 1,
+    "end_col": 47,
+    "end_line": 516,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 516,
+    "path": "src/error.rs",
+    "qualified_name": "anyhow.src.error.vtable",
+    "resolution": "exact",
+    "through": "anyhow.src.error.Error.downcast"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/error.rs",
+    "col": 13,
+    "depth": 1,
+    "end_col": 36,
+    "end_line": 529,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 529,
+    "path": "src/error.rs",
+    "qualified_name": "anyhow.src.error.vtable",
+    "resolution": "exact",
+    "through": "anyhow.src.error.Error.downcast"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/lib.rs",
+    "col": 12,
+    "depth": 1,
+    "end_col": 21,
+    "end_line": 531,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 531,
+    "path": "src/error.rs",
+    "qualified_name": "anyhow.src.lib.Ok",
+    "resolution": "heuristic",
+    "through": "anyhow.src.error.Error.downcast"
+  },
+  {
+    "arg_count": 0,
+    "callee_path": "src/ptr.rs",
+    "col": 71,
+    "depth": 1,
+    "end_col": 79,
+    "end_line": 511,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 511,
+    "path": "src/error.rs",
+    "qualified_name": "anyhow.src.ptr.Mut.by_ref",
+    "resolution": "heuristic",
+    "through": "anyhow.src.error.Error.downcast"
+  },
+  {
+    "arg_count": 0,
+    "callee_path": "src/ptr.rs",
+    "col": 29,
+    "depth": 1,
+    "end_col": 40,
+    "end_line": 526,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 526,
+    "path": "src/error.rs",
+    "qualified_name": "anyhow.src.ptr.Mut.cast",
+    "resolution": "heuristic",
+    "through": "anyhow.src.error.Error.downcast"
+  },
+  {
+    "arg_count": 0,
+    "callee_path": "src/ptr.rs",
+    "col": 31,
+    "depth": 1,
+    "end_col": 39,
+    "end_line": 506,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 506,
+    "path": "src/error.rs",
+    "qualified_name": "anyhow.src.ptr.Own.by_mut",
+    "resolution": "heuristic",
+    "through": "anyhow.src.error.Error.downcast"
+  }
+]
+--- stderr

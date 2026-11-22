@@ -1,0 +1,33 @@
+> tools/call resolve {"target": "loads"}
+isError: false
+--- text
+[
+  {
+    "label": "Method",
+    "qualified_name": "itsdangerous.src.itsdangerous._json._CompactJSON.loads",
+    "path": "src/itsdangerous/_json.py",
+    "start_line": 11,
+    "end_line": 12
+  },
+  {
+    "label": "Method",
+    "qualified_name": "itsdangerous.src.itsdangerous.serializer.Serializer.loads",
+    "path": "src/itsdangerous/serializer.py",
+    "start_line": 330,
+    "end_line": 345
+  },
+  {
+    "label": "Method",
+    "qualified_name": "itsdangerous.src.itsdangerous.serializer._PDataSerializer.loads",
+    "path": "src/itsdangerous/serializer.py",
+    "start_line": 27,
+    "end_line": 27
+  },
+  {
+    "label": "Method",
+    "qualified_name": "itsdangerous.src.itsdangerous.timed.TimedSerializer.loads",
+    "path": "src/itsdangerous/timed.py",
+    "start_line": 185,
+    "end_line": 220
+  }
+]

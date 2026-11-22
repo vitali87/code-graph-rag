@@ -1,0 +1,34 @@
+$ cgr -q graph resolve parseJson --project ky
+status: 0
+--- stdout
+[
+  {
+    "end_line": 314,
+    "label": "Function",
+    "path": "test/hooks.ts",
+    "qualified_name": "ky.test.hooks.parseJson",
+    "start_line": 311
+  },
+  {
+    "end_line": 851,
+    "label": "Function",
+    "path": "test/main.ts",
+    "qualified_name": "ky.test.main.parseJson",
+    "start_line": 848
+  },
+  {
+    "end_line": 480,
+    "label": "Function",
+    "path": "test/hooks.ts",
+    "qualified_name": "ky.test.hooks.parseJson@477",
+    "start_line": 477
+  },
+  {
+    "end_line": 879,
+    "label": "Function",
+    "path": "test/main.ts",
+    "qualified_name": "ky.test.main.parseJson@876",
+    "start_line": 876
+  }
+]
+--- stderr

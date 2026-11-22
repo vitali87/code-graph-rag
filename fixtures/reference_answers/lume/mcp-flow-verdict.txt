@@ -1,0 +1,14 @@
+> tools/call flow_verdict {"sink_qualified_name": "lume.lume.getiter", "source_qualified_name": "lume.lume.lume.count"}
+isError: false
+--- text
+{
+  "verdict": "UNKNOWN",
+  "path": [],
+  "gaps": [
+    "README.md",
+    "lume.lua",
+    "test/test.lua",
+    "test/util/tester.lua"
+  ],
+  "remote_hops": []
+}

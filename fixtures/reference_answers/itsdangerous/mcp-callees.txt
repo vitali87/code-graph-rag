@@ -1,0 +1,73 @@
+> tools/call callees {"qualified_name": "itsdangerous.src.itsdangerous.signer.Signer.__init__"}
+isError: false
+--- text
+[
+  {
+    "label": "Function",
+    "qualified_name": "itsdangerous.src.itsdangerous.encoding.want_bytes",
+    "path": "src/itsdangerous/signer.py",
+    "callee_path": "src/itsdangerous/encoding.py",
+    "line": 144,
+    "col": 26,
+    "col_char": 26,
+    "end_line": 144,
+    "end_col": 41,
+    "end_col_char": 41,
+    "arg_count": 1,
+    "kwarg_names": [],
+    "resolution": "exact",
+    "depth": 1,
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.__init__"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "itsdangerous.src.itsdangerous.encoding.want_bytes",
+    "path": "src/itsdangerous/signer.py",
+    "callee_path": "src/itsdangerous/encoding.py",
+    "line": 154,
+    "col": 19,
+    "col_char": 19,
+    "end_line": 154,
+    "end_col": 35,
+    "end_col_char": 35,
+    "arg_count": 1,
+    "kwarg_names": [],
+    "resolution": "exact",
+    "depth": 1,
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.__init__"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "itsdangerous.src.itsdangerous.signer.HMACAlgorithm.__init__",
+    "path": "src/itsdangerous/signer.py",
+    "callee_path": "src/itsdangerous/signer.py",
+    "line": 171,
+    "col": 24,
+    "col_char": 24,
+    "end_line": 171,
+    "end_col": 57,
+    "end_col_char": 57,
+    "arg_count": 1,
+    "kwarg_names": [],
+    "resolution": "exact",
+    "depth": 1,
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.__init__"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "itsdangerous.src.itsdangerous.signer._make_keys_list",
+    "path": "src/itsdangerous/signer.py",
+    "callee_path": "src/itsdangerous/signer.py",
+    "line": 143,
+    "col": 40,
+    "col_char": 40,
+    "end_line": 143,
+    "end_col": 67,
+    "end_col_char": 67,
+    "arg_count": 1,
+    "kwarg_names": [],
+    "resolution": "exact",
+    "depth": 1,
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.__init__"
+  }
+]

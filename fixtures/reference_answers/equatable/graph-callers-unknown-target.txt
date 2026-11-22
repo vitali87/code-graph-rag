@@ -1,0 +1,5 @@
+$ cgr -q graph callers equatable.lib.src.equatable_utils.no_such_function --project equatable
+status: 4
+--- stdout
+--- stderr
+'equatable.lib.src.equatable_utils.no_such_function' is not in the graph. 'cgr graph resolve NAME' lists the qualified names a name matches.

@@ -1,0 +1,29 @@
+> tools/call read_file {"file_path": "lib/utils.js", "limit": 25, "offset": 0}
+isError: false
+--- text
+# Lines 1-25 of 83
+'use strict'
+
+/**
+ * Module dependencies.
+ */
+
+var bytes = require('bytes')
+var contentType = require('content-type')
+var typeis = require('type-is')
+
+/**
+ * Module exports.
+ */
+
+module.exports = {
+  getCharset,
+  normalizeOptions
+}
+
+/**
+ * Get the charset of a request.
+ *
+ * @param {object} req
+ * @api private
+ */

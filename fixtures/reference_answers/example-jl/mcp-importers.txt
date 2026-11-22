@@ -1,0 +1,29 @@
+> tools/call importers {"module_qualified_name": "example-jl.src.Example"}
+isError: false
+--- text
+[
+  {
+    "module": "example-jl.docs.make",
+    "path": "docs/make.jl",
+    "line": 1,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 1,
+    "end_col": 25,
+    "end_col_char": 25,
+    "alias": "Example",
+    "imported_name": "Example"
+  },
+  {
+    "module": "example-jl.test.runtests",
+    "path": "test/runtests.jl",
+    "line": 1,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 1,
+    "end_col": 19,
+    "end_col_char": 19,
+    "alias": "Example",
+    "imported_name": "Example"
+  }
+]

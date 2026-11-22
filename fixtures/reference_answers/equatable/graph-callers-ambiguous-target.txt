@@ -1,0 +1,5 @@
+$ cgr -q graph callers stringify --project equatable
+status: 5
+--- stdout
+--- stderr
+'stringify' names 12 definitions: equatable.example.main.Credentials.stringify, equatable.example.main.EquatableDateTime.stringify, equatable.lib.src.equatable.Equatable.stringify, equatable.lib.src.equatable_config.EquatableConfig.stringify, equatable.lib.src.equatable_mixin.EquatableMixin.stringify, equatable.test.equatable_config_test.Credentials.stringify, equatable.test.equatable_config_test.CredentialsMixin.stringify, equatable.test.equatable_mixin_test.ComplexStringify.stringify, equatable.test.equatable_mixin_test.ExplicitStringifyFalse.stringify, equatable.test.equatable_test.ComplexStringify.stringify and 2 more ('cgr graph resolve' lists them all). Pass one of their qualified names.

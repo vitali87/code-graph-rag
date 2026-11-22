@@ -1,0 +1,33 @@
+> tools/call tests_reaching {"qualified_name": "uuid.uuid.ParseBytes"}
+isError: false
+--- text
+[
+  {
+    "label": "Function",
+    "qualified_name": "uuid.uuid_test.BenchmarkParseBytes",
+    "path": "uuid_test.go",
+    "depth": 1,
+    "through": "uuid.uuid.ParseBytes"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "uuid.uuid_test.FuzzParseBytes",
+    "path": "uuid_test.go",
+    "depth": 1,
+    "through": "uuid.uuid.ParseBytes"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "uuid.uuid_test.testBytes",
+    "path": "uuid_test.go",
+    "depth": 1,
+    "through": "uuid.uuid.ParseBytes"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "uuid.uuid_test.TestUUID",
+    "path": "uuid_test.go",
+    "depth": 2,
+    "through": "uuid.uuid_test.testBytes"
+  }
+]

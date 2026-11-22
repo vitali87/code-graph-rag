@@ -33,6 +33,7 @@ from .mcp import *  # noqa: F403
 from .notebook import *  # noqa: F403
 from .port import *  # noqa: F403
 from .providers import *  # noqa: F403
+from .reference_answers import *  # noqa: F403
 from .reference_graphs import *  # noqa: F403
 from .security import *  # noqa: F403
 from .sqlite_vectors import *  # noqa: F403
