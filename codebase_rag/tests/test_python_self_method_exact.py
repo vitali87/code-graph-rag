@@ -166,7 +166,12 @@ FILES = {
         "    def run_def(self):\n"
         "        def inner(self):\n            return self.nm()\n\n"
         "        return inner(None)\n\n"
-        "    def run_other(self):\n        return (lambda x: self.nm())(1)\n"
+        "    def run_other(self):\n        return (lambda x: self.nm())(1)\n\n"
+        "    def pool(self):\n        return []\n\n"
+        "    def run_comp(self, items):\n"
+        "        return [self.nm() for self in items]\n\n"
+        "    def run_comp_iter(self):\n"
+        "        return [self.nm() for self in self.pool()]\n"
     ),
     # A static method's `self` is whatever its caller passed.
     "static_untyped.py": (
@@ -233,6 +238,7 @@ def _calls(graph: RecordedGraph, caller: str) -> dict[str, str]:
         ("extbase.ExternalLast.run", "extbase.Local.ext_m"),
         ("extbase.BuiltinFirst.run", "extbase.Local.ext_m"),
         ("nested_self.NHolder.run_other", "nested_self.NHolder.nm"),
+        ("nested_self.NHolder.run_comp_iter", "nested_self.NHolder.pool"),
     ],
 )
 def test_a_self_call_on_the_enclosing_class_is_exact(
@@ -345,6 +351,8 @@ def test_an_annotation_naming_the_class_still_dispatches_to_overrides(
         ("conditional.CHolder.run", "conditional.CHolder.c5"),
         ("nested_self.NHolder.run", "nested_self.NHolder.nm"),
         ("nested_self.NHolder.run_def.inner", "nested_self.NHolder.nm"),
+        ("nested_self.NHolder.run_comp", "nested_self.NHolder.nm"),
+        ("nested_self.NHolder.run_comp_iter", "nested_self.NHolder.nm"),
     ],
     ids=[
         "later-rebinding",
@@ -359,6 +367,8 @@ def test_an_annotation_naming_the_class_still_dispatches_to_overrides(
         "conditional-method-write",
         "lambda-own-self",
         "nested-def-own-self",
+        "comprehension-target-self",
+        "comprehension-target-self-past-its-iterable",
     ],
 )
 def test_a_self_call_the_class_may_not_answer_is_not_exact(

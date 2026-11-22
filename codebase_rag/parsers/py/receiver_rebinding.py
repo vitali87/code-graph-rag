@@ -142,7 +142,8 @@ def bound_receiver(caller: Node) -> str | None:
 def receiver_hidden_spans(caller: Node, receiver: str) -> tuple[tuple[int, int], ...]:
     """The byte spans inside `caller` where `receiver` names something
     else: the body of a nested def or lambda taking a parameter of that name
-    (`(lambda self: self.name)(None)`). A nested class holds its own."""
+    (`(lambda self: self.name)(None)`), and a comprehension whose `for`
+    binds it. A nested class holds its own."""
     spans: list[tuple[int, int]] = []
     stack = list(caller.named_children)
     while stack:
@@ -156,8 +157,45 @@ def receiver_hidden_spans(caller: Node, receiver: str) -> tuple[tuple[int, int],
         ):
             spans.append((body.start_byte, body.end_byte))
             continue
+        if node.type in cs.PY_COMPREHENSION_TYPES and (
+            hidden := _comprehension_hides(node, receiver)
+        ):
+            spans.extend(hidden)
         stack.extend(node.named_children)
     return tuple(sorted(spans))
+
+
+def _comprehension_hides(comprehension: Node, receiver: str) -> list[tuple[int, int]]:
+    # `[self.m() for self in items]` binds `self` to each item for the whole
+    # comprehension but its first iterable, which runs in the enclosing
+    # scope (Greptile, PR #2908).
+    clauses = [
+        child
+        for child in comprehension.named_children
+        if child.type == cs.TS_PY_FOR_IN_CLAUSE
+    ]
+    if not any(receiver in _target_names(clause) for clause in clauses):
+        return []
+    first = clauses[0].child_by_field_name(cs.FIELD_RIGHT)
+    if first is None:
+        return [(comprehension.start_byte, comprehension.end_byte)]
+    return [
+        (comprehension.start_byte, first.start_byte),
+        (first.end_byte, comprehension.end_byte),
+    ]
+
+
+def _target_names(clause: Node) -> set[str]:
+    # Every name a `for ... in` clause's target binds (`self`, `a, self`).
+    target = clause.child_by_field_name(cs.FIELD_LEFT)
+    names: set[str] = set()
+    stack = [target] if target is not None else []
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_IDENTIFIER and (name := safe_decode_text(node)):
+            names.add(name)
+        stack.extend(node.named_children)
+    return names
 
 
 def _methods(body: Node) -> Iterator[Node]:
