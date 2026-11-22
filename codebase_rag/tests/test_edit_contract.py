@@ -43,6 +43,7 @@ def _delta(**overrides: object) -> StructuralDelta:
         "new_duplicates": [],
         "new_import_cycles": [],
         "stale_importers": [],
+        "parse_errors": [],
         "tests_reaching": [
             {
                 "qualified_name": "p.tests.test_util.test_helper",
@@ -1408,6 +1409,7 @@ def _snapshot(
         sites=(),
         imports={qn: frozenset(t) for qn, t in imports.items()},
         module_paths={qn: f"{qn.replace('.', '/')}.py" for qn in imports},
+        eager_imports={qn: frozenset(t) for qn, t in imports.items()},
     )
 
 

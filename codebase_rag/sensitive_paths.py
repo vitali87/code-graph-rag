@@ -18,7 +18,9 @@ def is_sensitive_path(path: Path) -> bool:
         return True
     try:
         resolved = path.resolve()
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):
+        # ValueError: a NUL byte in the name, which no file can have; the
+        # shell gate's fuzzer reached it with `uniq \x00...` (PR #3670).
         return False
     return resolved != path and _is_sensitive_name(resolved)
 
