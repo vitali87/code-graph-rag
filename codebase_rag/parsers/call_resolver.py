@@ -2095,8 +2095,6 @@ class CallResolver:
         handled, result = self._resolve_caller_scoped_stages(call)
         if handled:
             return result
-        if result := self._resolve_c_family_inherited_member(call):
-            return result
         # After the scope walk, which answers a nested def or class of the
         # name: any other local is a value the graph cannot follow, and the
         # same-module, class, import and trie stages below would bind it to
@@ -2292,6 +2290,7 @@ class CallResolver:
             self._resolve_receiver_shadow,
             self._resolve_rust_block_scope,
             self._resolve_caller_scope,
+            self._resolve_c_family_inherited_member,
         ):
             handled, result = stage(call)
             if handled:
@@ -2467,41 +2466,40 @@ class CallResolver:
 
     def _resolve_c_family_inherited_member(
         self, call: _CallSite
-    ) -> tuple[str, str] | None:
+    ) -> tuple[bool, tuple[str, str] | None]:
         # Inside a C/C++ member function a call with no receiver finds a
         # member of the class or of a base, nearest class first: the one way
         # such a call reaches a method, so the simple-name fallback offers
         # none (issue #2575). The scope walk already answered the class's own
         # members; this answers the inherited ones. Caller-specific, so it
-        # runs ahead of the module-keyed cache.
+        # runs ahead of the module-keyed cache. Handled only when a method is
+        # found; anything else falls through to the later stages.
         if not call.receiverless or not call.caller_qn:
-            return None
+            return False, None
         language = call.language or self._module_language(call.module_qn)
         if language not in cs.C_FAMILY_LANGUAGES:
-            return None
+            return False, None
         # A parameter or local of the name hides every member where it is in
         # scope: `void D::run(void (*dispatch)()) { dispatch(); }` calls the
         # parameter, not an inherited `B::dispatch` (CodeRabbit, PR #2948).
         if self._local_in_scope(call, self.cpp_local_scopes):
-            return None
+            return False, None
         # A class nested in another looks the name up in its own scope and
         # bases first, then in each enclosing class's: `Outer::Inner::run`
         # reaches `Base::ping` through `Outer : Base` (CodeRabbit, PR #2948).
+        # The first class scope declaring the name ends the walk.
         owner = self._enclosing_class(call.caller_qn)
         while owner is not None:
-            found = self._cpp_member_lookup(owner, call.call_name)
-            if found is not None:
-                return found or None
+            if definers := self._cpp_member_definers(owner, call.call_name):
+                method = self._cpp_unique_member_method(definers, call.call_name)
+                return method is not None, method
             owner = self._enclosing_class(owner)
-        return None
+        return False, None
 
-    def _cpp_member_lookup(
-        self, owner: str, call_name: str
-    ) -> tuple[str, str] | tuple[()] | None:
-        """C++ unqualified lookup of `call_name` in `owner` and its bases: the
-        method found, `()` when the name is found but is no single method
-        (a data member, or an ambiguous lookup), or None when nothing in
-        this class scope declares it."""
+    def _cpp_member_definers(self, owner: str, call_name: str) -> list[str]:
+        """Every class C++ unqualified lookup of `call_name` visits from
+        `owner` (itself and its bases) that declares the name, as a method
+        or as a data member; empty when this class scope declares none."""
         # `Base(1)` names the class, not its constructor: unqualified lookup
         # never finds a constructor, so the construction path must bind it
         # (INSTANTIATES and the destructor edge) instead (CodeRabbit, PR #2948).
@@ -2509,7 +2507,7 @@ class CallResolver:
         # function does: `void (*dispatch)();` in `D` makes `dispatch()` call
         # the pointer, not `B::dispatch` (Greptile, PR #2948). So lookup runs
         # over every class declaring the name, field or method.
-        definers = [
+        return [
             class_qn
             for class_qn in self._mro(owner)
             if qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
@@ -2519,8 +2517,13 @@ class CallResolver:
                 or self._declares_cpp_field(class_qn, call_name)
             )
         ]
-        if not definers:
-            return None
+
+    def _cpp_unique_member_method(
+        self, definers: list[str], call_name: str
+    ) -> tuple[str, str] | None:
+        """The method lookup of `call_name` finds among `definers`, or None
+        when the name it finds is no single method (a data member, or an
+        ambiguous lookup)."""
         # A member hides the name in every base its class derives from, so
         # lookup finds the definers no other definer derives from: in a
         # virtual diamond, DB::probe over DA::probe, though a breadth-first
@@ -2534,7 +2537,7 @@ class CallResolver:
             )
         ]
         if len(found) != 1 or not self._declares_cpp_method(found[0], call_name):
-            return ()
+            return None
         return (
             cs.NodeLabel.METHOD.value,
             f"{found[0]}{cs.SEPARATOR_DOT}{call_name}",
