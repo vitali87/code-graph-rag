@@ -1047,7 +1047,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
         # class, so Python runs the right operand's reflected method, as for
         # an untyped left operand (Greptile, PR #2912).
         builtins = (
-            self._builtin_members(left_members, dunder, module_qn)
+            self._builtin_members(left_members, dunder, module_qn, right_classes)
             if right_classes
             else []
         )
@@ -1070,18 +1070,41 @@ class PythonVariableAnalyzerMixin(_VarBase):
         return f" {cs.PY_UNION_SEPARATOR} ".join(results)
 
     def _builtin_members(
-        self, members: list[str], dunder: str, module_qn: str
+        self,
+        members: list[str],
+        dunder: str,
+        module_qn: str,
+        right_classes: list[str],
     ) -> list[str]:
         """The builtin value types (`str`, `list`) among `members` that no
         project class of the name shadows and that leave `dunder` to the
-        right operand: `str` answers `%` itself, for any operand."""
+        right operand: `str` answers `%` itself, for any operand, unless the
+        right operand subclasses `str` and provides its own `__rmod__`."""
         return [
             member
             for member in members
             if member in cs.PY_BUILTIN_VALUE_TYPES
-            and dunder not in cs.PY_BUILTIN_TOTAL_OPERATORS.get(member, frozenset())
+            and (
+                dunder not in cs.PY_BUILTIN_TOTAL_OPERATORS.get(member, frozenset())
+                or self._subclass_reflects(member, right_classes, dunder)
+            )
             and self._get_project_class_qn(member, module_qn) is None
         ]
+
+    def _subclass_reflects(
+        self, builtin: str, right_classes: list[str], dunder: str
+    ) -> bool:
+        """Whether a right operand's class subclasses `builtin` and provides
+        the reflected method, which Python then runs before the builtin's own
+        operator: `"%s" % Template("x")` with `Template(str).__rmod__`
+        (Greptile, PR #2912). The builtin's own reflected method is no
+        project method, so any owner found is the subclass's."""
+        reflected = _reflected_dunder(dunder)
+        return any(
+            builtin in self._get_mro(right_qn)
+            and self._get_dunder_return_type(right_qn, reflected).owner is not None
+            for right_qn in right_classes
+        )
 
     def _get_project_classes(self, union: str | None, module_qn: str) -> list[str]:
         return [

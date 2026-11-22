@@ -113,7 +113,22 @@ APP = (
     "    def __rmod__(self, other):\n        return Shaped()\n\n\n"
     "def formatted():\n"
     '    template = "%s"\n    item = Formatter()\n'
-    "    rendered = template % item\n    return rendered.strip()\n"
+    "    rendered = template % item\n    return rendered.strip()\n\n\n"
+    # Greptile, PR #2912: a right operand whose class subclasses `str` and
+    # provides `__rmod__` runs first, so the result is what that returns.
+    "class Template(str):\n"
+    "    def __rmod__(self, other):\n        return Product()\n\n\n"
+    "class Inherited(Template):\n    pass\n\n\n"
+    "class Plain(str):\n    pass\n\n\n"
+    "def subclass_formatted():\n"
+    '    template = "%s"\n    rendered = template % Template("x")\n'
+    "    return rendered.run()\n\n\n"
+    "def inherited_formatted():\n"
+    '    template = "%s"\n    rendered = template % Inherited("x")\n'
+    "    return rendered.run()\n\n\n"
+    "def plain_formatted():\n"
+    '    template = "%s"\n    rendered = template % Plain("x")\n'
+    "    return rendered.run()\n"
 )
 # A first-party class imported under a builtin's name is that class.
 ALIASED = (
@@ -273,3 +288,19 @@ def test_a_builtin_that_answers_the_operator_keeps_its_own_type(
     # `"%s" % item` formats `item` into a `str` whatever `item` defines, so
     # `rendered.strip()` is the string's method, never `Shaped.strip`.
     assert "app.Shaped.strip" not in _callees(graph, "formatted")
+
+
+@pytest.mark.parametrize("caller", ["subclass_formatted", "inherited_formatted"])
+def test_a_str_subclass_reflected_method_runs_before_the_builtin_operator(
+    graph: RecordedGraph, caller: str
+) -> None:
+    # Python gives a right operand that subclasses `str` and provides its own
+    # `__rmod__` priority over `str.__mod__`, so the result is its `Product`.
+    assert _callees(graph, caller).get("app.Product.run") == "exact"
+
+
+def test_a_str_subclass_without_its_own_reflected_method_stays_a_str(
+    graph: RecordedGraph,
+) -> None:
+    # `Plain` inherits `str`'s own `__rmod__`, so `str.__mod__` formats it.
+    assert "app.Product.run" not in _callees(graph, "plain_formatted")
