@@ -2272,15 +2272,6 @@ class CallResolver:
         handled, result = self._resolve_caller_scoped_stages(call)
         if handled:
             return result
-        # After the scope walk, which answers a nested def or class of the
-        # name: any other local is a value the graph cannot follow, and the
-        # same-module, class, import and trie stages below would bind it to
-        # the definition it shadows (issue #2666). Before the cache, whose
-        # answers are caller-independent.
-        if self._is_python_local_name(call) or self._is_js_parameter_name(call):
-            return None
-        if (result := self._resolve_python_self_method(call)) is not None:
-            return result
 
         cache_key = self._resolution_cache_key(call)
         if cache_key is not None and cache_key in self._simple_resolution_cache:
@@ -2469,10 +2460,25 @@ class CallResolver:
             self._resolve_rust_block_scope,
             self._resolve_caller_scope,
             self._resolve_js_object_member,
+            self._resolve_local_name_or_self_method,
         ):
             handled, result = stage(call)
             if handled:
                 return True, result
+        return False, None
+
+    def _resolve_local_name_or_self_method(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # After the scope walk, which answers a nested def or class of the
+        # name: any other local is a value the graph cannot follow, and the
+        # same-module, class, import and trie stages below would bind it to
+        # the definition it shadows (issue #2666). Before the cache, whose
+        # answers are caller-independent.
+        if self._is_python_local_name(call) or self._is_js_parameter_name(call):
+            return True, None
+        if (result := self._resolve_python_self_method(call)) is not None:
+            return True, result
         return False, None
 
     def _resolve_receiver_shadow(

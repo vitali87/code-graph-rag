@@ -9353,35 +9353,7 @@ class CallProcessor:
             self._emit_protocol_conformer_edges(ctx, dispatch_targets)
             return
 
-        if (
-            ctx.is_python
-            and ctx.class_context
-            and (
-                call_name.startswith(cs.PY_SELF_PREFIX)
-                or call_name.startswith(cs.PY_CLS_PREFIX)
-            )
-            # A typed `self` (a static method's `self: Other`) names its own
-            # type, not the enclosing class (Greptile, PR #2908). Only the
-            # annotation says so: the method-wide map also holds a later
-            # `self = Other()`, which leaves an earlier call on the class. An
-            # annotation naming the class itself or a base (`self: "Base"`,
-            # `self: Self`) still dispatches to the overrides (Greptile).
-            and not self._receiver_annotated_elsewhere(
-                ctx.class_context,
-                receiver_annotation(
-                    call_node, call_name.partition(cs.SEPARATOR_DOT)[0]
-                ),
-                (ctx.local_var_types or {}).get(
-                    call_name.partition(cs.SEPARATOR_DOT)[0]
-                ),
-            )
-            # A call that runs after `self = Other()` on every path calls
-            # through that value's type, which the resolved edge follows.
-            and not (
-                (rebinding := self._receiver_rebinding_at(ctx, call_node, call_name))
-                and rebinding.always
-            )
-        ):
+        if class_qn := self._python_self_dispatch_class(ctx, call_node, call_name):
             # self.M()/cls.M() statically targets the enclosing class's own or
             # inherited M and dynamically dispatches to every concrete subclass
             # override, so emit an edge to each in ADDITION to the resolved edge
@@ -9392,7 +9364,7 @@ class CallProcessor:
             # miss the base and the others. The self/cls receiver excludes
             # super().M() and Base.M() (not virtual dispatch). Skip self.attr.M()
             # (a call on a member, not on self).
-            self._emit_python_self_dispatch(ctx, ctx.class_context, call_name)
+            self._emit_python_self_dispatch(ctx, class_qn, call_name)
 
         if (
             ctx.is_js_ts
@@ -9490,6 +9462,41 @@ class CallProcessor:
         ):
             return None
         return receiver_rebinding(call_node, receiver)
+
+    def _python_self_dispatch_class(
+        self, ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> str | None:
+        # The enclosing class a Python `self.M()` / `cls.M()` dispatches
+        # through, or None when the call's receiver is not its instance.
+        class_qn = ctx.class_context
+        if (
+            not ctx.is_python
+            or not class_qn
+            or not (
+                call_name.startswith(cs.PY_SELF_PREFIX)
+                or call_name.startswith(cs.PY_CLS_PREFIX)
+            )
+        ):
+            return None
+        receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
+        # A typed `self` (a static method's `self: Other`) names its own
+        # type, not the enclosing class (Greptile, PR #2908). Only the
+        # annotation says so: the method-wide map also holds a later
+        # `self = Other()`, which leaves an earlier call on the class. An
+        # annotation naming the class itself or a base (`self: "Base"`,
+        # `self: Self`) still dispatches to the overrides (Greptile).
+        if self._receiver_annotated_elsewhere(
+            class_qn,
+            receiver_annotation(call_node, receiver),
+            (ctx.local_var_types or {}).get(receiver),
+        ):
+            return None
+        # A call that runs after `self = Other()` on every path calls
+        # through that value's type, which the resolved edge follows.
+        rebinding = self._receiver_rebinding_at(ctx, call_node, call_name)
+        if rebinding and rebinding.always:
+            return None
+        return class_qn
 
     def _receiver_annotated_elsewhere(
         self, class_qn: str, annotation: str | None, typed: str | None
