@@ -187,11 +187,16 @@ def _comprehension_hides(comprehension: Node, receiver: str) -> list[tuple[int, 
 
 def _target_names(clause: Node) -> set[str]:
     # Every name a `for ... in` clause's target binds (`self`, `a, self`).
+    # An attribute or subscript target (`for self.slot in items`) writes
+    # into an object and binds no name, so the walk stops there (Greptile,
+    # PR #2908).
     target = clause.child_by_field_name(cs.FIELD_LEFT)
     names: set[str] = set()
     stack = [target] if target is not None else []
     while stack:
         node = stack.pop()
+        if node.type in (cs.TS_PY_ATTRIBUTE, cs.TS_PY_SUBSCRIPT):
+            continue
         if node.type == cs.TS_PY_IDENTIFIER and (name := safe_decode_text(node)):
             names.add(name)
         stack.extend(node.named_children)

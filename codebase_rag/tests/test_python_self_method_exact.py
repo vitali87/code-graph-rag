@@ -171,7 +171,9 @@ FILES = {
         "    def run_comp(self, items):\n"
         "        return [self.nm() for self in items]\n\n"
         "    def run_comp_iter(self):\n"
-        "        return [self.nm() for self in self.pool()]\n"
+        "        return [self.nm() for self in self.pool()]\n\n"
+        "    def run_comp_attr(self, items):\n"
+        "        return [self.nm() for self.slot in items]\n"
     ),
     # A static method's `self` is whatever its caller passed.
     "static_untyped.py": (
@@ -239,6 +241,7 @@ def _calls(graph: RecordedGraph, caller: str) -> dict[str, str]:
         ("extbase.BuiltinFirst.run", "extbase.Local.ext_m"),
         ("nested_self.NHolder.run_other", "nested_self.NHolder.nm"),
         ("nested_self.NHolder.run_comp_iter", "nested_self.NHolder.pool"),
+        ("nested_self.NHolder.run_comp_attr", "nested_self.NHolder.nm"),
     ],
 )
 def test_a_self_call_on_the_enclosing_class_is_exact(
