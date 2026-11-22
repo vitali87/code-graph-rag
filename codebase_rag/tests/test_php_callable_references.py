@@ -459,6 +459,66 @@ def test_relative_scoped_calls_bind_early_late_and_parent(tmp_path: Path) -> Non
     assert (f"{_CHILD}.__construct", f"{_R}.__construct") in calls
 
 
+_CONFIG_ERROR = """final class ConfigurationException extends {parent}
+{{
+    public function __construct(string $option, int $code = 0)
+    {{
+        parent::__construct(
+            sprintf('Option "%s" is invalid.', $option),
+            $code,
+        );
+    }}
+}}
+"""
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        pytest.param(
+            {
+                "src/Errors.php": "<?php\nnamespace App;\n\n"
+                + _CONFIG_ERROR.format(parent="\\Exception")
+            },
+            id="global-parent",
+        ),
+        pytest.param(
+            {
+                "src/Errors.php": "<?php\nnamespace App;\n\nuse Exception;\n\n"
+                + _CONFIG_ERROR.format(parent="Exception")
+            },
+            id="imported-parent",
+        ),
+        # sebastian/diff's shape: the project parent declares no constructor
+        # and extends a vendor class, so the constructor is outside the index.
+        pytest.param(
+            {
+                "src/InvalidArgumentException.php": r"""<?php
+namespace App;
+
+class InvalidArgumentException extends \InvalidArgumentException
+{
+}
+""",
+                "src/Errors.php": "<?php\nnamespace App;\n\n"
+                + _CONFIG_ERROR.format(parent="InvalidArgumentException"),
+            },
+            id="project-parent-without-constructor",
+        ),
+    ],
+)
+def test_parent_constructor_outside_the_index_is_not_the_own(
+    tmp_path: Path, files: dict[str, str]
+) -> None:
+    # `parent::__construct()` runs a constructor no indexed class declares.
+    # The name lookup would bind the caller's own `__construct`, an exact
+    # self-call that never happens, so the call keeps no edge.
+    ingestor = _index(tmp_path, files)
+    ctor = f"{_PROJECT}.src.Errors.ConfigurationException.__construct"
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    assert not {dst for src, dst in calls if src == ctor and "__construct" in dst}
+
+
 def test_stored_closures_and_direct_arguments_are_referenced(
     tmp_path: Path,
 ) -> None:
