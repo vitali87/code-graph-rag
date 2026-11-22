@@ -3,3 +3,6 @@
 # is the string_spec, so any line-ending normalisation re-points the seed at
 # a different grammar or edit plan without changing anything a diff shows.
 fuzz/corpus/** binary
+# Recorded answers are compared byte for byte: a file the repository holds
+# with CRLF line ends is read back with them, so no checkout may convert one.
+fixtures/reference_answers/** -text

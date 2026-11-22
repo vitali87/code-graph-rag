@@ -1,0 +1,96 @@
+$ cgr -q graph callees equatable.lib.src.equatable_utils.objectsEquals --project equatable
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 1,
+    "callee_path": "lib/src/equatable_utils.dart",
+    "col": 13,
+    "depth": 1,
+    "end_col": 28,
+    "end_line": 63,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 63,
+    "path": "lib/src/equatable_utils.dart",
+    "qualified_name": "equatable.lib.src.equatable_utils._isEquatable",
+    "resolution": "exact",
+    "through": "equatable.lib.src.equatable_utils.objectsEquals"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "lib/src/equatable_utils.dart",
+    "col": 32,
+    "depth": 1,
+    "end_col": 47,
+    "end_line": 63,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 63,
+    "path": "lib/src/equatable_utils.dart",
+    "qualified_name": "equatable.lib.src.equatable_utils._isEquatable",
+    "resolution": "exact",
+    "through": "equatable.lib.src.equatable_utils.objectsEquals"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "lib/src/equatable_utils.dart",
+    "col": 11,
+    "depth": 1,
+    "end_col": 31,
+    "end_line": 68,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 68,
+    "path": "lib/src/equatable_utils.dart",
+    "qualified_name": "equatable.lib.src.equatable_utils.iterableEquals",
+    "resolution": "exact",
+    "through": "equatable.lib.src.equatable_utils.objectsEquals"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "lib/src/equatable_utils.dart",
+    "col": 11,
+    "depth": 1,
+    "end_col": 26,
+    "end_line": 70,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 70,
+    "path": "lib/src/equatable_utils.dart",
+    "qualified_name": "equatable.lib.src.equatable_utils.mapEquals",
+    "resolution": "exact",
+    "through": "equatable.lib.src.equatable_utils.objectsEquals"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "lib/src/equatable_utils.dart",
+    "col": 11,
+    "depth": 1,
+    "end_col": 26,
+    "end_line": 62,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 62,
+    "path": "lib/src/equatable_utils.dart",
+    "qualified_name": "equatable.lib.src.equatable_utils.numEquals",
+    "resolution": "exact",
+    "through": "equatable.lib.src.equatable_utils.objectsEquals"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "lib/src/equatable_utils.dart",
+    "col": 11,
+    "depth": 1,
+    "end_col": 26,
+    "end_line": 66,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 66,
+    "path": "lib/src/equatable_utils.dart",
+    "qualified_name": "equatable.lib.src.equatable_utils.setEquals",
+    "resolution": "exact",
+    "through": "equatable.lib.src.equatable_utils.objectsEquals"
+  }
+]
+--- stderr

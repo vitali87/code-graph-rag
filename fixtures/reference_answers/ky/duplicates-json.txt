@@ -1,0 +1,992 @@
+$ cgr -q duplicates --project ky --format json
+status: 0
+--- stdout
+{
+  "groups": [
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 34,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.hooks.anonymous_360_17",
+          "name": "anonymous_360_17",
+          "path": "test/hooks.ts",
+          "start_line": 361,
+          "end_line": 369
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.hooks.anonymous_392_17",
+          "name": "anonymous_392_17",
+          "path": "test/hooks.ts",
+          "start_line": 393,
+          "end_line": 401
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.hooks.anonymous_505_17",
+          "name": "anonymous_505_17",
+          "path": "test/hooks.ts",
+          "start_line": 506,
+          "end_line": 514
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.hooks.anonymous_537_17",
+          "name": "anonymous_537_17",
+          "path": "test/hooks.ts",
+          "start_line": 538,
+          "end_line": 546
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.hooks.anonymous_568_17",
+          "name": "anonymous_568_17",
+          "path": "test/hooks.ts",
+          "start_line": 569,
+          "end_line": 577
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 33,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_34_17",
+          "name": "anonymous_34_17",
+          "path": "test/retry.ts",
+          "start_line": 35,
+          "end_line": 43
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_54_17",
+          "name": "anonymous_54_17",
+          "path": "test/retry.ts",
+          "start_line": 55,
+          "end_line": 63
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_74_18",
+          "name": "anonymous_74_18",
+          "path": "test/retry.ts",
+          "start_line": 75,
+          "end_line": 83
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_590_17",
+          "name": "anonymous_590_17",
+          "path": "test/retry.ts",
+          "start_line": 591,
+          "end_line": 599
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_637_17",
+          "name": "anonymous_637_17",
+          "path": "test/retry.ts",
+          "start_line": 638,
+          "end_line": 646
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 63,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_33_21",
+          "name": "anonymous_33_21",
+          "path": "test/main.ts",
+          "start_line": 34,
+          "end_line": 43
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_44_20",
+          "name": "anonymous_44_20",
+          "path": "test/main.ts",
+          "start_line": 45,
+          "end_line": 54
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_55_22",
+          "name": "anonymous_55_22",
+          "path": "test/main.ts",
+          "start_line": 56,
+          "end_line": 65
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_80_23",
+          "name": "anonymous_80_23",
+          "path": "test/main.ts",
+          "start_line": 81,
+          "end_line": 90
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 40,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.headers.anonymous_315_84",
+          "name": "anonymous_315_84",
+          "path": "test/headers.ts",
+          "start_line": 316,
+          "end_line": 319
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.headers.anonymous_320_86",
+          "name": "anonymous_320_86",
+          "path": "test/headers.ts",
+          "start_line": 321,
+          "end_line": 324
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.headers.anonymous_325_78",
+          "name": "anonymous_325_78",
+          "path": "test/headers.ts",
+          "start_line": 326,
+          "end_line": 329
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.headers.anonymous_330_79",
+          "name": "anonymous_330_79",
+          "path": "test/headers.ts",
+          "start_line": 331,
+          "end_line": 334
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 52,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.headers.anonymous_40_21",
+          "name": "anonymous_40_21",
+          "path": "test/headers.ts",
+          "start_line": 41,
+          "end_line": 47
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.headers.anonymous_48_26",
+          "name": "anonymous_48_26",
+          "path": "test/headers.ts",
+          "start_line": 49,
+          "end_line": 56
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.headers.anonymous_145_73",
+          "name": "anonymous_145_73",
+          "path": "test/headers.ts",
+          "start_line": 146,
+          "end_line": 153
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 30,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.test@376",
+          "name": "test",
+          "path": "test/retry.ts",
+          "start_line": 376,
+          "end_line": 383
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.test@393",
+          "name": "test",
+          "path": "test/retry.ts",
+          "start_line": 393,
+          "end_line": 400
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.test@618",
+          "name": "test",
+          "path": "test/retry.ts",
+          "start_line": 618,
+          "end_line": 625
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 19,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_307_17",
+          "name": "anonymous_307_17",
+          "path": "test/main.ts",
+          "start_line": 308,
+          "end_line": 312
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_326_17",
+          "name": "anonymous_326_17",
+          "path": "test/main.ts",
+          "start_line": 327,
+          "end_line": 331
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_344_17",
+          "name": "anonymous_344_17",
+          "path": "test/main.ts",
+          "start_line": 345,
+          "end_line": 349
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 95,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_478_57",
+          "name": "anonymous_478_57",
+          "path": "test/retry.ts",
+          "start_line": 479,
+          "end_line": 503
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_504_61",
+          "name": "anonymous_504_61",
+          "path": "test/retry.ts",
+          "start_line": 505,
+          "end_line": 529
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 90,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_284_34",
+          "name": "anonymous_284_34",
+          "path": "test/retry.ts",
+          "start_line": 285,
+          "end_line": 307
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_530_52",
+          "name": "anonymous_530_52",
+          "path": "test/retry.ts",
+          "start_line": 531,
+          "end_line": 554
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 64,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_408_31",
+          "name": "anonymous_408_31",
+          "path": "test/main.ts",
+          "start_line": 409,
+          "end_line": 418
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_419_41",
+          "name": "anonymous_419_41",
+          "path": "test/main.ts",
+          "start_line": 420,
+          "end_line": 429
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 56,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_196_17",
+          "name": "anonymous_196_17",
+          "path": "test/retry.ts",
+          "start_line": 197,
+          "end_line": 208
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_264_17",
+          "name": "anonymous_264_17",
+          "path": "test/retry.ts",
+          "start_line": 265,
+          "end_line": 276
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 52,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.headers.anonymous_107_22",
+          "name": "anonymous_107_22",
+          "path": "test/headers.ts",
+          "start_line": 108,
+          "end_line": 114
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.headers.anonymous_307_58",
+          "name": "anonymous_307_58",
+          "path": "test/headers.ts",
+          "start_line": 308,
+          "end_line": 314
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 44,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_97_17",
+          "name": "anonymous_97_17",
+          "path": "test/retry.ts",
+          "start_line": 98,
+          "end_line": 110
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_358_17",
+          "name": "anonymous_358_17",
+          "path": "test/retry.ts",
+          "start_line": 359,
+          "end_line": 371
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 44,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_555_50",
+          "name": "anonymous_555_50",
+          "path": "test/retry.ts",
+          "start_line": 556,
+          "end_line": 569
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_570_54",
+          "name": "anonymous_570_54",
+          "path": "test/retry.ts",
+          "start_line": 571,
+          "end_line": 584
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 34,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.browser.anonymous_190_21",
+          "name": "anonymous_190_21",
+          "path": "test/browser.ts",
+          "start_line": 191,
+          "end_line": 200
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.browser.anonymous_252_17",
+          "name": "anonymous_252_17",
+          "path": "test/browser.ts",
+          "start_line": 253,
+          "end_line": 262
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 25,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.hooks.anonymous_98_6",
+          "name": "anonymous_98_6",
+          "path": "test/hooks.ts",
+          "start_line": 99,
+          "end_line": 102
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.hooks.anonymous_127_6",
+          "name": "anonymous_127_6",
+          "path": "test/hooks.ts",
+          "start_line": 128,
+          "end_line": 131
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 24,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.test",
+          "name": "test",
+          "path": "test/retry.ts",
+          "start_line": 115,
+          "end_line": 119
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.test@604",
+          "name": "test",
+          "path": "test/retry.ts",
+          "start_line": 604,
+          "end_line": 608
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 20,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_258_17",
+          "name": "anonymous_258_17",
+          "path": "test/main.ts",
+          "start_line": 259,
+          "end_line": 262
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.methods.anonymous_53_17",
+          "name": "anonymous_53_17",
+          "path": "test/methods.ts",
+          "start_line": 54,
+          "end_line": 57
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 20,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.test@149",
+          "name": "test",
+          "path": "test/retry.ts",
+          "start_line": 149,
+          "end_line": 151
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.test@182",
+          "name": "test",
+          "path": "test/retry.ts",
+          "start_line": 182,
+          "end_line": 184
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 17,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_558_10",
+          "name": "anonymous_558_10",
+          "path": "test/retry.ts",
+          "start_line": 559,
+          "end_line": 566
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_573_10",
+          "name": "anonymous_573_10",
+          "path": "test/retry.ts",
+          "start_line": 574,
+          "end_line": 581
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.browser.anonymous_82_21",
+          "name": "anonymous_82_21",
+          "path": "test/browser.ts",
+          "start_line": 83,
+          "end_line": 87
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.browser.anonymous_224_22",
+          "name": "anonymous_224_22",
+          "path": "test/browser.ts",
+          "start_line": 225,
+          "end_line": 229
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 15,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.hooks.parseJson",
+          "name": "parseJson",
+          "path": "test/hooks.ts",
+          "start_line": 311,
+          "end_line": 314
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.hooks.parseJson@477",
+          "name": "parseJson",
+          "path": "test/hooks.ts",
+          "start_line": 477,
+          "end_line": 480
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 34,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_95_18",
+          "name": "anonymous_95_18",
+          "path": "test/main.ts",
+          "start_line": 96,
+          "end_line": 99
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_198_18",
+          "name": "anonymous_198_18",
+          "path": "test/main.ts",
+          "start_line": 199,
+          "end_line": 203
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_155_18",
+          "name": "anonymous_155_18",
+          "path": "test/main.ts",
+          "start_line": 156,
+          "end_line": 159
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "ky.test.main.anonymous_95_18",
+          "ky.test.main.anonymous_155_18"
+        ]
+      ],
+      "links": [
+        {
+          "first": "ky.test.main.anonymous_95_18",
+          "second": "ky.test.main.anonymous_198_18",
+          "similarity": 1.0
+        },
+        {
+          "first": "ky.test.main.anonymous_155_18",
+          "second": "ky.test.main.anonymous_198_18",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.818,
+      "max_similarity": 0.818,
+      "node_count": 159,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_607_74",
+          "name": "anonymous_607_74",
+          "path": "test/main.ts",
+          "start_line": 608,
+          "end_line": 631
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_632_77",
+          "name": "anonymous_632_77",
+          "path": "test/main.ts",
+          "start_line": 633,
+          "end_line": 656
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "ky.test.main.anonymous_607_74",
+          "second": "ky.test.main.anonymous_632_77",
+          "similarity": 0.818
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.846,
+      "max_similarity": 0.846,
+      "node_count": 156,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_191_32",
+          "name": "anonymous_191_32",
+          "path": "test/retry.ts",
+          "start_line": 192,
+          "end_line": 215
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_259_72",
+          "name": "anonymous_259_72",
+          "path": "test/retry.ts",
+          "start_line": 260,
+          "end_line": 283
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "ky.test.retry.anonymous_191_32",
+          "second": "ky.test.retry.anonymous_259_72",
+          "similarity": 0.846
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.8,
+      "max_similarity": 0.8,
+      "node_count": 115,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.hooks.anonymous_533_42",
+          "name": "anonymous_533_42",
+          "path": "test/hooks.ts",
+          "start_line": 534,
+          "end_line": 563
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.hooks.anonymous_564_47",
+          "name": "anonymous_564_47",
+          "path": "test/hooks.ts",
+          "start_line": 565,
+          "end_line": 594
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "ky.test.hooks.anonymous_533_42",
+          "second": "ky.test.hooks.anonymous_564_47",
+          "similarity": 0.8
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.8,
+      "max_similarity": 0.8,
+      "node_count": 106,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_50_37",
+          "name": "anonymous_50_37",
+          "path": "test/retry.ts",
+          "start_line": 51,
+          "end_line": 69
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.retry.anonymous_70_20",
+          "name": "anonymous_70_20",
+          "path": "test/retry.ts",
+          "start_line": 71,
+          "end_line": 91
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "ky.test.retry.anonymous_50_37",
+          "second": "ky.test.retry.anonymous_70_20",
+          "similarity": 0.8
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.8,
+      "max_similarity": 0.8,
+      "node_count": 103,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_91_18",
+          "name": "anonymous_91_18",
+          "path": "test/main.ts",
+          "start_line": 92,
+          "end_line": 110
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.main.anonymous_151_50",
+          "name": "anonymous_151_50",
+          "path": "test/main.ts",
+          "start_line": 152,
+          "end_line": 175
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "ky.test.main.anonymous_91_18",
+          "second": "ky.test.main.anonymous_151_50",
+          "similarity": 0.8
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.8,
+      "max_similarity": 0.8,
+      "node_count": 89,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.headers.anonymous_57_53",
+          "name": "anonymous_57_53",
+          "path": "test/headers.ts",
+          "start_line": 58,
+          "end_line": 70
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.headers.anonymous_71_64",
+          "name": "anonymous_71_64",
+          "path": "test/headers.ts",
+          "start_line": 72,
+          "end_line": 88
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "ky.test.headers.anonymous_57_53",
+          "second": "ky.test.headers.anonymous_71_64",
+          "similarity": 0.8
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.857,
+      "max_similarity": 0.857,
+      "node_count": 87,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.methods.anonymous_4_36",
+          "name": "anonymous_4_36",
+          "path": "test/methods.ts",
+          "start_line": 5,
+          "end_line": 25
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.methods.anonymous_26_48",
+          "name": "anonymous_26_48",
+          "path": "test/methods.ts",
+          "start_line": 27,
+          "end_line": 50
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "ky.test.methods.anonymous_4_36",
+          "second": "ky.test.methods.anonymous_26_48",
+          "similarity": 0.857
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.8,
+      "max_similarity": 0.8,
+      "node_count": 59,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.hooks.anonymous_619_5",
+          "name": "anonymous_619_5",
+          "path": "test/hooks.ts",
+          "start_line": 620,
+          "end_line": 629
+        },
+        {
+          "label": "Function",
+          "qualified_name": "ky.test.hooks.anonymous_652_5",
+          "name": "anonymous_652_5",
+          "path": "test/hooks.ts",
+          "start_line": 653,
+          "end_line": 663
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "ky.test.hooks.anonymous_619_5",
+          "second": "ky.test.hooks.anonymous_652_5",
+          "similarity": 0.8
+        }
+      ]
+    }
+  ],
+  "skipped_symbols": 0,
+  "truncated": false
+}
+--- stderr

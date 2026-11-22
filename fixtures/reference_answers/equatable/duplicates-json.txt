@@ -1,0 +1,248 @@
+$ cgr -q duplicates --project equatable --format json
+status: 0
+--- stdout
+{
+  "groups": [
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 17,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.add",
+          "name": "add",
+          "path": "test/custom_list.dart",
+          "start_line": 172,
+          "end_line": 175
+        },
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.addAll",
+          "name": "addAll",
+          "path": "test/custom_list.dart",
+          "start_line": 178,
+          "end_line": 181
+        },
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.sort",
+          "name": "sort",
+          "path": "test/custom_list.dart",
+          "start_line": 184,
+          "end_line": 187
+        },
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.shuffle",
+          "name": "shuffle",
+          "path": "test/custom_list.dart",
+          "start_line": 190,
+          "end_line": 193
+        },
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.removeWhere",
+          "name": "removeWhere",
+          "path": "test/custom_list.dart",
+          "start_line": 238,
+          "end_line": 241
+        },
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.retainWhere",
+          "name": "retainWhere",
+          "path": "test/custom_list.dart",
+          "start_line": 244,
+          "end_line": 247
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 19,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.insert",
+          "name": "insert",
+          "path": "test/custom_list.dart",
+          "start_line": 202,
+          "end_line": 205
+        },
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.insertAll",
+          "name": "insertAll",
+          "path": "test/custom_list.dart",
+          "start_line": 208,
+          "end_line": 211
+        },
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.setAll",
+          "name": "setAll",
+          "path": "test/custom_list.dart",
+          "start_line": 214,
+          "end_line": 217
+        },
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.removeRange",
+          "name": "removeRange",
+          "path": "test/custom_list.dart",
+          "start_line": 256,
+          "end_line": 259
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 15,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.length@148",
+          "name": "length",
+          "path": "test/custom_list.dart",
+          "start_line": 148,
+          "end_line": 151
+        },
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.first@160",
+          "name": "first",
+          "path": "test/custom_list.dart",
+          "start_line": 160,
+          "end_line": 163
+        },
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.last@166",
+          "name": "last",
+          "path": "test/custom_list.dart",
+          "start_line": 166,
+          "end_line": 169
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 32,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.equatable_mixin_test.Credentials.fromJson",
+          "name": "fromJson",
+          "path": "test/equatable_mixin_test.dart",
+          "start_line": 72,
+          "end_line": 77
+        },
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.equatable_test.Credentials.fromJson",
+          "name": "fromJson",
+          "path": "test/equatable_test.dart",
+          "start_line": 76,
+          "end_line": 81
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 25,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "equatable.lib.src.equatable.Equatable.toString",
+          "name": "toString",
+          "path": "lib/src/equatable.dart",
+          "start_line": 56,
+          "end_line": 61
+        },
+        {
+          "label": "Method",
+          "qualified_name": "equatable.lib.src.equatable_mixin.EquatableMixin.toString",
+          "name": "toString",
+          "path": "lib/src/equatable_mixin.dart",
+          "start_line": 32,
+          "end_line": 37
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 21,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.fillRange",
+          "name": "fillRange",
+          "path": "test/custom_list.dart",
+          "start_line": 262,
+          "end_line": 265
+        },
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.replaceRange",
+          "name": "replaceRange",
+          "path": "test/custom_list.dart",
+          "start_line": 268,
+          "end_line": 271
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 18,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.remove",
+          "name": "remove",
+          "path": "test/custom_list.dart",
+          "start_line": 220,
+          "end_line": 223
+        },
+        {
+          "label": "Method",
+          "qualified_name": "equatable.test.custom_list.CustomList.removeAt",
+          "name": "removeAt",
+          "path": "test/custom_list.dart",
+          "start_line": 226,
+          "end_line": 229
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    }
+  ],
+  "skipped_symbols": 31,
+  "truncated": false
+}
+--- stderr

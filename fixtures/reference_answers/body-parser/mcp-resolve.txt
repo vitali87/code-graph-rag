@@ -1,0 +1,33 @@
+> tools/call resolve {"target": "parse"}
+isError: false
+--- text
+[
+  {
+    "label": "Function",
+    "qualified_name": "body-parser.lib.types.json.json.parse",
+    "path": "lib/types/json.js",
+    "start_line": 59,
+    "end_line": 84
+  },
+  {
+    "label": "Function",
+    "qualified_name": "body-parser.lib.types.raw.raw.parse",
+    "path": "lib/types/raw.js",
+    "start_line": 36,
+    "end_line": 38
+  },
+  {
+    "label": "Function",
+    "qualified_name": "body-parser.lib.types.text.text.parse",
+    "path": "lib/types/text.js",
+    "start_line": 38,
+    "end_line": 40
+  },
+  {
+    "label": "Function",
+    "qualified_name": "body-parser.lib.types.urlencoded.urlencoded.parse",
+    "path": "lib/types/urlencoded.js",
+    "start_line": 48,
+    "end_line": 52
+  }
+]

@@ -1,0 +1,44 @@
+$ cgr -q stats --project php-diff
+status: 0
+--- stdout
+Scoped to: php-diff
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ Method      │   206 │
+│ File        │    66 │
+│ Section     │    56 │
+│ Module      │    42 │
+│ Class       │    36 │
+│ Folder      │    15 │
+│ Interface   │     3 │
+│ Project     │     1 │
+│ Function    │     1 │
+├─────────────┼───────┤
+│ Total Nodes │   426 │
+└─────────────┴───────┘
+
+    Relationship Statistics    
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Relationship Type   ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ CALLS               │   309 │
+│ DEFINES_METHOD      │   206 │
+│ IMPORTS             │    95 │
+│ CONTAINS_FILE       │    66 │
+│ INSTANTIATES        │    59 │
+│ CONTAINS_SECTION    │    56 │
+│ CONTAINS_MODULE     │    42 │
+│ DEFINES             │    40 │
+│ INHERITS            │    23 │
+│ CONTAINS_FOLDER     │    15 │
+│ OVERRIDES           │     8 │
+│ IMPLEMENTS          │     8 │
+│ DEPENDS_ON_EXTERNAL │     2 │
+│ REFERENCES          │     1 │
+├─────────────────────┼───────┤
+│ Total Relationships │   930 │
+└─────────────────────┴───────┘
+--- stderr
+Fetching graph statistics...

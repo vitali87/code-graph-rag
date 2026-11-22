@@ -1,0 +1,14 @@
+> tools/call glosses {"target": "anyhow.src.error.Error.msg"}
+isError: false
+--- text
+{
+  "target": {
+    "label": "Method",
+    "qualified_name": "anyhow.src.error.Error.msg",
+    "path": "src/error.rs",
+    "start_line": 81,
+    "end_line": 86
+  },
+  "annotating": [],
+  "mentioning": []
+}

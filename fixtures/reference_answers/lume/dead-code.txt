@@ -1,0 +1,23 @@
+$ cgr -q dead-code --project lume
+status: 0
+--- stdout
+                       Dead Code Candidates (lume)                        
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┓
+┃ Kind     ┃ Qualified Name                         ┃ Path     ┃   Lines ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━┩
+│ Function │ lume.lume.__call                       │ lume.lua │ 766-768 │
+│ Function │ lume.lume.__index                      │ lume.lua │ 568-568 │
+│ Function │ lume.lume.chain_mt.__index@754         │ lume.lua │ 754-757 │
+│ Function │ lume.lume.identity                     │ lume.lua │   24-26 │
+│ Function │ lume.lume.lume.combine.anonymous_508_9 │ lume.lua │ 509-511 │
+│ Function │ lume.lume.lume.fn.anonymous_455_9      │ lume.lua │ 456-459 │
+│ Function │ lume.lume.lume.memoize.anonymous_478_9 │ lume.lua │ 479-488 │
+│ Function │ lume.lume.lume.once.anonymous_465_9    │ lume.lua │ 466-470 │
+│ Function │ lume.lume.noop                         │ lume.lua │   21-22 │
+│ Function │ lume.lume.ripairs_iter                 │ lume.lua │ 709-713 │
+│ Function │ lume.lume.serialize_map.number         │ lume.lua │ 548-553 │
+│ Function │ lume.lume.serialize_map.string         │ lume.lua │ 547-547 │
+│ Function │ lume.lume.serialize_map.table          │ lume.lua │ 554-564 │
+└──────────┴────────────────────────────────────────┴──────────┴─────────┘
+13 candidate(s) for review.
+--- stderr

@@ -1,0 +1,12 @@
+> tools/call tests_reaching {"qualified_name": "equatable.lib.src.equatable_utils.mapEquals"}
+isError: false
+--- text
+[
+  {
+    "label": "Function",
+    "qualified_name": "equatable.test.equatable_utils_test.main",
+    "path": "test/equatable_utils_test.dart",
+    "depth": 1,
+    "through": "equatable.lib.src.equatable_utils.mapEquals"
+  }
+]

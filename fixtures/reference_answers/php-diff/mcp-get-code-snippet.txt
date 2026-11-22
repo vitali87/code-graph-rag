@@ -1,0 +1,13 @@
+> tools/call get_code_snippet {"qualified_name": "php-diff.src.Parser.Parser.parse"}
+isError: false
+--- text
+{
+  "qualified_name": "php-diff.src.Parser.Parser.parse",
+  "source_code": "    public function parse(string $string): array\n    {\n        $lines = preg_split('(\\r\\n|\\r|\\n)', $string);\n\n        if (!empty($lines) && $lines[count($lines) - 1] === '') {\n            array_pop($lines);\n        }\n\n        $lineCount = count($lines);\n        $diffs     = [];\n        $diff      = null;\n        $collected = [];\n\n        for ($i = 0; $i < $lineCount; $i++) {\n            if (preg_match('#^---\\h+\"?(?P<file>[^\\\\v\\\\t\"]+)#', $lines[$i], $fromMatch) &&\n                preg_match('#^\\\\+\\\\+\\\\+\\\\h+\"?(?P<file>[^\\\\v\\\\t\"]+)#', $lines[$i + 1], $toMatch)) {\n                if ($diff !== null) {\n                    $this->parseFileDiff($diff, $collected);\n\n                    $diffs[]   = $diff;\n                    $collected = [];\n                }\n\n                assert(!empty($fromMatch['file']));\n                assert(!empty($toMatch['file']));\n\n                $diff = new Diff($fromMatch['file'], $toMatch['file']);\n\n                $i++;\n            } else {\n                if (preg_match('/^(?:diff --git |index [\\da-f.]+|[+-]{3} [ab])/', $lines[$i])) {\n                    continue;\n                }\n\n                $collected[] = $lines[$i];\n            }\n        }\n\n        if ($diff !== null && count($collected)) {\n            $this->parseFileDiff($diff, $collected);\n\n            $diffs[] = $diff;\n        }\n\n        return $diffs;\n    }\n",
+  "file_path": "src/Parser.php",
+  "line_start": 27,
+  "line_end": 72,
+  "docstring": "@return Diff[]",
+  "found": true,
+  "error_message": null
+}

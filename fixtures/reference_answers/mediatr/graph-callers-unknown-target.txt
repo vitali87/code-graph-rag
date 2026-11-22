@@ -1,0 +1,5 @@
+$ cgr -q graph callers mediatr.src.MediatR.Mediator.no_such_function --project mediatr
+status: 4
+--- stdout
+--- stderr
+'mediatr.src.MediatR.Mediator.no_such_function' is not in the graph. 'cgr graph resolve NAME' lists the qualified names a name matches.

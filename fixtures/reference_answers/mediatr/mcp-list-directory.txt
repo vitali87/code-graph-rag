@@ -1,0 +1,22 @@
+> tools/call list_directory {"directory_path": "src/MediatR"}
+isError: false
+--- text
+IMediator.cs
+INotificationHandler.cs
+INotificationPublisher.cs
+IPipelineBehavior.cs
+IPublisher.cs
+IRequestHandler.cs
+ISender.cs
+IStreamPipelineBehavior.cs
+IStreamRequestHandler.cs
+Internal
+MediatR.csproj
+Mediator.cs
+MicrosoftExtensionsDI
+NotificationHandlerExecutor.cs
+NotificationPublishers
+Pipeline
+Registration
+TypeForwardings.cs
+Wrappers

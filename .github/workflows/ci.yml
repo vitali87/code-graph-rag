@@ -660,7 +660,9 @@ jobs:
   # (fixtures/reference_graphs, issue #3629). A change to what the indexer
   # records must come with the regenerated graph, so it shows in the pull
   # request; the second and third runs index a copy at another path under
-  # another hash seed and must give the same graph.
+  # another hash seed and must give the same graph. The same job then asks
+  # the installed cgr what its commands and MCP tools answer on those
+  # repositories (fixtures/reference_answers), with the same install.
   reference-graphs:
     name: Reference Graphs
     runs-on: ubuntu-latest
@@ -710,6 +712,15 @@ jobs:
 
       - name: Check the reference graphs
         run: uv run --no-sync python scripts/reference_graphs.py check --runs 3
+
+      # Each case's answer (the status and output of a command line, or what
+      # an MCP tool returns over stdio) must match the recorded one, and the
+      # second run, on a copy at another path under another hash seed, must
+      # answer the same. Run after a graph difference too, so one push shows
+      # both.
+      - name: Check the reference answers
+        if: ${{ !cancelled() }}
+        run: uv run --no-sync python -m scripts.reference_answers check --runs 2
 
   rust-graph-core:
     name: Rust Graph Core
@@ -983,7 +994,7 @@ jobs:
             exit 1
           fi
           if [[ "${{ needs.reference-graphs.result }}" != "success" ]]; then
-            echo "❌ Reference graphs differ: see the job's log"
+            echo "❌ Reference graphs or answers differ: see the job's log"
             exit 1
           fi
           if [[ "${{ needs.rust-graph-core.result }}" != "success" ]]; then

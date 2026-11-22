@@ -1,0 +1,33 @@
+> tools/call resolve {"target": "parseJson"}
+isError: false
+--- text
+[
+  {
+    "label": "Function",
+    "qualified_name": "ky.test.hooks.parseJson",
+    "path": "test/hooks.ts",
+    "start_line": 311,
+    "end_line": 314
+  },
+  {
+    "label": "Function",
+    "qualified_name": "ky.test.main.parseJson",
+    "path": "test/main.ts",
+    "start_line": 848,
+    "end_line": 851
+  },
+  {
+    "label": "Function",
+    "qualified_name": "ky.test.hooks.parseJson@477",
+    "path": "test/hooks.ts",
+    "start_line": 477,
+    "end_line": 480
+  },
+  {
+    "label": "Function",
+    "qualified_name": "ky.test.main.parseJson@876",
+    "path": "test/main.ts",
+    "start_line": 876,
+    "end_line": 879
+  }
+]

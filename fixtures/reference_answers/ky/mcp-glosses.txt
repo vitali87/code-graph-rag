@@ -1,0 +1,14 @@
+> tools/call glosses {"target": "ky.source.utils.merge.validateAndMerge"}
+isError: false
+--- text
+{
+  "target": {
+    "label": "Function",
+    "qualified_name": "ky.source.utils.merge.validateAndMerge",
+    "path": "source/utils/merge.ts",
+    "start_line": 5,
+    "end_line": 13
+  },
+  "annotating": [],
+  "mentioning": []
+}

@@ -1,0 +1,5 @@
+$ cgr -q graph callers initialize --project cjson
+status: 5
+--- stdout
+--- stderr
+'initialize' names 7 definitions: cjson.tests.unity.auto.colour_prompt_rb.initialize, cjson.tests.unity.auto.generate_module_rb.initialize, cjson.tests.unity.auto.generate_test_runner_rb.initialize, cjson.tests.unity.auto.parse_output_rb.initialize, cjson.tests.unity.auto.stylize_as_junit_rb.initialize, cjson.tests.unity.auto.test_file_filter_rb.initialize, cjson.tests.unity.auto.unity_test_summary_rb.initialize. Pass one of their qualified names.

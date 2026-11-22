@@ -1,0 +1,18 @@
+$ cgr -q graph definition 'javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get(Type)' --project javapoet --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "decorators": [],
+  "docstring": "Returns a type name equivalent to {@code type}.",
+  "end_line": 324,
+  "found": true,
+  "label": "Method",
+  "name": "get",
+  "name_line": 322,
+  "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+  "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get(Type)",
+  "source": "public static TypeName get(Type type) {\n    return get(type, new LinkedHashMap<>());\n  }",
+  "start_col": 2,
+  "start_line": 322
+}
+--- stderr

@@ -1,0 +1,14 @@
+> tools/call glosses {"target": "php-diff.src.Differ.Differ"}
+isError: false
+--- text
+{
+  "target": {
+    "label": "Class",
+    "qualified_name": "php-diff.src.Differ.Differ",
+    "path": "src/Differ.php",
+    "start_line": 31,
+    "end_line": 247
+  },
+  "annotating": [],
+  "mentioning": []
+}

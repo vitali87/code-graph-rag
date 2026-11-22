@@ -1,0 +1,36 @@
+$ cgr -q graph importers scopt.shared.src.main.scala.scopt.OParser --project scopt
+status: 0
+--- stdout
+[
+  {
+    "alias": "OParser",
+    "col": 0,
+    "end_col": 20,
+    "end_line": 5,
+    "imported_name": "OParser",
+    "line": 5,
+    "module": "scopt.jvm.src.test.scala.scopt.MonadicParserSpecJVM",
+    "path": "jvm/src/test/scala/scopt/MonadicParserSpecJVM.scala"
+  },
+  {
+    "alias": "OParser",
+    "col": 4,
+    "end_col": 24,
+    "end_line": 11,
+    "imported_name": "OParser",
+    "line": 11,
+    "module": "scopt.shared.src.test.scala.scopttest.Issue264",
+    "path": "shared/src/test/scala/scopttest/Issue264.scala"
+  },
+  {
+    "alias": "OParser",
+    "col": 0,
+    "end_col": 20,
+    "end_line": 4,
+    "imported_name": "OParser",
+    "line": 4,
+    "module": "scopt.shared.src.test.scala.scopttest.MonadicParserSpec",
+    "path": "shared/src/test/scala/scopttest/MonadicParserSpec.scala"
+  }
+]
+--- stderr

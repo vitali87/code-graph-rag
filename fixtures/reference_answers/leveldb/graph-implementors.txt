@@ -1,0 +1,60 @@
+$ cgr -q graph implementors leveldb.include.leveldb.iterator.leveldb.Iterator --project leveldb
+status: 0
+--- stdout
+[
+  {
+    "label": "Class",
+    "path": "db/db_iter.cc",
+    "qualified_name": "leveldb.db.db_iter.leveldb.DBIter",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "db/db_test.cc",
+    "qualified_name": "leveldb.db.db_test.leveldb.ModelDB.ModelIter",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "db/memtable.cc",
+    "qualified_name": "leveldb.db.memtable.leveldb.MemTableIterator",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "db/version_set.cc",
+    "qualified_name": "leveldb.db.version_set.leveldb.Version::LevelFileNumIterator",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "table/block.cc",
+    "qualified_name": "leveldb.table.block.leveldb.Block::Iter",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "table/iterator.cc",
+    "qualified_name": "leveldb.table.iterator.leveldb.EmptyIterator",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "table/merger.cc",
+    "qualified_name": "leveldb.table.merger.leveldb.MergingIterator",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "table/table_test.cc",
+    "qualified_name": "leveldb.table.table_test.leveldb.KeyConvertingIterator",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "table/two_level_iterator.cc",
+    "qualified_name": "leveldb.table.two_level_iterator.leveldb.TwoLevelIterator",
+    "relationship": "INHERITS"
+  }
+]
+--- stderr

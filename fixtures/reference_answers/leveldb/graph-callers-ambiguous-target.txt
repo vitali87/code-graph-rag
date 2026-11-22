@@ -1,0 +1,5 @@
+$ cgr -q graph callers Append --project leveldb
+status: 5
+--- stdout
+--- stderr
+'Append' names 13 definitions: leveldb.db.db_test.leveldb.SpecialEnv.NewWritableFile.DataFile.Append, leveldb.db.db_test.leveldb.SpecialEnv.NewWritableFile.ManifestFile.Append, leveldb.db.fault_injection_test.leveldb.TestWritableFile.Append, leveldb.db.leveldbutil.leveldb.StdoutPrinter.Append, leveldb.db.log_test.leveldb.log.LogTest.StringDest.Append, leveldb.db.write_batch_internal.leveldb.WriteBatchInternal.Append, leveldb.helpers.memenv.memenv.leveldb.FileState.Append, leveldb.helpers.memenv.memenv.leveldb.WritableFileImpl.Append, leveldb.include.leveldb.env.leveldb.WritableFile.Append, leveldb.include.leveldb.write_batch.leveldb.WriteBatch.Append and 3 more ('cgr graph resolve' lists them all). Pass one of their qualified names.

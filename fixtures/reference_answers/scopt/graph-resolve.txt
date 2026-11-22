@@ -1,0 +1,41 @@
+$ cgr -q graph resolve reportError --project scopt
+status: 0
+--- stdout
+[
+  {
+    "end_line": 29,
+    "label": "Method",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.DefaultOEffectSetup.reportError",
+    "start_line": 27
+  },
+  {
+    "end_line": 15,
+    "label": "Method",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffectSetup.reportError",
+    "start_line": 15
+  },
+  {
+    "end_line": 231,
+    "label": "Function",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.reportError",
+    "start_line": 231
+  },
+  {
+    "end_line": 191,
+    "label": "Function",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.reportError",
+    "start_line": 191
+  },
+  {
+    "end_line": 85,
+    "label": "Method",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.reportError@85",
+    "start_line": 85
+  }
+]
+--- stderr

@@ -1,0 +1,29 @@
+> tools/call read_file {"file_path": "src/chain.rs", "limit": 25, "offset": 0}
+isError: false
+--- text
+# Lines 1-25 of 102
+use self::ChainState::*;
+use crate::StdError;
+
+#[cfg(any(feature = "std", not(anyhow_no_core_error)))]
+use alloc::vec::{self, Vec};
+
+#[cfg(any(feature = "std", not(anyhow_no_core_error)))]
+pub(crate) use crate::Chain;
+
+#[cfg(all(not(feature = "std"), anyhow_no_core_error))]
+pub(crate) struct Chain<'a> {
+    state: ChainState<'a>,
+}
+
+#[derive(Clone)]
+pub(crate) enum ChainState<'a> {
+    Linked {
+        next: Option<&'a (dyn StdError + 'static)>,
+    },
+    #[cfg(any(feature = "std", not(anyhow_no_core_error)))]
+    Buffered {
+        rest: vec::IntoIter<&'a (dyn StdError + 'static)>,
+    },
+}
+

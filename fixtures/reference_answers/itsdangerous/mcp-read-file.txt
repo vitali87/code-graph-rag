@@ -1,0 +1,16 @@
+> tools/call read_file {"file_path": "src/itsdangerous/encoding.py", "limit": 12, "offset": 10}
+isError: false
+--- text
+# Lines 11-22 of 54
+def want_bytes(
+    s: str | bytes, encoding: str = "utf-8", errors: str = "strict"
+) -> bytes:
+    if isinstance(s, str):
+        s = s.encode(encoding, errors)
+
+    return s
+
+
+def base64_encode(string: str | bytes) -> bytes:
+    """Base64 encode a string of bytes or text. The resulting bytes are
+    safe to use in URLs.

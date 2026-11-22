@@ -1,0 +1,24 @@
+> tools/call read_file {"file_path": "src/main/java/com/squareup/javapoet/NameAllocator.java", "limit": 20, "offset": 90}
+isError: false
+--- text
+# Lines 91-110 of 168
+    this.allocatedNames = allocatedNames;
+    this.tagToName = tagToName;
+  }
+
+  /**
+   * Return a new name using {@code suggestion} that will not be a Java identifier or clash with
+   * other names.
+   */
+  public String newName(String suggestion) {
+    return newName(suggestion, UUID.randomUUID().toString());
+  }
+
+  /**
+   * Return a new name using {@code suggestion} that will not be a Java identifier or clash with
+   * other names. The returned value can be queried multiple times by passing {@code tag} to
+   * {@link #get(Object)}.
+   */
+  public String newName(String suggestion, Object tag) {
+    checkNotNull(suggestion, "suggestion");
+    checkNotNull(tag, "tag");

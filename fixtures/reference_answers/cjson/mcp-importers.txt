@@ -1,0 +1,65 @@
+> tools/call importers {"module_qualified_name": "cjson.cJSON.h"}
+isError: false
+--- text
+[
+  {
+    "module": "cjson.cJSON",
+    "path": "cJSON.c",
+    "line": 59,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 60,
+    "end_col": 0,
+    "end_col_char": 0,
+    "alias": "cJSON",
+    "imported_name": "cJSON.h"
+  },
+  {
+    "module": "cjson.cJSON_Utils.h",
+    "path": "cJSON_Utils.h",
+    "line": 31,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 32,
+    "end_col": 0,
+    "end_col_char": 0,
+    "alias": "cJSON",
+    "imported_name": "cJSON.h"
+  },
+  {
+    "module": "cjson.fuzzing.afl",
+    "path": "fuzzing/afl.c",
+    "line": 27,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 28,
+    "end_col": 0,
+    "end_col_char": 0,
+    "alias": "cJSON",
+    "imported_name": "../cJSON.h"
+  },
+  {
+    "module": "cjson.fuzzing.cjson_read_fuzzer",
+    "path": "fuzzing/cjson_read_fuzzer.c",
+    "line": 9,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 10,
+    "end_col": 0,
+    "end_col_char": 0,
+    "alias": "cJSON",
+    "imported_name": "../cJSON.h"
+  },
+  {
+    "module": "cjson.test",
+    "path": "test.c",
+    "line": 26,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 27,
+    "end_col": 0,
+    "end_col_char": 0,
+    "alias": "cJSON",
+    "imported_name": "cJSON.h"
+  }
+]

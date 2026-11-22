@@ -1,0 +1,75 @@
+> tools/call tests_reaching {"qualified_name": "scopt.shared.src.main.scala.scopt.OParser.OParserBuilder.note"}
+isError: false
+--- text
+[
+  {
+    "label": "Module",
+    "qualified_name": "scopt.jvm.src.test.scala.scopt.MonadicParserSpecJVM",
+    "path": "jvm/src/test/scala/scopt/MonadicParserSpecJVM.scala",
+    "depth": 1,
+    "through": "scopt.shared.src.main.scala.scopt.OParser.OParserBuilder.note"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.helpParserOneColumn",
+    "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+    "depth": 1,
+    "through": "scopt.shared.src.main.scala.scopt.OParser.OParserBuilder.note"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.helpParserTwoColumns",
+    "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+    "depth": 1,
+    "through": "scopt.shared.src.main.scala.scopt.OParser.OParserBuilder.note"
+  },
+  {
+    "label": "Module",
+    "qualified_name": "scopt.shared.src.test.scala.scopttest.MonadicParserSpec",
+    "path": "shared/src/test/scala/scopttest/MonadicParserSpec.scala",
+    "depth": 1,
+    "through": "scopt.shared.src.main.scala.scopt.OParser.OParserBuilder.note"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "scopt.shared.src.test.scala.scopttest.MonadicParserSpec.MonadicParserSpec.parser1",
+    "path": "shared/src/test/scala/scopttest/MonadicParserSpec.scala",
+    "depth": 1,
+    "through": "scopt.shared.src.main.scala.scopt.OParser.OParserBuilder.note"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "scopt.shared.src.test.scala.scopttest.MonadicParserSpec.MonadicParserSpec.parser2",
+    "path": "shared/src/test/scala/scopttest/MonadicParserSpec.scala",
+    "depth": 1,
+    "through": "scopt.shared.src.main.scala.scopt.OParser.OParserBuilder.note"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.helpParserOneColumn",
+    "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+    "depth": 1,
+    "through": "scopt.shared.src.main.scala.scopt.OParser.OParserBuilder.note"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.helpParserTwoColumns",
+    "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+    "depth": 1,
+    "through": "scopt.shared.src.main.scala.scopt.OParser.OParserBuilder.note"
+  },
+  {
+    "label": "Module",
+    "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec",
+    "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+    "depth": 2,
+    "through": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.helpParserOneColumn"
+  },
+  {
+    "label": "Module",
+    "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec",
+    "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+    "depth": 2,
+    "through": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.helpParserOneColumn"
+  }
+]

@@ -1,0 +1,306 @@
+$ cgr -q duplicates --project uuid --format json
+status: 0
+--- stdout
+{
+  "groups": [
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 47,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "uuid.uuid_test.BenchmarkParse",
+          "name": "BenchmarkParse",
+          "path": "uuid_test.go",
+          "start_line": 640,
+          "end_line": 647
+        },
+        {
+          "label": "Function",
+          "qualified_name": "uuid.uuid_test.BenchmarkParseBytes",
+          "name": "BenchmarkParseBytes",
+          "path": "uuid_test.go",
+          "start_line": 649,
+          "end_line": 656
+        },
+        {
+          "label": "Function",
+          "qualified_name": "uuid.uuid_test.BenchmarkParseBytesUnsafe",
+          "name": "BenchmarkParseBytesUnsafe",
+          "path": "uuid_test.go",
+          "start_line": 663,
+          "end_line": 670
+        },
+        {
+          "label": "Function",
+          "qualified_name": "uuid.uuid_test.BenchmarkParseBytesCopy",
+          "name": "BenchmarkParseBytesCopy",
+          "path": "uuid_test.go",
+          "start_line": 677,
+          "end_line": 684
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 124,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "uuid.null_test.TestNullUUIDMarshalText",
+          "name": "TestNullUUIDMarshalText",
+          "path": "null_test.go",
+          "start_line": 72,
+          "end_line": 102
+        },
+        {
+          "label": "Function",
+          "qualified_name": "uuid.null_test.TestNullUUIDUnmarshalText",
+          "name": "TestNullUUIDUnmarshalText",
+          "path": "null_test.go",
+          "start_line": 104,
+          "end_line": 134
+        },
+        {
+          "label": "Function",
+          "qualified_name": "uuid.null_test.TestNullUUIDMarshalBinary",
+          "name": "TestNullUUIDMarshalBinary",
+          "path": "null_test.go",
+          "start_line": 136,
+          "end_line": 166
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 269,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "uuid.uuid_test.TestVersion1",
+          "name": "TestVersion1",
+          "path": "uuid_test.go",
+          "start_line": 306,
+          "end_line": 343
+        },
+        {
+          "label": "Function",
+          "qualified_name": "uuid.uuid_test.TestVersion6",
+          "name": "TestVersion6",
+          "path": "uuid_test.go",
+          "start_line": 784,
+          "end_line": 821
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 66,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "uuid.uuid_test.BenchmarkUUID_String",
+          "name": "BenchmarkUUID_String",
+          "path": "uuid_test.go",
+          "start_line": 692,
+          "end_line": 702
+        },
+        {
+          "label": "Function",
+          "qualified_name": "uuid.uuid_test.BenchmarkUUID_URN",
+          "name": "BenchmarkUUID_URN",
+          "path": "uuid_test.go",
+          "start_line": 704,
+          "end_line": 714
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 42,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "uuid.uuid_test.TestMD5",
+          "name": "TestMD5",
+          "path": "uuid_test.go",
+          "start_line": 409,
+          "end_line": 415
+        },
+        {
+          "label": "Function",
+          "qualified_name": "uuid.uuid_test.TestSHA1",
+          "name": "TestSHA1",
+          "path": "uuid_test.go",
+          "start_line": 417,
+          "end_line": 423
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 21,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "uuid.time.GetTime",
+          "name": "GetTime",
+          "path": "time.go",
+          "start_line": 45,
+          "end_line": 49
+        },
+        {
+          "label": "Function",
+          "qualified_name": "uuid.time.ClockSequence",
+          "name": "ClockSequence",
+          "path": "time.go",
+          "start_line": 76,
+          "end_line": 80
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 17,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "uuid.dce.NewDCEPerson",
+          "name": "NewDCEPerson",
+          "path": "dce.go",
+          "start_line": 46,
+          "end_line": 48
+        },
+        {
+          "label": "Function",
+          "qualified_name": "uuid.dce.NewDCEGroup",
+          "name": "NewDCEGroup",
+          "path": "dce.go",
+          "start_line": 54,
+          "end_line": 56
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "uuid.hash.NewMD5",
+          "name": "NewMD5",
+          "path": "hash.go",
+          "start_line": 49,
+          "end_line": 51
+        },
+        {
+          "label": "Function",
+          "qualified_name": "uuid.hash.NewSHA1",
+          "name": "NewSHA1",
+          "path": "hash.go",
+          "start_line": 57,
+          "end_line": 59
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.833,
+      "max_similarity": 0.833,
+      "node_count": 154,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "uuid.uuid_test.TestVersion7",
+          "name": "TestVersion7",
+          "path": "uuid_test.go",
+          "start_line": 825,
+          "end_line": 845
+        },
+        {
+          "label": "Function",
+          "qualified_name": "uuid.uuid_test.TestVersion7_pooled",
+          "name": "TestVersion7_pooled",
+          "path": "uuid_test.go",
+          "start_line": 849,
+          "end_line": 872
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "uuid.uuid_test.TestVersion7",
+          "second": "uuid.uuid_test.TestVersion7_pooled",
+          "similarity": 0.833
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.812,
+      "max_similarity": 0.812,
+      "node_count": 132,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "uuid.uuid_test.TestRandomUUID",
+          "name": "TestRandomUUID",
+          "path": "uuid_test.go",
+          "start_line": 168,
+          "end_line": 184
+        },
+        {
+          "label": "Function",
+          "qualified_name": "uuid.uuid_test.TestRandomUUID_Pooled",
+          "name": "TestRandomUUID_Pooled",
+          "path": "uuid_test.go",
+          "start_line": 186,
+          "end_line": 204
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "uuid.uuid_test.TestRandomUUID",
+          "second": "uuid.uuid_test.TestRandomUUID_Pooled",
+          "similarity": 0.812
+        }
+      ]
+    }
+  ],
+  "skipped_symbols": 0,
+  "truncated": false
+}
+--- stderr

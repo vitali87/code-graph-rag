@@ -1,0 +1,10 @@
+> tools/call get_function_source {"node_id": "<node_id:anyhow.src.lib.Ok>"}
+isError: false
+--- text
+Source code for node ID <node_id>:
+
+```
+pub fn Ok<T>(value: T) -> Result<T> {
+    Result::Ok(value)
+}
+```
