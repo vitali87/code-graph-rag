@@ -1,0 +1,2769 @@
+$ cgr -q duplicates --project javapoet --format json
+status: 0
+--- stdout
+{
+  "groups": [
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 40,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.indentCannotBeIndexed()",
+          "name": "indentCannotBeIndexed",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 52,
+          "end_line": 61
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.deindentCannotBeIndexed()",
+          "name": "deindentCannotBeIndexed",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 63,
+          "end_line": 72
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.dollarSignEscapeCannotBeIndexed()",
+          "name": "dollarSignEscapeCannotBeIndexed",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 74,
+          "end_line": 83
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.statementBeginningCannotBeIndexed()",
+          "name": "statementBeginningCannotBeIndexed",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 85,
+          "end_line": 94
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.statementEndingCannotBeIndexed()",
+          "name": "statementEndingCannotBeIndexed",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 96,
+          "end_line": 105
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.indexTooHigh()",
+          "name": "indexTooHigh",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 204,
+          "end_line": 211
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.indexIsZero()",
+          "name": "indexIsZero",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 213,
+          "end_line": 220
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.indexIsNegative()",
+          "name": "indexIsNegative",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 222,
+          "end_line": 229
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.indexWithoutFormatType()",
+          "name": "indexWithoutFormatType",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 231,
+          "end_line": 238
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.indexWithoutFormatTypeNotAtStringEnd()",
+          "name": "indexWithoutFormatTypeNotAtStringEnd",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 240,
+          "end_line": 247
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.formatIndicatorAlone()",
+          "name": "formatIndicatorAlone",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 258,
+          "end_line": 265
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.formatIndicatorWithoutIndexOrFormatType()",
+          "name": "formatIndicatorWithoutIndexOrFormatType",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 267,
+          "end_line": 274
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 15,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ArrayTypeName.ArrayTypeName.get(ArrayType)",
+          "name": "get",
+          "path": "src/main/java/com/squareup/javapoet/ArrayTypeName.java",
+          "start_line": 92,
+          "end_line": 94
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ArrayTypeName.ArrayTypeName.get(GenericArrayType)",
+          "name": "get",
+          "path": "src/main/java/com/squareup/javapoet/ArrayTypeName.java",
+          "start_line": 102,
+          "end_line": 104
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterizedTypeName.ParameterizedTypeName.get(ParameterizedType)",
+          "name": "get",
+          "path": "src/main/java/com/squareup/javapoet/ParameterizedTypeName.java",
+          "start_line": 123,
+          "end_line": 125
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get(TypeMirror)",
+          "name": "get",
+          "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+          "start_line": 242,
+          "end_line": 244
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get(Type)",
+          "name": "get",
+          "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+          "start_line": 322,
+          "end_line": 324
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.list(Type[])",
+          "name": "list",
+          "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+          "start_line": 359,
+          "end_line": 361
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName.TypeVariableName.get(java.lang.reflect.TypeVariable<?>)",
+          "name": "get",
+          "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java",
+          "start_line": 148,
+          "end_line": 150
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.WildcardTypeName.WildcardTypeName.get(javax.lang.model.type.WildcardType)",
+          "name": "get",
+          "path": "src/main/java/com/squareup/javapoet/WildcardTypeName.java",
+          "start_line": 100,
+          "end_line": 102
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.WildcardTypeName.WildcardTypeName.get(WildcardType)",
+          "name": "get",
+          "path": "src/main/java/com/squareup/javapoet/WildcardTypeName.java",
+          "start_line": 120,
+          "end_line": 122
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 48,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.equals(Object)",
+          "name": "equals",
+          "path": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+          "start_line": 171,
+          "end_line": 176
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.equals(Object)",
+          "name": "equals",
+          "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+          "start_line": 83,
+          "end_line": 88
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.equals(Object)",
+          "name": "equals",
+          "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+          "start_line": 67,
+          "end_line": 72
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.equals(Object)",
+          "name": "equals",
+          "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+          "start_line": 222,
+          "end_line": 227
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.equals(Object)",
+          "name": "equals",
+          "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+          "start_line": 165,
+          "end_line": 170
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.equals(Object)",
+          "name": "equals",
+          "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+          "start_line": 64,
+          "end_line": 69
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.equals(Object)",
+          "name": "equals",
+          "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+          "start_line": 195,
+          "end_line": 200
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.equals(Object)",
+          "name": "equals",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 346,
+          "end_line": 351
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 27,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.addAnnotations(Iterable<AnnotationSpec>)",
+          "name": "addAnnotations",
+          "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+          "start_line": 134,
+          "end_line": 140
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addAnnotations(Iterable<AnnotationSpec>)",
+          "name": "addAnnotations",
+          "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+          "start_line": 332,
+          "end_line": 338
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addTypeVariables(Iterable<TypeVariableName>)",
+          "name": "addTypeVariables",
+          "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+          "start_line": 368,
+          "end_line": 374
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addParameters(Iterable<ParameterSpec>)",
+          "name": "addParameters",
+          "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+          "start_line": 391,
+          "end_line": 397
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addExceptions(Iterable<? extends TypeName>)",
+          "name": "addExceptions",
+          "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+          "start_line": 421,
+          "end_line": 427
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.addAnnotations(Iterable<AnnotationSpec>)",
+          "name": "addAnnotations",
+          "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+          "start_line": 160,
+          "end_line": 166
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addAnnotations(Iterable<AnnotationSpec>)",
+          "name": "addAnnotations",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 448,
+          "end_line": 454
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addTypeVariables(Iterable<TypeVariableName>)",
+          "name": "addTypeVariables",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 475,
+          "end_line": 481
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 37,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.nullAnnotationsAddition()",
+          "name": "nullAnnotationsAddition",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 1760,
+          "end_line": 1768
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.nullFieldsAddition()",
+          "name": "nullFieldsAddition",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 1790,
+          "end_line": 1798
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.nullMethodsAddition()",
+          "name": "nullMethodsAddition",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 1818,
+          "end_line": 1826
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.nullSuperinterfacesAddition()",
+          "name": "nullSuperinterfacesAddition",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 1860,
+          "end_line": 1868
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.nullTypeVariablesAddition()",
+          "name": "nullTypeVariablesAddition",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 1920,
+          "end_line": 1928
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.nullTypesAddition()",
+          "name": "nullTypesAddition",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 1945,
+          "end_line": 1953
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 37,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.MethodSpecTest.MethodSpecTest.nullAnnotationsAddition()",
+          "name": "nullAnnotationsAddition",
+          "path": "src/test/java/com/squareup/javapoet/MethodSpecTest.java",
+          "start_line": 66,
+          "end_line": 73
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.MethodSpecTest.MethodSpecTest.nullTypeVariablesAddition()",
+          "name": "nullTypeVariablesAddition",
+          "path": "src/test/java/com/squareup/javapoet/MethodSpecTest.java",
+          "start_line": 75,
+          "end_line": 82
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.MethodSpecTest.MethodSpecTest.nullParametersAddition()",
+          "name": "nullParametersAddition",
+          "path": "src/test/java/com/squareup/javapoet/MethodSpecTest.java",
+          "start_line": 84,
+          "end_line": 91
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.MethodSpecTest.MethodSpecTest.nullExceptionsAddition()",
+          "name": "nullExceptionsAddition",
+          "path": "src/test/java/com/squareup/javapoet/MethodSpecTest.java",
+          "start_line": 93,
+          "end_line": 100
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 30,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.nameFormatCanBeIndexed()",
+          "name": "nameFormatCanBeIndexed",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 107,
+          "end_line": 110
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.literalFormatCanBeIndexed()",
+          "name": "literalFormatCanBeIndexed",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 112,
+          "end_line": 115
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.stringFormatCanBeIndexed()",
+          "name": "stringFormatCanBeIndexed",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 117,
+          "end_line": 120
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.typeFormatCanBeIndexed()",
+          "name": "typeFormatCanBeIndexed",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 122,
+          "end_line": 125
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 24,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addSuperinterfaces(Iterable<? extends TypeName>)",
+          "name": "addSuperinterfaces",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 526,
+          "end_line": 532
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addFields(Iterable<FieldSpec>)",
+          "name": "addFields",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 589,
+          "end_line": 595
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addMethods(Iterable<MethodSpec>)",
+          "name": "addMethods",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 627,
+          "end_line": 633
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addTypes(Iterable<TypeSpec>)",
+          "name": "addTypes",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 640,
+          "end_line": 646
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.classBuilder(String)",
+          "name": "classBuilder",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 127,
+          "end_line": 129
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.interfaceBuilder(String)",
+          "name": "interfaceBuilder",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 135,
+          "end_line": 137
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.enumBuilder(String)",
+          "name": "enumBuilder",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 143,
+          "end_line": 145
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.annotationBuilder(String)",
+          "name": "annotationBuilder",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 159,
+          "end_line": 161
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 32,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.classToString()",
+          "name": "classToString",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 1588,
+          "end_line": 1594
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.interfaceClassToString()",
+          "name": "interfaceClassToString",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 1612,
+          "end_line": 1618
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.annotationDeclarationToString()",
+          "name": "annotationDeclarationToString",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 1620,
+          "end_line": 1626
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 19,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.addAnnotation(ClassName)",
+          "name": "addAnnotation",
+          "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+          "start_line": 147,
+          "end_line": 150
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addAnnotation(ClassName)",
+          "name": "addAnnotation",
+          "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+          "start_line": 345,
+          "end_line": 348
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.addAnnotation(ClassName)",
+          "name": "addAnnotation",
+          "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+          "start_line": 173,
+          "end_line": 176
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.Util.Util.immutableMap(Map<K, V>)",
+          "name": "immutableMap",
+          "path": "src/main/java/com/squareup/javapoet/Util.java",
+          "start_line": 48,
+          "end_line": 50
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.Util.Util.immutableList(Collection<T>)",
+          "name": "immutableList",
+          "path": "src/main/java/com/squareup/javapoet/Util.java",
+          "start_line": 65,
+          "end_line": 67
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.Util.Util.immutableSet(Collection<T>)",
+          "name": "immutableSet",
+          "path": "src/main/java/com/squareup/javapoet/Util.java",
+          "start_line": 69,
+          "end_line": 71
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 140,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.FileWritingTest.FileWritingTest.pathNestedClasses()",
+          "name": "pathNestedClasses",
+          "path": "src/test/java/com/squareup/javapoet/FileWritingTest.java",
+          "start_line": 103,
+          "end_line": 115
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.FileWritingTest.FileWritingTest.filerNestedClasses()",
+          "name": "filerNestedClasses",
+          "path": "src/test/java/com/squareup/javapoet/FileWritingTest.java",
+          "start_line": 134,
+          "end_line": 146
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 85,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.interfaceStaticMethods()",
+          "name": "interfaceStaticMethods",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 865,
+          "end_line": 884
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.interfaceDefaultMethods()",
+          "name": "interfaceDefaultMethods",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 886,
+          "end_line": 905
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 84,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.ClassNameTest.ClassNameTest.reflectionName()",
+          "name": "reflectionName",
+          "path": "src/test/java/com/squareup/javapoet/ClassNameTest.java",
+          "start_line": 187,
+          "end_line": 195
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.ClassNameTest.ClassNameTest.canonicalName()",
+          "name": "canonicalName",
+          "path": "src/test/java/com/squareup/javapoet/ClassNameTest.java",
+          "start_line": 197,
+          "end_line": 205
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 75,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.isPrimitive()",
+          "name": "isPrimitive",
+          "path": "src/test/java/com/squareup/javapoet/TypeNameTest.java",
+          "start_line": 162,
+          "end_line": 168
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.isBoxedPrimitive()",
+          "name": "isBoxedPrimitive",
+          "path": "src/test/java/com/squareup/javapoet/TypeNameTest.java",
+          "start_line": 170,
+          "end_line": 176
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 56,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.AnnotationSpecTest.AnnotationSpecTest.disallowsNullMemberName()",
+          "name": "disallowsNullMemberName",
+          "path": "src/test/java/com/squareup/javapoet/AnnotationSpecTest.java",
+          "start_line": 356,
+          "end_line": 364
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.AnnotationSpecTest.AnnotationSpecTest.requiresValidMemberName()",
+          "name": "requiresValidMemberName",
+          "path": "src/test/java/com/squareup/javapoet/AnnotationSpecTest.java",
+          "start_line": 366,
+          "end_line": 374
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 55,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.JavaFileTest.JavaFileTest.classAndSuperclassShareName()",
+          "name": "classAndSuperclassShareName",
+          "path": "src/test/java/com/squareup/javapoet/JavaFileTest.java",
+          "start_line": 504,
+          "end_line": 516
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.JavaFileTest.JavaFileTest.defaultPackageTypesAreNotImported()",
+          "name": "defaultPackageTypesAreNotImported",
+          "path": "src/test/java/com/squareup/javapoet/JavaFileTest.java",
+          "start_line": 628,
+          "end_line": 638
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 55,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.MethodSpecTest.MethodSpecTest.modifyTypeVariables()",
+          "name": "modifyTypeVariables",
+          "path": "src/test/java/com/squareup/javapoet/MethodSpecTest.java",
+          "start_line": 413,
+          "end_line": 421
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.modifyTypeVariables()",
+          "name": "modifyTypeVariables",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2466,
+          "end_line": 2476
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 52,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.toString()",
+          "name": "toString",
+          "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+          "start_line": 176,
+          "end_line": 185
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.toString()",
+          "name": "toString",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 357,
+          "end_line": 366
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 51,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.javadocWithTrailingLineDoesNotAddAnother()",
+          "name": "javadocWithTrailingLineDoesNotAddAnother",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2525,
+          "end_line": 2538
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.javadocEnsuresTrailingLine()",
+          "name": "javadocEnsuresTrailingLine",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2540,
+          "end_line": 2553
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 50,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.FileWritingTest.FileWritingTest.pathDefaultPackage()",
+          "name": "pathDefaultPackage",
+          "path": "src/test/java/com/squareup/javapoet/FileWritingTest.java",
+          "start_line": 79,
+          "end_line": 85
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.FileWritingTest.FileWritingTest.filerDefaultPackage()",
+          "name": "filerDefaultPackage",
+          "path": "src/test/java/com/squareup/javapoet/FileWritingTest.java",
+          "start_line": 95,
+          "end_line": 101
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 48,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.tooManyStatementEnters()",
+          "name": "tooManyStatementEnters",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 283,
+          "end_line": 292
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.statementExitWithoutStatementEnter()",
+          "name": "statementExitWithoutStatementEnter",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 294,
+          "end_line": 303
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 46,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.superclass(Type,boolean)",
+          "name": "superclass",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 501,
+          "end_line": 510
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addSuperinterface(Type,boolean)",
+          "name": "addSuperinterface",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 544,
+          "end_line": 553
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 45,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.FieldSpecTest.FieldSpecTest.modifyModifiers()",
+          "name": "modifyModifiers",
+          "path": "src/test/java/com/squareup/javapoet/FieldSpecTest.java",
+          "start_line": 59,
+          "end_line": 65
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.ParameterSpecTest.ParameterSpecTest.modifyModifiers()",
+          "name": "modifyModifiers",
+          "path": "src/test/java/com/squareup/javapoet/ParameterSpecTest.java",
+          "start_line": 147,
+          "end_line": 153
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 44,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.MethodSpecTest.MethodSpecTest.modifyModifiers()",
+          "name": "modifyModifiers",
+          "path": "src/test/java/com/squareup/javapoet/MethodSpecTest.java",
+          "start_line": 397,
+          "end_line": 403
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.modifyModifiers()",
+          "name": "modifyModifiers",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2448,
+          "end_line": 2455
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 43,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.superclass(TypeMirror,boolean)",
+          "name": "superclass",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 516,
+          "end_line": 524
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addSuperinterface(TypeMirror,boolean)",
+          "name": "addSuperinterface",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 569,
+          "end_line": 578
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 43,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.AnnotatedTypeNameTest.AnnotatedTypeNameTest.annotatedWildcardTypeNameWithSuper()",
+          "name": "annotatedWildcardTypeNameWithSuper",
+          "path": "src/test/java/com/squareup/javapoet/AnnotatedTypeNameTest.java",
+          "start_line": 90,
+          "end_line": 94
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.AnnotatedTypeNameTest.AnnotatedTypeNameTest.annotatedWildcardTypeNameWithExtends()",
+          "name": "annotatedWildcardTypeNameWithExtends",
+          "path": "src/test/java/com/squareup/javapoet/AnnotatedTypeNameTest.java",
+          "start_line": 96,
+          "end_line": 100
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 42,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.FieldSpecTest.FieldSpecTest.modifyAnnotations()",
+          "name": "modifyAnnotations",
+          "path": "src/test/java/com/squareup/javapoet/FieldSpecTest.java",
+          "start_line": 50,
+          "end_line": 57
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.ParameterSpecTest.ParameterSpecTest.modifyAnnotations()",
+          "name": "modifyAnnotations",
+          "path": "src/test/java/com/squareup/javapoet/ParameterSpecTest.java",
+          "start_line": 138,
+          "end_line": 145
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 42,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.modifyMethods()",
+          "name": "modifyMethods",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2487,
+          "end_line": 2494
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.modifyTypes()",
+          "name": "modifyTypes",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2496,
+          "end_line": 2503
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 41,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.MethodSpecTest.MethodSpecTest.modifyAnnotations()",
+          "name": "modifyAnnotations",
+          "path": "src/test/java/com/squareup/javapoet/MethodSpecTest.java",
+          "start_line": 388,
+          "end_line": 395
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.modifyAnnotations()",
+          "name": "modifyAnnotations",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2437,
+          "end_line": 2446
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 41,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.literalFromAnything()",
+          "name": "literalFromAnything",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2025,
+          "end_line": 2032
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.stringFromAnything()",
+          "name": "stringFromAnything",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2070,
+          "end_line": 2077
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 39,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.MethodSpecTest.MethodSpecTest.ensureTrailingNewline()",
+          "name": "ensureTrailingNewline",
+          "path": "src/test/java/com/squareup/javapoet/MethodSpecTest.java",
+          "start_line": 423,
+          "end_line": 432
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.MethodSpecTest.MethodSpecTest.ensureTrailingNewlineWithExistingNewline()",
+          "name": "ensureTrailingNewlineWithExistingNewline",
+          "path": "src/test/java/com/squareup/javapoet/MethodSpecTest.java",
+          "start_line": 435,
+          "end_line": 444
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 38,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.FieldSpecTest.FieldSpecTest.nullAnnotationsAddition()",
+          "name": "nullAnnotationsAddition",
+          "path": "src/test/java/com/squareup/javapoet/FieldSpecTest.java",
+          "start_line": 39,
+          "end_line": 48
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.ParameterSpecTest.ParameterSpecTest.nullAnnotationsAddition()",
+          "name": "nullAnnotationsAddition",
+          "path": "src/test/java/com/squareup/javapoet/ParameterSpecTest.java",
+          "start_line": 82,
+          "end_line": 90
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 38,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.initializerBlockUnsupportedExceptionOnInterface()",
+          "name": "initializerBlockUnsupportedExceptionOnInterface",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2341,
+          "end_line": 2348
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.initializerBlockUnsupportedExceptionOnAnnotation()",
+          "name": "initializerBlockUnsupportedExceptionOnAnnotation",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2350,
+          "end_line": 2357
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 37,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.MethodSpecTest.MethodSpecTest.modifyParameters()",
+          "name": "modifyParameters",
+          "path": "src/test/java/com/squareup/javapoet/MethodSpecTest.java",
+          "start_line": 405,
+          "end_line": 411
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.modifyFields()",
+          "name": "modifyFields",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2457,
+          "end_line": 2464
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 32,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.nameFromField()",
+          "name": "nameFromField",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2038,
+          "end_line": 2041
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.nameFromParameter()",
+          "name": "nameFromParameter",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2043,
+          "end_line": 2046
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 26,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.initializer(CodeBlock)",
+          "name": "initializer",
+          "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+          "start_line": 165,
+          "end_line": 169
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.defaultValue(CodeBlock)",
+          "name": "defaultValue",
+          "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+          "start_line": 462,
+          "end_line": 466
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 26,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.ParameterSpecTest.ParameterSpecTest.receiverParameterInstanceMethod()",
+          "name": "receiverParameterInstanceMethod",
+          "path": "src/test/java/com/squareup/javapoet/ParameterSpecTest.java",
+          "start_line": 63,
+          "end_line": 66
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.ParameterSpecTest.ParameterSpecTest.receiverParameterNestedClass()",
+          "name": "receiverParameterNestedClass",
+          "path": "src/test/java/com/squareup/javapoet/ParameterSpecTest.java",
+          "start_line": 68,
+          "end_line": 71
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 24,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.typeVariable()",
+          "name": "typeVariable",
+          "path": "src/test/java/com/squareup/javapoet/AbstractTypesTest.java",
+          "start_line": 255,
+          "end_line": 258
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.of()",
+          "name": "of",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 41,
+          "end_line": 44
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 19,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.Util.Util.checkArgument(boolean,String,Object...)",
+          "name": "checkArgument",
+          "path": "src/main/java/com/squareup/javapoet/Util.java",
+          "start_line": 52,
+          "end_line": 54
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.Util.Util.checkState(boolean,String,Object...)",
+          "name": "checkState",
+          "path": "src/main/java/com/squareup/javapoet/Util.java",
+          "start_line": 61,
+          "end_line": 63
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 18,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.nameFromCharSequence()",
+          "name": "nameFromCharSequence",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2034,
+          "end_line": 2036
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeSpecTest.TypeSpecTest.typeFromReflectType()",
+          "name": "typeFromReflectType",
+          "path": "src/test/java/com/squareup/javapoet/TypeSpecTest.java",
+          "start_line": 2098,
+          "end_line": 2100
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addParameter(TypeName,String,Modifier...)",
+          "name": "addParameter",
+          "path": "src/main/java/com/squareup/javapoet/MethodSpec.java",
+          "start_line": 404,
+          "end_line": 406
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Builder.addField(TypeName,String,Modifier...)",
+          "name": "addField",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 602,
+          "end_line": 604
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 141,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrap()",
+          "name": "wrap",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 26,
+          "end_line": 34
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "name": "multipleWrite",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 66,
+          "end_line": 88
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrap()",
+          "name": "noWrap",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 36,
+          "end_line": 44
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.zeroWidthNoWrap()",
+          "name": "zeroWidthNoWrap",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 46,
+          "end_line": 54
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.nospaceWrapMax()",
+          "name": "nospaceWrapMax",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 56,
+          "end_line": 64
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepost()",
+          "name": "fencepost",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 90,
+          "end_line": 100
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepostZeroWidth()",
+          "name": "fencepostZeroWidth",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 102,
+          "end_line": 112
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "name": "overlyLongLinesWithoutLeadingSpace",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 114,
+          "end_line": 120
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "name": "overlyLongLinesWithLeadingSpace",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 122,
+          "end_line": 129
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "name": "overlyLongLinesWithLeadingZeroWidth",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 131,
+          "end_line": 138
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines()",
+          "name": "noWrapEmbeddedNewlines",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 140,
+          "end_line": 149
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines()",
+          "name": "wrapEmbeddedNewlines",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 151,
+          "end_line": 160
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines_ZeroWidth()",
+          "name": "noWrapEmbeddedNewlines_ZeroWidth",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 162,
+          "end_line": 171
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines_ZeroWidth()",
+          "name": "wrapEmbeddedNewlines_ZeroWidth",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 173,
+          "end_line": 182
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapMultipleNewlines()",
+          "name": "noWrapMultipleNewlines",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 184,
+          "end_line": 194
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapMultipleNewlines()",
+          "name": "wrapMultipleNewlines",
+          "path": "src/test/java/com/squareup/javapoet/LineWrapperTest.java",
+          "start_line": 196,
+          "end_line": 206
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrap()",
+          "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrap()",
+          "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.zeroWidthNoWrap()",
+          "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.nospaceWrapMax()"
+        ],
+        [
+          "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepost()",
+          "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepostZeroWidth()",
+          "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapMultipleNewlines()",
+          "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapMultipleNewlines()"
+        ],
+        [
+          "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()"
+        ],
+        [
+          "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines()",
+          "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines()",
+          "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines_ZeroWidth()",
+          "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines_ZeroWidth()"
+        ]
+      ],
+      "links": [
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepost()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepostZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepost()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepostZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.zeroWidthNoWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.zeroWidthNoWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepost()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.zeroWidthNoWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepostZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.zeroWidthNoWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.zeroWidthNoWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.zeroWidthNoWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.zeroWidthNoWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.zeroWidthNoWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.zeroWidthNoWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.zeroWidthNoWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.zeroWidthNoWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.zeroWidthNoWrap()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.nospaceWrapMax()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.nospaceWrapMax()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepost()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.nospaceWrapMax()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepostZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.nospaceWrapMax()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.nospaceWrapMax()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.nospaceWrapMax()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.nospaceWrapMax()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.nospaceWrapMax()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.nospaceWrapMax()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.nospaceWrapMax()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.nospaceWrapMax()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.nospaceWrapMax()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepost()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepostZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.multipleWrite()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepost()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepost()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepost()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepost()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepost()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepost()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepost()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepostZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepostZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepostZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepostZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepostZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepostZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.fencepostZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithoutLeadingSpace()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingSpace()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines_ZeroWidth()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.overlyLongLinesWithLeadingZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines_ZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapEmbeddedNewlines_ZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines_ZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.noWrapMultipleNewlines()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapEmbeddedNewlines_ZeroWidth()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.LineWrapperTest.LineWrapperTest.wrapMultipleNewlines()",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 29,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.CodeBlockJoiner.CodeBlockJoiner(String,Builder)",
+          "name": "CodeBlockJoiner",
+          "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+          "start_line": 443,
+          "end_line": 446
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Kind.Kind(Set<Modifier>,Set<Modifier>,Set<Modifier>,Set<Modifier>)",
+          "name": "Kind",
+          "path": "src/main/java/com/squareup/javapoet/TypeSpec.java",
+          "start_line": 398,
+          "end_line": 406
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.Builder(TypeName,String)",
+          "name": "Builder",
+          "path": "src/main/java/com/squareup/javapoet/FieldSpec.java",
+          "start_line": 119,
+          "end_line": 122
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.Builder.Builder(String,TypeSpec)",
+          "name": "Builder",
+          "path": "src/main/java/com/squareup/javapoet/JavaFile.java",
+          "start_line": 285,
+          "end_line": 288
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.NameAllocator.NameAllocator.NameAllocator(LinkedHashSet<String>,LinkedHashMap<Object, String>)",
+          "name": "NameAllocator",
+          "path": "src/main/java/com/squareup/javapoet/NameAllocator.java",
+          "start_line": 89,
+          "end_line": 93
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.Builder(TypeName,String)",
+          "name": "Builder",
+          "path": "src/main/java/com/squareup/javapoet/ParameterSpec.java",
+          "start_line": 145,
+          "end_line": 148
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.CodeBlockJoiner.CodeBlockJoiner(String,Builder)",
+          "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.Builder(TypeName,String)",
+          "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.Builder.Builder(String,TypeSpec)",
+          "javapoet.src.main.java.com.squareup.javapoet.NameAllocator.NameAllocator.NameAllocator(LinkedHashSet<String>,LinkedHashMap<Object, String>)",
+          "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.Builder(TypeName,String)"
+        ]
+      ],
+      "links": [
+        {
+          "first": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.CodeBlockJoiner.CodeBlockJoiner(String,Builder)",
+          "second": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Kind.Kind(Set<Modifier>,Set<Modifier>,Set<Modifier>,Set<Modifier>)",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.Builder(TypeName,String)",
+          "second": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Kind.Kind(Set<Modifier>,Set<Modifier>,Set<Modifier>,Set<Modifier>)",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.Builder.Builder(String,TypeSpec)",
+          "second": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Kind.Kind(Set<Modifier>,Set<Modifier>,Set<Modifier>,Set<Modifier>)",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.main.java.com.squareup.javapoet.NameAllocator.NameAllocator.NameAllocator(LinkedHashSet<String>,LinkedHashMap<Object, String>)",
+          "second": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Kind.Kind(Set<Modifier>,Set<Modifier>,Set<Modifier>,Set<Modifier>)",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.Builder(TypeName,String)",
+          "second": "javapoet.src.main.java.com.squareup.javapoet.TypeSpec.TypeSpec.Kind.Kind(Set<Modifier>,Set<Modifier>,Set<Modifier>,Set<Modifier>)",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 63,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.simpleNamedArgument()",
+          "name": "simpleNamedArgument",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 127,
+          "end_line": 132
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.multipleNamedArguments()",
+          "name": "multipleNamedArguments",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 173,
+          "end_line": 184
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.repeatedNamedArgument()",
+          "name": "repeatedNamedArgument",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 134,
+          "end_line": 142
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.namedAndNoArgFormat()",
+          "name": "namedAndNoArgFormat",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 144,
+          "end_line": 150
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.namedNewline()",
+          "name": "namedNewline",
+          "path": "src/test/java/com/squareup/javapoet/CodeBlockTest.java",
+          "start_line": 186,
+          "end_line": 191
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.simpleNamedArgument()",
+          "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.repeatedNamedArgument()",
+          "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.namedAndNoArgFormat()",
+          "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.namedNewline()"
+        ]
+      ],
+      "links": [
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.simpleNamedArgument()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.multipleNamedArguments()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.repeatedNamedArgument()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.multipleNamedArguments()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.namedAndNoArgFormat()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.multipleNamedArguments()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.multipleNamedArguments()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.CodeBlockTest.CodeBlockTest.namedNewline()",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 47,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.ClassNameNoPackageTest.ClassNameNoPackageTest.shouldSupportClassInDefaultPackage()",
+          "name": "shouldSupportClassInDefaultPackage",
+          "path": "src/test/java/ClassNameNoPackageTest.java",
+          "start_line": 27,
+          "end_line": 32
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.arrayType()",
+          "name": "arrayType",
+          "path": "src/test/java/com/squareup/javapoet/AbstractTypesTest.java",
+          "start_line": 211,
+          "end_line": 214
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.wildcardExtendsType()",
+          "name": "wildcardExtendsType",
+          "path": "src/test/java/com/squareup/javapoet/AbstractTypesTest.java",
+          "start_line": 216,
+          "end_line": 219
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.wildcardExtendsObject()",
+          "name": "wildcardExtendsObject",
+          "path": "src/test/java/com/squareup/javapoet/AbstractTypesTest.java",
+          "start_line": 221,
+          "end_line": 224
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.wildcardSuperType()",
+          "name": "wildcardSuperType",
+          "path": "src/test/java/com/squareup/javapoet/AbstractTypesTest.java",
+          "start_line": 226,
+          "end_line": 229
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.arrayType()",
+          "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.wildcardExtendsType()",
+          "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.wildcardExtendsObject()",
+          "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.wildcardSuperType()"
+        ]
+      ],
+      "links": [
+        {
+          "first": "javapoet.src.test.java.ClassNameNoPackageTest.ClassNameNoPackageTest.shouldSupportClassInDefaultPackage()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.arrayType()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.ClassNameNoPackageTest.ClassNameNoPackageTest.shouldSupportClassInDefaultPackage()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.wildcardExtendsType()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.ClassNameNoPackageTest.ClassNameNoPackageTest.shouldSupportClassInDefaultPackage()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.wildcardExtendsObject()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.ClassNameNoPackageTest.ClassNameNoPackageTest.shouldSupportClassInDefaultPackage()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.wildcardSuperType()",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 38,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingSubstitute()",
+          "name": "characterMappingSubstitute",
+          "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+          "start_line": 51,
+          "end_line": 54
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingInvalidStartButValidPart()",
+          "name": "characterMappingInvalidStartButValidPart",
+          "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+          "start_line": 61,
+          "end_line": 65
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingSurrogate()",
+          "name": "characterMappingSurrogate",
+          "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+          "start_line": 56,
+          "end_line": 59
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingInvalidStartIsInvalidPart()",
+          "name": "characterMappingInvalidStartIsInvalidPart",
+          "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+          "start_line": 67,
+          "end_line": 70
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingSubstitute()",
+          "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingSurrogate()",
+          "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingInvalidStartIsInvalidPart()"
+        ]
+      ],
+      "links": [
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingSubstitute()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingInvalidStartButValidPart()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingSurrogate()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingInvalidStartButValidPart()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingInvalidStartButValidPart()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.characterMappingInvalidStartIsInvalidPart()",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 91,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.usage()",
+          "name": "usage",
+          "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+          "start_line": 26,
+          "end_line": 32
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.nameCollisionWithTag()",
+          "name": "nameCollisionWithTag",
+          "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+          "start_line": 41,
+          "end_line": 49
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.javaKeyword()",
+          "name": "javaKeyword",
+          "path": "src/test/java/com/squareup/javapoet/NameAllocatorTest.java",
+          "start_line": 72,
+          "end_line": 76
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.usage()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.nameCollisionWithTag()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.usage()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.javaKeyword()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.nameCollisionWithTag()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.NameAllocatorTest.NameAllocatorTest.javaKeyword()",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.8,
+      "max_similarity": 1.0,
+      "node_count": 79,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.innerClassInGenericType()",
+          "name": "innerClassInGenericType",
+          "path": "src/test/java/com/squareup/javapoet/TypeNameTest.java",
+          "start_line": 76,
+          "end_line": 86
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.innerStaticInGenericType()",
+          "name": "innerStaticInGenericType",
+          "path": "src/test/java/com/squareup/javapoet/TypeNameTest.java",
+          "start_line": 100,
+          "end_line": 108
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.innerGenericInGenericType()",
+          "name": "innerGenericInGenericType",
+          "path": "src/test/java/com/squareup/javapoet/TypeNameTest.java",
+          "start_line": 88,
+          "end_line": 98
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.innerClassInGenericType()",
+          "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.innerGenericInGenericType()"
+        ]
+      ],
+      "links": [
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.innerClassInGenericType()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.innerStaticInGenericType()",
+          "similarity": 0.8
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.innerGenericInGenericType()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.innerStaticInGenericType()",
+          "similarity": 0.8
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 43,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.equalsAndHashCodeArrayTypeName()",
+          "name": "equalsAndHashCodeArrayTypeName",
+          "path": "src/test/java/com/squareup/javapoet/TypeNameTest.java",
+          "start_line": 122,
+          "end_line": 127
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.equalsAndHashCodeClassName()",
+          "name": "equalsAndHashCodeClassName",
+          "path": "src/test/java/com/squareup/javapoet/TypeNameTest.java",
+          "start_line": 129,
+          "end_line": 134
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.equalsAndHashCodeWildcardTypeName()",
+          "name": "equalsAndHashCodeWildcardTypeName",
+          "path": "src/test/java/com/squareup/javapoet/TypeNameTest.java",
+          "start_line": 153,
+          "end_line": 160
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.equalsAndHashCodeClassName()",
+          "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.equalsAndHashCodeWildcardTypeName()"
+        ]
+      ],
+      "links": [
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.equalsAndHashCodeArrayTypeName()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.equalsAndHashCodeClassName()",
+          "similarity": 1.0
+        },
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.equalsAndHashCodeArrayTypeName()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.TypeNameTest.TypeNameTest.equalsAndHashCodeWildcardTypeName()",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 185,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.getPrimitiveTypeMirror()",
+          "name": "getPrimitiveTypeMirror",
+          "path": "src/test/java/com/squareup/javapoet/AbstractTypesTest.java",
+          "start_line": 169,
+          "end_line": 186
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.getVoidTypeMirror()",
+          "name": "getVoidTypeMirror",
+          "path": "src/test/java/com/squareup/javapoet/AbstractTypesTest.java",
+          "start_line": 193,
+          "end_line": 196
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.getPrimitiveTypeMirror()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.AbstractTypesTest.AbstractTypesTest.getVoidTypeMirror()",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.8,
+      "max_similarity": 0.8,
+      "node_count": 167,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.FileWritingTest.FileWritingTest.fileDefaultPackage()",
+          "name": "fileDefaultPackage",
+          "path": "src/test/java/com/squareup/javapoet/FileWritingTest.java",
+          "start_line": 87,
+          "end_line": 93
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.FileWritingTest.FileWritingTest.fileNestedClasses()",
+          "name": "fileNestedClasses",
+          "path": "src/test/java/com/squareup/javapoet/FileWritingTest.java",
+          "start_line": 117,
+          "end_line": 132
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.FileWritingTest.FileWritingTest.fileDefaultPackage()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.FileWritingTest.FileWritingTest.fileNestedClasses()",
+          "similarity": 0.8
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 136,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.MethodSpecTest.MethodSpecTest.overrideFinalClassMethod()",
+          "name": "overrideFinalClassMethod",
+          "path": "src/test/java/com/squareup/javapoet/MethodSpecTest.java",
+          "start_line": 220,
+          "end_line": 230
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.test.java.com.squareup.javapoet.MethodSpecTest.MethodSpecTest.overrideInvalidModifiers()",
+          "name": "overrideInvalidModifiers",
+          "path": "src/test/java/com/squareup/javapoet/MethodSpecTest.java",
+          "start_line": 232,
+          "end_line": 253
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "javapoet.src.test.java.com.squareup.javapoet.MethodSpecTest.MethodSpecTest.overrideFinalClassMethod()",
+          "second": "javapoet.src.test.java.com.squareup.javapoet.MethodSpecTest.MethodSpecTest.overrideInvalidModifiers()",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.8,
+      "max_similarity": 0.8,
+      "node_count": 51,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.LineWrapper.LineWrapper.wrappingSpace(int)",
+          "name": "wrappingSpace",
+          "path": "src/main/java/com/squareup/javapoet/LineWrapper.java",
+          "start_line": 88,
+          "end_line": 95
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.LineWrapper.LineWrapper.zeroWidthSpace(int)",
+          "name": "zeroWidthSpace",
+          "path": "src/main/java/com/squareup/javapoet/LineWrapper.java",
+          "start_line": 98,
+          "end_line": 105
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "javapoet.src.main.java.com.squareup.javapoet.LineWrapper.LineWrapper.wrappingSpace(int)",
+          "second": "javapoet.src.main.java.com.squareup.javapoet.LineWrapper.LineWrapper.zeroWidthSpace(int)",
+          "similarity": 0.8
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 24,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.nextControlFlow(String,Object...)",
+          "name": "nextControlFlow",
+          "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+          "start_line": 377,
+          "end_line": 382
+        },
+        {
+          "label": "Method",
+          "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.endControlFlow(String,Object...)",
+          "name": "endControlFlow",
+          "path": "src/main/java/com/squareup/javapoet/CodeBlock.java",
+          "start_line": 394,
+          "end_line": 398
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.nextControlFlow(String,Object...)",
+          "second": "javapoet.src.main.java.com.squareup.javapoet.CodeBlock.CodeBlock.Builder.endControlFlow(String,Object...)",
+          "similarity": 1.0
+        }
+      ]
+    }
+  ],
+  "skipped_symbols": 6,
+  "truncated": false
+}
+--- stderr

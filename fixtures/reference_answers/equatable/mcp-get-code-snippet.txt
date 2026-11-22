@@ -1,0 +1,13 @@
+> tools/call get_code_snippet {"qualified_name": "equatable.lib.src.equatable.Equatable.toString"}
+isError: false
+--- text
+{
+  "qualified_name": "equatable.lib.src.equatable.Equatable.toString",
+  "source_code": "  String toString() {\n    if (stringify ?? EquatableConfig.stringify) {\n      return mapPropsToString(runtimeType, props);\n    }\n    return '$runtimeType';\n  }\n",
+  "file_path": "lib/src/equatable.dart",
+  "line_start": 56,
+  "line_end": 61,
+  "docstring": null,
+  "found": true,
+  "error_message": null
+}

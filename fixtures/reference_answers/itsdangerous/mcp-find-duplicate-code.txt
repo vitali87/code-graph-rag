@@ -1,0 +1,7 @@
+> tools/call find_duplicate_code {}
+isError: false
+--- text
+Found 1 duplicate group(s) in project 'itsdangerous' (largest first; each function is in one group; 'exact' groups are certain copies, 'similar' groups link near-copies and carry a score range):
+1. exact (100% similar):
+   - itsdangerous.tests.test_itsdangerous.test_timed.TestTimestampSigner.test_timestamp_missing  tests/test_itsdangerous/test_timed.py:49-57
+   - itsdangerous.tests.test_itsdangerous.test_timed.TestTimestampSigner.test_malformed_timestamp  tests/test_itsdangerous/test_timed.py:59-67

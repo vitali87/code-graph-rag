@@ -1,0 +1,81 @@
+$ cgr -q graph callers createInstance --project ky
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 0,
+    "callee_path": "source/index.ts",
+    "col": 11,
+    "depth": 1,
+    "end_col": 27,
+    "end_line": 33,
+    "kwarg_names": [],
+    "label": "Module",
+    "line": 33,
+    "path": "source/index.ts",
+    "qualified_name": "ky.source.index",
+    "resolution": "exact",
+    "through": "ky.source.index.createInstance"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "source/index.ts",
+    "col": 49,
+    "depth": 1,
+    "end_col": 94,
+    "end_line": 19,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 19,
+    "path": "source/index.ts",
+    "qualified_name": "ky.source.index.createInstance",
+    "resolution": "exact",
+    "through": "ky.source.index.createInstance"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "source/index.ts",
+    "col": 9,
+    "depth": 1,
+    "end_col": 64,
+    "end_line": 25,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 25,
+    "path": "source/index.ts",
+    "qualified_name": "ky.source.index.createInstance",
+    "resolution": "exact",
+    "through": "ky.source.index.createInstance"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "source/index.ts",
+    "col": 49,
+    "depth": 1,
+    "end_col": 94,
+    "end_line": 19,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 19,
+    "path": "source/index.ts",
+    "qualified_name": "ky.source.index.createInstance.create",
+    "resolution": "exact",
+    "through": "ky.source.index.createInstance"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "source/index.ts",
+    "col": 9,
+    "depth": 1,
+    "end_col": 64,
+    "end_line": 25,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 25,
+    "path": "source/index.ts",
+    "qualified_name": "ky.source.index.createInstance.extend",
+    "resolution": "exact",
+    "through": "ky.source.index.createInstance"
+  }
+]
+--- stderr

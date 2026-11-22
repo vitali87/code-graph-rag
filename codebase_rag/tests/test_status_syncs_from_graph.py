@@ -795,7 +795,10 @@ class TestWithoutTheGraph:
 
         endpoint = f"localhost:{THIS_GRAPH}"
         assert f"memgraph={endpoint} reachable=False" in output
-        assert cs.CLI_STATUS_SYNCS_NEED_GRAPH.format(endpoint=endpoint) in output
+        assert (
+            cs.CLI_STATUS_SYNCS_NEED_GRAPH.format(engine="Memgraph", endpoint=endpoint)
+            in output
+        )
         assert _listed(output) == {}
 
     def test_a_graph_that_refuses_the_connection_is_reported_the_same_way(
@@ -810,7 +813,10 @@ class TestWithoutTheGraph:
 
         endpoint = f"localhost:{THIS_GRAPH}"
         assert f"memgraph={endpoint} reachable=True" in output
-        assert cs.CLI_STATUS_SYNCS_NEED_GRAPH.format(endpoint=endpoint) in output
+        assert (
+            cs.CLI_STATUS_SYNCS_NEED_GRAPH.format(engine="Memgraph", endpoint=endpoint)
+            in output
+        )
 
 
 def _updater(

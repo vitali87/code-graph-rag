@@ -1,0 +1,54 @@
+$ cgr -q dead-code --project php-diff --no-public-roots --format json
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "name": "getIterator",
+    "qualified_name": "php-diff.src.Chunk.Chunk.getIterator",
+    "path": "src/Chunk.php",
+    "start_line": 85,
+    "end_line": 88
+  },
+  {
+    "label": "Method",
+    "name": "getIterator",
+    "qualified_name": "php-diff.src.Diff.Diff.getIterator",
+    "path": "src/Diff.php",
+    "start_line": 80,
+    "end_line": 83
+  },
+  {
+    "label": "Method",
+    "name": "getDiff",
+    "qualified_name": "php-diff.src.Output.DiffOutputBuilderInterface.DiffOutputBuilderInterface.getDiff",
+    "path": "src/Output/DiffOutputBuilderInterface.php",
+    "start_line": 18,
+    "end_line": 18
+  },
+  {
+    "label": "Method",
+    "name": "getDiff",
+    "qualified_name": "php-diff.src.Output.UnifiedDiffOutputBuilder.UnifiedDiffOutputBuilder.getDiff",
+    "path": "src/Output/UnifiedDiffOutputBuilder.php",
+    "start_line": 45,
+    "end_line": 72
+  },
+  {
+    "label": "Method",
+    "name": "writeDiffHunks",
+    "qualified_name": "php-diff.src.Output.UnifiedDiffOutputBuilder.UnifiedDiffOutputBuilder.writeDiffHunks",
+    "path": "src/Output/UnifiedDiffOutputBuilder.php",
+    "start_line": 74,
+    "end_line": 213
+  },
+  {
+    "label": "Method",
+    "name": "writeHunk",
+    "qualified_name": "php-diff.src.Output.UnifiedDiffOutputBuilder.UnifiedDiffOutputBuilder.writeHunk",
+    "path": "src/Output/UnifiedDiffOutputBuilder.php",
+    "start_line": 215,
+    "end_line": 256
+  }
+]
+--- stderr

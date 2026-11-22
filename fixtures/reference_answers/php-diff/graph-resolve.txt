@@ -1,0 +1,41 @@
+$ cgr -q graph resolve getDiff --project php-diff
+status: 0
+--- stdout
+[
+  {
+    "end_line": 69,
+    "label": "Method",
+    "path": "src/Output/DiffOnlyOutputBuilder.php",
+    "qualified_name": "php-diff.src.Output.DiffOnlyOutputBuilder.DiffOnlyOutputBuilder.getDiff",
+    "start_line": 33
+  },
+  {
+    "end_line": 18,
+    "label": "Method",
+    "path": "src/Output/DiffOutputBuilderInterface.php",
+    "qualified_name": "php-diff.src.Output.DiffOutputBuilderInterface.DiffOutputBuilderInterface.getDiff",
+    "start_line": 18
+  },
+  {
+    "end_line": 123,
+    "label": "Method",
+    "path": "src/Output/StrictUnifiedDiffOutputBuilder.php",
+    "qualified_name": "php-diff.src.Output.StrictUnifiedDiffOutputBuilder.StrictUnifiedDiffOutputBuilder.getDiff",
+    "start_line": 93
+  },
+  {
+    "end_line": 72,
+    "label": "Method",
+    "path": "src/Output/UnifiedDiffOutputBuilder.php",
+    "qualified_name": "php-diff.src.Output.UnifiedDiffOutputBuilder.UnifiedDiffOutputBuilder.getDiff",
+    "start_line": 45
+  },
+  {
+    "end_line": 133,
+    "label": "Method",
+    "path": "tests/Output/AbstractChunkOutputBuilderTest.php",
+    "qualified_name": "php-diff.tests.Output.AbstractChunkOutputBuilderTest.AbstractChunkOutputBuilderTest.testGetCommonChunks.anonymous_127_22.getDiff",
+    "start_line": 130
+  }
+]
+--- stderr

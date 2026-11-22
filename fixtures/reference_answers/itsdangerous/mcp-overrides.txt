@@ -1,0 +1,23 @@
+> tools/call overrides {"qualified_name": "itsdangerous.src.itsdangerous.signer.SigningAlgorithm.get_signature"}
+isError: false
+--- text
+[
+  {
+    "label": "Method",
+    "qualified_name": "itsdangerous.src.itsdangerous.signer.HMACAlgorithm.get_signature",
+    "path": "src/itsdangerous/signer.py",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "itsdangerous.src.itsdangerous.signer.NoneAlgorithm.get_signature",
+    "path": "src/itsdangerous/signer.py",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_signer._ReverseAlgorithm.get_signature",
+    "path": "tests/test_itsdangerous/test_signer.py",
+    "relationship": "OVERRIDES"
+  }
+]

@@ -1,0 +1,111 @@
+$ cgr -q graph callers ky.source.utils.merge.validateAndMerge --project ky
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 2,
+    "callee_path": "source/utils/merge.ts",
+    "col": 96,
+    "depth": 1,
+    "end_col": 131,
+    "end_line": 12,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 12,
+    "path": "source/index.ts",
+    "qualified_name": "ky.source.index.createInstance",
+    "resolution": "exact",
+    "through": "ky.source.utils.merge.validateAndMerge"
+  },
+  {
+    "arg_count": 3,
+    "callee_path": "source/utils/merge.ts",
+    "col": 69,
+    "depth": 1,
+    "end_col": 114,
+    "end_line": 16,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 16,
+    "path": "source/index.ts",
+    "qualified_name": "ky.source.index.createInstance",
+    "resolution": "exact",
+    "through": "ky.source.utils.merge.validateAndMerge"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "source/utils/merge.ts",
+    "col": 64,
+    "depth": 1,
+    "end_col": 93,
+    "end_line": 19,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 19,
+    "path": "source/index.ts",
+    "qualified_name": "ky.source.index.createInstance",
+    "resolution": "exact",
+    "through": "ky.source.utils.merge.validateAndMerge"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "source/utils/merge.ts",
+    "col": 24,
+    "depth": 1,
+    "end_col": 63,
+    "end_line": 25,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 25,
+    "path": "source/index.ts",
+    "qualified_name": "ky.source.index.createInstance",
+    "resolution": "exact",
+    "through": "ky.source.utils.merge.validateAndMerge"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "source/utils/merge.ts",
+    "col": 64,
+    "depth": 1,
+    "end_col": 93,
+    "end_line": 19,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 19,
+    "path": "source/index.ts",
+    "qualified_name": "ky.source.index.createInstance.create",
+    "resolution": "exact",
+    "through": "ky.source.utils.merge.validateAndMerge"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "source/utils/merge.ts",
+    "col": 24,
+    "depth": 1,
+    "end_col": 63,
+    "end_line": 25,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 25,
+    "path": "source/index.ts",
+    "qualified_name": "ky.source.index.createInstance.extend",
+    "resolution": "exact",
+    "through": "ky.source.utils.merge.validateAndMerge"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "source/utils/merge.ts",
+    "col": 96,
+    "depth": 1,
+    "end_col": 131,
+    "end_line": 12,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 12,
+    "path": "source/index.ts",
+    "qualified_name": "ky.source.index.createInstance.ky",
+    "resolution": "exact",
+    "through": "ky.source.utils.merge.validateAndMerge"
+  }
+]
+--- stderr

@@ -258,9 +258,15 @@ CLI_STATUS_SYNC_INCOMPLETE = (
 CLI_STATUS_SYNCS_HEADER = "syncs:"
 CLI_STATUS_SYNCS_NONE = "syncs:    (no projects in the graph at {endpoint})"
 CLI_STATUS_SYNCS_NEED_GRAPH = (
-    "syncs:    unknown -- sync times are kept in the graph, and Memgraph at "
+    "syncs:    unknown -- sync times are kept in the graph, and {engine} at "
     "{endpoint} could not be read"
 )
+# The graph the backend selects, as those lines name it (issue #3676).
+CLI_STATUS_GRAPH_ENGINES = {
+    "memgraph": "Memgraph",
+    "neo4j": "Neo4j",
+    "sqlite": "the embedded graph",
+}
 CLI_STATUS_SYNC_ROW = "  - {project}: {detail}"
 CLI_STATUS_SYNC_TIME = "last sync {time}"
 CLI_STATUS_SYNC_NOT_RECORDED = "last sync not recorded (the next sync records it)"

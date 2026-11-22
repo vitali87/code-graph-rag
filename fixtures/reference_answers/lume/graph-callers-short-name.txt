@@ -1,0 +1,111 @@
+$ cgr -q graph callers trim --project lume
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 1,
+    "callee_path": "lume.lua",
+    "col": 10,
+    "depth": 1,
+    "end_col": 22,
+    "end_line": 688,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 688,
+    "path": "lume.lua",
+    "qualified_name": "lume.lume.lume.hotswap",
+    "resolution": "exact",
+    "through": "lume.lume.lume.trim"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "lume.lua",
+    "col": 10,
+    "depth": 1,
+    "end_col": 22,
+    "end_line": 688,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 688,
+    "path": "lume.lua",
+    "qualified_name": "lume.lume.onerror",
+    "resolution": "exact",
+    "through": "lume.lume.lume.trim"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "lume.lua",
+    "col": 10,
+    "depth": 1,
+    "end_col": 40,
+    "end_line": 520,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 520,
+    "path": "test/test.lua",
+    "qualified_name": "lume.test.test.anonymous_518_21",
+    "resolution": "exact",
+    "through": "lume.lume.lume.trim"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "lume.lua",
+    "col": 10,
+    "depth": 1,
+    "end_col": 46,
+    "end_line": 521,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 521,
+    "path": "test/test.lua",
+    "qualified_name": "lume.test.test.anonymous_518_21",
+    "resolution": "exact",
+    "through": "lume.lume.lume.trim"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "lume.lua",
+    "col": 10,
+    "depth": 1,
+    "end_col": 45,
+    "end_line": 522,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 522,
+    "path": "test/test.lua",
+    "qualified_name": "lume.test.test.anonymous_518_21",
+    "resolution": "exact",
+    "through": "lume.lume.lume.trim"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "lume.lua",
+    "col": 10,
+    "depth": 1,
+    "end_col": 43,
+    "end_line": 523,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 523,
+    "path": "test/test.lua",
+    "qualified_name": "lume.test.test.anonymous_518_21",
+    "resolution": "exact",
+    "through": "lume.lume.lume.trim"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "lume.lua",
+    "col": 10,
+    "depth": 1,
+    "end_col": 45,
+    "end_line": 524,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 524,
+    "path": "test/test.lua",
+    "qualified_name": "lume.test.test.anonymous_518_21",
+    "resolution": "exact",
+    "through": "lume.lume.lume.trim"
+  }
+]
+--- stderr

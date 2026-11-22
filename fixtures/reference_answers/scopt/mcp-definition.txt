@@ -1,0 +1,17 @@
+> tools/call definition {"qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleArgument"}
+isError: false
+--- text
+{
+  "label": "Function",
+  "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleArgument",
+  "path": "shared/src/main/scala/scopt/ORunner.scala",
+  "start_line": 268,
+  "end_line": 283,
+  "start_col": 4,
+  "name_line": 268,
+  "decorators": [],
+  "name": "handleArgument",
+  "docstring": null,
+  "source": "def handleArgument(opt: OptionDef[_, C], arg: String): Unit = {\n      // version and help are dependent on runner results, so the actions are provided here\n      val runnerAction = opt.kind match {\n        case OptHelp    => Some(helpAction)\n        case OptVersion => Some(versionAction)\n        case _          => None\n      }\n      opt.applyArgument(arg, _config, runnerAction) match {\n        case Right(c) =>\n          _config = c\n          pushChildren(opt)\n        case Left(xs) =>\n          _error = true\n          xs foreach reportError\n      }\n    }",
+  "found": true
+}

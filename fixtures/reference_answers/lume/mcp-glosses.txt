@@ -1,0 +1,14 @@
+> tools/call glosses {"target": "lume.lume.lume.sort"}
+isError: false
+--- text
+{
+  "target": {
+    "label": "Function",
+    "qualified_name": "lume.lume.lume.sort",
+    "path": "lume.lua",
+    "start_line": 211,
+    "end_line": 223
+  },
+  "annotating": [],
+  "mentioning": []
+}

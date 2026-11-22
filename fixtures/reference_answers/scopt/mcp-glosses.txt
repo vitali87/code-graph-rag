@@ -1,0 +1,14 @@
+> tools/call glosses {"target": "scopt.shared.src.main.scala.scopt.OEffect.OEffect"}
+isError: false
+--- text
+{
+  "target": {
+    "label": "Class",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffect",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "start_line": 3,
+    "end_line": 3
+  },
+  "annotating": [],
+  "mentioning": []
+}

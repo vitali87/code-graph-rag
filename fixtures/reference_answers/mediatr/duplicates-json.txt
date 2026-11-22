@@ -1,0 +1,2105 @@
+$ cgr -q duplicates --project mediatr --format json
+status: 0
+--- stdout
+{
+  "groups": [
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 36,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipeLineMultiCallToConstructorTest.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineMultiCallToConstructorTests.ConstructorTestBehavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipeLineMultiCallToConstructorTest.cs",
+          "start_line": 20,
+          "end_line": 27
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.OuterBehavior.Handle(Ping, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 29,
+          "end_line": 36
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.InnerBehavior.Handle(Ping, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 48,
+          "end_line": 55
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.InnerBehavior`2.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 108,
+          "end_line": 115
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.OuterBehavior`2.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 128,
+          "end_line": 135
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.ConstrainedBehavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 149,
+          "end_line": 156
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.OuterBehavior.Handle(Ping, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 92,
+          "end_line": 99
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.OuterVoidBehavior.Handle(VoidPing, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 111,
+          "end_line": 118
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.InnerBehavior.Handle(Ping, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 130,
+          "end_line": 137
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.InnerVoidBehavior.Handle(VoidPing, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 149,
+          "end_line": 156
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.InnerBehavior`2.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 169,
+          "end_line": 176
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.OuterBehavior`2.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 188,
+          "end_line": 195
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.ConstrainedBehavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 209,
+          "end_line": 216
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.ConcreteBehavior.Handle(Ping, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 228,
+          "end_line": 235
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 20,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.FirstPreProcessor.Process(TRequest, CancellationToken)",
+          "name": "Process",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 167,
+          "end_line": 171
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.FirstConcretePreProcessor.Process(Ping, CancellationToken)",
+          "name": "Process",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 182,
+          "end_line": 186
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.NextPreProcessor.Process(TRequest, CancellationToken)",
+          "name": "Process",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 197,
+          "end_line": 201
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.NextConcretePreProcessor.Process(Ping, CancellationToken)",
+          "name": "Process",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 212,
+          "end_line": 216
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.FirstPostProcessor.Process(TRequest, TResponse, CancellationToken)",
+          "name": "Process",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 228,
+          "end_line": 232
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.FirstConcretePostProcessor.Process(Ping, Pong, CancellationToken)",
+          "name": "Process",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 243,
+          "end_line": 247
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.NextPostProcessor.Process(TRequest, TResponse, CancellationToken)",
+          "name": "Process",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 259,
+          "end_line": 263
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.NextConcretePostProcessor.Process(Ping, Pong, CancellationToken)",
+          "name": "Process",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 274,
+          "end_line": 278
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 36,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.OuterBehavior.Handle(Ping, StreamHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/StreamPipelineTests.cs",
+          "start_line": 75,
+          "end_line": 83
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.InnerBehavior.Handle(Ping, StreamHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/StreamPipelineTests.cs",
+          "start_line": 95,
+          "end_line": 103
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.InnerBehavior`2.Handle(TRequest, StreamHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/StreamPipelineTests.cs",
+          "start_line": 116,
+          "end_line": 124
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.OuterBehavior`2.Handle(TRequest, StreamHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/StreamPipelineTests.cs",
+          "start_line": 137,
+          "end_line": 145
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.ConstrainedBehavior.Handle(TRequest, StreamHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/StreamPipelineTests.cs",
+          "start_line": 158,
+          "end_line": 166
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.ConcreteBehavior.Handle(Ping, StreamHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/StreamPipelineTests.cs",
+          "start_line": 178,
+          "end_line": 186
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 28,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.CommonExceptionHandler.Handle(PingResource, Exception, RequestExceptionHandlerState, CancellationToken)",
+          "name": "Handle",
+          "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs",
+          "start_line": 15,
+          "end_line": 25
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.ConnectionExceptionHandler.Handle(PingResource, ConnectionException, RequestExceptionHandlerState, CancellationToken)",
+          "name": "Handle",
+          "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs",
+          "start_line": 34,
+          "end_line": 44
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.AccessDeniedExceptionHandler.Handle(PingResource, ForbiddenException, RequestExceptionHandlerState, CancellationToken)",
+          "name": "Handle",
+          "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs",
+          "start_line": 53,
+          "end_line": 63
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlers.ServerExceptionHandler.Handle(PingNewResource, ServerException, RequestExceptionHandlerState, CancellationToken)",
+          "name": "Handle",
+          "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlers.cs",
+          "start_line": 72,
+          "end_line": 82
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlersOverrides.MediatR.Examples.ExceptionHandler.Overrides.CommonExceptionHandler.Handle(PingResourceTimeout, Exception, RequestExceptionHandlerState, CancellationToken)",
+          "name": "Handle",
+          "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlersOverrides.cs",
+          "start_line": 15,
+          "end_line": 25
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.ExceptionHandler.ExceptionsHandlersOverrides.MediatR.Examples.ExceptionHandler.Overrides.ServerExceptionHandler.Handle(PingNewResource, ServerException, RequestExceptionHandlerState, CancellationToken)",
+          "name": "Handle",
+          "path": "samples/MediatR.Examples/ExceptionHandler/ExceptionsHandlersOverrides.cs",
+          "start_line": 34,
+          "end_line": 44
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.PingPongGenericExceptionAction.Execute(Ping, Exception, CancellationToken)",
+          "name": "Execute",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 287,
+          "end_line": 292
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.PingPongApplicationExceptionAction.Execute(Ping, ApplicationException, CancellationToken)",
+          "name": "Execute",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 301,
+          "end_line": 306
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.PingPongExceptionActionForType1.Execute(Ping, SystemException, CancellationToken)",
+          "name": "Execute",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 315,
+          "end_line": 320
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.PingPongExceptionActionForType2.Execute(Ping, SystemException, CancellationToken)",
+          "name": "Execute",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 329,
+          "end_line": 334
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.FooRequestHandler.Handle(FooRequest, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 906,
+          "end_line": 909
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.VoidPingHandler.Handle(VoidPing, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 61,
+          "end_line": 65
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.AssemblyResolutionTests.ShouldResolveMediator",
+          "name": "ShouldResolveMediator",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/AssemblyResolutionTests.cs",
+          "start_line": 26,
+          "end_line": 30
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeEvaluatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeEvaluatorTests.ShouldResolveMediator",
+          "name": "ShouldResolveMediator",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeEvaluatorTests.cs",
+          "start_line": 30,
+          "end_line": 34
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.ShouldResolveMediator",
+          "name": "ShouldResolveMediator",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs",
+          "start_line": 25,
+          "end_line": 29
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.ShouldResolveSender",
+          "name": "ShouldResolveSender",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs",
+          "start_line": 31,
+          "end_line": 35
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.ShouldResolvePublisher",
+          "name": "ShouldResolvePublisher",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs",
+          "start_line": 37,
+          "end_line": 41
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 131,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddOpenBehavior(Type, ServiceLifetime)",
+          "name": "AddOpenBehavior",
+          "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+          "start_line": 202,
+          "end_line": 223
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddOpenStreamBehavior(Type, ServiceLifetime)",
+          "name": "AddOpenStreamBehavior",
+          "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+          "start_line": 287,
+          "end_line": 308
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddOpenRequestPreProcessor(Type, ServiceLifetime)",
+          "name": "AddOpenRequestPreProcessor",
+          "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+          "start_line": 373,
+          "end_line": 394
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddOpenRequestPostProcessor(Type, ServiceLifetime)",
+          "name": "AddOpenRequestPostProcessor",
+          "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+          "start_line": 457,
+          "end_line": 478
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 70,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddBehavior(Type, ServiceLifetime)",
+          "name": "AddBehavior",
+          "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+          "start_line": 165,
+          "end_line": 180
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddStreamBehavior(Type, ServiceLifetime)",
+          "name": "AddStreamBehavior",
+          "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+          "start_line": 264,
+          "end_line": 279
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPreProcessor(Type, ServiceLifetime)",
+          "name": "AddRequestPreProcessor",
+          "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+          "start_line": 350,
+          "end_line": 365
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPostProcessor(Type, ServiceLifetime)",
+          "name": "AddRequestPostProcessor",
+          "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+          "start_line": 435,
+          "end_line": 449
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 42,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.OuterStreamBehavior.Handle(Ping, StreamHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 67,
+          "end_line": 75
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.InnerStreamBehavior.Handle(Ping, StreamHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 87,
+          "end_line": 95
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.StreamPipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.StreamPipelineTests.OuterBehavior.Handle(StreamPing, StreamHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/StreamPipelineTests.cs",
+          "start_line": 27,
+          "end_line": 35
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.StreamPipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.StreamPipelineTests.InnerBehavior.Handle(StreamPing, StreamHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/StreamPipelineTests.cs",
+          "start_line": 47,
+          "end_line": 55
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 32,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.Handlers.MediatR.Extensions.Microsoft.DependencyInjection.Tests.ZingHandler.Handle(Zing, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/Handlers.cs",
+          "start_line": 133,
+          "end_line": 137
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipeLineMultiCallToConstructorTest.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineMultiCallToConstructorTests.ConstructorTestHandler.Handle(ConstructorTestRequest, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipeLineMultiCallToConstructorTest.cs",
+          "start_line": 66,
+          "end_line": 70
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.PingHandler.Handle(Ping, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 46,
+          "end_line": 50
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.ZingHandler.Handle(Zing, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 76,
+          "end_line": 80
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 30,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_for_send",
+          "name": "Should_throw_for_send",
+          "path": "test/MediatR.Tests/ExceptionTests.cs",
+          "start_line": 81,
+          "end_line": 85
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_for_void_send",
+          "name": "Should_throw_for_void_send",
+          "path": "test/MediatR.Tests/ExceptionTests.cs",
+          "start_line": 87,
+          "end_line": 91
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_for_async_send",
+          "name": "Should_throw_for_async_send",
+          "path": "test/MediatR.Tests/ExceptionTests.cs",
+          "start_line": 108,
+          "end_line": 112
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_for_async_void_send",
+          "name": "Should_throw_for_async_void_send",
+          "path": "test/MediatR.Tests/ExceptionTests.cs",
+          "start_line": 114,
+          "end_line": 118
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 27,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.AssemblyResolutionTests.ShouldResolveNotificationHandlers",
+          "name": "ShouldResolveNotificationHandlers",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/AssemblyResolutionTests.cs",
+          "start_line": 44,
+          "end_line": 48
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.CustomMediatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.CustomMediatorTests.ShouldResolveNotificationHandlers",
+          "name": "ShouldResolveNotificationHandlers",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/CustomMediatorTests.cs",
+          "start_line": 39,
+          "end_line": 43
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.DuplicateAssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.DuplicateAssemblyResolutionTests.ShouldResolveNotificationHandlersOnlyOnce",
+          "name": "ShouldResolveNotificationHandlersOnlyOnce",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/DuplicateAssemblyResolutionTests.cs",
+          "start_line": 22,
+          "end_line": 26
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.ShouldResolveNotificationHandlers",
+          "name": "ShouldResolveNotificationHandlers",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs",
+          "start_line": 55,
+          "end_line": 59
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 22,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.GenericTypeConstraintsTests.GenericTypeConstraintsTests.PingHandler.Handle(Ping, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/GenericTypeConstraintsTests.cs",
+          "start_line": 82,
+          "end_line": 85
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.Pipeline.RequestPostProcessorTests.RequestPostProcessorTests.PingHandler.Handle(Ping, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/Pipeline/RequestPostProcessorTests.cs",
+          "start_line": 25,
+          "end_line": 28
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.Pipeline.RequestPreProcessorTests.RequestPreProcessorTests.PingHandler.Handle(Ping, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/Pipeline/RequestPreProcessorTests.cs",
+          "start_line": 25,
+          "end_line": 28
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.SendTests.SendTests.PingHandler.Handle(Ping, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/SendTests.cs",
+          "start_line": 47,
+          "end_line": 50
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 21,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddBehavior(Type, Type, ServiceLifetime)",
+          "name": "AddBehavior",
+          "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+          "start_line": 189,
+          "end_line": 194
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddStreamBehavior(Type, Type, ServiceLifetime)",
+          "name": "AddStreamBehavior",
+          "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+          "start_line": 242,
+          "end_line": 247
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPreProcessor(Type, Type, ServiceLifetime)",
+          "name": "AddRequestPreProcessor",
+          "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+          "start_line": 327,
+          "end_line": 332
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration.Microsoft.Extensions.DependencyInjection.MediatRServiceConfiguration.AddRequestPostProcessor(Type, Type, ServiceLifetime)",
+          "name": "AddRequestPostProcessor",
+          "path": "src/MediatR/MicrosoftExtensionsDI/MediatrServiceConfiguration.cs",
+          "start_line": 413,
+          "end_line": 418
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 83,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.Runner.Runner.IsHandlerForSameExceptionWorks(IMediator, WrappingWriter)",
+          "name": "IsHandlerForSameExceptionWorks",
+          "path": "samples/MediatR.Examples/Runner.cs",
+          "start_line": 182,
+          "end_line": 199
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.Runner.Runner.IsHandlerForBaseExceptionWorks(IMediator, WrappingWriter)",
+          "name": "IsHandlerForBaseExceptionWorks",
+          "path": "samples/MediatR.Examples/Runner.cs",
+          "start_line": 201,
+          "end_line": 218
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.Runner.Runner.IsHandlerForLessSpecificExceptionWorks(IMediator, WrappingWriter)",
+          "name": "IsHandlerForLessSpecificExceptionWorks",
+          "path": "samples/MediatR.Examples/Runner.cs",
+          "start_line": 220,
+          "end_line": 237
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 80,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.GenericRequestHandlerTests.GenericRequestHandlerTests.ShouldThrowExceptionWhenTypesClosingExceedsMaximum",
+          "name": "ShouldThrowExceptionWhenTypesClosingExceedsMaximum",
+          "path": "test/MediatR.Tests/GenericRequestHandlerTests.cs",
+          "start_line": 97,
+          "end_line": 114
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.GenericRequestHandlerTests.GenericRequestHandlerTests.ShouldThrowExceptionWhenGenericHandlerRegistrationsExceedsMaximum",
+          "name": "ShouldThrowExceptionWhenGenericHandlerRegistrationsExceedsMaximum",
+          "path": "test/MediatR.Tests/GenericRequestHandlerTests.cs",
+          "start_line": 116,
+          "end_line": 133
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.GenericRequestHandlerTests.GenericRequestHandlerTests.ShouldThrowExceptionWhenGenericTypeParametersExceedsMaximum",
+          "name": "ShouldThrowExceptionWhenGenericTypeParametersExceedsMaximum",
+          "path": "test/MediatR.Tests/GenericRequestHandlerTests.cs",
+          "start_line": 135,
+          "end_line": 152
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 44,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.AspNetCore.Program.Program.Main(string[])",
+          "name": "Main",
+          "path": "samples/MediatR.Examples.AspNetCore/Program.cs",
+          "start_line": 12,
+          "end_line": 17
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.Autofac.Program.Program.Main(string[])",
+          "name": "Main",
+          "path": "samples/MediatR.Examples.Autofac/Program.cs",
+          "start_line": 15,
+          "end_line": 21
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.Stashbox.Program.Program.Main",
+          "name": "Main",
+          "path": "samples/MediatR.Examples.Stashbox/Program.cs",
+          "start_line": 12,
+          "end_line": 17
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 41,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.DryIoc.Program.Program.Main",
+          "name": "Main",
+          "path": "samples/MediatR.Examples.DryIoc/Program.cs",
+          "start_line": 12,
+          "end_line": 18
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.Lamar.Program.Program.Main(string[])",
+          "name": "Main",
+          "path": "samples/MediatR.Examples.Lamar/Program.cs",
+          "start_line": 11,
+          "end_line": 17
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.LightInject.Program.Program.Main(string[])",
+          "name": "Main",
+          "path": "samples/MediatR.Examples.LightInject/Program.cs",
+          "start_line": 14,
+          "end_line": 20
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 27,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.SyncStopOnException(IEnumerable, INotification, CancellationToken)",
+          "name": "SyncStopOnException",
+          "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+          "start_line": 123,
+          "end_line": 129
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.NotificationPublishers.ForeachAwaitPublisher.ForeachAwaitPublisher.Publish(IEnumerable, INotification, CancellationToken)",
+          "name": "Publish",
+          "path": "src/MediatR/NotificationPublishers/ForeachAwaitPublisher.cs",
+          "start_line": 17,
+          "end_line": 23
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.SequentialMediator.PublishCore(IEnumerable, INotification, CancellationToken)",
+          "name": "PublishCore",
+          "path": "test/MediatR.Tests/PublishTests.cs",
+          "start_line": 115,
+          "end_line": 121
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 177,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.Pipeline.RequestPostProcessorTests.RequestPostProcessorTests.Should_run_postprocessors",
+          "name": "Should_run_postprocessors",
+          "path": "test/MediatR.Tests/Pipeline/RequestPostProcessorTests.cs",
+          "start_line": 41,
+          "end_line": 63
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.Pipeline.RequestPreProcessorTests.RequestPreProcessorTests.Should_run_preprocessors",
+          "name": "Should_run_preprocessors",
+          "path": "test/MediatR.Tests/Pipeline/RequestPreProcessorTests.cs",
+          "start_line": 41,
+          "end_line": 63
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 169,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.CreateStreamTests.CreateStreamTests.Should_resolve_main_handler",
+          "name": "Should_resolve_main_handler",
+          "path": "test/MediatR.Tests/CreateStreamTests.cs",
+          "start_line": 34,
+          "end_line": 64
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.CreateStreamTests.CreateStreamTests.Should_resolve_main_handler_by_specific_interface",
+          "name": "Should_resolve_main_handler_by_specific_interface",
+          "path": "test/MediatR.Tests/CreateStreamTests.cs",
+          "start_line": 99,
+          "end_line": 128
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 155,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.SendTests.SendTests.Should_resolve_closed_handler_if_defined",
+          "name": "Should_resolve_closed_handler_if_defined",
+          "path": "test/MediatR.Tests/SendTests.cs",
+          "start_line": 250,
+          "end_line": 271
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.SendTests.SendTests.Should_resolve_open_handler_if_not_defined",
+          "name": "Should_resolve_open_handler_if_not_defined",
+          "path": "test/MediatR.Tests/SendTests.cs",
+          "start_line": 273,
+          "end_line": 293
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 148,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_pick_up_base_exception_behaviors",
+          "name": "Should_pick_up_base_exception_behaviors",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 517,
+          "end_line": 532
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_pick_up_exception_actions",
+          "name": "Should_pick_up_exception_actions",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 555,
+          "end_line": 570
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 58,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.ParallelWhenAll(IEnumerable, INotification, CancellationToken)",
+          "name": "ParallelWhenAll",
+          "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+          "start_line": 53,
+          "end_line": 63
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.ParallelWhenAny(IEnumerable, INotification, CancellationToken)",
+          "name": "ParallelWhenAny",
+          "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+          "start_line": 65,
+          "end_line": 75
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 44,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.Handlers.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PingHandler.Handle(Ping, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/Handlers.cs",
+          "start_line": 100,
+          "end_line": 107
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.Handlers.MediatR.Extensions.Microsoft.DependencyInjection.Tests.Included.FooHandler.Handle(Foo, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/Handlers.cs",
+          "start_line": 284,
+          "end_line": 291
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 43,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.SimpleInjector.Program.Program.Main(string[])",
+          "name": "Main",
+          "path": "samples/MediatR.Examples.SimpleInjector/Program.cs",
+          "start_line": 16,
+          "end_line": 22
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.Windsor.Program.Program.Main(string[])",
+          "name": "Main",
+          "path": "samples/MediatR.Examples.Windsor/Program.cs",
+          "start_line": 18,
+          "end_line": 24
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 43,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_not_throw_for_publish",
+          "name": "Should_not_throw_for_publish",
+          "path": "test/MediatR.Tests/ExceptionTests.cs",
+          "start_line": 93,
+          "end_line": 106
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_not_throw_for_async_publish",
+          "name": "Should_not_throw_for_async_publish",
+          "path": "test/MediatR.Tests/ExceptionTests.cs",
+          "start_line": 120,
+          "end_line": 133
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 36,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.samples.MediatR.Examples.GenericPipelineBehavior.GenericPipelineBehavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "samples/MediatR.Examples/GenericPipelineBehavior.cs",
+          "start_line": 16,
+          "end_line": 22
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Benchmarks.GenericPipelineBehavior.GenericPipelineBehavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Benchmarks/GenericPipelineBehavior.cs",
+          "start_line": 17,
+          "end_line": 23
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 35,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.PingHandler.Handle(Ping, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/StreamPipelineTests.cs",
+          "start_line": 43,
+          "end_line": 47
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.ZingHandler.Handle(Zing, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/StreamPipelineTests.cs",
+          "start_line": 59,
+          "end_line": 63
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 34,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.DerivingRequestsTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.DerivingRequestsTests.ShouldReturnPingPong",
+          "name": "ShouldReturnPingPong",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/DerivingRequestsTests.cs",
+          "start_line": 23,
+          "end_line": 28
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.DerivingRequestsTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.DerivingRequestsTests.ShouldReturnDerivedPingPong",
+          "name": "ShouldReturnDerivedPingPong",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/DerivingRequestsTests.cs",
+          "start_line": 30,
+          "end_line": 35
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 34,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.SendTests.SendTests.Should_resolve_main_handler",
+          "name": "Should_resolve_main_handler",
+          "path": "test/MediatR.Tests/SendTests.cs",
+          "start_line": 162,
+          "end_line": 168
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.SendTests.SendTests.Should_resolve_main_handler_by_specific_interface",
+          "name": "Should_resolve_main_handler_by_specific_interface",
+          "path": "test/MediatR.Tests/SendTests.cs",
+          "start_line": 199,
+          "end_line": 205
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 27,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "mediatr.src.MediatR.Wrappers.RequestHandlerWrapper.RequestHandlerWrapperImpl`2.Handle.Handler",
+          "name": "Handler",
+          "path": "src/MediatR/Wrappers/RequestHandlerWrapper.cs",
+          "start_line": 37,
+          "end_line": 38
+        },
+        {
+          "label": "Function",
+          "qualified_name": "mediatr.src.MediatR.Wrappers.StreamRequestHandlerWrapper.StreamRequestHandlerWrapperImpl.Handle.Handler",
+          "name": "Handler",
+          "path": "src/MediatR/Wrappers/StreamRequestHandlerWrapper.cs",
+          "start_line": 41,
+          "end_line": 43
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 27,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.Pipeline.RequestExceptionActionProcessorBehavior.RequestExceptionActionProcessorBehavior.GetExceptionTypes(Type)",
+          "name": "GetExceptionTypes",
+          "path": "src/MediatR/Pipeline/RequestExceptionActionProcessorBehavior.cs",
+          "start_line": 61,
+          "end_line": 68
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.src.MediatR.Pipeline.RequestExceptionProcessorBehavior.RequestExceptionProcessorBehavior.GetExceptionTypes(Type)",
+          "name": "GetExceptionTypes",
+          "path": "src/MediatR/Pipeline/RequestExceptionProcessorBehavior.cs",
+          "start_line": 77,
+          "end_line": 84
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 27,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_throw_when_adding_non_open_behavior",
+          "name": "Should_throw_when_adding_non_open_behavior",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 640,
+          "end_line": 644
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_throw_when_adding_non_open_stream_behavior",
+          "name": "Should_throw_when_adding_non_open_stream_behavior",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 646,
+          "end_line": 650
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 27,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.Pipeline.RequestExceptionHandlerTests.RequestExceptionHandlerTests.PingPongExceptionHandlerForType.Handle(Ping, PingException, RequestExceptionHandlerState, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/Pipeline/RequestExceptionHandlerTests.cs",
+          "start_line": 51,
+          "end_line": 56
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.Pipeline.RequestExceptionHandlerTests.RequestExceptionHandlerTests.PingPongExceptionHandler.Handle(Ping, Exception, RequestExceptionHandlerState, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/Pipeline/RequestExceptionHandlerTests.cs",
+          "start_line": 61,
+          "end_line": 66
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 26,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.AssemblyResolutionTests.ShouldResolveGenericVoidRequestHandler",
+          "name": "ShouldResolveGenericVoidRequestHandler",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/AssemblyResolutionTests.cs",
+          "start_line": 66,
+          "end_line": 70
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.AssemblyResolutionTests.ShouldResolveVoidGenericPingRequestHandler",
+          "name": "ShouldResolveVoidGenericPingRequestHandler",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/AssemblyResolutionTests.cs",
+          "start_line": 84,
+          "end_line": 88
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 21,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.AssemblyResolutionTests.ShouldResolveInternalHandler",
+          "name": "ShouldResolveInternalHandler",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/AssemblyResolutionTests.cs",
+          "start_line": 38,
+          "end_line": 42
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.ShouldResolveVoidRequestHandler",
+          "name": "ShouldResolveVoidRequestHandler",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs",
+          "start_line": 49,
+          "end_line": 53
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.ClosedBehavior.Handle(FooRequest, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 920,
+          "end_line": 923
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Open2Behavior.Handle(TRequest, RequestHandlerDelegate, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 934,
+          "end_line": 937
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 15,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.PongHandler.Handle(Ping, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/PublishTests.cs",
+          "start_line": 30,
+          "end_line": 33
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.PungHandler.Handle(Ping, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/PublishTests.cs",
+          "start_line": 45,
+          "end_line": 48
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.812,
+      "max_similarity": 1.0,
+      "node_count": 243,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_main_handler",
+          "name": "Should_resolve_main_handler",
+          "path": "test/MediatR.Tests/PublishTests.cs",
+          "start_line": 51,
+          "end_line": 77
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_main_handler_when_object_is_passed",
+          "name": "Should_resolve_main_handler_when_object_is_passed",
+          "path": "test/MediatR.Tests/PublishTests.cs",
+          "start_line": 79,
+          "end_line": 106
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_override_with_sequential_firing",
+          "name": "Should_override_with_sequential_firing",
+          "path": "test/MediatR.Tests/PublishTests.cs",
+          "start_line": 138,
+          "end_line": 164
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_override_with_sequential_firing_through_injection",
+          "name": "Should_override_with_sequential_firing_through_injection",
+          "path": "test/MediatR.Tests/PublishTests.cs",
+          "start_line": 166,
+          "end_line": 195
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_handlers_given_interface",
+          "name": "Should_resolve_handlers_given_interface",
+          "path": "test/MediatR.Tests/PublishTests.cs",
+          "start_line": 197,
+          "end_line": 225
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_main_handler_by_specific_interface",
+          "name": "Should_resolve_main_handler_by_specific_interface",
+          "path": "test/MediatR.Tests/PublishTests.cs",
+          "start_line": 227,
+          "end_line": 253
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_main_handler",
+          "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_override_with_sequential_firing",
+          "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_main_handler_by_specific_interface"
+        ]
+      ],
+      "links": [
+        {
+          "first": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_main_handler",
+          "second": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_main_handler_when_object_is_passed",
+          "similarity": 0.812
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_main_handler",
+          "second": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_override_with_sequential_firing_through_injection",
+          "similarity": 0.812
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_main_handler",
+          "second": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_handlers_given_interface",
+          "similarity": 0.812
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_main_handler_when_object_is_passed",
+          "second": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_override_with_sequential_firing",
+          "similarity": 0.812
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_main_handler_when_object_is_passed",
+          "second": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_main_handler_by_specific_interface",
+          "similarity": 0.812
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_override_with_sequential_firing",
+          "second": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_override_with_sequential_firing_through_injection",
+          "similarity": 0.812
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_override_with_sequential_firing",
+          "second": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_handlers_given_interface",
+          "similarity": 0.812
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_override_with_sequential_firing_through_injection",
+          "second": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_main_handler_by_specific_interface",
+          "similarity": 0.812
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_handlers_given_interface",
+          "second": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.Should_resolve_main_handler_by_specific_interface",
+          "similarity": 0.812
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.818,
+      "max_similarity": 1.0,
+      "node_count": 139,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_send_when_request_is_null",
+          "name": "Should_throw_argument_exception_for_send_when_request_is_null",
+          "path": "test/MediatR.Tests/ExceptionTests.cs",
+          "start_line": 135,
+          "end_line": 154
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_publish_when_request_is_null_object",
+          "name": "Should_throw_argument_exception_for_publish_when_request_is_null_object",
+          "path": "test/MediatR.Tests/ExceptionTests.cs",
+          "start_line": 198,
+          "end_line": 217
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_void_send_when_request_is_null",
+          "name": "Should_throw_argument_exception_for_void_send_when_request_is_null",
+          "path": "test/MediatR.Tests/ExceptionTests.cs",
+          "start_line": 156,
+          "end_line": 175
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_publish_when_request_is_null",
+          "name": "Should_throw_argument_exception_for_publish_when_request_is_null",
+          "path": "test/MediatR.Tests/ExceptionTests.cs",
+          "start_line": 177,
+          "end_line": 196
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_publish_when_request_is_not_notification",
+          "name": "Should_throw_argument_exception_for_publish_when_request_is_not_notification",
+          "path": "test/MediatR.Tests/ExceptionTests.cs",
+          "start_line": 219,
+          "end_line": 238
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_send_when_request_is_null",
+          "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_void_send_when_request_is_null",
+          "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_publish_when_request_is_null"
+        ]
+      ],
+      "links": [
+        {
+          "first": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_send_when_request_is_null",
+          "second": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_publish_when_request_is_null_object",
+          "similarity": 0.818
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_send_when_request_is_null",
+          "second": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_publish_when_request_is_not_notification",
+          "similarity": 0.818
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_void_send_when_request_is_null",
+          "second": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_publish_when_request_is_null_object",
+          "similarity": 0.818
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_void_send_when_request_is_null",
+          "second": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_publish_when_request_is_not_notification",
+          "similarity": 0.818
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_publish_when_request_is_null",
+          "second": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_publish_when_request_is_null_object",
+          "similarity": 0.818
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_publish_when_request_is_null",
+          "second": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_publish_when_request_is_not_notification",
+          "similarity": 0.818
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_publish_when_request_is_null_object",
+          "second": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_argument_exception_for_publish_when_request_is_not_notification",
+          "similarity": 0.818
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 43,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.AssemblyResolutionTests.ShouldResolveRequestHandler",
+          "name": "ShouldResolveRequestHandler",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/AssemblyResolutionTests.cs",
+          "start_line": 32,
+          "end_line": 36
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeEvaluatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeEvaluatorTests.ShouldOnlyResolveIncludedRequestHandlers",
+          "name": "ShouldOnlyResolveIncludedRequestHandlers",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeEvaluatorTests.cs",
+          "start_line": 36,
+          "end_line": 41
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.AssemblyResolutionTests.ShouldResolveStreamHandlers",
+          "name": "ShouldResolveStreamHandlers",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/AssemblyResolutionTests.cs",
+          "start_line": 50,
+          "end_line": 54
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.CustomMediatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.CustomMediatorTests.ShouldResolveRequestHandler",
+          "name": "ShouldResolveRequestHandler",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/CustomMediatorTests.cs",
+          "start_line": 33,
+          "end_line": 37
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.ShouldResolveRequestHandler",
+          "name": "ShouldResolveRequestHandler",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs",
+          "start_line": 43,
+          "end_line": 47
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.AssemblyResolutionTests.ShouldResolveRequestHandler",
+          "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.AssemblyResolutionTests.ShouldResolveStreamHandlers",
+          "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.CustomMediatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.CustomMediatorTests.ShouldResolveRequestHandler",
+          "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.ShouldResolveRequestHandler"
+        ]
+      ],
+      "links": [
+        {
+          "first": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.AssemblyResolutionTests.ShouldResolveRequestHandler",
+          "second": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeEvaluatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeEvaluatorTests.ShouldOnlyResolveIncludedRequestHandlers",
+          "similarity": 1.0
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.AssemblyResolutionTests.ShouldResolveStreamHandlers",
+          "second": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeEvaluatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeEvaluatorTests.ShouldOnlyResolveIncludedRequestHandlers",
+          "similarity": 1.0
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.CustomMediatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.CustomMediatorTests.ShouldResolveRequestHandler",
+          "second": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeEvaluatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeEvaluatorTests.ShouldOnlyResolveIncludedRequestHandlers",
+          "similarity": 1.0
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeEvaluatorTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeEvaluatorTests.ShouldOnlyResolveIncludedRequestHandlers",
+          "second": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.ShouldResolveRequestHandler",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.833,
+      "max_similarity": 0.842,
+      "node_count": 337,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.Should_handle_constrained_generics",
+          "name": "Should_handle_constrained_generics",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 384,
+          "end_line": 439
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.Should_handle_concrete_and_open_generics",
+          "name": "Should_handle_concrete_and_open_generics",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 441,
+          "end_line": 496
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.Should_handle_constrained_generics",
+          "name": "Should_handle_constrained_generics",
+          "path": "test/MediatR.Tests/StreamPipelineTests.cs",
+          "start_line": 268,
+          "end_line": 323
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.Should_handle_concrete_and_open_generics",
+          "name": "Should_handle_concrete_and_open_generics",
+          "path": "test/MediatR.Tests/StreamPipelineTests.cs",
+          "start_line": 325,
+          "end_line": 380
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.Should_handle_constrained_generics",
+          "second": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.Should_handle_concrete_and_open_generics",
+          "similarity": 0.842
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.Should_handle_concrete_and_open_generics",
+          "second": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.Should_handle_concrete_and_open_generics",
+          "similarity": 0.842
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.Should_handle_constrained_generics",
+          "second": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.Should_handle_constrained_generics",
+          "similarity": 0.833
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.Should_handle_constrained_generics",
+          "second": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.Should_handle_concrete_and_open_generics",
+          "similarity": 0.833
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.833,
+      "max_similarity": 1.0,
+      "node_count": 267,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_behavior_registration",
+          "name": "Should_handle_inferred_behavior_registration",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 691,
+          "end_line": 720
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_pre_processor_registration",
+          "name": "Should_handle_inferred_pre_processor_registration",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 754,
+          "end_line": 783
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_stream_behavior_registration",
+          "name": "Should_handle_inferred_stream_behavior_registration",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 723,
+          "end_line": 752
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_post_processor_registration",
+          "name": "Should_handle_inferred_post_processor_registration",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 785,
+          "end_line": 814
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_behavior_registration",
+          "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_stream_behavior_registration",
+          "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_post_processor_registration"
+        ]
+      ],
+      "links": [
+        {
+          "first": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_behavior_registration",
+          "second": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_pre_processor_registration",
+          "similarity": 0.833
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_stream_behavior_registration",
+          "second": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_pre_processor_registration",
+          "similarity": 0.833
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_pre_processor_registration",
+          "second": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_inferred_post_processor_registration",
+          "similarity": 0.833
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.8,
+      "max_similarity": 0.867,
+      "node_count": 234,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.Should_wrap_with_behavior",
+          "name": "Should_wrap_with_behavior",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 243,
+          "end_line": 276
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.Should_wrap_with_behavior",
+          "name": "Should_wrap_with_behavior",
+          "path": "test/MediatR.Tests/StreamPipelineTests.cs",
+          "start_line": 194,
+          "end_line": 228
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.Should_wrap_void_with_behavior",
+          "name": "Should_wrap_void_with_behavior",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 278,
+          "end_line": 309
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.Should_wrap_with_behavior",
+          "second": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.Should_wrap_with_behavior",
+          "similarity": 0.867
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.Should_wrap_with_behavior",
+          "second": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.Should_wrap_void_with_behavior",
+          "similarity": 0.8
+        },
+        {
+          "first": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.Should_wrap_void_with_behavior",
+          "second": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.Should_wrap_with_behavior",
+          "similarity": 0.8
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.818,
+      "max_similarity": 0.818,
+      "node_count": 298,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_open_behavior_registration",
+          "name": "Should_handle_open_behavior_registration",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 658,
+          "end_line": 689
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_open_behaviors_registration_from_a_single_type",
+          "name": "Should_handle_open_behaviors_registration_from_a_single_type",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+          "start_line": 816,
+          "end_line": 847
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_open_behavior_registration",
+          "second": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.PipelineTests.Should_handle_open_behaviors_registration_from_a_single_type",
+          "similarity": 0.818
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.867,
+      "max_similarity": 0.867,
+      "node_count": 234,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.Should_wrap_generics_with_behavior",
+          "name": "Should_wrap_generics_with_behavior",
+          "path": "test/MediatR.Tests/PipelineTests.cs",
+          "start_line": 311,
+          "end_line": 346
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.Should_wrap_generics_with_behavior",
+          "name": "Should_wrap_generics_with_behavior",
+          "path": "test/MediatR.Tests/StreamPipelineTests.cs",
+          "start_line": 230,
+          "end_line": 266
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "mediatr.test.MediatR.Tests.PipelineTests.PipelineTests.Should_wrap_generics_with_behavior",
+          "second": "mediatr.test.MediatR.Tests.StreamPipelineTests.StreamPipelineTests.Should_wrap_generics_with_behavior",
+          "similarity": 0.867
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.9,
+      "max_similarity": 0.9,
+      "node_count": 185,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.Pipeline.RequestExceptionHandlerTests.RequestExceptionHandlerTests.Should_run_exception_handler_and_allow_for_exception_to_be_still_thrown",
+          "name": "Should_run_exception_handler_and_allow_for_exception_to_be_still_thrown",
+          "path": "test/MediatR.Tests/Pipeline/RequestExceptionHandlerTests.cs",
+          "start_line": 106,
+          "end_line": 126
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.Pipeline.RequestExceptionHandlerTests.RequestExceptionHandlerTests.Should_run_exception_handler_and_unwrap_expections_thrown_in_the_handler",
+          "name": "Should_run_exception_handler_and_unwrap_expections_thrown_in_the_handler",
+          "path": "test/MediatR.Tests/Pipeline/RequestExceptionHandlerTests.cs",
+          "start_line": 128,
+          "end_line": 146
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "mediatr.test.MediatR.Tests.Pipeline.RequestExceptionHandlerTests.RequestExceptionHandlerTests.Should_run_exception_handler_and_allow_for_exception_to_be_still_thrown",
+          "second": "mediatr.test.MediatR.Tests.Pipeline.RequestExceptionHandlerTests.RequestExceptionHandlerTests.Should_run_exception_handler_and_unwrap_expections_thrown_in_the_handler",
+          "similarity": 0.9
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.818,
+      "max_similarity": 0.818,
+      "node_count": 154,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_exception_for_non_generic_send_when_exception_occurs",
+          "name": "Should_throw_exception_for_non_generic_send_when_exception_occurs",
+          "path": "test/MediatR.Tests/ExceptionTests.cs",
+          "start_line": 253,
+          "end_line": 273
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_exception_for_generic_send_when_exception_occurs",
+          "name": "Should_throw_exception_for_generic_send_when_exception_occurs",
+          "path": "test/MediatR.Tests/ExceptionTests.cs",
+          "start_line": 302,
+          "end_line": 322
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_exception_for_non_generic_send_when_exception_occurs",
+          "second": "mediatr.test.MediatR.Tests.ExceptionTests.ExceptionTests.Should_throw_exception_for_generic_send_when_exception_occurs",
+          "similarity": 0.818
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 79,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.CreateStreamTests.CreateStreamTests.PingStreamHandler.Handle(Ping, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/CreateStreamTests.cs",
+          "start_line": 28,
+          "end_line": 31
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.Pipeline.Streams.StreamPipelineBehaviorTests.StreamPipelineBehaviorTests.SingHandler.Handle(Sing, CancellationToken)",
+          "name": "Handle",
+          "path": "test/MediatR.Tests/Pipeline/Streams/StreamPipelineBehaviorTests.cs",
+          "start_line": 26,
+          "end_line": 31
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "mediatr.test.MediatR.Tests.CreateStreamTests.CreateStreamTests.PingStreamHandler.Handle(Ping, CancellationToken)",
+          "second": "mediatr.test.MediatR.Tests.Pipeline.Streams.StreamPipelineBehaviorTests.StreamPipelineBehaviorTests.SingHandler.Handle(Sing, CancellationToken)",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.8,
+      "max_similarity": 0.8,
+      "node_count": 63,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.DerivingRequestsTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.DerivingRequestsTests.DerivingRequestsTests",
+          "name": "DerivingRequestsTests",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/DerivingRequestsTests.cs",
+          "start_line": 14,
+          "end_line": 21
+        },
+        {
+          "label": "Method",
+          "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.TypeResolutionTests",
+          "name": "TypeResolutionTests",
+          "path": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs",
+          "start_line": 17,
+          "end_line": 23
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.DerivingRequestsTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.DerivingRequestsTests.DerivingRequestsTests",
+          "second": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.TypeResolutionTests.TypeResolutionTests",
+          "similarity": 0.8
+        }
+      ]
+    }
+  ],
+  "skipped_symbols": 143,
+  "truncated": false
+}
+--- stderr

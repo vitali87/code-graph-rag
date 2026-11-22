@@ -1,0 +1,14 @@
+> tools/call glosses {"target": "cjson.cJSON.cJSON_Parse"}
+isError: false
+--- text
+{
+  "target": {
+    "label": "Function",
+    "qualified_name": "cjson.cJSON.cJSON_Parse",
+    "path": "cJSON.c",
+    "start_line": 1184,
+    "end_line": 1187
+  },
+  "annotating": [],
+  "mentioning": []
+}

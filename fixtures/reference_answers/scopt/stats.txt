@@ -1,0 +1,41 @@
+$ cgr -q stats --project scopt
+status: 0
+--- stdout
+Scoped to: scopt
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ Method      │   312 │
+│ Class       │    86 │
+│ File        │    57 │
+│ Function    │    56 │
+│ Section     │    49 │
+│ Module      │    48 │
+│ Folder      │    35 │
+│ Project     │     1 │
+├─────────────┼───────┤
+│ Total Nodes │   644 │
+└─────────────┴───────┘
+
+    Relationship Statistics    
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Relationship Type   ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ CALLS               │ 2,323 │
+│ INSTANTIATES        │   389 │
+│ DEFINES_METHOD      │   312 │
+│ DEFINES             │   142 │
+│ IMPORTS             │   105 │
+│ CONTAINS_FILE       │    57 │
+│ CONTAINS_SECTION    │    49 │
+│ CONTAINS_MODULE     │    48 │
+│ INHERITS            │    37 │
+│ CONTAINS_FOLDER     │    35 │
+│ OVERRIDES           │    10 │
+│ LINKS_TO            │     1 │
+├─────────────────────┼───────┤
+│ Total Relationships │ 3,508 │
+└─────────────────────┴───────┘
+--- stderr
+Fetching graph statistics...

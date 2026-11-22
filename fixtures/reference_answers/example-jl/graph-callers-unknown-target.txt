@@ -1,0 +1,5 @@
+$ cgr -q graph callers example-jl.src.Example.no_such_function --project example-jl
+status: 4
+--- stdout
+--- stderr
+'example-jl.src.Example.no_such_function' is not in the graph. 'cgr graph resolve NAME' lists the qualified names a name matches.

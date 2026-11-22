@@ -6795,7 +6795,7 @@
     },
     {
       "label": "Function",
-      "properties": "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, rust_visibility: string?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, first_return_type: string?, chain_return_type: string?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}"
+      "properties": "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, rust_visibility: string?, is_macro: boolean?, is_object_member: boolean?, object_binding: string?, is_body_scoped_name: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, first_return_type: string?, chain_return_type: string?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}"
     },
     {
       "label": "Method",
@@ -8540,6 +8540,12 @@
         {
           "name": "rust_visibility",
           "number": 15,
+          "type": "STRING",
+          "repeated": false
+        },
+        {
+          "name": "object_binding",
+          "number": 16,
           "type": "STRING",
           "repeated": false
         },

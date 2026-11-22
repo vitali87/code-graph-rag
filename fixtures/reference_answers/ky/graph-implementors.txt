@@ -1,0 +1,12 @@
+$ cgr -q graph implementors ky.source.types.options.KyOptions --project ky
+status: 0
+--- stdout
+[
+  {
+    "label": "Interface",
+    "path": "source/types/options.ts",
+    "qualified_name": "ky.source.types.options.Options",
+    "relationship": "INHERITS"
+  }
+]
+--- stderr

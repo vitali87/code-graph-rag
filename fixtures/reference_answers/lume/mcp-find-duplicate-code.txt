@@ -1,0 +1,23 @@
+> tools/call find_duplicate_code {}
+isError: false
+--- text
+Found 6 duplicate group(s) in project 'lume' (largest first; each function is in one group; 'exact' groups are certain copies, 'similar' groups link near-copies and carry a score range):
+1. exact (100% similar):
+   - lume.test.test.anonymous_364_22  test/test.lua:365-370
+   - lume.test.test.anonymous_372_21  test/test.lua:373-378
+2. exact (100% similar):
+   - lume.lume.lume.invert  lume.lua:421-425
+   - lume.lume.lume.clone  lume.lua:446-450
+3. exact (100% similar):
+   - lume.test.util.tester.dopass  test/util/tester.lua:69-72
+   - lume.test.util.tester.dofail  test/util/tester.lua:75-78
+4. exact (100% similar):
+   - lume.test.test.cmp  test/test.lua:85-85
+   - lume.test.util.tester.t.number  test/util/tester.lua:20-20
+5. similar (100% similar):
+   - lume.test.test.anonymous_39_21  test/test.lua:40-45
+   - lume.test.test.anonymous_47_23  test/test.lua:48-54
+6. similar (100% similar):
+   - lume.test.test.anonymous_415_19  test/test.lua:416-420
+   - lume.test.test.anonymous_422_21  test/test.lua:423-428
+3 symbol(s) had no structural fingerprint and were not analyzed.

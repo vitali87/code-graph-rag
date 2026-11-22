@@ -1,0 +1,16 @@
+$ cgr -q graph importers lume.lume --project lume
+status: 0
+--- stdout
+[
+  {
+    "alias": "lume",
+    "col": 13,
+    "end_col": 27,
+    "end_line": 5,
+    "imported_name": "lume",
+    "line": 5,
+    "module": "lume.test.test",
+    "path": "test/test.lua"
+  }
+]
+--- stderr

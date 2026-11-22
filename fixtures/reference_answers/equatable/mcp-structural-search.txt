@@ -1,0 +1,14 @@
+> tools/call structural_search {"language": "dart", "pattern": "bool $F($$$PARAMS)"}
+isError: false
+--- text
+lib/src/equatable_utils.dart:12:0  bool equals(List<Object?>? a, List<Object?>? b)
+lib/src/equatable_utils.dart:20:0  bool iterableEquals(Iterable<Object?> a, Iterable<Object?> b)
+lib/src/equatable_utils.dart:35:0  bool numEquals(num a, num b)
+lib/src/equatable_utils.dart:38:0  bool setEquals(Set<Object?> a, Set<Object?> b)
+lib/src/equatable_utils.dart:48:0  bool mapEquals(Map<Object?, Object?> a, Map<Object?, Object?> b)
+lib/src/equatable_utils.dart:59:0  bool objectsEquals(Object? a, Object? b)
+lib/src/equatable_utils.dart:80:0  bool _isEquatable(Object? object)
+test/custom_list.dart:29:2  bool any(bool Function(E element) test)
+test/custom_list.dart:38:2  bool contains(Object? element)
+test/custom_list.dart:44:2  bool every(bool Function(E element) test)
+test/custom_list.dart:220:2  bool remove(Object? value)

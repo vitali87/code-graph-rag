@@ -675,7 +675,11 @@ class JavaMethodResolverMixin:
 
     @abstractmethod
     def _lookup_java_field_type(
-        self, class_type: str, field_name: str, module_qn: str
+        self,
+        class_type: str,
+        field_name: str,
+        module_qn: str,
+        inherited_only: bool = False,
     ) -> str | None: ...
 
     @abstractmethod

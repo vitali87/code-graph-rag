@@ -1,0 +1,36 @@
+$ cgr -q graph overrides 'javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.emit(CodeWriter)' --project javapoet
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "path": "src/main/java/com/squareup/javapoet/ArrayTypeName.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ArrayTypeName.ArrayTypeName.emit(CodeWriter)",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.emit(CodeWriter)",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "src/main/java/com/squareup/javapoet/ParameterizedTypeName.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterizedTypeName.ParameterizedTypeName.emit(CodeWriter)",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName.TypeVariableName.emit(CodeWriter)",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "src/main/java/com/squareup/javapoet/WildcardTypeName.java",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.WildcardTypeName.WildcardTypeName.emit(CodeWriter)",
+    "relationship": "OVERRIDES"
+  }
+]
+--- stderr

@@ -1,0 +1,97 @@
+$ cgr -q graph resolve stringify --project equatable
+status: 0
+--- stdout
+[
+  {
+    "end_line": 15,
+    "label": "Method",
+    "path": "example/main.dart",
+    "qualified_name": "equatable.example.main.Credentials.stringify",
+    "start_line": 15
+  },
+  {
+    "end_line": 36,
+    "label": "Method",
+    "path": "example/main.dart",
+    "qualified_name": "equatable.example.main.EquatableDateTime.stringify",
+    "start_line": 36
+  },
+  {
+    "end_line": 42,
+    "label": "Method",
+    "path": "lib/src/equatable.dart",
+    "qualified_name": "equatable.lib.src.equatable.Equatable.stringify",
+    "start_line": 42
+  },
+  {
+    "end_line": 30,
+    "label": "Method",
+    "path": "lib/src/equatable_config.dart",
+    "qualified_name": "equatable.lib.src.equatable_config.EquatableConfig.stringify",
+    "start_line": 21
+  },
+  {
+    "end_line": 18,
+    "label": "Method",
+    "path": "lib/src/equatable_mixin.dart",
+    "qualified_name": "equatable.lib.src.equatable_mixin.EquatableMixin.stringify",
+    "start_line": 18
+  },
+  {
+    "end_line": 20,
+    "label": "Method",
+    "path": "test/equatable_config_test.dart",
+    "qualified_name": "equatable.test.equatable_config_test.Credentials.stringify",
+    "start_line": 20
+  },
+  {
+    "end_line": 40,
+    "label": "Method",
+    "path": "test/equatable_config_test.dart",
+    "qualified_name": "equatable.test.equatable_config_test.CredentialsMixin.stringify",
+    "start_line": 40
+  },
+  {
+    "end_line": 98,
+    "label": "Method",
+    "path": "test/equatable_mixin_test.dart",
+    "qualified_name": "equatable.test.equatable_mixin_test.ComplexStringify.stringify",
+    "start_line": 98
+  },
+  {
+    "end_line": 109,
+    "label": "Method",
+    "path": "test/equatable_mixin_test.dart",
+    "qualified_name": "equatable.test.equatable_mixin_test.ExplicitStringifyFalse.stringify",
+    "start_line": 109
+  },
+  {
+    "end_line": 108,
+    "label": "Method",
+    "path": "test/equatable_test.dart",
+    "qualified_name": "equatable.test.equatable_test.ComplexStringify.stringify",
+    "start_line": 108
+  },
+  {
+    "end_line": 139,
+    "label": "Method",
+    "path": "test/equatable_test.dart",
+    "qualified_name": "equatable.test.equatable_test.ExplicitStringifyFalse.stringify",
+    "start_line": 139
+  },
+  {
+    "end_line": 125,
+    "label": "Method",
+    "path": "test/equatable_test.dart",
+    "qualified_name": "equatable.test.equatable_test.SuperLongPropertiesStringify.stringify",
+    "start_line": 125
+  },
+  {
+    "end_line": 33,
+    "label": "Method",
+    "path": "lib/src/equatable_config.dart",
+    "qualified_name": "equatable.lib.src.equatable_config.EquatableConfig.stringify@33",
+    "start_line": 33
+  }
+]
+--- stderr

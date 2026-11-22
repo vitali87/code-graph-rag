@@ -1,0 +1,40 @@
+> tools/call resolve {"target": "context"}
+isError: false
+--- text
+[
+  {
+    "label": "Module",
+    "qualified_name": "anyhow.src.context",
+    "path": "src/context.rs",
+    "start_line": null,
+    "end_line": null
+  },
+  {
+    "label": "Method",
+    "qualified_name": "anyhow.src.context.Option.context",
+    "path": "src/context.rs",
+    "start_line": 91,
+    "end_line": 101
+  },
+  {
+    "label": "Method",
+    "qualified_name": "anyhow.src.context.Result.context",
+    "path": "src/context.rs",
+    "start_line": 46,
+    "end_line": 56
+  },
+  {
+    "label": "Method",
+    "qualified_name": "anyhow.src.error.Error.context",
+    "path": "src/error.rs",
+    "start_line": 383,
+    "end_line": 414
+  },
+  {
+    "label": "Method",
+    "qualified_name": "anyhow.src.lib.Context.context",
+    "path": "src/lib.rs",
+    "start_line": 618,
+    "end_line": 620
+  }
+]

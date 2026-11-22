@@ -1,0 +1,14 @@
+> tools/call glosses {"target": "example-jl.src.Example.Example.hello"}
+isError: false
+--- text
+{
+  "target": {
+    "label": "Function",
+    "qualified_name": "example-jl.src.Example.Example.hello",
+    "path": "src/Example.jl",
+    "start_line": 9,
+    "end_line": 9
+  },
+  "annotating": [],
+  "mentioning": []
+}

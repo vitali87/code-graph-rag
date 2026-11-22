@@ -1,0 +1,169 @@
+$ cgr -q context leveldb.db.db_impl.leveldb.SanitizeOptions --budget 1500 --project leveldb --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "target": "leveldb.db.db_impl.leveldb.SanitizeOptions",
+  "resolved": "leveldb.db.db_impl.leveldb.SanitizeOptions",
+  "budget_tokens": 1500,
+  "used_tokens": 1500,
+  "pieces": [
+    {
+      "qualified_name": "leveldb.db.db_impl.leveldb.SanitizeOptions",
+      "file": "db/db_impl.cc",
+      "span": [
+        94,
+        119
+      ],
+      "why_included": "target",
+      "source": "Options SanitizeOptions(const std::string& dbname,\n                        const InternalKeyComparator* icmp,\n                        const InternalFilterPolicy* ipolicy,\n                        const Options& src) {\n  Options result = src;\n  result.comparator = icmp;\n  result.filter_policy = (src.filter_policy != nullptr) ? ipolicy : nullptr;\n  ClipToRange(&result.max_open_files, 64 + kNumNonTableCacheFiles, 50000);\n  ClipToRange(&result.write_buffer_size, 64 << 10, 1 << 30);\n  ClipToRange(&result.max_file_size, 1 << 20, 1 << 30);\n  ClipToRange(&result.block_size, 1 << 10, 4 << 20);\n  if (result.info_log == nullptr) {\n    // Open a log file in the same directory as the db\n    src.env->CreateDir(dbname);  // In case it does not exist\n    src.env->RenameFile(InfoLogFileName(dbname), OldInfoLogFileName(dbname));\n    Status s = src.env->NewLogger(InfoLogFileName(dbname), &result.info_log);\n    if (!s.ok()) {\n      // No place suitable for logging\n      result.info_log = nullptr;\n    }\n  }\n  if (result.block_cache == nullptr) {\n    result.block_cache = NewLRUCache(8 << 20);\n  }\n  return result;\n}",
+      "tokens": 389
+    },
+    {
+      "qualified_name": "leveldb.db.db_impl",
+      "file": "db/db_impl.cc",
+      "span": [
+        130,
+        130
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "options_(SanitizeOptions(dbname, &internal_comparator_,",
+      "tokens": 82
+    },
+    {
+      "qualified_name": "leveldb.db.db_impl.h.leveldb.DBImpl.DBImpl",
+      "file": "db/db_impl.cc",
+      "span": [
+        130,
+        130
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "options_(SanitizeOptions(dbname, &internal_comparator_,",
+      "tokens": 91
+    },
+    {
+      "qualified_name": "leveldb.db.db_impl.leveldb.ClipToRange",
+      "file": "db/db_impl.cc",
+      "span": [
+        89,
+        89
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "template <class T, class V>\nstatic void ClipToRange(T* ptr, V minvalue, V maxvalue) {",
+      "tokens": 103
+    },
+    {
+      "qualified_name": "leveldb.db.fault_injection_test.leveldb.FaultInjectionTestEnv.RenameFile",
+      "file": "db/fault_injection_test.cc",
+      "span": [
+        310,
+        310
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "Status FaultInjectionTestEnv::RenameFile(const std::string& s,\n                                         const std::string& t) {",
+      "tokens": 111
+    },
+    {
+      "qualified_name": "leveldb.db.filename.leveldb.InfoLogFileName",
+      "file": "db/filename.cc",
+      "span": [
+        62,
+        62
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "std::string InfoLogFileName(const std::string& dbname) {",
+      "tokens": 88
+    },
+    {
+      "qualified_name": "leveldb.db.filename.leveldb.OldInfoLogFileName",
+      "file": "db/filename.cc",
+      "span": [
+        67,
+        67
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "std::string OldInfoLogFileName(const std::string& dbname) {",
+      "tokens": 91
+    },
+    {
+      "qualified_name": "leveldb.db.repair",
+      "file": "db/repair.cc",
+      "span": [
+        52,
+        52
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "options_(SanitizeOptions(dbname, &icmp_, &ipolicy_, options)),",
+      "tokens": 86
+    },
+    {
+      "qualified_name": "leveldb.db.repair.leveldb.Repairer.Repairer",
+      "file": "db/repair.cc",
+      "span": [
+        52,
+        52
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "options_(SanitizeOptions(dbname, &icmp_, &ipolicy_, options)),",
+      "tokens": 96
+    },
+    {
+      "qualified_name": "leveldb.include.leveldb.options.leveldb.Options",
+      "file": "include/leveldb/options.h",
+      "span": [
+        33,
+        33
+      ],
+      "why_included": "type it returns",
+      "source": "struct LEVELDB_EXPORT Options {",
+      "tokens": 83
+    },
+    {
+      "qualified_name": "leveldb.include.leveldb.status.leveldb.Status.ok",
+      "file": "include/leveldb/status.h",
+      "span": [
+        57,
+        57
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "bool ok() const { return (state_ == nullptr); }",
+      "tokens": 93
+    },
+    {
+      "qualified_name": "leveldb.util.cache.leveldb.NewLRUCache",
+      "file": "util/cache.cc",
+      "span": [
+        399,
+        399
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "Cache* NewLRUCache(size_t capacity) { return new ShardedLRUCache(capacity); }",
+      "tokens": 96
+    },
+    {
+      "qualified_name": "leveldb.util.env_posix.leveldb.PosixEnv.CreateDir",
+      "file": "util/env_posix.cc",
+      "span": [
+        597,
+        597
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "Status CreateDir(const std::string& dirname) override {",
+      "tokens": 91
+    }
+  ],
+  "omitted": [
+    "leveldb.util.env_posix.leveldb.PosixEnv.NewLogger (direct callee: its signature)",
+    "leveldb.db.autocompact_test.leveldb.AutoCompactTest.AutoCompactTest (test reaching it at depth 3 through leveldb.include.leveldb.db.leveldb.DB.Open)",
+    "leveldb.db.corruption_test.leveldb.CorruptionTest.TryReopen (test reaching it at depth 3 through leveldb.include.leveldb.db.leveldb.DB.Open)",
+    "leveldb.db.db_test.leveldb.BM_LogAndApply (test reaching it at depth 3 through leveldb.include.leveldb.db.leveldb.DB.Open)",
+    "leveldb.db.db_test.leveldb.DBTest.TryReopen (test reaching it at depth 3 through leveldb.include.leveldb.db.leveldb.DB.Open)",
+    "leveldb.db.fault_injection_test.leveldb.FaultInjectionTest.OpenDB (test reaching it at depth 3 through leveldb.include.leveldb.db.leveldb.DB.Open)",
+    "leveldb.db.recovery_test.leveldb.RecoveryTest.OpenWithStatus (test reaching it at depth 3 through leveldb.include.leveldb.db.leveldb.DB.Open)",
+    "leveldb.table.table_test.leveldb.DBConstructor.NewDB (test reaching it at depth 3 through leveldb.include.leveldb.db.leveldb.DB.Open)",
+    "leveldb.db.c_test.main (test reaching it at depth 4 through leveldb.db.c.leveldb_open)",
+    "leveldb.db.corruption_test.leveldb.CorruptionTest.Reopen (test reaching it at depth 4 through leveldb.db.corruption_test.leveldb.CorruptionTest.TryReopen)"
+  ],
+  "omitted_count": 24,
+  "truncated": false
+}
+--- stderr

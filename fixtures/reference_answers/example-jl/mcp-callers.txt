@@ -1,0 +1,22 @@
+> tools/call callers {"qualified_name": "example-jl.src.Example.Example.hello"}
+isError: false
+--- text
+[
+  {
+    "label": "Module",
+    "qualified_name": "example-jl.test.runtests",
+    "path": "test/runtests.jl",
+    "callee_path": "src/Example.jl",
+    "line": 3,
+    "col": 6,
+    "col_char": 6,
+    "end_line": 3,
+    "end_col": 20,
+    "end_col_char": 20,
+    "arg_count": 1,
+    "kwarg_names": [],
+    "resolution": "heuristic",
+    "depth": 1,
+    "through": "example-jl.src.Example.Example.hello"
+  }
+]

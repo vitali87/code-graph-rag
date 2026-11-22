@@ -14,10 +14,10 @@ REFERENCE_GRAPH_SUFFIX = ".graph"
 # extra, Ruby and shell files give no nodes. The CI job installs exactly
 # these (test_reference_graphs.py checks it).
 REFERENCE_EXTRAS = tuple(dict.fromkeys(TIER_EXTRAS[tier] for tier in LanguageTier))
-_REFERENCE_EXTRA_FLAGS = " ".join(f"--extra {extra}" for extra in REFERENCE_EXTRAS)
-REFERENCE_INSTALL = f"uv sync {_REFERENCE_EXTRA_FLAGS}"
+REFERENCE_EXTRA_FLAGS = " ".join(f"--extra {extra}" for extra in REFERENCE_EXTRAS)
+REFERENCE_INSTALL = f"uv sync {REFERENCE_EXTRA_FLAGS}"
 REFERENCE_REGENERATE = (
-    f"uv run {_REFERENCE_EXTRA_FLAGS} python scripts/reference_graphs.py record"
+    f"uv run {REFERENCE_EXTRA_FLAGS} python scripts/reference_graphs.py record"
 )
 REFERENCE_CACHE_DIRNAME = "cgr-reference-repos"
 REFERENCE_GIT_URL = "https://github.com/{repository}"
@@ -87,13 +87,15 @@ REFERENCE_ENVIRONMENT_DIFFERS = (
 REFERENCE_CGR_PROGRAM = "cgr"
 REFERENCE_OTHER_CGR_RECORD = (
     "`{cgr}` does not run under this Python ({python}): environment.txt, read "
-    "under this Python, would describe another install than the graphs. "
+    "under this Python, would describe another install than the {recorded}. "
     "Record with this Python's cgr: `{regenerate}`."
 )
 REFERENCE_OTHER_CGR_CHECK = (
     "`{cgr}` does not run under this Python, so what it parses is not "
-    "compared with {path}; only its graphs are."
+    "compared with {path}; only its {recorded} are."
 )
+# What a check compares, as the messages above name it.
+REFERENCE_GRAPHS_RECORDED = "graphs"
 REFERENCE_TIER_ENTRIES = "{names} ({tier})"
 REFERENCE_TIER_MISSING = "{names} ({tier} missing)"
 REFERENCE_LIST_SEPARATOR = ", "

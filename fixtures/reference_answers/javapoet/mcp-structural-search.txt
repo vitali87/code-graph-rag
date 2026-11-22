@@ -1,0 +1,13 @@
+> tools/call structural_search {"language": "java", "pattern": "$X.toBuilder()"}
+isError: false
+--- text
+src/main/java/com/squareup/javapoet/MethodSpec.java:144:32  javadoc.toBuilder()
+src/test/java/com/squareup/javapoet/AnnotationSpecTest.java:225:14  builder.build().toBuilder()
+src/test/java/com/squareup/javapoet/AnnotationSpecTest.java:248:37  AnnotationSpec.get(element.getAnnotationMirrors().get(0))
+        .toBuilder()
+src/test/java/com/squareup/javapoet/MethodSpecTest.java:355:15  methodSpec.toBuilder()
+src/test/java/com/squareup/javapoet/MethodSpecTest.java:379:28  MethodSpec.methodBuilder("initialMethod")
+        .build()
+        .toBuilder()
+src/test/java/com/squareup/javapoet/TypeSpecTest.java:2290:29  taco.toBuilder()
+src/test/java/com/squareup/javapoet/TypeSpecTest.java:2297:33  taco.toBuilder()

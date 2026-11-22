@@ -1,0 +1,15 @@
+> tools/call get_function_source {"node_id": "<node_id:lume.lume.getiter>"}
+isError: false
+--- text
+Source code for node ID <node_id>:
+
+```
+local getiter = function(x)
+  if lume.isarray(x) then
+    return ipairs
+  elseif type(x) == "table" then
+    return pairs
+  end
+  error("expected table", 3)
+end
+```

@@ -1,0 +1,30 @@
+$ cgr -q dead-code --project equatable --no-public-roots --format json
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "name": "Equatable",
+    "qualified_name": "equatable.lib.src.equatable.Equatable.Equatable",
+    "path": "lib/src/equatable.dart",
+    "start_line": 22,
+    "end_line": 22
+  },
+  {
+    "label": "Method",
+    "name": "stringify",
+    "qualified_name": "equatable.lib.src.equatable_config.EquatableConfig.stringify",
+    "path": "lib/src/equatable_config.dart",
+    "start_line": 21,
+    "end_line": 30
+  },
+  {
+    "label": "Method",
+    "name": "stringify",
+    "qualified_name": "equatable.lib.src.equatable_config.EquatableConfig.stringify@33",
+    "path": "lib/src/equatable_config.dart",
+    "start_line": 33,
+    "end_line": 33
+  }
+]
+--- stderr

@@ -1,0 +1,41 @@
+$ cgr -q graph tests-reaching itsdangerous.src.itsdangerous.encoding.base64_decode --project itsdangerous
+status: 0
+--- stdout
+[
+  {
+    "depth": 1,
+    "label": "Function",
+    "path": "tests/test_itsdangerous/test_encoding.py",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_encoding.test_base64",
+    "through": "itsdangerous.src.itsdangerous.encoding.base64_decode"
+  },
+  {
+    "depth": 1,
+    "label": "Function",
+    "path": "tests/test_itsdangerous/test_encoding.py",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_encoding.test_base64_bad",
+    "through": "itsdangerous.src.itsdangerous.encoding.base64_decode"
+  },
+  {
+    "depth": 3,
+    "label": "Method",
+    "path": "tests/test_itsdangerous/test_signer.py",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_signer.TestSigner.test_secret_keys",
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.validate"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "tests/test_itsdangerous/test_serializer.py",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_serializer.TestSerializer.test_file",
+    "through": "itsdangerous.src.itsdangerous.serializer.Serializer.load"
+  },
+  {
+    "depth": 4,
+    "label": "Method",
+    "path": "tests/test_itsdangerous/test_serializer.py",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_serializer.TestSerializer.test_loads_unsafe",
+    "through": "itsdangerous.src.itsdangerous.serializer.Serializer.loads_unsafe"
+  }
+]
+--- stderr
