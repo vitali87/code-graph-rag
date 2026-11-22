@@ -2553,7 +2553,11 @@ class CallResolver:
         return None
 
     def _php_member(
-        self, class_qn: str, name: str, seen: frozenset[str]
+        self,
+        class_qn: str,
+        name: str,
+        seen: frozenset[str],
+        used_trait: bool = False,
     ) -> tuple[str, str] | None:
         # PHP composes each class on its own: its methods, else those of the
         # traits it uses, less what its `insteadof` clauses exclude, else
@@ -2561,9 +2565,13 @@ class CallResolver:
         # parent's own `label` even when the parent uses T too, and a
         # parent's `insteadof` never reaches the child's `use` (CodeRabbit,
         # Greptile on PR #3240). Names are case-insensitive: a child's
-        # `LABEL()` overrides a base's `label()`.
+        # `LABEL()` overrides a base's `label()`. A used trait's abstract
+        # `label` implements nothing: the search goes on to another trait
+        # or the parent (Greptile on PR #3240).
         folded = _php_fold(name)
-        if own := self._php_declared_method(class_qn, name, folded):
+        if (own := self._php_declared_method(class_qn, name, folded)) and not (
+            used_trait and folded in self._php_composition(class_qn).abstract_methods
+        ):
             return cs.NodeLabel.METHOD.value, own
         composition = self._php_composition(class_qn)
         bases = [
@@ -2578,7 +2586,7 @@ class CallResolver:
         for base in [*traits, *(base for base in bases if base not in traits)]:
             if base in traits and (folded, _php_simple(base)) in composition.exclusions:
                 continue
-            if hit := self._php_member(base, name, seen | {base}):
+            if hit := self._php_member(base, name, seen | {base}, base in traits):
                 return hit
         return None
 
@@ -2600,7 +2608,9 @@ class CallResolver:
             for base in traits:
                 if alias.trait and _php_simple(base) != alias.trait:
                     continue
-                if hit := self._php_member(base, alias.method, seen | {base}):
+                if hit := self._php_member(
+                    base, alias.method, seen | {base}, used_trait=True
+                ):
                     return hit
             return _PHP_ALIAS_UNRESOLVED
         return None
@@ -2620,6 +2630,7 @@ class CallResolver:
         traits: set[str] = set()
         exclusions: set[tuple[str, str]] = set()
         aliases: list[PhpTraitAlias] = []
+        abstract_methods: set[str] = set()
         stack = [root] if root is not None else []
         while stack:
             node = stack.pop()
@@ -2638,9 +2649,13 @@ class CallResolver:
                 traits |= found.traits
                 exclusions |= found.exclusions
                 aliases.extend(found.aliases)
+                abstract_methods |= found.abstract_methods
             stack.extend(node.children)
         composition = PhpTraitComposition(
-            frozenset(traits), frozenset(exclusions), tuple(aliases)
+            frozenset(traits),
+            frozenset(exclusions),
+            tuple(aliases),
+            frozenset(abstract_methods),
         )
         self._php_composition_memo[class_qn] = composition
         return composition

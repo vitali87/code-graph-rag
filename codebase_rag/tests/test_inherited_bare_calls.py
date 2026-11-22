@@ -956,3 +956,37 @@ def test_cpp_bases_agreeing_on_one_method_stay_exact(
     two_bases: _Calls, caller: str
 ) -> None:
     assert _callees(two_bases, caller) == {"two.A.label": "exact"}, two_bases
+
+
+# Greptile on PR #3240: a trait's `abstract function label();` asks the class
+# for a `label`, which the parent may supply. It is no implementation, so the
+# parent's method runs.
+_PHP_ABSTRACT_TRAIT = {
+    "needs.php": """\
+<?php
+trait Needs { abstract public function label(): string; }
+trait Gives { public function label(): string { return "g"; } }
+class Other { public function label(): string { return "o"; } }
+class P { public function label(): string { return "p"; } }
+class C extends P {
+    use Needs;
+    public function call(): string { return $this->label(); }
+}
+class D extends P {
+    use Needs, Gives;
+    public function call(): string { return $this->label(); }
+}
+""",
+}
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [("needs.C.call", "needs.P.label"), ("needs.D.call", "needs.Gives.label")],
+    ids=["parent-implements", "other-trait-implements"],
+)
+def test_an_abstract_php_trait_method_leaves_the_implementation_to_find(
+    tmp_path: Path, caller: str, callee: str
+) -> None:
+    calls = _calls(tmp_path / "needs", _PHP_ABSTRACT_TRAIT, "php")
+    assert _callees(calls, caller) == {callee: "exact"}, calls

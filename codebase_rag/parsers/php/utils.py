@@ -35,11 +35,15 @@ class PhpTraitComposition(NamedTuple):
     clauses exclude (`use A, B { A::label insteadof B; }` excludes
     ("label", "b")), and the aliases its `as` clauses add, in source
     order. Each class composes its own traits; a parent's adaptations
-    never reach a child's `use` (CodeRabbit, PR #3240)."""
+    never reach a child's `use` (CodeRabbit, PR #3240). `abstract_methods`
+    are the methods the type declares without a body: a trait's
+    `abstract function label();` asks its class for a `label`, which the
+    class's parent may supply (Greptile, PR #3240)."""
 
     traits: frozenset[str]
     exclusions: frozenset[tuple[str, str]]
     aliases: tuple[PhpTraitAlias, ...]
+    abstract_methods: frozenset[str]
 
 
 def php_trait_composition(type_node: Node) -> PhpTraitComposition:
@@ -53,7 +57,29 @@ def php_trait_composition(type_node: Node) -> PhpTraitComposition:
                 aliases.extend(_as_aliases(listed))
             elif simple := _simple_name(listed):
                 traits.add(ascii_fold(simple))
-    return PhpTraitComposition(frozenset(traits), frozenset(exclusions), tuple(aliases))
+    return PhpTraitComposition(
+        frozenset(traits),
+        frozenset(exclusions),
+        tuple(aliases),
+        frozenset(_abstract_methods(type_node)),
+    )
+
+
+def _abstract_methods(type_node: Node) -> Iterator[str]:
+    # The folded names of the methods a type's own body declares with no
+    # body to run.
+    for body in type_node.children:
+        if body.type != cs.TS_PHP_DECLARATION_LIST:
+            continue
+        for method in body.children:
+            if (
+                method.type == cs.TS_PHP_METHOD_DECLARATION
+                and method.child_by_field_name(cs.FIELD_BODY) is None
+                and (
+                    name := safe_decode_text(method.child_by_field_name(cs.FIELD_NAME))
+                )
+            ):
+                yield ascii_fold(name)
 
 
 def _use_declarations(type_node: Node) -> Iterator[Node]:
