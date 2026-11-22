@@ -491,6 +491,19 @@ def _scope_of(node: Node) -> int | None:
     return current.id if current is not None else None
 
 
+def _names_bound_by_others(
+    scope: Node, literal_binders: set[int], literal_names: set[str]
+) -> set[str]:
+    """The names of `literal_names` that a binding in `scope` other than the
+    `literal_binders` binds too."""
+    found: set[str] = set()
+    for binder, identifier in _bindings_in(scope):
+        name = safe_decode_text(identifier)
+        if binder.id not in literal_binders and name in literal_names:
+            found.add(name)
+    return found
+
+
 def _bindings_in(scope: Node) -> Iterator[tuple[Node, Node]]:
     """(binding node, identifier bound) for every name the statements
     directly in `scope` bind, without entering a nested def, class or
@@ -1843,16 +1856,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         literal_binders: set[int] = set()
         literal_names: set[str] = set()
         for binder in binders:
-            if binder.type == cs.TS_PY_ASSIGNMENT:
-                left = binder.child_by_field_name(cs.TS_FIELD_LEFT)
-                value = binder.child_by_field_name(cs.TS_FIELD_RIGHT)
-                name = (
-                    self._extract_assignment_variable_name(left)
-                    if left is not None
-                    else None
-                )
-            else:
-                name, value = _walrus_parts(binder)
+            name, value = self._binder_name_and_value(binder)
             if not name or value is None:
                 continue
             if python_literal_type(value) is None:
@@ -1861,12 +1865,18 @@ class PythonAstAnalyzerMixin(_AstBase):
                 literal_binders.add(binder.id)
                 literal_names.add(name)
         if literal_names - names:
-            for binder, identifier in _bindings_in(scope):
-                if binder.id not in literal_binders and (
-                    (name := safe_decode_text(identifier)) in literal_names
-                ):
-                    names.add(name)
+            names |= _names_bound_by_others(scope, literal_binders, literal_names)
         return names
+
+    def _binder_name_and_value(self, binder: Node) -> tuple[str | None, Node | None]:
+        # (name, value) of a plain assignment or a walrus.
+        if binder.type != cs.TS_PY_ASSIGNMENT:
+            return _walrus_parts(binder)
+        left = binder.child_by_field_name(cs.TS_FIELD_LEFT)
+        name = (
+            self._extract_assignment_variable_name(left) if left is not None else None
+        )
+        return name, binder.child_by_field_name(cs.TS_FIELD_RIGHT)
 
     def _process_assignment_simple(
         self,

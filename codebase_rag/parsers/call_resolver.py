@@ -2109,13 +2109,7 @@ class CallResolver:
             return result
         # Ahead of the import probe: for a receiver it cannot place, that probe
         # binds `subprocess.run` to a same-module function named `run`.
-        if self._receiver_is_external_python_module(call):
-            self._remember_cacheable(cache_key, None)
-            return None
-        # `"-".join(...)`, `self.cache.get(k)` on `self.cache = {}`: the
-        # builtin's method. The probes below match the name alone, and bound
-        # it to any first-party method that shares it (issue #2859).
-        if self._receiver_is_python_builtin_value(call):
+        if self._python_receiver_is_not_first_party(call):
             self._remember_cacheable(cache_key, None)
             return None
         handled, result = self._resolve_imported_or_module_member(call, cache_key)
@@ -3640,6 +3634,15 @@ class CallResolver:
         # pre-pass cache the very guess the scan is meant to refuse.
         language = call.language or self._module_language(call.module_qn)
         return language == cs.SupportedLanguage.PYTHON
+
+    def _python_receiver_is_not_first_party(self, call: _CallSite) -> bool:
+        # An external module's (`subprocess.run`) or a builtin value's
+        # (`"-".join(...)`, `self.cache.get(k)` on `self.cache = {}`): the
+        # probes after it match the name alone, and bound it to any
+        # first-party definition that shares it (issue #2859).
+        if self._receiver_is_external_python_module(call):
+            return True
+        return self._receiver_is_python_builtin_value(call)
 
     def _receiver_is_python_builtin_value(self, call: _CallSite) -> bool:
         # A literal receiver (`"-"`, `{}`, `[x for x in y]`), or one whose
