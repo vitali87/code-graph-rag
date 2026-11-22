@@ -20,6 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag.cli import app
 from codebase_rag.cli_runtime import app_context
 from codebase_rag.config import settings
+from codebase_rag.embedded_graph.store import open_connection
 from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, DIALECT_SQLITE
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.stack.constants import StackState
@@ -165,3 +166,33 @@ def test_an_unreachable_stack_memgraph_is_not_opened(
         )
         in output
     ), output
+
+
+def test_status_creates_no_embedded_graph_on_a_fresh_install(embedded: None) -> None:
+    # Status only reads: the engine's usual open would create the file and
+    # write its schema (Codex on PR #3681). No file holds no project.
+    assert not settings.graph_db_file.exists()
+
+    output = _cgr("status")
+
+    assert not settings.graph_db_file.exists(), output
+    assert cs.CLI_STATUS_SYNCS_NONE.format(endpoint=settings.graph_db_file) in output
+
+
+def test_status_opens_an_existing_embedded_graph_read_only(
+    embedded: None, tmp_path: Path
+) -> None:
+    _sync(tmp_path, "billing")
+
+    with patch(
+        "codebase_rag.embedded_graph.connection.open_connection",
+        wraps=open_connection,
+    ) as opened:
+        output = _cgr("status")
+
+    assert list(_listed(output)) == ["billing"], output
+    assert opened.call_args_list, output
+    assert all(
+        call.args[1:2] == (True,) or call.kwargs.get("read_only") is True
+        for call in opened.call_args_list
+    ), opened.call_args_list

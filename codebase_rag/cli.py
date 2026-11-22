@@ -58,6 +58,8 @@ from .editor_links import (
     resolve_editor,
     url_template_problem,
 )
+from .embedded_graph.connection import EmbeddedConnection
+from .embedded_graph.executor import Result as EmbeddedResult
 from .graph_cli import cli as graph_cli
 from .graph_dialects import DIALECT_MEMGRAPH, DIALECT_NEO4J, DIALECT_SQLITE
 from .parser_loader import load_parsers
@@ -2753,9 +2755,7 @@ def _project_syncs() -> list[ProjectSync] | None:
     status must still print without it.
     """
     try:
-        with connect_memgraph(1) as ingestor:
-            projects = ingestor.fetch_all(cq.CYPHER_PROJECT_SYNC_TIMES)
-            markers = ingestor.fetch_all(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)
+        projects, markers = _sync_rows()
     except Exception as exc:
         logger.warning(ls.CLI_SYNC_STATE_UNREADABLE.format(error=exc))
         return None
@@ -2775,6 +2775,34 @@ def _project_syncs() -> list[ProjectSync] | None:
         )
         for name in sorted(synced_at.keys() | interrupted)
     ]
+
+
+def _sync_rows() -> tuple[list[ResultRow], list[ResultRow]]:
+    """The project rows and interrupted-run markers `cgr status` lists.
+
+    The embedded graph is opened read-only, as a reader should: the engine's
+    usual open creates the file and migrates its schema, which a status
+    check must not do. A file that does not exist yet holds no project
+    (Codex on PR #3681).
+    """
+    if settings.GRAPH_BACKEND != DIALECT_SQLITE:
+        with connect_memgraph(1) as ingestor:
+            return (
+                ingestor.fetch_all(cq.CYPHER_PROJECT_SYNC_TIMES),
+                ingestor.fetch_all(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS),
+            )
+    path = settings.graph_db_file
+    if not path.exists():
+        return [], []
+    with EmbeddedConnection(str(path), read_only=True) as graph:
+        return (
+            _result_rows(graph.run(cq.CYPHER_PROJECT_SYNC_TIMES)),
+            _result_rows(graph.run(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)),
+        )
+
+
+def _result_rows(result: EmbeddedResult) -> list[ResultRow]:
+    return [dict(zip(result.columns, row)) for row in result.rows]
 
 
 def _sync_row(sync: ProjectSync, root_missing: bool = False) -> str:
