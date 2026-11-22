@@ -474,14 +474,63 @@ class CppTypeInferenceEngine:
             if (
                 node.type == cs.TS_CPP_FOR_RANGE_LOOP
                 and (body := node.child_by_field_name(cs.FIELD_BODY)) is not None
-                and (
-                    name := self._declarator_name(
+            ):
+                found.extend(
+                    (body.start_byte, body.end_byte, name)
+                    for name in self._bound_names(
                         node.child_by_field_name(cs.FIELD_DECLARATOR)
                     )
                 )
-            ):
-                found.append((body.start_byte, body.end_byte, name))
         return found
+
+    def structured_bindings(self, caller_node: Node) -> list[tuple[int, int, str]]:
+        """Each name a structured binding in the caller's body declares, as
+        (start, end, name) of the window it is visible in: `auto [tag,
+        dispatch] = callbacks;` binds both names from the end of the
+        declaration to the end of its block, where `declaration_scopes`
+        holds only the first (Greptile, PR #2948)."""
+        found: list[tuple[int, int, str]] = []
+        for node, block_end in _scope_declarations(
+            caller_node.child_by_field_name(cs.FIELD_BODY)
+        ):
+            if node.type != cs.CppNodeType.DECLARATION:
+                continue
+            for declarator in node.children_by_field_name(cs.FIELD_DECLARATOR):
+                if self._structured_binding(declarator) is not None:
+                    found.extend(
+                        (node.end_byte, block_end, name)
+                        for name in self._bound_names(declarator)
+                    )
+        return found
+
+    def _bound_names(self, declarator: Node | None) -> list[str]:
+        # Every name a declarator binds: each one in a structured binding's
+        # brackets, else the one `_declarator_name` finds.
+        if (binding := self._structured_binding(declarator)) is not None:
+            return [
+                name
+                for child in binding.named_children
+                if child.type == cs.CppNodeType.IDENTIFIER
+                and (name := safe_decode_text(child))
+            ]
+        name = self._declarator_name(declarator)
+        return [name] if name else []
+
+    def _structured_binding(self, declarator: Node | None) -> Node | None:
+        # `[a, b]` under `= value` (init_declarator) and `&`/`&&`
+        # (reference_declarator), which hold it as their first named child.
+        current = declarator
+        while current is not None:
+            match current.type:
+                case cs.CppNodeType.STRUCTURED_BINDING_DECLARATOR:
+                    return current
+                case cs.CppNodeType.INIT_DECLARATOR:
+                    current = current.child_by_field_name(cs.FIELD_DECLARATOR)
+                case cs.CppNodeType.REFERENCE_DECLARATOR:
+                    current = next(iter(current.named_children), None)
+                case _:
+                    return None
+        return None
 
     def _declarator_name(self, declarator: Node | None) -> str | None:
         # Unwrap pointer/reference/init declarators down to the bound identifier.

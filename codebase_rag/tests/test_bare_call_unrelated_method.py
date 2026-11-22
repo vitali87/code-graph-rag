@@ -152,7 +152,15 @@ FILES = {
         "  struct Inner { void run() { ping(); } };\n"
         "  void ranged(void (**fs)()) {\n"
         "    for (auto dispatch : {fs[0]}) { dispatch(); }\n  }\n"
-        "  void ranged_source() { for (auto dispatch : dispatch()) {} }\n};\n"
+        "  void ranged_source() { for (auto dispatch : dispatch()) {} }\n"
+        "  void unpacked(Pair callbacks) {\n"
+        "    auto [tag, dispatch] = callbacks;\n    dispatch();\n  }\n"
+        "  void unpacked_ref(Pair& callbacks) {\n"
+        "    auto& [tag, dispatch] = callbacks;\n    dispatch();\n  }\n"
+        "  void ranged_pairs(Pair* pairs) {\n"
+        "    for (auto [tag, dispatch] : pairs) { dispatch(); }\n  }\n"
+        "  void unpacked_later() {\n    dispatch();\n"
+        "    auto [tag, dispatch] = Pair();\n  }\n};\n"
     ),
     # Lua: a colon method beside a bare call of its name (CodeRabbit, PR
     # #2948); `flush()` is a global, never `M:flush`.
@@ -244,6 +252,27 @@ def test_a_range_for_variable_hides_an_inherited_method(graph: RecordedGraph) ->
     assert _callees(graph, "c.scopes.SD.ranged").get("c.scopes.SB.dispatch") != (
         "exact"
     )
+
+
+@pytest.mark.parametrize("caller", ["unpacked", "unpacked_ref", "ranged_pairs"])
+def test_every_structured_binding_name_hides_an_inherited_method(
+    graph: RecordedGraph, caller: str
+) -> None:
+    # `auto [tag, dispatch] = callbacks; dispatch();` calls the bound
+    # callback: every name in the brackets is a local, not only the first
+    # (Greptile, PR #2948).
+    assert _callees(graph, f"c.scopes.SD.{caller}").get("c.scopes.SB.dispatch") != (
+        "exact"
+    )
+
+
+def test_a_structured_binding_hides_only_after_its_declaration(
+    graph: RecordedGraph,
+) -> None:
+    # Before the binding, `dispatch()` still finds the base's method.
+    assert _callees(graph, "c.scopes.SD.unpacked_later").get(
+        "c.scopes.SB.dispatch"
+    ) == ("exact")
 
 
 @pytest.mark.parametrize("caller", ["c.hide.h.HD.run", "c.hide.h.HD.local"])

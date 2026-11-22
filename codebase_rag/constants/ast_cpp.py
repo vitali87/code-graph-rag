@@ -55,6 +55,9 @@ class CppNodeType(StrEnum):
     VARIADIC_PARAMETER_DECLARATION = "variadic_parameter_declaration"
     VARIADIC_DECLARATOR = "variadic_declarator"
     INIT_DECLARATOR = "init_declarator"
+    # `auto [tag, dispatch] = callbacks;`: one declarator binding every name
+    # in the brackets (Greptile, PR #2948).
+    STRUCTURED_BINDING_DECLARATOR = "structured_binding_declarator"
     TEMPLATE_TYPE = "template_type"
     FIELD_EXPRESSION = "field_expression"
     COMPOUND_STATEMENT = "compound_statement"

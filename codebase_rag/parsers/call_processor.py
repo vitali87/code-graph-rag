@@ -6335,7 +6335,10 @@ class CallProcessor:
                 caller_node, fields=False
             ):
                 scopes.setdefault(name, []).append((start, end))
-            for start, end, name in engine.range_for_bindings(caller_node):
+            for start, end, name in (
+                *engine.range_for_bindings(caller_node),
+                *engine.structured_bindings(caller_node),
+            ):
                 scopes.setdefault(name, []).append((start, end))
         if scopes:
             self._resolver.cpp_local_scopes[caller_qn] = {
