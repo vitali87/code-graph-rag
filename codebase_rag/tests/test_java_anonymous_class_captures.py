@@ -314,6 +314,23 @@ public class Nearest {
     };
   }
 
+  java.util.List<Other> sources(Handler h) {
+    return java.util.List.of();
+  }
+
+  // Greptile, PR #2991: the loop variable is in scope in the body only, so
+  // a class created in the iterable reads the field.
+  void loopSource() {
+    for (Other codec : sources(new Handler() {
+      @Override
+      public String handle(String in) {
+        return codec.encode(in); // loop-iterable
+      }
+    })) {
+      codec.encode("x");
+    }
+  }
+
   // Greptile, PR #2991: a local in the lambda reads its parameter, and
   // `this` in a local class is that class's instance.
   Function<Other, Handler> lambdaAlias() {
@@ -517,6 +534,14 @@ def test_a_package_private_field_of_the_same_declared_package_hides_the_capture(
     assert line not in _callers_of_encode(
         graph, source="SplitTree", source_root=TEST_PREFIX
     )
+
+
+def test_a_loop_variable_is_not_captured_in_the_loops_iterable(
+    graph: RecordedGraph,
+) -> None:
+    line = _scoped_line("loop-iterable", NEAREST)
+    assert _callers_of_encode(graph, source="Nearest").get(line) == "exact"
+    assert line not in _callers_of_encode(graph, OTHER_ENCODE, "Nearest")
 
 
 def test_a_resource_is_not_captured_in_its_finally_block(

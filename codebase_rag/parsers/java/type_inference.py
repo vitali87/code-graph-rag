@@ -358,8 +358,11 @@ class JavaTypeInferenceEngine(
     ) -> None:
         # The names a statement or clause of `enclosing` around `site` binds,
         # each nearer than the fields and the method's own names.
+        # A for-each variable is in scope in the loop's body only, never in
+        # its iterable (Greptile on PR #2991).
         for loop in _nodes_of_type(enclosing, cs.TS_ENHANCED_FOR_STATEMENT):
-            if _encloses(loop, site):
+            body = loop.child_by_field_name(cs.FIELD_BODY)
+            if body is not None and _encloses(body, site):
                 self._process_enhanced_for_statement(loop, types, module_qn)
         # A catch parameter and a try-with-resources variable are in scope in
         # their clause and statement, nearer than the fields (bot review on
