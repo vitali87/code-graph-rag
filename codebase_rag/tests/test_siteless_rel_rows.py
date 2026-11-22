@@ -37,14 +37,21 @@ _HEURISTIC: PropertyDict = {
 }
 _EXACT: PropertyDict = {cs.KEY_RESOLUTION: cs.EdgeResolution.EXACT.value}
 
-# The issue's smallest case: `obj.inner()` binds to `make.inner` by name only,
-# and returning the closure writes a site-less `exact` row for the same pair.
-_RETURNED_CLOSURE = (
-    "def make(obj):\n"
+# `obj.inner()` binds to `make.inner` by name only, and calling the closure
+# `make()` returns writes a site-less `exact` row for the same pair. The
+# issue's fixture returned the closure instead, which writes no CALLS row
+# since #2966; an alias call still writes one.
+_FACTORY_ALIAS_CALL = (
+    "def make():\n"
     "    def inner():\n"
     "        return 1\n"
-    "    obj.inner()\n"
     "    return inner\n"
+    "\n"
+    "\n"
+    "def use(obj):\n"
+    "    f = make()\n"
+    "    f()\n"
+    "    obj.inner()\n"
 )
 
 type CallsEdge = tuple[str, str, PropertyValue, PropertyValue]
@@ -240,18 +247,18 @@ def _index_calls(root: Path, out: Path) -> set[CallsEdge]:
 def test_the_graph_and_the_index_keep_the_same_calls(tmp_path: Path) -> None:
     root = tmp_path / "tiny"
     root.mkdir()
-    (root / "app.py").write_text(_RETURNED_CLOSURE, encoding="utf-8")
+    (root / "app.py").write_text(_FACTORY_ALIAS_CALL, encoding="utf-8")
     out = tmp_path / "index"
     out.mkdir()
 
     graph = _graph_calls(root, tmp_path / "graph.sqlite")
     index = _index_calls(root, out)
 
-    pair = ("tiny.app.make", "tiny.app.make.inner")
+    pair = ("tiny.app.use", "tiny.app.make.inner")
     # The guessed `obj.inner()` keeps its own resolution in both sinks.
-    assert (*pair, 4, "heuristic") in graph
+    assert (*pair, 10, "heuristic") in graph
     assert {e for e in graph if e[:2] == pair} == {
-        (*pair, 4, "heuristic"),
+        (*pair, 10, "heuristic"),
         (*pair, None, "exact"),
     }
     assert graph == index
