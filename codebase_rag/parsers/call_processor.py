@@ -6338,6 +6338,7 @@ class CallProcessor:
             for start, end, name in (
                 *engine.range_for_bindings(caller_node),
                 *engine.structured_bindings(caller_node),
+                *engine.using_declarations(caller_node),
             ):
                 scopes.setdefault(name, []).append((start, end))
         if scopes:

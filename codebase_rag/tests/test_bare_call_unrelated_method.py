@@ -162,6 +162,20 @@ FILES = {
         "  void unpacked_later() {\n    dispatch();\n"
         "    auto [tag, dispatch] = Pair();\n  }\n};\n"
     ),
+    # Fourth review round (Greptile, PR #2948): a `catch` parameter ends with
+    # its handler, and a block's using-declaration hides a base's member.
+    "c/blocks.h": (
+        "namespace UN { void ping() {} }\n"
+        "class UB {\n public:\n  void dispatch() {}\n  void ping() {}\n};\n"
+        "class UD : public UB {\n public:\n"
+        "  void caught() {\n"
+        "    try {} catch (void (*dispatch)()) { dispatch(); }\n"
+        "    dispatch();\n  }\n"
+        "  void imported() { using UN::ping; ping(); }\n"
+        "  void imported_closed() { { using UN::ping; } ping(); }\n"
+        "  void directed() { using namespace UN; ping(); }\n"
+        "};\n"
+    ),
     # Lua: a colon method beside a bare call of its name (CodeRabbit, PR
     # #2948); `flush()` is a global, never `M:flush`.
     "lua_m.lua": "local M = {}\nfunction M:flush() return 1 end\nreturn M\n",
@@ -345,17 +359,31 @@ def test_a_function_local_class_keeps_its_members_bare_calls(
         ("c.scopes.SD.loop", "c.scopes.SB.dispatch"),
         ("c.scopes.SD.Inner.run", "c.scopes.SB.ping"),
         ("c.scopes.SD.ranged_source", "c.scopes.SB.dispatch"),
+        ("c.blocks.UD.caught", "c.blocks.UB.dispatch"),
+        ("c.blocks.UD.imported_closed", "c.blocks.UB.ping"),
+        ("c.blocks.UD.directed", "c.blocks.UB.ping"),
     ],
     ids=[
         "after-a-for-header-local",
         "through-the-enclosing-class",
         "in-a-range-for-expression",
+        "after-a-catch-handler",
+        "after-a-closed-using-declaration",
+        "beside-a-using-directive",
     ],
 )
 def test_a_cpp_inherited_member_found_past_a_closed_scope(
     graph: RecordedGraph, caller: str, method: str
 ) -> None:
     assert _callees(graph, caller).get(method) == "exact"
+
+
+def test_a_block_using_declaration_hides_an_inherited_method(
+    graph: RecordedGraph,
+) -> None:
+    # `using UN::ping; ping();` calls `UN::ping`: the using-declaration
+    # declares `ping` in the block, which lookup searches before the class.
+    assert _callees(graph, "c.blocks.UD.imported").get("c.blocks.UB.ping") != "exact"
 
 
 def test_a_cpp_member_initializer_keeps_its_call_of_a_member(

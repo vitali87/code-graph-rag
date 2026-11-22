@@ -398,9 +398,10 @@ TS_CPP_WHILE_STATEMENT = "while_statement"
 # Switch family: cases may fall through; a default arm is a
 # case_statement without a `value` field.
 TS_CPP_SWITCH_STATEMENT = "switch_statement"
+TS_CPP_CATCH_CLAUSE = "catch_clause"
 # Statements whose own header can declare a name (`for (auto x = ...;;)`,
-# `if (auto p = ...)`): it is in scope to the statement's end, not the end
-# of the block around it.
+# `if (auto p = ...)`, `catch (E e)`): it is in scope to the statement's end,
+# not the end of the block around it.
 CPP_HEADER_SCOPED_STATEMENTS = frozenset(
     {
         TS_CPP_FOR_STATEMENT,
@@ -408,6 +409,7 @@ CPP_HEADER_SCOPED_STATEMENTS = frozenset(
         TS_CPP_IF_STATEMENT,
         TS_CPP_WHILE_STATEMENT,
         TS_CPP_SWITCH_STATEMENT,
+        TS_CPP_CATCH_CLAUSE,
     }
 )
 TS_CPP_CASE_STATEMENT = "case_statement"

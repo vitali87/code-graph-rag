@@ -28,8 +28,8 @@ def _scope_declarations(scope: Node | None) -> list[tuple[Node, int]]:
     pending = [(scope, scope.end_byte)] if scope is not None else []
     while pending:
         node, block_end = pending.pop()
-        # A `for`/`if`/`while`/`switch` header's declaration ends with its
-        # statement (CodeRabbit, PR #2948).
+        # A `for`/`if`/`while`/`switch` header's declaration, and a `catch`
+        # parameter, end with their statement (CodeRabbit, Greptile, PR #2948).
         if (
             node.type == cs.CppNodeType.COMPOUND_STATEMENT
             or node.type in cs.CPP_HEADER_SCOPED_STATEMENTS
@@ -501,6 +501,28 @@ class CppTypeInferenceEngine:
                         (node.end_byte, block_end, name)
                         for name in self._bound_names(declarator)
                     )
+        return found
+
+    def using_declarations(self, caller_node: Node) -> list[tuple[int, int, str]]:
+        """Each name a using-declaration in the caller's body brings into its
+        block, as (start, end, name) of the window it is visible in: after
+        `using N::ping;`, `ping()` calls `N::ping`, found in the block before
+        the class and its bases are searched (Greptile, PR #2948). A
+        using-directive (`using namespace N;`) declares nothing in the
+        block, so a member still wins over the namespace's names."""
+        found: list[tuple[int, int, str]] = []
+        for node, block_end in _scope_declarations(
+            caller_node.child_by_field_name(cs.FIELD_BODY)
+        ):
+            if (
+                node.type == cs.TS_CPP_USING_DECLARATION
+                and node.named_child_count
+                and not any(
+                    child.type == cs.CPP_KEYWORD_NAMESPACE for child in node.children
+                )
+                and (name := self._rightmost_name(node.named_children[-1]))
+            ):
+                found.append((node.end_byte, block_end, name))
         return found
 
     def _bound_names(self, declarator: Node | None) -> list[str]:
