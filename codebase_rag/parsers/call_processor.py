@@ -7122,6 +7122,20 @@ class CallProcessor:
         if (cast := _ts_cast_target(member)) is None:
             return call_name
         target, method = cast
+        if (target := self._ts_peel_utility_types(ctx, target)) is None:
+            return call_name
+        type_name = _ts_named_type_text(target)
+        if type_name is None or _ts_names_scoped_type(
+            target, type_name.partition(cs.SEPARATOR_DOT)[0]
+        ):
+            return call_name
+        return f"{type_name}{cs.SEPARATOR_DOT}{method}"
+
+    def _ts_peel_utility_types(
+        self, ctx: _CallScanContext, target: Node
+    ) -> Node | None:
+        # The type a cast's member-preserving utilities wrap (`Service` in
+        # `Readonly<Partial<Service>>`), or None when one is given no type.
         while target.type == cs.TS_GENERIC_TYPE:
             name = _ts_named_type_text(target)
             if name is None or name not in cs.TS_MEMBER_PRESERVING_UTILITY_TYPES:
@@ -7140,14 +7154,9 @@ class CallProcessor:
                 break
             first = next(iter(arguments.named_children), None) if arguments else None
             if first is None:
-                return call_name
+                return None
             target = first
-        type_name = _ts_named_type_text(target)
-        if type_name is None or _ts_names_scoped_type(
-            target, type_name.partition(cs.SEPARATOR_DOT)[0]
-        ):
-            return call_name
-        return f"{type_name}{cs.SEPARATOR_DOT}{method}"
+        return target
 
     def _csharp_argument_target_name(
         self, ctx: _CallScanContext, creation_node: Node
