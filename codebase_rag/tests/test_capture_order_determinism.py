@@ -193,19 +193,28 @@ def test_the_js_return_reader_lists_returns_in_document_order() -> None:
     ]
 
 
-def test_no_analysis_reads_unsorted_captures() -> None:
-    # `sorted_captures` is the one reader of `QueryCursor.captures()`. The
-    # sources are UTF-8 whatever the platform's locale encoding (cp1252 on
-    # Windows), and the paths are compared with `/` separators.
+def _modules_calling(pattern: str) -> list[str]:
+    # The sources are UTF-8 whatever the platform's locale encoding (cp1252
+    # on Windows), and the paths are compared with `/` separators.
     package = Path(codebase_rag.__file__).parent
-    readers = [
+    return [
         path.relative_to(package).as_posix()
         for path in package.rglob("*.py")
         if "tests" not in path.parts
         for line in path.read_text(encoding="utf-8").splitlines()
-        if re.search(r"\.captures\(", line)
+        if re.search(pattern, line)
     ]
-    assert readers == ["parsers/utils.py"]
+
+
+def test_no_analysis_reads_unsorted_captures() -> None:
+    # `sorted_captures` is the one reader of `QueryCursor.captures()`. It reads
+    # them through `query_captures`, which only adds the predicate callback
+    # that keeps `#match?` off undecodable bytes, so that helper is the one
+    # raw call and `sorted_captures` its one caller.
+    assert _modules_calling(r"\.captures\(") == ["query_predicates.py"]
+    assert _modules_calling(r"(?<!def )(?<![\w.])query_captures\(") == [
+        "parsers/utils.py"
+    ]
 
 
 # Negative: what must not change.

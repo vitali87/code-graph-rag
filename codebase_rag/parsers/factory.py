@@ -166,6 +166,7 @@ class ProcessorFactory:
                 class_field_types=self.definition_processor.class_field_types,
                 class_field_guard_inner=self.definition_processor.class_field_guard_inner,
                 class_field_element_types=self.definition_processor.class_field_element_types,
+                rust_variant_payload_types=self.definition_processor.rust_variant_payload_types,
                 class_owner_module=self.definition_processor.class_owner_module,
                 rehydrated_definition_paths=(
                     self.definition_processor.rehydrated_definition_paths
