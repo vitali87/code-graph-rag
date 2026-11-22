@@ -140,11 +140,17 @@ def bound_receiver(caller: Node) -> str | None:
 
 
 def _methods(body: Node) -> Iterator[Node]:
-    for child in body.named_children:
+    # The defs of a class body, including those under an `if`/`try`/`with`
+    # block in it (Greptile, PR #2908); a nested class holds its own.
+    stack = list(body.named_children)
+    while stack:
+        child = stack.pop()
         if child.type == cs.TS_PY_DECORATED_DEFINITION:
             child = child.child_by_field_name(cs.FIELD_DEFINITION) or child
         if child.type == cs.TS_PY_FUNCTION_DEFINITION:
             yield child
+        elif child.type != cs.TS_PY_CLASS_DEFINITION:
+            stack.extend(child.named_children)
 
 
 def _is_method(function: Node) -> bool:

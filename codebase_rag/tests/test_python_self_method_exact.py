@@ -150,6 +150,14 @@ FILES = {
         "    def call_r2(self):\n        return self.r2()\n\n"
         "    def other(self, cls):\n        return cls.r3()\n"
     ),
+    # A method under a class-body `if` still writes the instance.
+    "conditional.py": (
+        "def cb():\n    return 0\n\n\n"
+        "class CHolder:\n    if True:\n\n"
+        "        def __init__(self, callback):\n            self.c5 = callback\n\n"
+        "    def c5(self):\n        return 1\n\n"
+        "    def run(self):\n        return self.c5()\n"
+    ),
     # A static method's `self` is whatever its caller passed.
     "static_untyped.py": (
         "class SHost:\n    def sm(self):\n        return 1\n\n"
@@ -323,6 +331,7 @@ def test_an_annotation_naming_the_class_still_dispatches_to_overrides(
         ("receivers.RHolder.call_r1", "receivers.RHolder.r1"),
         ("receivers.RHolder.call_r2", "receivers.RHolder.r2"),
         ("receivers.RHolder.other", "receivers.RHolder.r3"),
+        ("conditional.CHolder.run", "conditional.CHolder.c5"),
     ],
     ids=[
         "later-rebinding",
@@ -334,6 +343,7 @@ def test_an_annotation_naming_the_class_still_dispatches_to_overrides(
         "write-through-another-receiver-name",
         "for-target-attribute",
         "unbound-cls-parameter",
+        "conditional-method-write",
     ],
 )
 def test_a_self_call_the_class_may_not_answer_is_not_exact(
