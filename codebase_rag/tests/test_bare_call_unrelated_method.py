@@ -151,7 +151,8 @@ FILES = {
         "    dispatch();\n  }\n"
         "  struct Inner { void run() { ping(); } };\n"
         "  void ranged(void (**fs)()) {\n"
-        "    for (auto dispatch : {fs[0]}) { dispatch(); }\n  }\n};\n"
+        "    for (auto dispatch : {fs[0]}) { dispatch(); }\n  }\n"
+        "  void ranged_source() { for (auto dispatch : dispatch()) {} }\n};\n"
     ),
     # Lua: a colon method beside a bare call of its name (CodeRabbit, PR
     # #2948); `flush()` is a global, never `M:flush`.
@@ -314,8 +315,13 @@ def test_a_function_local_class_keeps_its_members_bare_calls(
     [
         ("c.scopes.SD.loop", "c.scopes.SB.dispatch"),
         ("c.scopes.SD.Inner.run", "c.scopes.SB.ping"),
+        ("c.scopes.SD.ranged_source", "c.scopes.SB.dispatch"),
     ],
-    ids=["after-a-for-header-local", "through-the-enclosing-class"],
+    ids=[
+        "after-a-for-header-local",
+        "through-the-enclosing-class",
+        "in-a-range-for-expression",
+    ],
 )
 def test_a_cpp_inherited_member_found_past_a_closed_scope(
     graph: RecordedGraph, caller: str, method: str
