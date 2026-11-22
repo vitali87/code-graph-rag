@@ -4362,7 +4362,7 @@ class CallResolver:
             )
 
         return self._resolve_multi_part_call(
-            parts, call_name, import_map, module_qn, local_var_types
+            parts, call_name, import_map, module_qn, local_var_types, language
         )
 
     def _try_resolve_csharp_qualified_call(
@@ -5990,23 +5990,40 @@ class CallResolver:
 
     def _js_instance_member(self, class_qn: str, method: str) -> tuple[str, str] | None:
         """`(label, qn)` of the `method` an instance of the class runs: the
-        nearest class along its chain registering one it does not declare
-        static only. A static member lives on the class object, which an
-        instance never reaches, so it hides no base's instance member."""
+        nearest class along its chain declaring `method` for its instances.
+        A static member lives on the class object, which an instance never
+        reaches, so it hides nothing. An instance field hides every base's
+        method and names none to bind."""
         queue: deque[str] = deque([class_qn])
         seen = {class_qn}
         while queue:
             owner = self._follow_reexports(queue.popleft())
             member_qn = f"{owner}{cs.SEPARATOR_DOT}{method}"
-            if member_qn in self.function_registry and not self._js_static_only(
-                owner, method
-            ):
-                return self.function_registry[member_qn], member_qn
+            registered = member_qn in self.function_registry
+            if self._js_declares_for_instances(owner, method, registered):
+                return (
+                    (self.function_registry[member_qn], member_qn)
+                    if registered
+                    else None
+                )
             for base in self.class_inheritance.get(owner, []):
                 if base not in seen:
                     seen.add(base)
                     queue.append(base)
         return None
+
+    def _js_declares_for_instances(
+        self, class_qn: str, method: str, registered: bool
+    ) -> bool:
+        # As a method, accessor, field or signature in the body; or, with no
+        # declaration there, through a registration from outside it (a
+        # prototype write, a merged interface). With no class body to read,
+        # the registered member is the declaration.
+        sides = self.type_inference.js_member_sides(class_qn, method)
+        if sides is None:
+            return registered
+        instance, static = sides
+        return instance or (registered and not static)
 
     def _try_resolve_via_import(
         self,
@@ -6295,6 +6312,7 @@ class CallResolver:
         import_map: dict[str, str],
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         class_name = parts[0]
         method_name = cs.SEPARATOR_DOT.join(parts[1:])
@@ -6321,6 +6339,10 @@ class CallResolver:
             if class_qn := self._resolve_class_qn_from_type(
                 var_type, import_map, module_qn
             ):
+                if language in cs.JS_TS_LANGUAGES and len(parts) == 2:
+                    # The typed lookup answered for this instance already,
+                    # nothing when a field hides the method (issue #3672).
+                    return self._js_instance_member(class_qn, method_name)
                 method_qn = f"{class_qn}.{method_name}"
                 if method_qn in self.function_registry:
                     logger.debug(

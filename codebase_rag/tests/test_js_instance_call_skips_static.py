@@ -23,12 +23,15 @@ _CLASSES = (
     "class Mid extends Base { static run() { return 3; } }\n"
     "class Leaf extends Mid {}\n"
     "class Own extends Base { static run() { return 4; } run() { return 5; } }\n"
+    "class Field extends Base { run = 0; }\n"
+    "class Below extends Field { static run() { return 6; } }\n"
 )
 _CALLS = (
     "function made() { const c = new Child(); return c.run(); }\n"
     "function deep() { const l = new Leaf(); return l.run(); }\n"
     "function onclass() { return Child.run(); }\n"
     "function own() { const o = new Own(); return o.run(); }\n"
+    "function shadowed() { const b = new Below(); return b.run(); }\n"
 )
 
 
@@ -63,3 +66,11 @@ def test_a_class_declaring_an_instance_member_too_stops_the_walk(
 ) -> None:
     # `Own` declares `run` for its instances as well, which hides Base's.
     assert "m.Base.run" not in _calls(calls, ".own")
+
+
+def test_an_instance_field_up_the_chain_hides_the_base_method(
+    calls: MagicMock,
+) -> None:
+    # `Field`'s `run = 0` is what `b.run` reads, so neither the static
+    # `Below.run` nor `Base.run` is the callee.
+    assert not {"m.Below.run", "m.Base.run"} & set(_calls(calls, ".shadowed"))
