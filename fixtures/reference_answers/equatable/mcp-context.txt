@@ -1,0 +1,190 @@
+> tools/call context {"budget_tokens": 1500, "target": "equatable.lib.src.equatable_utils.objectsEquals"}
+isError: false
+--- text
+{
+  "target": "equatable.lib.src.equatable_utils.objectsEquals",
+  "resolved": "equatable.lib.src.equatable_utils.objectsEquals",
+  "budget_tokens": 1500,
+  "used_tokens": 1476,
+  "pieces": [
+    {
+      "qualified_name": "equatable.lib.src.equatable_utils.objectsEquals",
+      "file": "lib/src/equatable_utils.dart",
+      "span": [
+        58,
+        77
+      ],
+      "why_included": "target",
+      "source": "@pragma('vm:prefer-inline')\nbool objectsEquals(Object? a, Object? b) {\n  if (identical(a, b)) return true;\n  if (a is num && b is num) {\n    return numEquals(a, b);\n  } else if (_isEquatable(a) && _isEquatable(b)) {\n    return a == b;\n  } else if (a is Set && b is Set) {\n    return setEquals(a, b);\n  } else if (a is Iterable && b is Iterable) {\n    return iterableEquals(a, b);\n  } else if (a is Map && b is Map) {\n    return mapEquals(a, b);\n  } else if (a?.runtimeType != b?.runtimeType) {\n    return false;\n  } else if (a != b) {\n    return false;\n  }\n  return true;\n}",
+      "tokens": 271
+    },
+    {
+      "qualified_name": "equatable.lib.src.equatable_utils._isEquatable",
+      "file": "lib/src/equatable_utils.dart",
+      "span": [
+        79,
+        79
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "@pragma('vm:prefer-inline')",
+      "tokens": 83
+    },
+    {
+      "qualified_name": "equatable.lib.src.equatable_utils.iterableEquals",
+      "file": "lib/src/equatable_utils.dart",
+      "span": [
+        28,
+        28
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "if (!objectsEquals(a.elementAt(i), b.elementAt(i))) return false;",
+      "tokens": 90
+    },
+    {
+      "qualified_name": "equatable.lib.src.equatable_utils.iterableEquals",
+      "file": "lib/src/equatable_utils.dart",
+      "span": [
+        19,
+        19
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "@pragma('vm:prefer-inline')",
+      "tokens": 82
+    },
+    {
+      "qualified_name": "equatable.lib.src.equatable_utils.mapEquals",
+      "file": "lib/src/equatable_utils.dart",
+      "span": [
+        52,
+        52
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "if (!objectsEquals(a[key], b[key])) return false;",
+      "tokens": 87
+    },
+    {
+      "qualified_name": "equatable.lib.src.equatable_utils.mapEquals",
+      "file": "lib/src/equatable_utils.dart",
+      "span": [
+        48,
+        48
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "bool mapEquals(Map<Object?, Object?> a, Map<Object?, Object?> b) {",
+      "tokens": 92
+    },
+    {
+      "qualified_name": "equatable.lib.src.equatable_utils.numEquals",
+      "file": "lib/src/equatable_utils.dart",
+      "span": [
+        34,
+        34
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "@pragma('vm:prefer-inline')",
+      "tokens": 81
+    },
+    {
+      "qualified_name": "equatable.lib.src.equatable_utils.setEquals",
+      "file": "lib/src/equatable_utils.dart",
+      "span": [
+        42,
+        42
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "if (!b.any((e) => objectsEquals(element, e))) return false;",
+      "tokens": 91
+    },
+    {
+      "qualified_name": "equatable.lib.src.equatable_utils.setEquals",
+      "file": "lib/src/equatable_utils.dart",
+      "span": [
+        38,
+        38
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "bool setEquals(Set<Object?> a, Set<Object?> b) {",
+      "tokens": 88
+    },
+    {
+      "qualified_name": "equatable.test.equatable_utils_test.main",
+      "file": "test/equatable_utils_test.dart",
+      "span": [
+        252,
+        252
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "expect(objectsEquals(object, object), isTrue);",
+      "tokens": 84
+    },
+    {
+      "qualified_name": "equatable.test.equatable_utils_test.main",
+      "file": "test/equatable_utils_test.dart",
+      "span": [
+        259,
+        259
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "expect(objectsEquals(object1, object2), isTrue);",
+      "tokens": 86
+    },
+    {
+      "qualified_name": "equatable.test.equatable_utils_test.main",
+      "file": "test/equatable_utils_test.dart",
+      "span": [
+        263,
+        263
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "expect(objectsEquals(alice, aliceCopy), isTrue);",
+      "tokens": 86
+    },
+    {
+      "qualified_name": "equatable.test.equatable_utils_test.main",
+      "file": "test/equatable_utils_test.dart",
+      "span": [
+        264,
+        264
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "expect(objectsEquals(bob, bob), isTrue);",
+      "tokens": 85
+    },
+    {
+      "qualified_name": "equatable.test.equatable_utils_test.main",
+      "file": "test/equatable_utils_test.dart",
+      "span": [
+        268,
+        268
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "expect(objectsEquals(alice, bob), isFalse);",
+      "tokens": 85
+    },
+    {
+      "qualified_name": "equatable.test.equatable_utils_test.main",
+      "file": "test/equatable_utils_test.dart",
+      "span": [
+        269,
+        269
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "expect(objectsEquals(bob, alice), isFalse);",
+      "tokens": 85
+    }
+  ],
+  "omitted": [
+    "equatable.test.equatable_utils_test.main (direct caller: the call line)",
+    "equatable.test.equatable_utils_test.main (direct caller: the call line)",
+    "equatable.test.equatable_utils_test.main (direct caller: the call line)",
+    "equatable.test.equatable_utils_test.main (direct caller: the call line)",
+    "equatable.test.equatable_utils_test.main (direct caller: the call line)",
+    "equatable.test.equatable_utils_test.main (direct caller: the call line)",
+    "equatable.test.equatable_utils_test.main (direct caller: the call line)",
+    "equatable.test.equatable_utils_test.main (direct caller: the call line)",
+    "equatable.test.equatable_utils_test.main (direct caller: the call line)",
+    "equatable.test.equatable_utils_test.main (test reaching it at depth 1 through equatable.lib.src.equatable_utils.objectsEquals)"
+  ],
+  "omitted_count": 10,
+  "truncated": false
+}

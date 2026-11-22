@@ -1,0 +1,26 @@
+> tools/call get_function_source {"node_id": "<node_id:equatable.lib.src.equatable_utils.objectsEquals>"}
+isError: false
+--- text
+Source code for node ID <node_id>:
+
+```
+bool objectsEquals(Object? a, Object? b) {
+  if (identical(a, b)) return true;
+  if (a is num && b is num) {
+    return numEquals(a, b);
+  } else if (_isEquatable(a) && _isEquatable(b)) {
+    return a == b;
+  } else if (a is Set && b is Set) {
+    return setEquals(a, b);
+  } else if (a is Iterable && b is Iterable) {
+    return iterableEquals(a, b);
+  } else if (a is Map && b is Map) {
+    return mapEquals(a, b);
+  } else if (a?.runtimeType != b?.runtimeType) {
+    return false;
+  } else if (a != b) {
+    return false;
+  }
+  return true;
+}
+```

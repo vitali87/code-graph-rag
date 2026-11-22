@@ -1,0 +1,13 @@
+> tools/call get_code_snippet {"qualified_name": "body-parser.lib.types.text.text"}
+isError: false
+--- text
+{
+  "qualified_name": "body-parser.lib.types.text.text",
+  "source_code": "function text (options) {\n  var { inflate, limit, verify, shouldParse } = normalizeOptions(options, 'text/plain')\n\n  var defaultCharset = options?.defaultCharset || 'utf-8'\n\n  function parse (buf) {\n    return buf\n  }\n\n  return function textParser (req, res, next) {\n    if (isFinished(req)) {\n      debug('body already parsed')\n      next()\n      return\n    }\n\n    if (!('body' in req)) {\n      req.body = undefined\n    }\n\n    // skip requests without bodies\n    if (!typeis.hasBody(req)) {\n      debug('skip empty body')\n      next()\n      return\n    }\n\n    debug('content-type %j', req.headers['content-type'])\n\n    // determine if request should be parsed\n    if (!shouldParse(req)) {\n      debug('skip parsing')\n      next()\n      return\n    }\n\n    // get charset\n    var charset = getCharset(req) || defaultCharset\n\n    // read\n    read(req, res, next, parse, debug, {\n      encoding: charset,\n      inflate,\n      limit,\n      verify\n    })\n  }\n}\n",
+  "file_path": "lib/types/text.js",
+  "line_start": 33,
+  "line_end": 80,
+  "docstring": null,
+  "found": true,
+  "error_message": null
+}

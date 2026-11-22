@@ -1,0 +1,31 @@
+> tools/call flow_verdict {"sink_qualified_name": "equatable.lib.src.equatable_utils.mapEquals", "source_qualified_name": "equatable.lib.src.equatable_utils.objectsEquals"}
+isError: false
+--- text
+{
+  "verdict": "UNKNOWN",
+  "path": [],
+  "gaps": [
+    ".github/ISSUE_TEMPLATE/bug_report.md",
+    ".github/ISSUE_TEMPLATE/feature_request.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "CHANGELOG.md",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "README.md",
+    "benchmarks/README.md",
+    "benchmarks/main.dart",
+    "doc/migration_guides/migration-0.6.0.md",
+    "example/main.dart",
+    "lib/equatable.dart",
+    "lib/src/equatable.dart",
+    "lib/src/equatable_config.dart",
+    "lib/src/equatable_mixin.dart",
+    "lib/src/equatable_utils.dart",
+    "test/custom_list.dart",
+    "test/equatable_config_test.dart",
+    "test/equatable_mixin_test.dart",
+    "test/equatable_test.dart",
+    "test/equatable_utils_test.dart"
+  ],
+  "remote_hops": []
+}

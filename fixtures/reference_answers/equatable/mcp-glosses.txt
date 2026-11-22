@@ -1,0 +1,14 @@
+> tools/call glosses {"target": "equatable.lib.src.equatable.Equatable"}
+isError: false
+--- text
+{
+  "target": {
+    "label": "Class",
+    "qualified_name": "equatable.lib.src.equatable.Equatable",
+    "path": "lib/src/equatable.dart",
+    "start_line": 19,
+    "end_line": 62
+  },
+  "annotating": [],
+  "mentioning": []
+}

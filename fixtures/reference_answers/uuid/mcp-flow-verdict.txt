@@ -1,0 +1,34 @@
+> tools/call flow_verdict {"sink_qualified_name": "uuid.version4.NewRandom", "source_qualified_name": "uuid.version4.New"}
+isError: false
+--- text
+{
+  "verdict": "UNKNOWN",
+  "path": [],
+  "gaps": [
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "README.md",
+    "dce.go",
+    "doc.go",
+    "hash.go",
+    "json_test.go",
+    "marshal.go",
+    "node.go",
+    "node_js.go",
+    "node_net.go",
+    "null.go",
+    "null_test.go",
+    "seq_test.go",
+    "sql.go",
+    "sql_test.go",
+    "time.go",
+    "util.go",
+    "uuid.go",
+    "uuid_test.go",
+    "version1.go",
+    "version4.go",
+    "version6.go",
+    "version7.go"
+  ],
+  "remote_hops": []
+}

@@ -1,0 +1,5 @@
+$ cgr -q duplicates --project example-jl
+status: 0
+--- stdout
+None of the 2 function(s)/method(s) in this project carry a structural fingerprint; the graph predates fingerprint stamping. Re-index the repository (cgr start --update-graph) and rerun.
+--- stderr

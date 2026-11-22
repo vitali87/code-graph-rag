@@ -1,0 +1,138 @@
+> tools/call context {"budget_tokens": 1500, "target": "uuid.uuid.ParseBytes"}
+isError: false
+--- text
+{
+  "target": "uuid.uuid.ParseBytes",
+  "resolved": "uuid.uuid.ParseBytes",
+  "budget_tokens": 1500,
+  "used_tokens": 1415,
+  "pieces": [
+    {
+      "qualified_name": "uuid.uuid.ParseBytes",
+      "file": "uuid.go",
+      "span": [
+        120,
+        162
+      ],
+      "why_included": "target",
+      "source": "func ParseBytes(b []byte) (UUID, error) {\n\tvar uuid UUID\n\tswitch len(b) {\n\tcase 36: // xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\n\tcase 36 + 9: // urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\n\t\tif !bytes.EqualFold(b[:9], []byte(\"urn:uuid:\")) {\n\t\t\treturn uuid, fmt.Errorf(\"invalid urn prefix: %q\", b[:9])\n\t\t}\n\t\tb = b[9:]\n\tcase 36 + 2: // {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}\n\t\tb = b[1:]\n\tcase 32: // xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n\t\tvar ok bool\n\t\tfor i := 0; i < 32; i += 2 {\n\t\t\tuuid[i/2], ok = xtob(b[i], b[i+1])\n\t\t\tif !ok {\n\t\t\t\treturn uuid, errors.New(\"invalid UUID format\")\n\t\t\t}\n\t\t}\n\t\treturn uuid, nil\n\tdefault:\n\t\treturn uuid, invalidLengthError{len(b)}\n\t}\n\t// s is now at least 36 bytes long\n\t// it must be of the form  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\n\tif b[8] != '-' || b[13] != '-' || b[18] != '-' || b[23] != '-' {\n\t\treturn uuid, errors.New(\"invalid UUID format\")\n\t}\n\tfor i, x := range [16]int{\n\t\t0, 2, 4, 6,\n\t\t9, 11,\n\t\t14, 16,\n\t\t19, 21,\n\t\t24, 26, 28, 30, 32, 34,\n\t} {\n\t\tv, ok := xtob(b[x], b[x+1])\n\t\tif !ok {\n\t\t\treturn uuid, errors.New(\"invalid UUID format\")\n\t\t}\n\t\tuuid[i] = v\n\t}\n\treturn uuid, nil\n}",
+      "tokens": 556
+    },
+    {
+      "qualified_name": "uuid.null.NullUUID.UnmarshalText",
+      "file": "null.go",
+      "span": [
+        90,
+        90
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "id, err := ParseBytes(data)",
+      "tokens": 74
+    },
+    {
+      "qualified_name": "uuid.util.xtob",
+      "file": "util.go",
+      "span": [
+        39,
+        39
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "func xtob(x1, x2 byte) (byte, bool) {",
+      "tokens": 81
+    },
+    {
+      "qualified_name": "uuid.uuid.UUID",
+      "file": "uuid.go",
+      "span": [
+        20,
+        20
+      ],
+      "why_included": "type it returns",
+      "source": "type UUID [16]byte",
+      "tokens": 66
+    },
+    {
+      "qualified_name": "uuid.uuid.UUID.UnmarshalText",
+      "file": "marshal.go",
+      "span": [
+        18,
+        18
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "id, err := ParseBytes(data)",
+      "tokens": 73
+    },
+    {
+      "qualified_name": "uuid.uuid_test.BenchmarkParseBytes",
+      "file": "uuid_test.go",
+      "span": [
+        651,
+        651
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "_, err := ParseBytes(asBytes)",
+      "tokens": 76
+    },
+    {
+      "qualified_name": "uuid.uuid_test.FuzzParseBytes",
+      "file": "uuid_test.go",
+      "span": [
+        591,
+        591
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "ParseBytes(in)",
+      "tokens": 72
+    },
+    {
+      "qualified_name": "uuid.uuid_test.testBytes",
+      "file": "uuid_test.go",
+      "span": [
+        116,
+        116
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "uuid, err := ParseBytes(in)",
+      "tokens": 74
+    },
+    {
+      "qualified_name": "uuid.version4.New",
+      "file": "version4.go",
+      "span": [
+        13,
+        13
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "func New() UUID {",
+      "tokens": 70
+    },
+    {
+      "qualified_name": "uuid.uuid_test.BenchmarkParseBytes",
+      "file": "uuid_test.go",
+      "span": [
+        649,
+        656
+      ],
+      "why_included": "test reaching it at depth 1 through uuid.uuid.ParseBytes",
+      "source": "func BenchmarkParseBytes(b *testing.B) {\n\tfor i := 0; i < b.N; i++ {\n\t\t_, err := ParseBytes(asBytes)\n\t\tif err != nil {\n\t\t\tb.Fatal(err)\n\t\t}\n\t}\n}",
+      "tokens": 136
+    },
+    {
+      "qualified_name": "uuid.uuid_test.FuzzParseBytes",
+      "file": "uuid_test.go",
+      "span": [
+        586,
+        593
+      ],
+      "why_included": "test reaching it at depth 1 through uuid.uuid.ParseBytes",
+      "source": "func FuzzParseBytes(f *testing.F) {\n\tfor _, tt := range tests {\n\t\tf.Add([]byte(tt.in))\n\t}\n\tf.Fuzz(func(t *testing.T, in []byte) {\n\t\tParseBytes(in)\n\t})\n}",
+      "tokens": 137
+    }
+  ],
+  "omitted": [
+    "uuid.uuid_test.testBytes (test reaching it at depth 1 through uuid.uuid.ParseBytes)",
+    "uuid.uuid_test.TestUUID (test reaching it at depth 2 through uuid.uuid_test.testBytes)"
+  ],
+  "omitted_count": 2,
+  "truncated": false
+}

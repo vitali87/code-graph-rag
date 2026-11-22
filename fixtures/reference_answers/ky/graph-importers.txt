@@ -1,0 +1,146 @@
+$ cgr -q graph importers ky.source.core.constants --project ky
+status: 0
+--- stdout
+[
+  {
+    "alias": "maxSafeTimeout",
+    "col": 0,
+    "end_col": 24,
+    "end_line": 25,
+    "imported_name": "maxSafeTimeout",
+    "line": 17,
+    "module": "ky.source.core.Ky",
+    "path": "source/core/Ky.ts"
+  },
+  {
+    "alias": "responseTypes",
+    "col": 0,
+    "end_col": 24,
+    "end_line": 25,
+    "imported_name": "responseTypes",
+    "line": 17,
+    "module": "ky.source.core.Ky",
+    "path": "source/core/Ky.ts"
+  },
+  {
+    "alias": "stop",
+    "col": 0,
+    "end_col": 24,
+    "end_line": 25,
+    "imported_name": "stop",
+    "line": 17,
+    "module": "ky.source.core.Ky",
+    "path": "source/core/Ky.ts"
+  },
+  {
+    "alias": "supportsAbortController",
+    "col": 0,
+    "end_col": 24,
+    "end_line": 25,
+    "imported_name": "supportsAbortController",
+    "line": 17,
+    "module": "ky.source.core.Ky",
+    "path": "source/core/Ky.ts"
+  },
+  {
+    "alias": "supportsFormData",
+    "col": 0,
+    "end_col": 24,
+    "end_line": 25,
+    "imported_name": "supportsFormData",
+    "line": 17,
+    "module": "ky.source.core.Ky",
+    "path": "source/core/Ky.ts"
+  },
+  {
+    "alias": "supportsRequestStreams",
+    "col": 0,
+    "end_col": 24,
+    "end_line": 25,
+    "imported_name": "supportsRequestStreams",
+    "line": 17,
+    "module": "ky.source.core.Ky",
+    "path": "source/core/Ky.ts"
+  },
+  {
+    "alias": "supportsResponseStreams",
+    "col": 0,
+    "end_col": 24,
+    "end_line": 25,
+    "imported_name": "supportsResponseStreams",
+    "line": 17,
+    "module": "ky.source.core.Ky",
+    "path": "source/core/Ky.ts"
+  },
+  {
+    "alias": "requestMethods",
+    "col": 0,
+    "end_col": 57,
+    "end_line": 4,
+    "imported_name": "requestMethods",
+    "line": 4,
+    "module": "ky.source.index",
+    "path": "source/index.ts"
+  },
+  {
+    "alias": "stop",
+    "col": 0,
+    "end_col": 57,
+    "end_line": 4,
+    "imported_name": "stop",
+    "line": 4,
+    "module": "ky.source.index",
+    "path": "source/index.ts"
+  },
+  {
+    "alias": "stop",
+    "col": 0,
+    "end_col": 47,
+    "end_line": 1,
+    "imported_name": "stop",
+    "line": 1,
+    "module": "ky.source.types.hooks",
+    "path": "source/types/hooks.ts"
+  },
+  {
+    "alias": "stop",
+    "col": 0,
+    "end_col": 47,
+    "end_line": 1,
+    "imported_name": "stop",
+    "line": 1,
+    "module": "ky.source.types.ky",
+    "path": "source/types/ky.ts"
+  },
+  {
+    "alias": "requestMethods",
+    "col": 0,
+    "end_col": 52,
+    "end_line": 1,
+    "imported_name": "requestMethods",
+    "line": 1,
+    "module": "ky.source.utils.normalize",
+    "path": "source/utils/normalize.ts"
+  },
+  {
+    "alias": "kyOptionKeys",
+    "col": 0,
+    "end_col": 74,
+    "end_line": 1,
+    "imported_name": "kyOptionKeys",
+    "line": 1,
+    "module": "ky.source.utils.options",
+    "path": "source/utils/options.ts"
+  },
+  {
+    "alias": "requestOptionsRegistry",
+    "col": 0,
+    "end_col": 74,
+    "end_line": 1,
+    "imported_name": "requestOptionsRegistry",
+    "line": 1,
+    "module": "ky.source.utils.options",
+    "path": "source/utils/options.ts"
+  }
+]
+--- stderr

@@ -1,5 +1,6 @@
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from functools import lru_cache
+from typing import TYPE_CHECKING, NamedTuple
 
 from tree_sitter import Language, Node, QueryCursor
 
@@ -7,7 +8,11 @@ from ... import constants as cs
 from ..utils import get_cached_query, safe_decode_text, sorted_captures
 
 if TYPE_CHECKING:
-    from ...types_defs import LanguageQueries
+    from ...types_defs import (
+        FunctionRegistryTrieProtocol,
+        LanguageQueries,
+        PropertyDict,
+    )
 
 
 def get_js_ts_language_obj(
@@ -626,6 +631,258 @@ def is_object_literal_method(func_node: Node) -> bool:
     )
 
 
+# Wrappers a TS object literal can sit in without changing which binding holds
+# it: `const api = { ... } as const`, `satisfies Api`, `({ ... })`.
+_OBJECT_LITERAL_WRAPPERS = frozenset(
+    {cs.TS_AS_EXPRESSION, cs.TS_SATISFIES_EXPRESSION, cs.TS_PARENTHESIZED_EXPRESSION}
+)
+
+
+class JsLocalIntro(NamedTuple):
+    """One introduction of a name by a function: the byte span it governs,
+    whether the name binds an object literal there whose members are reached
+    through it (issue #2763), and where the function owning it starts (its
+    literals share one binding)."""
+
+    start: int
+    end: int
+    object_literal: bool
+    owner: int = -1
+
+
+# A caller's introductions, its own and those of every function around it, by
+# name.
+JsLocalIntros = dict[str, tuple[JsLocalIntro, ...]]
+
+
+# The function values an object literal's `pair` member registers as.
+_OBJECT_MEMBER_FUNCTIONS = frozenset(
+    {cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION}
+)
+
+
+def binds_object_literal(value: Node | None) -> bool:
+    """Whether `value` is an object literal (`{ ... }`, also under `as
+    const`, `satisfies T` or parentheses) that some member is reached
+    through its holder's name from (issue #2763). A `let` written again, or
+    a literal whose every member a later key or spread replaces, binds none:
+    a call through that name reads no literal's member, and must not reach
+    one bound further out (Greptile, PR #3118)."""
+    while value is not None and value.type in _OBJECT_LITERAL_WRAPPERS:
+        value = value.named_child(0)
+    if value is None or value.type != cs.TS_OBJECT:
+        return False
+    for member in value.named_children:
+        func = (
+            member.child_by_field_name(cs.FIELD_VALUE)
+            if member.type == cs.TS_PAIR
+            else member
+        )
+        if (
+            func is not None
+            and (
+                func.type == cs.TS_METHOD_DEFINITION
+                or func.type in _OBJECT_MEMBER_FUNCTIONS
+            )
+            and object_literal_binding(func) is not None
+        ):
+            return True
+    return False
+
+
+def object_literal_binding(func_node: Node) -> str | None:
+    """The name an object literal holding this function is bound to.
+
+    `const api = { fetchUser() {} }` and `{ build: () => 2 }` assigned to
+    `tools` give `api` and `tools`; `export default { run() {} }` gives
+    `default` (issue #2763). A nested object, or one that is passed,
+    returned or assigned to a property, has no name of its own: None.
+    """
+    member = func_node
+    obj = func_node.parent
+    if obj is not None and obj.type == cs.TS_PAIR:
+        value = obj.child_by_field_name(cs.FIELD_VALUE)
+        if value is None or value.id != func_node.id:
+            return None
+        member = obj
+        obj = obj.parent
+    if obj is None or obj.type != cs.TS_OBJECT:
+        return None
+    if _overridden_later(obj, member):
+        return None
+    return _object_holder_name(obj)
+
+
+def _member_key(member: Node) -> str | None:
+    # The key a `pair`, a method or a shorthand (`{ run }`) of an object
+    # literal names; a quoted key (`"run": ...`) names what it spells.
+    if member.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER:
+        return safe_decode_text(member)
+    field = cs.FIELD_KEY if member.type == cs.TS_PAIR else cs.FIELD_NAME
+    key = member.child_by_field_name(field)
+    if key is not None and key.type == cs.TS_STRING:
+        key = next(
+            (c for c in key.named_children if c.type == cs.TS_STRING_FRAGMENT), key
+        )
+    return safe_decode_text(key)
+
+
+def _overridden_later(obj: Node, member: Node) -> bool:
+    # Whether a later spread (`...base`), a later member with the same key,
+    # or a later computed key (`[k]: ...`) may replace this member's value:
+    # the binding's key then holds what is not known here (bot review on
+    # PR #3118).
+    key = _member_key(member)
+    later = False
+    for child in obj.named_children:
+        if child.id == member.id:
+            later = True
+        elif later and (
+            child.type == cs.TS_SPREAD_ELEMENT
+            or (key is not None and _member_key(child) == key)
+            or _computed_key(child)
+        ):
+            return True
+    return False
+
+
+def _computed_key(member: Node) -> bool:
+    field = cs.FIELD_KEY if member.type == cs.TS_PAIR else cs.FIELD_NAME
+    key = member.child_by_field_name(field)
+    return key is not None and key.type == cs.TS_JS_COMPUTED_PROPERTY_NAME
+
+
+def _object_holder_name(obj: Node) -> str | None:
+    # The name the declarator or default export holding an object literal
+    # (through any TS wrapper) binds it to; None for any other holder.
+    holder = obj.parent
+    while holder is not None and holder.type in _OBJECT_LITERAL_WRAPPERS:
+        holder = holder.parent
+    if holder is None:
+        return None
+    if holder.type == cs.TS_VARIABLE_DECLARATOR:
+        name = holder.child_by_field_name(cs.TS_FIELD_NAME)
+        if (
+            name is not None
+            and name.type == cs.TS_IDENTIFIER
+            and (text := safe_decode_text(name))
+            and not _written_again(holder, text)
+        ):
+            return text
+        return None
+    if holder.type == cs.TS_EXPORT_STATEMENT and any(
+        child.type == cs.TS_EXPORT_DEFAULT for child in holder.children
+    ):
+        return cs.TS_EXPORT_DEFAULT
+    return None
+
+
+_WRITES = frozenset(
+    {cs.TS_JS_ASSIGNMENT_EXPRESSION, cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION}
+)
+_WRITE_PATTERNS = frozenset(
+    {
+        cs.TS_OBJECT_PATTERN,
+        cs.TS_ARRAY_PATTERN,
+        cs.TS_PAIR_PATTERN,
+        cs.TS_REST_PATTERN,
+        cs.TS_ASSIGNMENT_PATTERN,
+        cs.TS_OBJECT_ASSIGNMENT_PATTERN,
+        cs.TS_PARENTHESIZED_EXPRESSION,
+    }
+)
+
+
+def _written_again(declarator: Node, name: str) -> bool:
+    # Whether the `let` or `var` the declarator binds is written anywhere in
+    # its file (`api = other`, `api += x`, `[api] = xs`, `api++`,
+    # `for (api in o)`): a call through the name may then reach another
+    # object (Greptile, PR #3118). A `const` is never written; a write to a
+    # local of the same name elsewhere only costs the binding.
+    declaration = declarator.parent
+    kind = (
+        declaration.child_by_field_name(cs.FIELD_KIND)
+        if declaration is not None
+        else None
+    )
+    if kind is not None and kind.type == cs.JS_CONST_KEYWORD:
+        return False
+    root = declarator
+    while root.parent is not None:
+        root = root.parent
+    return name in _file_written_names(root)
+
+
+# The files whose writes stay indexed: each caller's local introductions ask
+# about the file being processed.
+_WRITTEN_NAMES_CACHE_SIZE = 8
+
+
+@lru_cache(maxsize=_WRITTEN_NAMES_CACHE_SIZE)
+def _file_written_names(root: Node) -> frozenset[str]:
+    # Every plain name the file writes, collected once per tree: each
+    # caller's introductions ask about the literals around it.
+    names: set[str] = set()
+    pending = [root]
+    while pending:
+        node = pending.pop()
+        if node.type in _WRITES or node.type == cs.TS_JS_FOR_IN_STATEMENT:
+            target = node.child_by_field_name(cs.FIELD_LEFT)
+        elif node.type == cs.TS_JS_UPDATE_EXPRESSION:
+            target = node.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+        else:
+            target = None
+        if target is not None:
+            names |= _written_names(target)
+        pending.extend(node.named_children)
+    return frozenset(names)
+
+
+def _written_names(target: Node) -> set[str]:
+    names: set[str] = set()
+    pending = [target]
+    while pending:
+        node = pending.pop()
+        if node.type in (cs.TS_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN):
+            names.add(safe_decode_text(node) or "")
+        elif node.type in _WRITE_PATTERNS:
+            pending.extend(node.named_children)
+    return names
+
+
+def object_binding_qn(func_node: Node, member_qn: str) -> str | None:
+    """The qualified name of the binding an object member is reached through.
+
+    A member registers under the scope its object is written in
+    (`<scope>.<key>`, or a duplicate variant of it), and so does the
+    object's binding: `const api = { fetchUser() {} }` in module `m` gives
+    `m.api` for member `m.fetchUser` (issue #2763).
+    """
+    binding = object_literal_binding(func_node)
+    if binding is None:
+        return None
+    natural = member_qn.split(cs.DUP_QN_MARKER, 1)[0]
+    scope, sep, _key = natural.rpartition(cs.SEPARATOR_DOT)
+    return f"{scope}{cs.SEPARATOR_DOT}{binding}" if sep else None
+
+
+def mark_js_ts_object_binding(
+    registry: "FunctionRegistryTrieProtocol",
+    props: "PropertyDict",
+    qualified_name: str,
+    func_node: Node,
+) -> None:
+    # The binding the member's object is reached through, recorded in the
+    # registry and on the node, which carries it to an incremental run's
+    # rehydrated registry (the is_object_member pattern).
+    binding_qn = object_binding_qn(func_node, qualified_name)
+    key = props.get(cs.KEY_NAME)
+    if binding_qn is None or not isinstance(key, str):
+        return
+    props[cs.KEY_OBJECT_BINDING] = binding_qn
+    registry.mark_object_binding(qualified_name, binding_qn, key)
+
+
 def analyze_return_expression(expr_node: Node, method_qn: str) -> str | None:
     match expr_node.type:
         case cs.TS_NEW_EXPRESSION:
@@ -654,3 +911,127 @@ def analyze_return_expression(expr_node: Node, method_qn: str) -> str | None:
 
         case _:
             return None
+
+
+_JS_TS_DECLARATION_NAMED = frozenset(
+    {
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+        cs.TS_CLASS_DECLARATION,
+    }
+)
+# `const cb = function r() {}`: the expression binds `r` inside itself only.
+_JS_TS_SELF_NAMED_FUNCTIONS = frozenset(
+    {cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION}
+)
+_JS_TS_PATTERN_CONTAINERS = frozenset(
+    {
+        cs.TS_OBJECT_PATTERN,
+        cs.TS_ARRAY_PATTERN,
+        cs.TS_REST_PATTERN,
+        cs.TS_JS_FORMAL_PARAMETERS,
+        cs.TS_REQUIRED_PARAMETER,
+        cs.TS_OPTIONAL_PARAMETER,
+    }
+)
+
+
+def js_ts_pattern_names(target: Node) -> set[str]:
+    # The names a binding target binds. Binding positions only: a default's
+    # right side, a computed key and a pair key read the enclosing scope.
+    names: set[str] = set()
+    stack: list[Node] = [target]
+    while stack:
+        node = stack.pop()
+        if node.type in (
+            cs.TS_IDENTIFIER,
+            cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+        ):
+            if name := safe_decode_text(node):
+                names.add(name)
+        elif node.type in (cs.TS_ASSIGNMENT_PATTERN, cs.TS_OBJECT_ASSIGNMENT_PATTERN):
+            if (left := node.child_by_field_name(cs.FIELD_LEFT)) is not None:
+                stack.append(left)
+        elif node.type == cs.TS_PAIR_PATTERN:
+            if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
+                stack.append(value)
+        elif node.type in _JS_TS_PATTERN_CONTAINERS:
+            stack.extend(node.named_children)
+    return names
+
+
+def js_ts_own_scope_names(func_node: Node) -> frozenset[str]:
+    """Every name a function binds itself rather than reads from the
+    function around it: a function expression's own name, its parameters,
+    its declarations, loop and catch variables, the functions and classes
+    it declares, and a plain name it assigns (which may hold another type
+    by the time it is read). Nested functions are their own scopes and are
+    not entered (issue #3200)."""
+    names: set[str] = set()
+    if func_node.type in _JS_TS_SELF_NAMED_FUNCTIONS and (
+        (name_node := func_node.child_by_field_name(cs.FIELD_NAME)) is not None
+        and (own_name := safe_decode_text(name_node))
+    ):
+        names.add(own_name)
+    for field in (cs.FIELD_PARAMETERS, cs.TS_FIELD_PARAMETER):
+        if (params := func_node.child_by_field_name(field)) is not None:
+            names |= js_ts_pattern_names(params)
+    body = func_node.child_by_field_name(cs.FIELD_BODY)
+    stack: list[Node] = list(body.children) if body is not None else []
+    while stack:
+        node = stack.pop()
+        names |= _js_ts_names_bound_by(node)
+        # A nested function binds its own name here, the rest in its scope.
+        if node.type not in cs.JS_TS_FUNCTION_NODES:
+            stack.extend(node.children)
+    return frozenset(names)
+
+
+def js_ts_assigned_names(func_node: Node) -> frozenset[str]:
+    """Every plain name a function assigns in its own body (`r = v`), its
+    nested functions not entered (Greptile on #3331)."""
+    names: set[str] = set()
+    body = func_node.child_by_field_name(cs.FIELD_BODY)
+    stack: list[Node] = list(body.children) if body is not None else []
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+            left = node.child_by_field_name(cs.FIELD_LEFT)
+            if (
+                left is not None
+                and left.type == cs.TS_IDENTIFIER
+                and (name := safe_decode_text(left))
+            ):
+                names.add(name)
+        if node.type not in cs.JS_TS_FUNCTION_NODES:
+            stack.extend(node.children)
+    return frozenset(names)
+
+
+# The node types that bind every name of a pattern, and the field holding it.
+_JS_TS_PATTERN_FIELDS = {
+    cs.TS_VARIABLE_DECLARATOR: cs.FIELD_NAME,
+    cs.TS_JS_FOR_IN_STATEMENT: cs.FIELD_LEFT,
+    cs.TS_JS_CATCH_CLAUSE: cs.FIELD_PARAMETER,
+}
+
+
+def _js_ts_names_bound_by(node: Node) -> set[str]:
+    # The names one node binds in the scope it sits in.
+    names: set[str] = set()
+    if node.type in _JS_TS_DECLARATION_NAMED:
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is not None and (name := safe_decode_text(name_node)):
+            names.add(name)
+    if (field := _JS_TS_PATTERN_FIELDS.get(node.type)) is not None:
+        if (target := node.child_by_field_name(field)) is not None:
+            names |= js_ts_pattern_names(target)
+    elif node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+        left = node.child_by_field_name(cs.FIELD_LEFT)
+        if (
+            left is not None
+            and left.type == cs.TS_IDENTIFIER
+            and (name := safe_decode_text(left))
+        ):
+            names.add(name)
+    return names

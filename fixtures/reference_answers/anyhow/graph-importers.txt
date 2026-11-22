@@ -1,0 +1,56 @@
+$ cgr -q graph importers anyhow.src.ptr --project anyhow
+status: 0
+--- stdout
+[
+  {
+    "alias": "Mut",
+    "col": 0,
+    "end_col": 20,
+    "end_line": 4,
+    "imported_name": "Mut",
+    "line": 4,
+    "module": "anyhow.src.error",
+    "path": "src/error.rs"
+  },
+  {
+    "alias": "Own",
+    "col": 0,
+    "end_col": 27,
+    "end_line": 5,
+    "imported_name": "Own",
+    "line": 5,
+    "module": "anyhow.src.error",
+    "path": "src/error.rs"
+  },
+  {
+    "alias": "Ref",
+    "col": 0,
+    "end_col": 27,
+    "end_line": 5,
+    "imported_name": "Ref",
+    "line": 5,
+    "module": "anyhow.src.error",
+    "path": "src/error.rs"
+  },
+  {
+    "alias": "Ref",
+    "col": 0,
+    "end_col": 20,
+    "end_line": 3,
+    "imported_name": "Ref",
+    "line": 3,
+    "module": "anyhow.src.fmt",
+    "path": "src/fmt.rs"
+  },
+  {
+    "alias": "Own",
+    "col": 0,
+    "end_col": 20,
+    "end_line": 266,
+    "imported_name": "Own",
+    "line": 266,
+    "module": "anyhow.src.lib",
+    "path": "src/lib.rs"
+  }
+]
+--- stderr

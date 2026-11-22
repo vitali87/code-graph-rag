@@ -1,0 +1,2547 @@
+$ cgr -q duplicates --project cjson --format json
+status: 0
+--- stdout
+{
+  "groups": [
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 24,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_IsInvalid",
+          "name": "cJSON_IsInvalid",
+          "path": "cJSON.c",
+          "start_line": 2909,
+          "end_line": 2917
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_IsFalse",
+          "name": "cJSON_IsFalse",
+          "path": "cJSON.c",
+          "start_line": 2919,
+          "end_line": 2927
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_IsTrue",
+          "name": "cJSON_IsTrue",
+          "path": "cJSON.c",
+          "start_line": 2929,
+          "end_line": 2937
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_IsNull",
+          "name": "cJSON_IsNull",
+          "path": "cJSON.c",
+          "start_line": 2949,
+          "end_line": 2957
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_IsNumber",
+          "name": "cJSON_IsNumber",
+          "path": "cJSON.c",
+          "start_line": 2959,
+          "end_line": 2967
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_IsString",
+          "name": "cJSON_IsString",
+          "path": "cJSON.c",
+          "start_line": 2969,
+          "end_line": 2977
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_IsArray",
+          "name": "cJSON_IsArray",
+          "path": "cJSON.c",
+          "start_line": 2979,
+          "end_line": 2987
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_IsObject",
+          "name": "cJSON_IsObject",
+          "path": "cJSON.c",
+          "start_line": 2989,
+          "end_line": 2997
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_IsRaw",
+          "name": "cJSON_IsRaw",
+          "path": "cJSON.c",
+          "start_line": 2999,
+          "end_line": 3007
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 50,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_null_should_add_null",
+          "name": "cjson_add_null_should_add_null",
+          "path": "tests/cjson_add.c",
+          "start_line": 48,
+          "end_line": 59
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_true_should_add_true",
+          "name": "cjson_add_true_should_add_true",
+          "path": "tests/cjson_add.c",
+          "start_line": 84,
+          "end_line": 95
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_false_should_add_false",
+          "name": "cjson_add_false_should_add_false",
+          "path": "tests/cjson_add.c",
+          "start_line": 164,
+          "end_line": 175
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cJSON_add_object_should_add_object",
+          "name": "cJSON_add_object_should_add_object",
+          "path": "tests/cjson_add.c",
+          "start_line": 355,
+          "end_line": 365
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cJSON_add_array_should_add_array",
+          "name": "cJSON_add_array_should_add_array",
+          "path": "tests/cjson_add.c",
+          "start_line": 390,
+          "end_line": 400
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 37,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_null_should_fail_on_allocation_failure",
+          "name": "cjson_add_null_should_fail_on_allocation_failure",
+          "path": "tests/cjson_add.c",
+          "start_line": 71,
+          "end_line": 82
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_true_should_fail_on_allocation_failure",
+          "name": "cjson_add_true_should_fail_on_allocation_failure",
+          "path": "tests/cjson_add.c",
+          "start_line": 107,
+          "end_line": 118
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_false_should_fail_on_allocation_failure",
+          "name": "cjson_add_false_should_fail_on_allocation_failure",
+          "path": "tests/cjson_add.c",
+          "start_line": 187,
+          "end_line": 198
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_object_should_fail_on_allocation_failure",
+          "name": "cjson_add_object_should_fail_on_allocation_failure",
+          "path": "tests/cjson_add.c",
+          "start_line": 377,
+          "end_line": 388
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_array_should_fail_on_allocation_failure",
+          "name": "cjson_add_array_should_fail_on_allocation_failure",
+          "path": "tests/cjson_add.c",
+          "start_line": 412,
+          "end_line": 423
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 36,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_AddNullToObject",
+          "name": "cJSON_AddNullToObject",
+          "path": "cJSON.c",
+          "start_line": 2097,
+          "end_line": 2107
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_AddTrueToObject",
+          "name": "cJSON_AddTrueToObject",
+          "path": "cJSON.c",
+          "start_line": 2109,
+          "end_line": 2119
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_AddFalseToObject",
+          "name": "cJSON_AddFalseToObject",
+          "path": "cJSON.c",
+          "start_line": 2121,
+          "end_line": 2131
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_AddObjectToObject",
+          "name": "cJSON_AddObjectToObject",
+          "path": "cJSON.c",
+          "start_line": 2181,
+          "end_line": 2191
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_AddArrayToObject",
+          "name": "cJSON_AddArrayToObject",
+          "path": "cJSON.c",
+          "start_line": 2193,
+          "end_line": 2203
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 34,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_null_should_fail_with_null_pointers",
+          "name": "cjson_add_null_should_fail_with_null_pointers",
+          "path": "tests/cjson_add.c",
+          "start_line": 61,
+          "end_line": 69
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_true_should_fail_with_null_pointers",
+          "name": "cjson_add_true_should_fail_with_null_pointers",
+          "path": "tests/cjson_add.c",
+          "start_line": 97,
+          "end_line": 105
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_false_should_fail_with_null_pointers",
+          "name": "cjson_add_false_should_fail_with_null_pointers",
+          "path": "tests/cjson_add.c",
+          "start_line": 177,
+          "end_line": 185
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_object_should_fail_with_null_pointers",
+          "name": "cjson_add_object_should_fail_with_null_pointers",
+          "path": "tests/cjson_add.c",
+          "start_line": 367,
+          "end_line": 375
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_array_should_fail_with_null_pointers",
+          "name": "cjson_add_array_should_fail_with_null_pointers",
+          "path": "tests/cjson_add.c",
+          "start_line": 402,
+          "end_line": 410
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 29,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_CreateNull",
+          "name": "cJSON_CreateNull",
+          "path": "cJSON.c",
+          "start_line": 2408,
+          "end_line": 2417
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_CreateTrue",
+          "name": "cJSON_CreateTrue",
+          "path": "cJSON.c",
+          "start_line": 2419,
+          "end_line": 2428
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_CreateFalse",
+          "name": "cJSON_CreateFalse",
+          "path": "cJSON.c",
+          "start_line": 2430,
+          "end_line": 2439
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_CreateArray",
+          "name": "cJSON_CreateArray",
+          "path": "cJSON.c",
+          "start_line": 2545,
+          "end_line": 2554
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_CreateObject",
+          "name": "cJSON_CreateObject",
+          "path": "cJSON.c",
+          "start_line": 2556,
+          "end_line": 2565
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 38,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_bool_should_fail_on_allocation_failure",
+          "name": "cjson_add_bool_should_fail_on_allocation_failure",
+          "path": "tests/cjson_add.c",
+          "start_line": 229,
+          "end_line": 240
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_number_should_fail_on_allocation_failure",
+          "name": "cjson_add_number_should_fail_on_allocation_failure",
+          "path": "tests/cjson_add.c",
+          "start_line": 268,
+          "end_line": 279
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_string_should_fail_on_allocation_failure",
+          "name": "cjson_add_string_should_fail_on_allocation_failure",
+          "path": "tests/cjson_add.c",
+          "start_line": 305,
+          "end_line": 316
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_raw_should_fail_on_allocation_failure",
+          "name": "cjson_add_raw_should_fail_on_allocation_failure",
+          "path": "tests/cjson_add.c",
+          "start_line": 342,
+          "end_line": 353
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 37,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_AddBoolToObject",
+          "name": "cJSON_AddBoolToObject",
+          "path": "cJSON.c",
+          "start_line": 2133,
+          "end_line": 2143
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_AddNumberToObject",
+          "name": "cJSON_AddNumberToObject",
+          "path": "cJSON.c",
+          "start_line": 2145,
+          "end_line": 2155
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_AddStringToObject",
+          "name": "cJSON_AddStringToObject",
+          "path": "cJSON.c",
+          "start_line": 2157,
+          "end_line": 2167
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_AddRawToObject",
+          "name": "cJSON_AddRawToObject",
+          "path": "cJSON.c",
+          "start_line": 2169,
+          "end_line": 2179
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 36,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_bool_should_fail_with_null_pointers",
+          "name": "cjson_add_bool_should_fail_with_null_pointers",
+          "path": "tests/cjson_add.c",
+          "start_line": 219,
+          "end_line": 227
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_number_should_fail_with_null_pointers",
+          "name": "cjson_add_number_should_fail_with_null_pointers",
+          "path": "tests/cjson_add.c",
+          "start_line": 258,
+          "end_line": 266
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_string_should_fail_with_null_pointers",
+          "name": "cjson_add_string_should_fail_with_null_pointers",
+          "path": "tests/cjson_add.c",
+          "start_line": 295,
+          "end_line": 303
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_raw_should_fail_with_null_pointers",
+          "name": "cjson_add_raw_should_fail_with_null_pointers",
+          "path": "tests/cjson_add.c",
+          "start_line": 332,
+          "end_line": 340
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 153,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_CreateIntArray",
+          "name": "cJSON_CreateIntArray",
+          "path": "cJSON.c",
+          "start_line": 2568,
+          "end_line": 2606
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_CreateDoubleArray",
+          "name": "cJSON_CreateDoubleArray",
+          "path": "cJSON.c",
+          "start_line": 2648,
+          "end_line": 2686
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_CreateStringArray",
+          "name": "cJSON_CreateStringArray",
+          "path": "cJSON.c",
+          "start_line": 2688,
+          "end_line": 2726
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 64,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.json_patch_tests.cjson_utils_should_pass_json_patch_test_tests",
+          "name": "cjson_utils_should_pass_json_patch_test_tests",
+          "path": "tests/json_patch_tests.c",
+          "start_line": 183,
+          "end_line": 198
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.json_patch_tests.cjson_utils_should_pass_json_patch_test_spec_tests",
+          "name": "cjson_utils_should_pass_json_patch_test_spec_tests",
+          "path": "tests/json_patch_tests.c",
+          "start_line": 200,
+          "end_line": 215
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.json_patch_tests.cjson_utils_should_pass_json_patch_test_cjson_utils_tests",
+          "name": "cjson_utils_should_pass_json_patch_test_cjson_utils_tests",
+          "path": "tests/json_patch_tests.c",
+          "start_line": 217,
+          "end_line": 232
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 33,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.unity.examples.example_1.src.ProductionCode.FindFunction_WhichIsBroken",
+          "name": "FindFunction_WhichIsBroken",
+          "path": "tests/unity/examples/example_1/src/ProductionCode.c",
+          "start_line": 11,
+          "end_line": 19
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.unity.examples.example_2.src.ProductionCode.FindFunction_WhichIsBroken",
+          "name": "FindFunction_WhichIsBroken",
+          "path": "tests/unity/examples/example_2/src/ProductionCode.c",
+          "start_line": 11,
+          "end_line": 19
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.unity.examples.example_3.src.ProductionCode.FindFunction_WhichIsBroken",
+          "name": "FindFunction_WhichIsBroken",
+          "path": "tests/unity/examples/example_3/src/ProductionCode.c",
+          "start_line": 11,
+          "end_line": 19
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 32,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_create_int_array_should_fail_on_allocation_failure",
+          "name": "cjson_create_int_array_should_fail_on_allocation_failure",
+          "path": "tests/cjson_add.c",
+          "start_line": 120,
+          "end_line": 129
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_create_float_array_should_fail_on_allocation_failure",
+          "name": "cjson_create_float_array_should_fail_on_allocation_failure",
+          "path": "tests/cjson_add.c",
+          "start_line": 131,
+          "end_line": 140
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_create_double_array_should_fail_on_allocation_failure",
+          "name": "cjson_create_double_array_should_fail_on_allocation_failure",
+          "path": "tests/cjson_add.c",
+          "start_line": 142,
+          "end_line": 151
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 19,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.unity.examples.example_1.src.ProductionCode2.ThisFunctionHasNotBeenTested",
+          "name": "ThisFunctionHasNotBeenTested",
+          "path": "tests/unity/examples/example_1/src/ProductionCode2.c",
+          "start_line": 4,
+          "end_line": 11
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.unity.examples.example_2.src.ProductionCode2.ThisFunctionHasNotBeenTested",
+          "name": "ThisFunctionHasNotBeenTested",
+          "path": "tests/unity/examples/example_2/src/ProductionCode2.c",
+          "start_line": 4,
+          "end_line": 11
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.unity.examples.example_3.src.ProductionCode2.ThisFunctionHasNotBeenTested",
+          "name": "ThisFunctionHasNotBeenTested",
+          "path": "tests/unity/examples/example_3/src/ProductionCode2.c",
+          "start_line": 4,
+          "end_line": 11
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 144,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.misc_tests.cjson_get_object_item_should_get_object_items",
+          "name": "cjson_get_object_item_should_get_object_items",
+          "path": "tests/misc_tests.c",
+          "start_line": 66,
+          "end_line": 95
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.misc_tests.cjson_get_object_item_case_sensitive_should_get_object_items",
+          "name": "cjson_get_object_item_case_sensitive_should_get_object_items",
+          "path": "tests/misc_tests.c",
+          "start_line": 97,
+          "end_line": 126
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 84,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON_Utils.cJSONUtils_ApplyPatches",
+          "name": "cJSONUtils_ApplyPatches",
+          "path": "cJSON_Utils.c",
+          "start_line": 1038,
+          "end_line": 1065
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON_Utils.cJSONUtils_ApplyPatchesCaseSensitive",
+          "name": "cJSONUtils_ApplyPatchesCaseSensitive",
+          "path": "cJSON_Utils.c",
+          "start_line": 1067,
+          "end_line": 1094
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 73,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_CreateString",
+          "name": "cJSON_CreateString",
+          "path": "cJSON.c",
+          "start_line": 2478,
+          "end_line": 2493
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_CreateRaw",
+          "name": "cJSON_CreateRaw",
+          "path": "cJSON.c",
+          "start_line": 2528,
+          "end_line": 2543
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 56,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON_Utils.cJSONUtils_GeneratePatches",
+          "name": "cJSONUtils_GeneratePatches",
+          "path": "cJSON_Utils.c",
+          "start_line": 1281,
+          "end_line": 1294
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON_Utils.cJSONUtils_GeneratePatchesCaseSensitive",
+          "name": "cJSONUtils_GeneratePatchesCaseSensitive",
+          "path": "cJSON_Utils.c",
+          "start_line": 1296,
+          "end_line": 1309
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 50,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_CreateObjectReference",
+          "name": "cJSON_CreateObjectReference",
+          "path": "cJSON.c",
+          "start_line": 2507,
+          "end_line": 2516
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_CreateArrayReference",
+          "name": "cJSON_CreateArrayReference",
+          "path": "cJSON.c",
+          "start_line": 2518,
+          "end_line": 2526
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 47,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "cjson.tests.unity.auto.unity_test_summary.UnityTestSummary.usage",
+          "name": "usage",
+          "path": "tests/unity/auto/unity_test_summary.py",
+          "start_line": 74,
+          "end_line": 83
+        },
+        {
+          "label": "Method",
+          "qualified_name": "cjson.tests.unity.auto.unity_to_junit.UnityTestSummary.usage",
+          "name": "usage",
+          "path": "tests/unity/auto/unity_to_junit.py",
+          "start_line": 111,
+          "end_line": 120
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 44,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.misc_tests.cjson_get_object_item_should_not_crash_with_array",
+          "name": "cjson_get_object_item_should_not_crash_with_array",
+          "path": "tests/misc_tests.c",
+          "start_line": 128,
+          "end_line": 138
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.misc_tests.cjson_get_object_item_case_sensitive_should_not_crash_with_array",
+          "name": "cjson_get_object_item_case_sensitive_should_not_crash_with_array",
+          "path": "tests/misc_tests.c",
+          "start_line": 140,
+          "end_line": 150
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 43,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_number.parse_number_should_parse_positive_reals",
+          "name": "parse_number_should_parse_positive_reals",
+          "path": "tests/parse_number.c",
+          "start_line": 79,
+          "end_line": 87
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_number.parse_number_should_parse_negative_reals",
+          "name": "parse_number_should_parse_negative_reals",
+          "path": "tests/parse_number.c",
+          "start_line": 89,
+          "end_line": 97
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 42,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.compare_double",
+          "name": "compare_double",
+          "path": "cJSON.c",
+          "start_line": 546,
+          "end_line": 550
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON_Utils.compare_double",
+          "name": "compare_double",
+          "path": "cJSON_Utils.c",
+          "start_line": 112,
+          "end_line": 116
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 36,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_array.parse_array_should_not_parse_non_arrays",
+          "name": "parse_array_should_not_parse_non_arrays",
+          "path": "tests/parse_array.c",
+          "start_line": 145,
+          "end_line": 154
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_object.parse_object_should_not_parse_non_objects",
+          "name": "parse_object_should_not_parse_non_objects",
+          "path": "tests/parse_object.c",
+          "start_line": 154,
+          "end_line": 163
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 25,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_number.parse_number_should_parse_negative_integers",
+          "name": "parse_number_should_parse_negative_integers",
+          "path": "tests/parse_number.c",
+          "start_line": 65,
+          "end_line": 70
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_number.parse_number_should_parse_positive_integers",
+          "name": "parse_number_should_parse_positive_integers",
+          "path": "tests/parse_number.c",
+          "start_line": 72,
+          "end_line": 77
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 22,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.readme_examples.create_monitor_should_create_a_monitor",
+          "name": "create_monitor_should_create_a_monitor",
+          "path": "tests/readme_examples.c",
+          "start_line": 217,
+          "end_line": 224
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.readme_examples.create_monitor_with_helpers_should_create_a_monitor",
+          "name": "create_monitor_with_helpers_should_create_a_monitor",
+          "path": "tests/readme_examples.c",
+          "start_line": 226,
+          "end_line": 233
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 20,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_DetachItemFromObject",
+          "name": "cJSON_DetachItemFromObject",
+          "path": "cJSON.c",
+          "start_line": 2256,
+          "end_line": 2261
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_DetachItemFromObjectCaseSensitive",
+          "name": "cJSON_DetachItemFromObjectCaseSensitive",
+          "path": "cJSON.c",
+          "start_line": 2263,
+          "end_line": 2268
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 19,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.unity.src.unity.UnityFloatToPtr",
+          "name": "UnityFloatToPtr",
+          "path": "tests/unity/src/unity.c",
+          "start_line": 1261,
+          "end_line": 1265
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.unity.src.unity.UnityDoubleToPtr",
+          "name": "UnityDoubleToPtr",
+          "path": "tests/unity/src/unity.c",
+          "start_line": 1269,
+          "end_line": 1273
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_Print",
+          "name": "cJSON_Print",
+          "path": "cJSON.c",
+          "start_line": 1264,
+          "end_line": 1267
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.cJSON.cJSON_PrintUnformatted",
+          "name": "cJSON_PrintUnformatted",
+          "path": "cJSON.c",
+          "start_line": 1269,
+          "end_line": 1272
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 165,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.main",
+          "name": "main",
+          "path": "tests/cjson_add.c",
+          "start_line": 425,
+          "end_line": 471
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.compare_tests.main",
+          "name": "main",
+          "path": "tests/compare_tests.c",
+          "start_line": 192,
+          "end_line": 208
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.json_patch_tests.main",
+          "name": "main",
+          "path": "tests/json_patch_tests.c",
+          "start_line": 234,
+          "end_line": 243
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.minify_tests.main",
+          "name": "main",
+          "path": "tests/minify_tests.c",
+          "start_line": 161,
+          "end_line": 174
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.misc_tests.main",
+          "name": "main",
+          "path": "tests/misc_tests.c",
+          "start_line": 752,
+          "end_line": 785
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.misc_utils_tests.main",
+          "name": "main",
+          "path": "tests/misc_utils_tests.c",
+          "start_line": 73,
+          "end_line": 80
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.old_utils_tests.main",
+          "name": "main",
+          "path": "tests/old_utils_tests.c",
+          "start_line": 214,
+          "end_line": 225
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_examples.main",
+          "name": "main",
+          "path": "tests/parse_examples.c",
+          "start_line": 280,
+          "end_line": 299
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_hex4.main",
+          "name": "main",
+          "path": "tests/parse_hex4.c",
+          "start_line": 67,
+          "end_line": 73
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_with_opts.main",
+          "name": "main",
+          "path": "tests/parse_with_opts.c",
+          "start_line": 100,
+          "end_line": 112
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.print_array.main",
+          "name": "main",
+          "path": "tests/print_array.c",
+          "start_line": 90,
+          "end_line": 100
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.print_number.main",
+          "name": "main",
+          "path": "tests/print_number.c",
+          "start_line": 112,
+          "end_line": 125
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.print_object.main",
+          "name": "main",
+          "path": "tests/print_object.c",
+          "start_line": 91,
+          "end_line": 101
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.print_string.main",
+          "name": "main",
+          "path": "tests/print_string.c",
+          "start_line": 68,
+          "end_line": 78
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.print_value.main",
+          "name": "main",
+          "path": "tests/print_value.c",
+          "start_line": 93,
+          "end_line": 107
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.readme_examples.main",
+          "name": "main",
+          "path": "tests/readme_examples.c",
+          "start_line": 249,
+          "end_line": 258
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "cjson.tests.json_patch_tests.main",
+          "cjson.tests.print_array.main",
+          "cjson.tests.print_object.main",
+          "cjson.tests.print_string.main",
+          "cjson.tests.readme_examples.main"
+        ],
+        [
+          "cjson.tests.minify_tests.main",
+          "cjson.tests.print_value.main"
+        ],
+        [
+          "cjson.tests.parse_with_opts.main",
+          "cjson.tests.print_number.main"
+        ]
+      ],
+      "links": [
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.compare_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.json_patch_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.minify_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.misc_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.misc_utils_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.old_utils_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.parse_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.parse_hex4.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.parse_with_opts.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.print_array.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.print_number.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.print_object.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.print_string.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.print_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.main",
+          "second": "cjson.tests.readme_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.main",
+          "second": "cjson.tests.json_patch_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.main",
+          "second": "cjson.tests.minify_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.main",
+          "second": "cjson.tests.misc_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.main",
+          "second": "cjson.tests.misc_utils_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.main",
+          "second": "cjson.tests.old_utils_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.main",
+          "second": "cjson.tests.parse_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.main",
+          "second": "cjson.tests.parse_hex4.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.main",
+          "second": "cjson.tests.parse_with_opts.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.main",
+          "second": "cjson.tests.print_array.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.main",
+          "second": "cjson.tests.print_number.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.main",
+          "second": "cjson.tests.print_object.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.main",
+          "second": "cjson.tests.print_string.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.main",
+          "second": "cjson.tests.print_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.main",
+          "second": "cjson.tests.readme_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.json_patch_tests.main",
+          "second": "cjson.tests.minify_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.json_patch_tests.main",
+          "second": "cjson.tests.misc_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.json_patch_tests.main",
+          "second": "cjson.tests.misc_utils_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.json_patch_tests.main",
+          "second": "cjson.tests.old_utils_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.json_patch_tests.main",
+          "second": "cjson.tests.parse_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.json_patch_tests.main",
+          "second": "cjson.tests.parse_hex4.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.json_patch_tests.main",
+          "second": "cjson.tests.parse_with_opts.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.json_patch_tests.main",
+          "second": "cjson.tests.print_number.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.json_patch_tests.main",
+          "second": "cjson.tests.print_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.minify_tests.main",
+          "second": "cjson.tests.misc_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.minify_tests.main",
+          "second": "cjson.tests.misc_utils_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.minify_tests.main",
+          "second": "cjson.tests.old_utils_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.minify_tests.main",
+          "second": "cjson.tests.parse_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.minify_tests.main",
+          "second": "cjson.tests.parse_hex4.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.minify_tests.main",
+          "second": "cjson.tests.parse_with_opts.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.minify_tests.main",
+          "second": "cjson.tests.print_array.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.minify_tests.main",
+          "second": "cjson.tests.print_number.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.minify_tests.main",
+          "second": "cjson.tests.print_object.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.minify_tests.main",
+          "second": "cjson.tests.print_string.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.minify_tests.main",
+          "second": "cjson.tests.readme_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_tests.main",
+          "second": "cjson.tests.misc_utils_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_tests.main",
+          "second": "cjson.tests.old_utils_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_tests.main",
+          "second": "cjson.tests.parse_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_tests.main",
+          "second": "cjson.tests.parse_hex4.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_tests.main",
+          "second": "cjson.tests.parse_with_opts.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_tests.main",
+          "second": "cjson.tests.print_array.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_tests.main",
+          "second": "cjson.tests.print_number.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_tests.main",
+          "second": "cjson.tests.print_object.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_tests.main",
+          "second": "cjson.tests.print_string.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_tests.main",
+          "second": "cjson.tests.print_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_tests.main",
+          "second": "cjson.tests.readme_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_utils_tests.main",
+          "second": "cjson.tests.old_utils_tests.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_utils_tests.main",
+          "second": "cjson.tests.parse_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_utils_tests.main",
+          "second": "cjson.tests.parse_hex4.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_utils_tests.main",
+          "second": "cjson.tests.parse_with_opts.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_utils_tests.main",
+          "second": "cjson.tests.print_array.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_utils_tests.main",
+          "second": "cjson.tests.print_number.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_utils_tests.main",
+          "second": "cjson.tests.print_object.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_utils_tests.main",
+          "second": "cjson.tests.print_string.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_utils_tests.main",
+          "second": "cjson.tests.print_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.misc_utils_tests.main",
+          "second": "cjson.tests.readme_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.old_utils_tests.main",
+          "second": "cjson.tests.parse_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.old_utils_tests.main",
+          "second": "cjson.tests.parse_hex4.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.old_utils_tests.main",
+          "second": "cjson.tests.parse_with_opts.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.old_utils_tests.main",
+          "second": "cjson.tests.print_array.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.old_utils_tests.main",
+          "second": "cjson.tests.print_number.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.old_utils_tests.main",
+          "second": "cjson.tests.print_object.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.old_utils_tests.main",
+          "second": "cjson.tests.print_string.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.old_utils_tests.main",
+          "second": "cjson.tests.print_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.old_utils_tests.main",
+          "second": "cjson.tests.readme_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_examples.main",
+          "second": "cjson.tests.parse_hex4.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_examples.main",
+          "second": "cjson.tests.parse_with_opts.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_examples.main",
+          "second": "cjson.tests.print_array.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_examples.main",
+          "second": "cjson.tests.print_number.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_examples.main",
+          "second": "cjson.tests.print_object.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_examples.main",
+          "second": "cjson.tests.print_string.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_examples.main",
+          "second": "cjson.tests.print_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_examples.main",
+          "second": "cjson.tests.readme_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_hex4.main",
+          "second": "cjson.tests.parse_with_opts.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_hex4.main",
+          "second": "cjson.tests.print_array.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_hex4.main",
+          "second": "cjson.tests.print_number.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_hex4.main",
+          "second": "cjson.tests.print_object.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_hex4.main",
+          "second": "cjson.tests.print_string.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_hex4.main",
+          "second": "cjson.tests.print_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_hex4.main",
+          "second": "cjson.tests.readme_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_with_opts.main",
+          "second": "cjson.tests.print_array.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_with_opts.main",
+          "second": "cjson.tests.print_object.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_with_opts.main",
+          "second": "cjson.tests.print_string.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_with_opts.main",
+          "second": "cjson.tests.print_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_with_opts.main",
+          "second": "cjson.tests.readme_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_array.main",
+          "second": "cjson.tests.print_number.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_array.main",
+          "second": "cjson.tests.print_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_number.main",
+          "second": "cjson.tests.print_object.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_number.main",
+          "second": "cjson.tests.print_string.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_number.main",
+          "second": "cjson.tests.print_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_number.main",
+          "second": "cjson.tests.readme_examples.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_object.main",
+          "second": "cjson.tests.print_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_string.main",
+          "second": "cjson.tests.print_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_value.main",
+          "second": "cjson.tests.readme_examples.main",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 101,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.compare_tests.cjson_compare_should_compare_null_pointer_as_not_equal",
+          "name": "cjson_compare_should_compare_null_pointer_as_not_equal",
+          "path": "tests/compare_tests.c",
+          "start_line": 46,
+          "end_line": 50
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.compare_tests.cjson_compare_should_compare_numbers",
+          "name": "cjson_compare_should_compare_numbers",
+          "path": "tests/compare_tests.c",
+          "start_line": 61,
+          "end_line": 73
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.compare_tests.cjson_compare_should_compare_booleans",
+          "name": "cjson_compare_should_compare_booleans",
+          "path": "tests/compare_tests.c",
+          "start_line": 75,
+          "end_line": 90
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.compare_tests.cjson_compare_should_compare_null",
+          "name": "cjson_compare_should_compare_null",
+          "path": "tests/compare_tests.c",
+          "start_line": 92,
+          "end_line": 99
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.compare_tests.cjson_compare_should_compare_strings",
+          "name": "cjson_compare_should_compare_strings",
+          "path": "tests/compare_tests.c",
+          "start_line": 112,
+          "end_line": 119
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.compare_tests.cjson_compare_should_compare_arrays",
+          "name": "cjson_compare_should_compare_arrays",
+          "path": "tests/compare_tests.c",
+          "start_line": 141,
+          "end_line": 158
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.compare_tests.cjson_compare_should_compare_objects",
+          "name": "cjson_compare_should_compare_objects",
+          "path": "tests/compare_tests.c",
+          "start_line": 160,
+          "end_line": 190
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "cjson.tests.compare_tests.cjson_compare_should_compare_numbers",
+          "cjson.tests.compare_tests.cjson_compare_should_compare_booleans",
+          "cjson.tests.compare_tests.cjson_compare_should_compare_objects"
+        ],
+        [
+          "cjson.tests.compare_tests.cjson_compare_should_compare_null",
+          "cjson.tests.compare_tests.cjson_compare_should_compare_strings"
+        ]
+      ],
+      "links": [
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_null_pointer_as_not_equal",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_numbers",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_null_pointer_as_not_equal",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_booleans",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_null_pointer_as_not_equal",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_null",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_null_pointer_as_not_equal",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_strings",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_null_pointer_as_not_equal",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_arrays",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_null_pointer_as_not_equal",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_objects",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_numbers",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_null",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_numbers",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_strings",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_numbers",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_arrays",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_booleans",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_null",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_booleans",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_strings",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_booleans",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_arrays",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_null",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_arrays",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_null",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_objects",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_strings",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_arrays",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_strings",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_objects",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.compare_tests.cjson_compare_should_compare_arrays",
+          "second": "cjson.tests.compare_tests.cjson_compare_should_compare_objects",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 37,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.print_array.print_array_should_print_arrays_with_one_element",
+          "name": "print_array_should_print_arrays_with_one_element",
+          "path": "tests/print_array.c",
+          "start_line": 75,
+          "end_line": 82
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.print_number.print_number_should_print_negative_integers",
+          "name": "print_number_should_print_negative_integers",
+          "path": "tests/print_number.c",
+          "start_line": 70,
+          "end_line": 75
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.print_number.print_number_should_print_positive_integers",
+          "name": "print_number_should_print_positive_integers",
+          "path": "tests/print_number.c",
+          "start_line": 77,
+          "end_line": 82
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.print_number.print_number_should_print_positive_reals",
+          "name": "print_number_should_print_positive_reals",
+          "path": "tests/print_number.c",
+          "start_line": 84,
+          "end_line": 92
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.print_number.print_number_should_print_negative_reals",
+          "name": "print_number_should_print_negative_reals",
+          "path": "tests/print_number.c",
+          "start_line": 94,
+          "end_line": 101
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.print_object.print_object_should_print_objects_with_one_element",
+          "name": "print_object_should_print_objects_with_one_element",
+          "path": "tests/print_object.c",
+          "start_line": 76,
+          "end_line": 83
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "cjson.tests.print_array.print_array_should_print_arrays_with_one_element",
+          "cjson.tests.print_object.print_object_should_print_objects_with_one_element"
+        ],
+        [
+          "cjson.tests.print_number.print_number_should_print_negative_integers",
+          "cjson.tests.print_number.print_number_should_print_positive_integers"
+        ]
+      ],
+      "links": [
+        {
+          "first": "cjson.tests.print_array.print_array_should_print_arrays_with_one_element",
+          "second": "cjson.tests.print_number.print_number_should_print_negative_integers",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_array.print_array_should_print_arrays_with_one_element",
+          "second": "cjson.tests.print_number.print_number_should_print_positive_integers",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_array.print_array_should_print_arrays_with_one_element",
+          "second": "cjson.tests.print_number.print_number_should_print_positive_reals",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_array.print_array_should_print_arrays_with_one_element",
+          "second": "cjson.tests.print_number.print_number_should_print_negative_reals",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_number.print_number_should_print_negative_integers",
+          "second": "cjson.tests.print_number.print_number_should_print_positive_reals",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_number.print_number_should_print_negative_integers",
+          "second": "cjson.tests.print_number.print_number_should_print_negative_reals",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_number.print_number_should_print_negative_integers",
+          "second": "cjson.tests.print_object.print_object_should_print_objects_with_one_element",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_number.print_number_should_print_positive_integers",
+          "second": "cjson.tests.print_number.print_number_should_print_positive_reals",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_number.print_number_should_print_positive_integers",
+          "second": "cjson.tests.print_number.print_number_should_print_negative_reals",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_number.print_number_should_print_positive_integers",
+          "second": "cjson.tests.print_object.print_object_should_print_objects_with_one_element",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_number.print_number_should_print_positive_reals",
+          "second": "cjson.tests.print_number.print_number_should_print_negative_reals",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_number.print_number_should_print_positive_reals",
+          "second": "cjson.tests.print_object.print_object_should_print_objects_with_one_element",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.print_number.print_number_should_print_negative_reals",
+          "second": "cjson.tests.print_object.print_object_should_print_objects_with_one_element",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.8,
+      "max_similarity": 1.0,
+      "node_count": 61,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.minify_tests.cjson_minify_should_remove_single_line_comments",
+          "name": "cjson_minify_should_remove_single_line_comments",
+          "path": "tests/minify_tests.c",
+          "start_line": 44,
+          "end_line": 56
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.minify_tests.cjson_minify_should_not_modify_strings",
+          "name": "cjson_minify_should_not_modify_strings",
+          "path": "tests/minify_tests.c",
+          "start_line": 86,
+          "end_line": 98
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.minify_tests.cjson_minify_should_remove_spaces",
+          "name": "cjson_minify_should_remove_spaces",
+          "path": "tests/minify_tests.c",
+          "start_line": 58,
+          "end_line": 70
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.minify_tests.cjson_minify_should_remove_multiline_comments",
+          "name": "cjson_minify_should_remove_multiline_comments",
+          "path": "tests/minify_tests.c",
+          "start_line": 72,
+          "end_line": 84
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.minify_tests.cjson_minify_should_minify_json",
+          "name": "cjson_minify_should_minify_json",
+          "path": "tests/minify_tests.c",
+          "start_line": 100,
+          "end_line": 153
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "cjson.tests.minify_tests.cjson_minify_should_remove_single_line_comments",
+          "cjson.tests.minify_tests.cjson_minify_should_remove_spaces",
+          "cjson.tests.minify_tests.cjson_minify_should_remove_multiline_comments"
+        ]
+      ],
+      "links": [
+        {
+          "first": "cjson.tests.minify_tests.cjson_minify_should_remove_single_line_comments",
+          "second": "cjson.tests.minify_tests.cjson_minify_should_not_modify_strings",
+          "similarity": 0.8
+        },
+        {
+          "first": "cjson.tests.minify_tests.cjson_minify_should_remove_spaces",
+          "second": "cjson.tests.minify_tests.cjson_minify_should_not_modify_strings",
+          "similarity": 0.8
+        },
+        {
+          "first": "cjson.tests.minify_tests.cjson_minify_should_remove_multiline_comments",
+          "second": "cjson.tests.minify_tests.cjson_minify_should_not_modify_strings",
+          "similarity": 0.8
+        },
+        {
+          "first": "cjson.tests.minify_tests.cjson_minify_should_not_modify_strings",
+          "second": "cjson.tests.minify_tests.cjson_minify_should_minify_json",
+          "similarity": 0.8
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 55,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_array.main",
+          "name": "main",
+          "path": "tests/parse_array.c",
+          "start_line": 156,
+          "end_line": 167
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_number.main",
+          "name": "main",
+          "path": "tests/parse_number.c",
+          "start_line": 99,
+          "end_line": 110
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_object.main",
+          "name": "main",
+          "path": "tests/parse_object.c",
+          "start_line": 165,
+          "end_line": 176
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_string.main",
+          "name": "main",
+          "path": "tests/parse_string.c",
+          "start_line": 122,
+          "end_line": 135
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_value.main",
+          "name": "main",
+          "path": "tests/parse_value.c",
+          "start_line": 99,
+          "end_line": 112
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "cjson.tests.parse_array.main",
+          "cjson.tests.parse_object.main"
+        ]
+      ],
+      "links": [
+        {
+          "first": "cjson.tests.parse_array.main",
+          "second": "cjson.tests.parse_number.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_array.main",
+          "second": "cjson.tests.parse_string.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_array.main",
+          "second": "cjson.tests.parse_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_number.main",
+          "second": "cjson.tests.parse_object.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_number.main",
+          "second": "cjson.tests.parse_string.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_number.main",
+          "second": "cjson.tests.parse_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_object.main",
+          "second": "cjson.tests.parse_string.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_object.main",
+          "second": "cjson.tests.parse_value.main",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_string.main",
+          "second": "cjson.tests.parse_value.main",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 43,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_array.assert_is_array",
+          "name": "assert_is_array",
+          "path": "tests/parse_array.c",
+          "start_line": 33,
+          "end_line": 43
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_number.assert_is_number",
+          "name": "assert_is_number",
+          "path": "tests/parse_number.c",
+          "start_line": 33,
+          "end_line": 44
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_object.assert_is_object",
+          "name": "assert_is_object",
+          "path": "tests/parse_object.c",
+          "start_line": 33,
+          "end_line": 43
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_string.assert_is_string",
+          "name": "assert_is_string",
+          "path": "tests/parse_string.c",
+          "start_line": 33,
+          "end_line": 44
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_value.assert_is_value",
+          "name": "assert_is_value",
+          "path": "tests/parse_value.c",
+          "start_line": 33,
+          "end_line": 42
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "cjson.tests.parse_array.assert_is_array",
+          "cjson.tests.parse_object.assert_is_object"
+        ],
+        [
+          "cjson.tests.parse_number.assert_is_number",
+          "cjson.tests.parse_string.assert_is_string"
+        ]
+      ],
+      "links": [
+        {
+          "first": "cjson.tests.parse_array.assert_is_array",
+          "second": "cjson.tests.parse_number.assert_is_number",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_array.assert_is_array",
+          "second": "cjson.tests.parse_string.assert_is_string",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_array.assert_is_array",
+          "second": "cjson.tests.parse_value.assert_is_value",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_number.assert_is_number",
+          "second": "cjson.tests.parse_object.assert_is_object",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_number.assert_is_number",
+          "second": "cjson.tests.parse_value.assert_is_value",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_object.assert_is_object",
+          "second": "cjson.tests.parse_string.assert_is_string",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_object.assert_is_object",
+          "second": "cjson.tests.parse_value.assert_is_value",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_string.assert_is_string",
+          "second": "cjson.tests.parse_value.assert_is_value",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.857,
+      "max_similarity": 1.0,
+      "node_count": 86,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_number_should_add_number",
+          "name": "cjson_add_number_should_add_number",
+          "path": "tests/cjson_add.c",
+          "start_line": 242,
+          "end_line": 256
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_string_should_add_string",
+          "name": "cjson_add_string_should_add_string",
+          "path": "tests/cjson_add.c",
+          "start_line": 281,
+          "end_line": 293
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_bool_should_add_bool",
+          "name": "cjson_add_bool_should_add_bool",
+          "path": "tests/cjson_add.c",
+          "start_line": 200,
+          "end_line": 217
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.cjson_add.cjson_add_raw_should_add_raw",
+          "name": "cjson_add_raw_should_add_raw",
+          "path": "tests/cjson_add.c",
+          "start_line": 318,
+          "end_line": 330
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "cjson.tests.cjson_add.cjson_add_string_should_add_string",
+          "cjson.tests.cjson_add.cjson_add_raw_should_add_raw"
+        ]
+      ],
+      "links": [
+        {
+          "first": "cjson.tests.cjson_add.cjson_add_number_should_add_number",
+          "second": "cjson.tests.cjson_add.cjson_add_string_should_add_string",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.cjson_add_number_should_add_number",
+          "second": "cjson.tests.cjson_add.cjson_add_raw_should_add_raw",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.cjson_add.cjson_add_bool_should_add_bool",
+          "second": "cjson.tests.cjson_add.cjson_add_number_should_add_number",
+          "similarity": 0.857
+        },
+        {
+          "first": "cjson.tests.cjson_add.cjson_add_bool_should_add_bool",
+          "second": "cjson.tests.cjson_add.cjson_add_string_should_add_string",
+          "similarity": 0.857
+        },
+        {
+          "first": "cjson.tests.cjson_add.cjson_add_bool_should_add_bool",
+          "second": "cjson.tests.cjson_add.cjson_add_raw_should_add_raw",
+          "similarity": 0.857
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 75,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_array.assert_not_array",
+          "name": "assert_not_array",
+          "path": "tests/parse_array.c",
+          "start_line": 45,
+          "end_line": 54
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_object.assert_not_object",
+          "name": "assert_not_object",
+          "path": "tests/parse_object.c",
+          "start_line": 53,
+          "end_line": 63
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_array.assert_parse_array",
+          "name": "assert_parse_array",
+          "path": "tests/parse_array.c",
+          "start_line": 56,
+          "end_line": 65
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_object.assert_parse_object",
+          "name": "assert_parse_object",
+          "path": "tests/parse_object.c",
+          "start_line": 65,
+          "end_line": 74
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "cjson.tests.parse_array.assert_not_array",
+          "cjson.tests.parse_array.assert_parse_array",
+          "cjson.tests.parse_object.assert_parse_object"
+        ]
+      ],
+      "links": [
+        {
+          "first": "cjson.tests.parse_array.assert_not_array",
+          "second": "cjson.tests.parse_object.assert_not_object",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_array.assert_parse_array",
+          "second": "cjson.tests.parse_object.assert_not_object",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_object.assert_not_object",
+          "second": "cjson.tests.parse_object.assert_parse_object",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 31,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_array.parse_array_should_parse_empty_arrays",
+          "name": "parse_array_should_parse_empty_arrays",
+          "path": "tests/parse_array.c",
+          "start_line": 67,
+          "end_line": 74
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_object.parse_object_should_parse_empty_objects",
+          "name": "parse_object_should_parse_empty_objects",
+          "path": "tests/parse_object.c",
+          "start_line": 76,
+          "end_line": 85
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_string.parse_string_should_not_parse_non_strings",
+          "name": "parse_string_should_not_parse_non_strings",
+          "path": "tests/parse_string.c",
+          "start_line": 93,
+          "end_line": 99
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.parse_string.parse_string_should_not_parse_invalid_backslash",
+          "name": "parse_string_should_not_parse_invalid_backslash",
+          "path": "tests/parse_string.c",
+          "start_line": 101,
+          "end_line": 107
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "cjson.tests.parse_array.parse_array_should_parse_empty_arrays",
+          "cjson.tests.parse_string.parse_string_should_not_parse_non_strings",
+          "cjson.tests.parse_string.parse_string_should_not_parse_invalid_backslash"
+        ]
+      ],
+      "links": [
+        {
+          "first": "cjson.tests.parse_array.parse_array_should_parse_empty_arrays",
+          "second": "cjson.tests.parse_object.parse_object_should_parse_empty_objects",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_object.parse_object_should_parse_empty_objects",
+          "second": "cjson.tests.parse_string.parse_string_should_not_parse_non_strings",
+          "similarity": 1.0
+        },
+        {
+          "first": "cjson.tests.parse_object.parse_object_should_parse_empty_objects",
+          "second": "cjson.tests.parse_string.parse_string_should_not_parse_invalid_backslash",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.857,
+      "max_similarity": 1.0,
+      "node_count": 260,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.print_array.assert_print_array",
+          "name": "assert_print_array",
+          "path": "tests/print_array.c",
+          "start_line": 27,
+          "end_line": 68
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.print_value.assert_print_value",
+          "name": "assert_print_value",
+          "path": "tests/print_value.c",
+          "start_line": 31,
+          "end_line": 55
+        },
+        {
+          "label": "Function",
+          "qualified_name": "cjson.tests.print_object.assert_print_object",
+          "name": "assert_print_object",
+          "path": "tests/print_object.c",
+          "start_line": 27,
+          "end_line": 69
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "cjson.tests.print_array.assert_print_array",
+          "cjson.tests.print_object.assert_print_object"
+        ]
+      ],
+      "links": [
+        {
+          "first": "cjson.tests.print_array.assert_print_array",
+          "second": "cjson.tests.print_value.assert_print_value",
+          "similarity": 0.857
+        },
+        {
+          "first": "cjson.tests.print_object.assert_print_object",
+          "second": "cjson.tests.print_value.assert_print_value",
+          "similarity": 0.857
+        }
+      ]
+    }
+  ],
+  "skipped_symbols": 99,
+  "truncated": false
+}
+--- stderr

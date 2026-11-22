@@ -1,0 +1,19 @@
+> tools/call definition {"qualified_name": "equatable.lib.src.equatable.Equatable.toString"}
+isError: false
+--- text
+{
+  "label": "Method",
+  "qualified_name": "equatable.lib.src.equatable.Equatable.toString",
+  "path": "lib/src/equatable.dart",
+  "start_line": 55,
+  "end_line": 61,
+  "start_col": 2,
+  "name_line": 56,
+  "decorators": [
+    "@override"
+  ],
+  "name": "toString",
+  "docstring": null,
+  "source": "@override\n  String toString() {\n    if (stringify ?? EquatableConfig.stringify) {\n      return mapPropsToString(runtimeType, props);\n    }\n    return '$runtimeType';\n  }",
+  "found": true
+}

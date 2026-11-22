@@ -1,0 +1,12 @@
+$ cgr -q duplicates --project itsdangerous
+status: 0
+--- stdout
+                                                             Duplicate Code Groups (itsdangerous)                                                             
+┏━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Group ┃ Kind  ┃ Similarity ┃ Member                                                                          ┃ Location                                    ┃
+┡━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ 1     │ exact │       100% │ tests.test_itsdangerous.test_timed.TestTimestampSigner.test_timestamp_missing   │ tests/test_itsdangerous/test_timed.py:49-57 │
+│       │       │            │ tests.test_itsdangerous.test_timed.TestTimestampSigner.test_malformed_timestamp │ tests/test_itsdangerous/test_timed.py:59-67 │
+└───────┴───────┴────────────┴─────────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────┘
+1 duplicate group(s) covering 2 function(s).
+--- stderr

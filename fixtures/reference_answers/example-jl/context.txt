@@ -1,0 +1,37 @@
+$ cgr -q context example-jl.src.Example.Example.hello --budget 1500 --project example-jl --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "target": "example-jl.src.Example.Example.hello",
+  "resolved": "example-jl.src.Example.Example.hello",
+  "budget_tokens": 1500,
+  "used_tokens": 162,
+  "pieces": [
+    {
+      "qualified_name": "example-jl.src.Example.Example.hello",
+      "file": "src/Example.jl",
+      "span": [
+        9,
+        9
+      ],
+      "why_included": "target",
+      "source": "hello(who::String) = \"Hello, $who\"",
+      "tokens": 81
+    },
+    {
+      "qualified_name": "example-jl.test.runtests",
+      "file": "test/runtests.jl",
+      "span": [
+        3,
+        3
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "@test hello(\"Julia\") == \"Hello, Julia\"",
+      "tokens": 81
+    }
+  ],
+  "omitted": [],
+  "omitted_count": 0,
+  "truncated": false
+}
+--- stderr

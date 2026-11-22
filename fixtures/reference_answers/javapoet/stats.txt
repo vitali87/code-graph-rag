@@ -1,0 +1,46 @@
+$ cgr -q stats --project javapoet
+status: 0
+--- stdout
+Scoped to: javapoet
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ Method      │   829 │
+│ Class       │    87 │
+│ Section     │    62 │
+│ File        │    49 │
+│ Module      │    43 │
+│ Function    │    24 │
+│ Folder      │    12 │
+│ Interface   │     5 │
+│ Enum        │     3 │
+│ Project     │     1 │
+├─────────────┼───────┤
+│ Total Nodes │ 1,115 │
+└─────────────┴───────┘
+
+    Relationship Statistics    
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Relationship Type   ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ CALLS               │ 1,466 │
+│ DEFINES_METHOD      │   829 │
+│ IMPORTS             │   540 │
+│ RETURNS             │   285 │
+│ ACCEPTS             │   167 │
+│ DEFINES             │   119 │
+│ INSTANTIATES        │   117 │
+│ CONTAINS_SECTION    │    62 │
+│ CONTAINS_FILE       │    49 │
+│ CONTAINS_MODULE     │    43 │
+│ OVERRIDES           │    20 │
+│ INHERITS            │    13 │
+│ CONTAINS_FOLDER     │    12 │
+│ IMPLEMENTS          │     6 │
+│ REFERENCES          │     5 │
+├─────────────────────┼───────┤
+│ Total Relationships │ 3,733 │
+└─────────────────────┴───────┘
+--- stderr
+Fetching graph statistics...

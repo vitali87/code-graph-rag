@@ -1,0 +1,737 @@
+$ cgr -q duplicates --project php-diff --format json
+status: 0
+--- stdout
+{
+  "groups": [
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 37,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testNoLinebreakEnd",
+          "name": "testNoLinebreakEnd",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 58,
+          "end_line": 64
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testInvalidStartWithoutHeader",
+          "name": "testInvalidStartWithoutHeader",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 66,
+          "end_line": 72
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testInvalidStartHeader1",
+          "name": "testInvalidStartHeader1",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 74,
+          "end_line": 80
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testInvalidStartHeader2",
+          "name": "testInvalidStartHeader2",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 82,
+          "end_line": 88
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testInvalidLine1",
+          "name": "testInvalidLine1",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 122,
+          "end_line": 136
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testInvalidLine2",
+          "name": "testInvalidLine2",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 138,
+          "end_line": 151
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testHunkInvalidFormat",
+          "name": "testHunkInvalidFormat",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 153,
+          "end_line": 166
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testHunkOverlapFrom",
+          "name": "testHunkOverlapFrom",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 168,
+          "end_line": 184
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testHunkOverlapTo",
+          "name": "testHunkOverlapTo",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 186,
+          "end_line": 202
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testExpectHunk1",
+          "name": "testExpectHunk1",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 204,
+          "end_line": 218
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testMisplacedLineAfterComments1",
+          "name": "testMisplacedLineAfterComments1",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 236,
+          "end_line": 252
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testMisplacedLineAfterComments2",
+          "name": "testMisplacedLineAfterComments2",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 254,
+          "end_line": 269
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testMisplacedLineAfterComments3",
+          "name": "testMisplacedLineAfterComments3",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 271,
+          "end_line": 286
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testMisplacedComment",
+          "name": "testMisplacedComment",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 288,
+          "end_line": 297
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testFromAfterClose",
+          "name": "testFromAfterClose",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 317,
+          "end_line": 332
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testSameAfterFromClose",
+          "name": "testSameAfterFromClose",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 334,
+          "end_line": 349
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testToAfterClose",
+          "name": "testToAfterClose",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 351,
+          "end_line": 366
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testSameAfterToClose",
+          "name": "testSameAfterToClose",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 368,
+          "end_line": 383
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 39,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testInvalidStartHeader3",
+          "name": "testInvalidStartHeader3",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 90,
+          "end_line": 104
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testInvalidStartHeader4",
+          "name": "testInvalidStartHeader4",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 106,
+          "end_line": 120
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testUnexpectedEOFFromMissingLines",
+          "name": "testUnexpectedEOFFromMissingLines",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 385,
+          "end_line": 399
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testUnexpectedEOFToMissingLines",
+          "name": "testUnexpectedEOFToMissingLines",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 401,
+          "end_line": 415
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Utils.UnifiedDiffAssertTraitTest.UnifiedDiffAssertTraitTest.testUnexpectedEOFBothFromAndToMissingLines",
+          "name": "testUnexpectedEOFBothFromAndToMissingLines",
+          "path": "tests/Utils/UnifiedDiffAssertTraitTest.php",
+          "start_line": 417,
+          "end_line": 431
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.ChunkTest.ChunkTest.testHasStart",
+          "name": "testHasStart",
+          "path": "tests/ChunkTest.php",
+          "start_line": 27,
+          "end_line": 30
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.ChunkTest.ChunkTest.testHasStartRange",
+          "name": "testHasStartRange",
+          "path": "tests/ChunkTest.php",
+          "start_line": 32,
+          "end_line": 35
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.ChunkTest.ChunkTest.testHasEnd",
+          "name": "testHasEnd",
+          "path": "tests/ChunkTest.php",
+          "start_line": 37,
+          "end_line": 40
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.ChunkTest.ChunkTest.testHasEndRange",
+          "name": "testHasEndRange",
+          "path": "tests/ChunkTest.php",
+          "start_line": 42,
+          "end_line": 45
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.LineTest.LineTest.testHasContent",
+          "name": "testHasContent",
+          "path": "tests/LineTest.php",
+          "start_line": 47,
+          "end_line": 50
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 23,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.DifferTest.DifferTest.testArrayRepresentationOfDiffCanBeRenderedUsingTimeEfficientLcsImplementation",
+          "name": "testArrayRepresentationOfDiffCanBeRenderedUsingTimeEfficientLcsImplementation",
+          "path": "tests/DifferTest.php",
+          "start_line": 329,
+          "end_line": 333
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.DifferTest.DifferTest.testTextRepresentationOfDiffCanBeRenderedUsingTimeEfficientLcsImplementation",
+          "name": "testTextRepresentationOfDiffCanBeRenderedUsingTimeEfficientLcsImplementation",
+          "path": "tests/DifferTest.php",
+          "start_line": 335,
+          "end_line": 339
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.DifferTest.DifferTest.testArrayRepresentationOfDiffCanBeRenderedUsingMemoryEfficientLcsImplementation",
+          "name": "testArrayRepresentationOfDiffCanBeRenderedUsingMemoryEfficientLcsImplementation",
+          "path": "tests/DifferTest.php",
+          "start_line": 341,
+          "end_line": 345
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.DifferTest.DifferTest.testTextRepresentationOfDiffCanBeRenderedUsingMemoryEfficientLcsImplementation",
+          "name": "testTextRepresentationOfDiffCanBeRenderedUsingMemoryEfficientLcsImplementation",
+          "path": "tests/DifferTest.php",
+          "start_line": 347,
+          "end_line": 351
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 58,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.LineTest.LineTest.testCanBeOfTypeAdded",
+          "name": "testCanBeOfTypeAdded",
+          "path": "tests/LineTest.php",
+          "start_line": 20,
+          "end_line": 27
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.LineTest.LineTest.testCanBeOfTypeRemoved",
+          "name": "testCanBeOfTypeRemoved",
+          "path": "tests/LineTest.php",
+          "start_line": 29,
+          "end_line": 36
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.LineTest.LineTest.testCanBeOfTypeUnchanged",
+          "name": "testCanBeOfTypeUnchanged",
+          "path": "tests/LineTest.php",
+          "start_line": 38,
+          "end_line": 45
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 86,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.testIntegrationUsingPHPFileInVendorGitApply",
+          "name": "testIntegrationUsingPHPFileInVendorGitApply",
+          "path": "tests/Output/Integration/StrictUnifiedDiffOutputBuilderIntegrationTest.php",
+          "start_line": 107,
+          "end_line": 123
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.testIntegrationUsingPHPFileInVendorPatch",
+          "name": "testIntegrationUsingPHPFileInVendorPatch",
+          "path": "tests/Output/Integration/StrictUnifiedDiffOutputBuilderIntegrationTest.php",
+          "start_line": 125,
+          "end_line": 141
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 72,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.setDiffFileHeader",
+          "name": "setDiffFileHeader",
+          "path": "tests/Output/Integration/StrictUnifiedDiffOutputBuilderIntegrationTest.php",
+          "start_line": 267,
+          "end_line": 274
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.Integration.UnifiedDiffOutputBuilderIntegrationTest.UnifiedDiffOutputBuilderIntegrationTest.setDiffFileHeader",
+          "name": "setDiffFileHeader",
+          "path": "tests/Output/Integration/UnifiedDiffOutputBuilderIntegrationTest.php",
+          "start_line": 155,
+          "end_line": 162
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 61,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseWithSpacesInFileNames",
+          "name": "testParseWithSpacesInFileNames",
+          "path": "tests/ParserTest.php",
+          "start_line": 82,
+          "end_line": 101
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseWithSpacesInFileNamesAndTimesamp",
+          "name": "testParseWithSpacesInFileNamesAndTimesamp",
+          "path": "tests/ParserTest.php",
+          "start_line": 103,
+          "end_line": 121
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 37,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.assertProcessSuccessful",
+          "name": "assertProcessSuccessful",
+          "path": "tests/Output/Integration/StrictUnifiedDiffOutputBuilderIntegrationTest.php",
+          "start_line": 244,
+          "end_line": 256
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.Integration.UnifiedDiffOutputBuilderIntegrationTest.UnifiedDiffOutputBuilderIntegrationTest.assertProcessSuccessful",
+          "name": "assertProcessSuccessful",
+          "path": "tests/Output/Integration/UnifiedDiffOutputBuilderIntegrationTest.php",
+          "start_line": 134,
+          "end_line": 146
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 34,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.StrictUnifiedDiffOutputBuilderTest.StrictUnifiedDiffOutputBuilderTest.testOutputBuilding",
+          "name": "testOutputBuilding",
+          "path": "tests/Output/StrictUnifiedDiffOutputBuilderTest.php",
+          "start_line": 502,
+          "end_line": 509
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.StrictUnifiedDiffOutputBuilderTest.StrictUnifiedDiffOutputBuilderTest.testSample",
+          "name": "testSample",
+          "path": "tests/Output/StrictUnifiedDiffOutputBuilderTest.php",
+          "start_line": 511,
+          "end_line": 518
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 32,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.DiffOnlyOutputBuilderTest.DiffOnlyOutputBuilderTest.testDiffDoNotShowNonDiffLines",
+          "name": "testDiffDoNotShowNonDiffLines",
+          "path": "tests/Output/DiffOnlyOutputBuilderTest.php",
+          "start_line": 62,
+          "end_line": 68
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.UnifiedDiffOutputBuilderTest.UnifiedDiffOutputBuilderTest.testCustomHeaderCanBeUsed",
+          "name": "testCustomHeaderCanBeUsed",
+          "path": "tests/Output/UnifiedDiffOutputBuilderTest.php",
+          "start_line": 71,
+          "end_line": 80
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.857,
+      "max_similarity": 1.0,
+      "node_count": 122,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestGitApply",
+          "name": "doIntegrationTestGitApply",
+          "path": "tests/Output/Integration/StrictUnifiedDiffOutputBuilderIntegrationTest.php",
+          "start_line": 194,
+          "end_line": 214
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestPatch",
+          "name": "doIntegrationTestPatch",
+          "path": "tests/Output/Integration/StrictUnifiedDiffOutputBuilderIntegrationTest.php",
+          "start_line": 216,
+          "end_line": 242
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.Integration.UnifiedDiffOutputBuilderIntegrationTest.UnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestPatch",
+          "name": "doIntegrationTestPatch",
+          "path": "tests/Output/Integration/UnifiedDiffOutputBuilderIntegrationTest.php",
+          "start_line": 84,
+          "end_line": 110
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.Integration.UnifiedDiffOutputBuilderIntegrationTest.UnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestGitApply",
+          "name": "doIntegrationTestGitApply",
+          "path": "tests/Output/Integration/UnifiedDiffOutputBuilderIntegrationTest.php",
+          "start_line": 112,
+          "end_line": 132
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestGitApply",
+          "php-diff.tests.Output.Integration.UnifiedDiffOutputBuilderIntegrationTest.UnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestGitApply"
+        ],
+        [
+          "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestPatch",
+          "php-diff.tests.Output.Integration.UnifiedDiffOutputBuilderIntegrationTest.UnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestPatch"
+        ]
+      ],
+      "links": [
+        {
+          "first": "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestGitApply",
+          "second": "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestPatch",
+          "similarity": 0.857
+        },
+        {
+          "first": "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestGitApply",
+          "second": "php-diff.tests.Output.Integration.UnifiedDiffOutputBuilderIntegrationTest.UnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestPatch",
+          "similarity": 0.857
+        },
+        {
+          "first": "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestPatch",
+          "second": "php-diff.tests.Output.Integration.UnifiedDiffOutputBuilderIntegrationTest.UnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestGitApply",
+          "similarity": 0.857
+        },
+        {
+          "first": "php-diff.tests.Output.Integration.UnifiedDiffOutputBuilderIntegrationTest.UnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestPatch",
+          "second": "php-diff.tests.Output.Integration.UnifiedDiffOutputBuilderIntegrationTest.UnifiedDiffOutputBuilderIntegrationTest.doIntegrationTestGitApply",
+          "similarity": 0.857
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 36,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.src.Chunk.Chunk.__construct",
+          "name": "__construct",
+          "path": "src/Chunk.php",
+          "start_line": 34,
+          "end_line": 41
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.src.Diff.Diff.__construct",
+          "name": "__construct",
+          "path": "src/Diff.php",
+          "start_line": 41,
+          "end_line": 46
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.src.Line.Line.__construct",
+          "name": "__construct",
+          "path": "src/Line.php",
+          "start_line": 20,
+          "end_line": 24
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.src.Output.UnifiedDiffOutputBuilder.UnifiedDiffOutputBuilder.__construct",
+          "name": "__construct",
+          "path": "src/Output/UnifiedDiffOutputBuilder.php",
+          "start_line": 39,
+          "end_line": 43
+        }
+      ],
+      "exact_subgroups": [
+        [
+          "php-diff.src.Line.Line.__construct",
+          "php-diff.src.Output.UnifiedDiffOutputBuilder.UnifiedDiffOutputBuilder.__construct"
+        ]
+      ],
+      "links": [
+        {
+          "first": "php-diff.src.Chunk.Chunk.__construct",
+          "second": "php-diff.src.Diff.Diff.__construct",
+          "similarity": 1.0
+        },
+        {
+          "first": "php-diff.src.Chunk.Chunk.__construct",
+          "second": "php-diff.src.Line.Line.__construct",
+          "similarity": 1.0
+        },
+        {
+          "first": "php-diff.src.Chunk.Chunk.__construct",
+          "second": "php-diff.src.Output.UnifiedDiffOutputBuilder.UnifiedDiffOutputBuilder.__construct",
+          "similarity": 1.0
+        },
+        {
+          "first": "php-diff.src.Diff.Diff.__construct",
+          "second": "php-diff.src.Line.Line.__construct",
+          "similarity": 1.0
+        },
+        {
+          "first": "php-diff.src.Diff.Diff.__construct",
+          "second": "php-diff.src.Output.UnifiedDiffOutputBuilder.UnifiedDiffOutputBuilder.__construct",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.917,
+      "max_similarity": 0.917,
+      "node_count": 579,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.src.Output.StrictUnifiedDiffOutputBuilder.StrictUnifiedDiffOutputBuilder.writeDiffHunks",
+          "name": "writeDiffHunks",
+          "path": "src/Output/StrictUnifiedDiffOutputBuilder.php",
+          "start_line": 125,
+          "end_line": 266
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.src.Output.UnifiedDiffOutputBuilder.UnifiedDiffOutputBuilder.writeDiffHunks",
+          "name": "writeDiffHunks",
+          "path": "src/Output/UnifiedDiffOutputBuilder.php",
+          "start_line": 74,
+          "end_line": 213
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "php-diff.src.Output.StrictUnifiedDiffOutputBuilder.StrictUnifiedDiffOutputBuilder.writeDiffHunks",
+          "second": "php-diff.src.Output.UnifiedDiffOutputBuilder.UnifiedDiffOutputBuilder.writeDiffHunks",
+          "similarity": 0.917
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.833,
+      "max_similarity": 0.833,
+      "node_count": 138,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParse",
+          "name": "testParse",
+          "path": "tests/ParserTest.php",
+          "start_line": 44,
+          "end_line": 60
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.ParserTest.ParserTest.testParseWithMultipleChunks",
+          "name": "testParseWithMultipleChunks",
+          "path": "tests/ParserTest.php",
+          "start_line": 62,
+          "end_line": 80
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "php-diff.tests.ParserTest.ParserTest.testParse",
+          "second": "php-diff.tests.ParserTest.ParserTest.testParseWithMultipleChunks",
+          "similarity": 0.833
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 55,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.cleanUpTempFiles",
+          "name": "cleanUpTempFiles",
+          "path": "tests/Output/Integration/StrictUnifiedDiffOutputBuilderIntegrationTest.php",
+          "start_line": 258,
+          "end_line": 265
+        },
+        {
+          "label": "Method",
+          "qualified_name": "php-diff.tests.Output.Integration.UnifiedDiffOutputBuilderIntegrationTest.UnifiedDiffOutputBuilderIntegrationTest.cleanUpTempFiles",
+          "name": "cleanUpTempFiles",
+          "path": "tests/Output/Integration/UnifiedDiffOutputBuilderIntegrationTest.php",
+          "start_line": 148,
+          "end_line": 153
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.cleanUpTempFiles",
+          "second": "php-diff.tests.Output.Integration.UnifiedDiffOutputBuilderIntegrationTest.UnifiedDiffOutputBuilderIntegrationTest.cleanUpTempFiles",
+          "similarity": 1.0
+        }
+      ]
+    }
+  ],
+  "skipped_symbols": 3,
+  "truncated": false
+}
+--- stderr

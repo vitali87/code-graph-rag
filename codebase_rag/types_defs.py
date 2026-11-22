@@ -493,6 +493,18 @@ class FunctionRegistryTrieProtocol(Protocol):
 
     def is_object_member(self, qualified_name: QualifiedName) -> bool: ...
 
+    def mark_object_binding(
+        self, qualified_name: QualifiedName, binding_qn: QualifiedName, key: str
+    ) -> None: ...
+
+    def object_binding_member(
+        self, binding_qn: QualifiedName, key: str
+    ) -> QualifiedName | None: ...
+
+    def has_object_bindings(self) -> bool: ...
+
+    def has_object_binding(self, binding_qn: QualifiedName) -> bool: ...
+
     def mark_abstract(self, qualified_name: QualifiedName) -> None: ...
 
     def is_abstract(self, qualified_name: QualifiedName) -> bool: ...
@@ -1117,6 +1129,17 @@ class ReferenceRepo(TypedDict):
     commit: str
 
 
+class ReferenceCase(TypedDict):
+    """One question asked of `cgr` on a pinned repository
+    (scripts/reference_answers.py): a command line, or an MCP tool call or
+    `tools/list`. `<root>` in an argument is the checkout's directory."""
+
+    name: str
+    cli: NotRequired[list[str]]
+    tool: NotRequired[str]
+    arguments: NotRequired[dict[str, JsonValue]]
+
+
 class ReingestToolResult(TypedDict, total=False):
     """MCP ``reingest`` payload: what was re-parsed and how long it took."""
 
@@ -1738,7 +1761,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, rust_visibility: string?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, first_return_type: string?, chain_return_type: string?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, rust_visibility: string?, is_macro: boolean?, is_object_member: boolean?, object_binding: string?, is_body_scoped_name: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, first_return_type: string?, chain_return_type: string?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,

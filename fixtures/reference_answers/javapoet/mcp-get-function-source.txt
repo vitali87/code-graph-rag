@@ -1,0 +1,28 @@
+> tools/call get_function_source {"node_id": "<node_id:javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get.visitDeclared>"}
+isError: false
+--- text
+Source code for node ID <node_id>:
+
+```
+@Override public TypeName visitDeclared(DeclaredType t, Void p) {
+        ClassName rawType = ClassName.get((TypeElement) t.asElement());
+        TypeMirror enclosingType = t.getEnclosingType();
+        TypeName enclosing =
+            (enclosingType.getKind() != TypeKind.NONE)
+                    && !t.asElement().getModifiers().contains(Modifier.STATIC)
+                ? enclosingType.accept(this, null)
+                : null;
+        if (t.getTypeArguments().isEmpty() && !(enclosing instanceof ParameterizedTypeName)) {
+          return rawType;
+        }
+
+        List<TypeName> typeArgumentNames = new ArrayList<>();
+        for (TypeMirror mirror : t.getTypeArguments()) {
+          typeArgumentNames.add(get(mirror, typeVariables));
+        }
+        return enclosing instanceof ParameterizedTypeName
+            ? ((ParameterizedTypeName) enclosing).nestedClass(
+            rawType.simpleName(), typeArgumentNames)
+            : new ParameterizedTypeName(null, rawType, typeArgumentNames);
+      }
+```

@@ -1,0 +1,206 @@
+$ cgr -q graph importers itsdangerous.src.itsdangerous.encoding --project itsdangerous
+status: 0
+--- stdout
+[
+  {
+    "alias": "base64_decode",
+    "col": 0,
+    "end_col": 52,
+    "end_line": 5,
+    "imported_name": "base64_decode",
+    "line": 5,
+    "module": "itsdangerous.src.itsdangerous",
+    "path": "src/itsdangerous/__init__.py"
+  },
+  {
+    "alias": "base64_encode",
+    "col": 0,
+    "end_col": 52,
+    "end_line": 6,
+    "imported_name": "base64_encode",
+    "line": 6,
+    "module": "itsdangerous.src.itsdangerous",
+    "path": "src/itsdangerous/__init__.py"
+  },
+  {
+    "alias": "want_bytes",
+    "col": 0,
+    "end_col": 46,
+    "end_line": 7,
+    "imported_name": "want_bytes",
+    "line": 7,
+    "module": "itsdangerous.src.itsdangerous",
+    "path": "src/itsdangerous/__init__.py"
+  },
+  {
+    "alias": "want_bytes",
+    "col": 0,
+    "end_col": 32,
+    "end_line": 7,
+    "imported_name": "want_bytes",
+    "line": 7,
+    "module": "itsdangerous.src.itsdangerous.serializer",
+    "path": "src/itsdangerous/serializer.py"
+  },
+  {
+    "alias": "_base64_alphabet",
+    "col": 0,
+    "end_col": 38,
+    "end_line": 8,
+    "imported_name": "_base64_alphabet",
+    "line": 8,
+    "module": "itsdangerous.src.itsdangerous.signer",
+    "path": "src/itsdangerous/signer.py"
+  },
+  {
+    "alias": "base64_decode",
+    "col": 0,
+    "end_col": 35,
+    "end_line": 9,
+    "imported_name": "base64_decode",
+    "line": 9,
+    "module": "itsdangerous.src.itsdangerous.signer",
+    "path": "src/itsdangerous/signer.py"
+  },
+  {
+    "alias": "base64_encode",
+    "col": 0,
+    "end_col": 35,
+    "end_line": 10,
+    "imported_name": "base64_encode",
+    "line": 10,
+    "module": "itsdangerous.src.itsdangerous.signer",
+    "path": "src/itsdangerous/signer.py"
+  },
+  {
+    "alias": "want_bytes",
+    "col": 0,
+    "end_col": 32,
+    "end_line": 11,
+    "imported_name": "want_bytes",
+    "line": 11,
+    "module": "itsdangerous.src.itsdangerous.signer",
+    "path": "src/itsdangerous/signer.py"
+  },
+  {
+    "alias": "base64_decode",
+    "col": 0,
+    "end_col": 35,
+    "end_line": 9,
+    "imported_name": "base64_decode",
+    "line": 9,
+    "module": "itsdangerous.src.itsdangerous.timed",
+    "path": "src/itsdangerous/timed.py"
+  },
+  {
+    "alias": "base64_encode",
+    "col": 0,
+    "end_col": 35,
+    "end_line": 10,
+    "imported_name": "base64_encode",
+    "line": 10,
+    "module": "itsdangerous.src.itsdangerous.timed",
+    "path": "src/itsdangerous/timed.py"
+  },
+  {
+    "alias": "bytes_to_int",
+    "col": 0,
+    "end_col": 34,
+    "end_line": 11,
+    "imported_name": "bytes_to_int",
+    "line": 11,
+    "module": "itsdangerous.src.itsdangerous.timed",
+    "path": "src/itsdangerous/timed.py"
+  },
+  {
+    "alias": "int_to_bytes",
+    "col": 0,
+    "end_col": 34,
+    "end_line": 12,
+    "imported_name": "int_to_bytes",
+    "line": 12,
+    "module": "itsdangerous.src.itsdangerous.timed",
+    "path": "src/itsdangerous/timed.py"
+  },
+  {
+    "alias": "want_bytes",
+    "col": 0,
+    "end_col": 32,
+    "end_line": 13,
+    "imported_name": "want_bytes",
+    "line": 13,
+    "module": "itsdangerous.src.itsdangerous.timed",
+    "path": "src/itsdangerous/timed.py"
+  },
+  {
+    "alias": "base64_decode",
+    "col": 0,
+    "end_col": 35,
+    "end_line": 7,
+    "imported_name": "base64_decode",
+    "line": 7,
+    "module": "itsdangerous.src.itsdangerous.url_safe",
+    "path": "src/itsdangerous/url_safe.py"
+  },
+  {
+    "alias": "base64_encode",
+    "col": 0,
+    "end_col": 35,
+    "end_line": 8,
+    "imported_name": "base64_encode",
+    "line": 8,
+    "module": "itsdangerous.src.itsdangerous.url_safe",
+    "path": "src/itsdangerous/url_safe.py"
+  },
+  {
+    "alias": "base64_decode",
+    "col": 0,
+    "end_col": 47,
+    "end_line": 3,
+    "imported_name": "base64_decode",
+    "line": 3,
+    "module": "itsdangerous.tests.test_itsdangerous.test_encoding",
+    "path": "tests/test_itsdangerous/test_encoding.py"
+  },
+  {
+    "alias": "base64_encode",
+    "col": 0,
+    "end_col": 47,
+    "end_line": 4,
+    "imported_name": "base64_encode",
+    "line": 4,
+    "module": "itsdangerous.tests.test_itsdangerous.test_encoding",
+    "path": "tests/test_itsdangerous/test_encoding.py"
+  },
+  {
+    "alias": "bytes_to_int",
+    "col": 0,
+    "end_col": 46,
+    "end_line": 5,
+    "imported_name": "bytes_to_int",
+    "line": 5,
+    "module": "itsdangerous.tests.test_itsdangerous.test_encoding",
+    "path": "tests/test_itsdangerous/test_encoding.py"
+  },
+  {
+    "alias": "int_to_bytes",
+    "col": 0,
+    "end_col": 46,
+    "end_line": 6,
+    "imported_name": "int_to_bytes",
+    "line": 6,
+    "module": "itsdangerous.tests.test_itsdangerous.test_encoding",
+    "path": "tests/test_itsdangerous/test_encoding.py"
+  },
+  {
+    "alias": "want_bytes",
+    "col": 0,
+    "end_col": 44,
+    "end_line": 7,
+    "imported_name": "want_bytes",
+    "line": 7,
+    "module": "itsdangerous.tests.test_itsdangerous.test_encoding",
+    "path": "tests/test_itsdangerous/test_encoding.py"
+  }
+]
+--- stderr

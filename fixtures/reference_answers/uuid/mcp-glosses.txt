@@ -1,0 +1,14 @@
+> tools/call glosses {"target": "uuid.uuid.Parse"}
+isError: false
+--- text
+{
+  "target": {
+    "label": "Function",
+    "qualified_name": "uuid.uuid.Parse",
+    "path": "uuid.go",
+    "start_line": 68,
+    "end_line": 117
+  },
+  "annotating": [],
+  "mentioning": []
+}

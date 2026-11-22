@@ -1,0 +1,44 @@
+$ cgr -q stats --project equatable
+status: 0
+--- stdout
+Scoped to: equatable
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ Method      │   141 │
+│ Section     │    97 │
+│ Class       │    37 │
+│ File        │    34 │
+│ Module      │    21 │
+│ Function    │    18 │
+│ Folder      │    11 │
+│ Enum        │     2 │
+│ Project     │     1 │
+├─────────────┼───────┤
+│ Total Nodes │   362 │
+└─────────────┴───────┘
+
+    Relationship Statistics    
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Relationship Type   ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ CALLS               │   461 │
+│ INSTANTIATES        │   322 │
+│ DEFINES_METHOD      │   141 │
+│ CONTAINS_SECTION    │    97 │
+│ DEFINES             │    57 │
+│ OVERRIDES           │    37 │
+│ CONTAINS_FILE       │    34 │
+│ INHERITS            │    33 │
+│ IMPORTS             │    31 │
+│ CONTAINS_MODULE     │    21 │
+│ REFERENCES          │    15 │
+│ CONTAINS_FOLDER     │    11 │
+│ DEPENDS_ON_EXTERNAL │     5 │
+│ IMPLEMENTS          │     1 │
+├─────────────────────┼───────┤
+│ Total Relationships │ 1,266 │
+└─────────────────────┴───────┘
+--- stderr
+Fetching graph statistics...

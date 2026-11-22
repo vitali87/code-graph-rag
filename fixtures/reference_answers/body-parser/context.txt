@@ -1,0 +1,146 @@
+$ cgr -q context body-parser.lib.read.read --budget 1500 --project body-parser --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "target": "body-parser.lib.read.read",
+  "resolved": "body-parser.lib.read.read",
+  "budget_tokens": 1500,
+  "used_tokens": 1484,
+  "pieces": [
+    {
+      "qualified_name": "body-parser.lib.read.read",
+      "file": "lib/read.js",
+      "span": [
+        38,
+        134
+      ],
+      "why_included": "target",
+      "source": "function read (req, res, next, parse, debug, options) {\n  var length\n  var opts = options\n  var stream\n\n  // read options\n  var encoding = opts.encoding !== null\n    ? opts.encoding\n    : null\n  var verify = opts.verify\n\n  try {\n    // get the content stream\n    stream = contentstream(req, debug, opts.inflate)\n    length = stream.length\n    stream.length = undefined\n  } catch (err) {\n    return next(err)\n  }\n\n  // set raw-body options\n  opts.length = length\n  opts.encoding = verify\n    ? null\n    : encoding\n\n  // assert charset is supported\n  if (opts.encoding === null && encoding !== null && !iconv.encodingExists(encoding)) {\n    return next(createError(415, 'unsupported charset \"' + encoding.toUpperCase() + '\"', {\n      charset: encoding.toLowerCase(),\n      type: 'charset.unsupported'\n    }))\n  }\n\n  // read body\n  debug('read body')\n  getBody(stream, opts, function (error, body) {\n    if (error) {\n      var _error\n\n      if (error.type === 'encoding.unsupported') {\n        // echo back charset\n        _error = createError(415, 'unsupported charset \"' + encoding.toUpperCase() + '\"', {\n          charset: encoding.toLowerCase(),\n          type: 'charset.unsupported'\n        })\n      } else {\n        // set status code on error\n        _error = createError(400, error)\n      }\n\n      // unpipe from stream and destroy\n      if (stream !== req) {\n        req.unpipe()\n        stream.destroy()\n      }\n\n      // read off entire request\n      dump(req, function onfinished () {\n        next(createError(400, _error))\n      })\n      return\n    }\n\n    // verify\n    if (verify) {\n      try {\n        debug('verify body')\n        verify(req, res, body, encoding)\n      } catch (err) {\n        next(createError(403, err, {\n          body: body,\n          type: err.type || 'entity.verify.failed'\n        }))\n        return\n      }\n    }\n\n    // parse\n    var str = body\n    try {\n      debug('parse body')\n      str = typeof body !== 'string' && encoding !== null\n        ? iconv.decode(body, encoding)\n        : body\n      req.body = parse(str, encoding)\n    } catch (err) {\n      next(createError(400, err, {\n        body: str,\n        type: err.type || 'entity.parse.failed'\n      }))\n      return\n    }\n\n    next()\n  })\n}",
+      "tokens": 689
+    },
+    {
+      "qualified_name": "body-parser.lib.read.contentstream",
+      "file": "lib/read.js",
+      "span": [
+        146,
+        146
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "function contentstream (req, debug, inflate) {",
+      "tokens": 78
+    },
+    {
+      "qualified_name": "body-parser.lib.read.dump",
+      "file": "lib/read.js",
+      "span": [
+        203,
+        203
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "function dump (req, callback) {",
+      "tokens": 74
+    },
+    {
+      "qualified_name": "body-parser.lib.read.read.anonymous_73_24",
+      "file": "lib/read.js",
+      "span": [
+        74,
+        74
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "getBody(stream, opts, function (error, body) {",
+      "tokens": 84
+    },
+    {
+      "qualified_name": "body-parser.lib.types.json.json",
+      "file": "lib/types/json.js",
+      "span": [
+        125,
+        125
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "read(req, res, next, parse, debug, {",
+      "tokens": 81
+    },
+    {
+      "qualified_name": "body-parser.lib.types.json.json.jsonParser",
+      "file": "lib/types/json.js",
+      "span": [
+        125,
+        125
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "read(req, res, next, parse, debug, {",
+      "tokens": 83
+    },
+    {
+      "qualified_name": "body-parser.lib.types.json.json.parse",
+      "file": "lib/types/json.js",
+      "span": [
+        59,
+        59
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "function parse (body) {",
+      "tokens": 75
+    },
+    {
+      "qualified_name": "body-parser.lib.types.raw.raw",
+      "file": "lib/types/raw.js",
+      "span": [
+        68,
+        68
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "read(req, res, next, parse, debug, {",
+      "tokens": 81
+    },
+    {
+      "qualified_name": "body-parser.lib.types.raw.raw.parse",
+      "file": "lib/types/raw.js",
+      "span": [
+        36,
+        36
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "function parse (buf) {",
+      "tokens": 75
+    },
+    {
+      "qualified_name": "body-parser.lib.types.raw.raw.rawParser",
+      "file": "lib/types/raw.js",
+      "span": [
+        68,
+        68
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "read(req, res, next, parse, debug, {",
+      "tokens": 83
+    },
+    {
+      "qualified_name": "body-parser.lib.types.text.text",
+      "file": "lib/types/text.js",
+      "span": [
+        73,
+        73
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "read(req, res, next, parse, debug, {",
+      "tokens": 81
+    }
+  ],
+  "omitted": [
+    "body-parser.lib.types.text.text.parse (direct callee: its signature)",
+    "body-parser.lib.types.text.text.textParser (direct caller: the call line)",
+    "body-parser.lib.types.urlencoded.urlencoded (direct caller: the call line)",
+    "body-parser.lib.types.urlencoded.urlencoded.parse (direct callee: its signature)",
+    "body-parser.lib.types.urlencoded.urlencoded.urlencodedParser (direct caller: the call line)",
+    "body-parser.test.utils.type (direct callee: its signature)",
+    "body-parser.test.utils.verify (direct callee: its signature)",
+    "body-parser.test.urlencoded (test reaching it at depth 2 through body-parser.lib.types.text.text)",
+    "body-parser.test.urlencoded.expectKeyCount (test reaching it at depth 2 through body-parser.lib.types.text.text)"
+  ],
+  "omitted_count": 9,
+  "truncated": false
+}
+--- stderr

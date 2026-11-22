@@ -1,0 +1,115 @@
+> tools/call structural_search {"language": "php", "pattern": "$this->assertSame($A, $B)"}
+isError: false
+--- text
+tests/ChunkTest.php:29:8  $this->assertSame(1, $this->chunk()->start())
+tests/ChunkTest.php:34:8  $this->assertSame(2, $this->chunk()->startRange())
+tests/ChunkTest.php:39:8  $this->assertSame(3, $this->chunk()->end())
+tests/ChunkTest.php:44:8  $this->assertSame(4, $this->chunk()->endRange())
+tests/ChunkTest.php:54:8  $this->assertSame($lines, $chunk->lines())
+tests/ChunkTest.php:63:12  $this->assertSame(0, $index)
+tests/ChunkTest.php:64:12  $this->assertSame($line, $_line)
+tests/DiffTest.php:28:8  $this->assertSame($from, $diff->from())
+tests/DiffTest.php:29:8  $this->assertSame($to, $diff->to())
+tests/DiffTest.php:41:8  $this->assertSame($from, $diff->from())
+tests/DiffTest.php:42:8  $this->assertSame($to, $diff->to())
+tests/DiffTest.php:64:12  $this->assertSame(0, $index)
+tests/DiffTest.php:65:12  $this->assertSame($chunk, $_chunk)
+tests/DifferTest.php:332:8  $this->assertSame($expected, $this->differ->diffToArray($from, $to, new TimeEfficientLongestCommonSubsequenceCalculator))
+tests/DifferTest.php:338:8  $this->assertSame($expected, $this->differ->diff($from, $to, new TimeEfficientLongestCommonSubsequenceCalculator))
+tests/DifferTest.php:344:8  $this->assertSame($expected, $this->differ->diffToArray($from, $to, new MemoryEfficientLongestCommonSubsequenceCalculator))
+tests/DifferTest.php:350:8  $this->assertSame($expected, $this->differ->diff($from, $to, new MemoryEfficientLongestCommonSubsequenceCalculator))
+tests/DifferTest.php:355:8  $this->assertSame(
+            '--- Original
++++ New
+@@ @@
+-one
++two
+',
+            $this->differ->diff(['one'], ['two']),
+        )
+tests/DifferTest.php:373:8  $this->assertSame($expected, $method->invoke($this->differ, $input))
+tests/Exception/ConfigurationExceptionTest.php:26:8  $this->assertSame(0, $e->getCode())
+tests/Exception/ConfigurationExceptionTest.php:28:8  $this->assertSame('Option "test" must be A, got "string#B".', $e->getMessage())
+tests/Exception/ConfigurationExceptionTest.php:41:8  $this->assertSame('Option "test" must be integer, got "SplFileInfo".', $e->getMessage())
+tests/Exception/InvalidArgumentExceptionTest.php:30:8  $this->assertSame($message, $exception->getMessage())
+tests/Exception/InvalidArgumentExceptionTest.php:31:8  $this->assertSame($code, $exception->getCode())
+tests/Exception/InvalidArgumentExceptionTest.php:32:8  $this->assertSame($previousException, $exception->getPrevious())
+tests/LineTest.php:22:8  $this->assertSame(Line::ADDED, $this->added()->type())
+tests/LineTest.php:31:8  $this->assertSame(Line::REMOVED, $this->removed()->type())
+tests/LineTest.php:40:8  $this->assertSame(Line::UNCHANGED, $this->unchanged()->type())
+tests/LineTest.php:49:8  $this->assertSame('content', $this->added()->content())
+tests/LongestCommonSubsequenceTestCase.php:37:8  $this->assertSame([], $common)
+tests/LongestCommonSubsequenceTestCase.php:49:8  $this->assertSame($from, $common)
+tests/LongestCommonSubsequenceTestCase.php:63:8  $this->assertSame($expected, $common)
+tests/LongestCommonSubsequenceTestCase.php:74:12  $this->assertSame($range, $common)
+tests/LongestCommonSubsequenceTestCase.php:83:8  $this->assertSame([], $common)
+tests/LongestCommonSubsequenceTestCase.php:88:8  $this->assertSame([], $common)
+tests/LongestCommonSubsequenceTestCase.php:94:12  $this->assertSame([], $common)
+tests/LongestCommonSubsequenceTestCase.php:104:8  $this->assertSame($expected, $common)
+tests/LongestCommonSubsequenceTestCase.php:110:8  $this->assertSame($expected, $common)
+tests/LongestCommonSubsequenceTestCase.php:118:12  $this->assertSame($expected, $common)
+tests/LongestCommonSubsequenceTestCase.php:129:12  $this->assertSame($to, $common)
+tests/LongestCommonSubsequenceTestCase.php:140:12  $this->assertSame($to, $common)
+tests/LongestCommonSubsequenceTestCase.php:151:12  $this->assertSame($to, $common)
+tests/LongestCommonSubsequenceTestCase.php:161:8  $this->assertSame($expected, $common)
+tests/LongestCommonSubsequenceTestCase.php:168:12  $this->assertSame([1], $common)
+tests/Output/AbstractChunkOutputBuilderTest.php:141:8  $this->assertSame(
+            $expected,
+            $output->getChunks((new Differ(new UnifiedDiffOutputBuilder))->diffToArray($from, $to), $lineThreshold),
+        )
+tests/Output/DiffOnlyOutputBuilderTest.php:67:8  $this->assertSame($expected, $differ->diff($from, $to))
+tests/Output/Integration/StrictUnifiedDiffOutputBuilderIntegrationTest.php:177:8  $this->assertSame(1, $p->getExitCode())
+tests/Output/Integration/StrictUnifiedDiffOutputBuilderIntegrationTest.php:191:8  $this->assertSame($diff, $output)
+tests/Output/StrictUnifiedDiffOutputBuilderTest.php:508:8  $this->assertSame($expected, $diff)
+tests/Output/StrictUnifiedDiffOutputBuilderTest.php:517:8  $this->assertSame($expected, $diff)
+tests/Output/StrictUnifiedDiffOutputBuilderTest.php:534:8  $this->assertSame($expected, $diff)
+tests/Output/StrictUnifiedDiffOutputBuilderTest.php:546:8  $this->assertSame($expected, $diff)
+tests/Output/StrictUnifiedDiffOutputBuilderTest.php:557:8  $this->assertSame(
+            '--- input.txt
++++ output.txt
+@@ -1,2 +1,2 @@
+ A
+-B
++X
+',
+            $diff,
+        )
+tests/Output/StrictUnifiedDiffOutputBuilderTest.php:569:8  $this->assertSame(
+            '',
+            $diff,
+        )
+tests/Output/StrictUnifiedDiffOutputBuilderTest.php:582:8  $this->assertSame(
+            '',
+            $builder->getDiff([]),
+        )
+tests/Output/StrictUnifiedDiffOutputBuilderTest.php:608:8  $this->assertSame($expected, $diff)
+tests/Output/StrictUnifiedDiffOutputBuilderTest.php:622:8  $this->assertSame($expected, $diff)
+tests/Output/UnifiedDiffOutputBuilderTest.php:76:8  $this->assertSame(
+            $expected,
+            $differ->diff($from, $to),
+        )
+tests/Output/UnifiedDiffOutputBuilderTest.php:87:8  $this->assertSame($expected, $differ->diff($from, $to))
+tests/ParserTest.php:58:8  $this->assertSame(20, $chunks[0]->start())
+tests/ParserTest.php:73:8  $this->assertSame(20, $chunks[0]->start())
+tests/ParserTest.php:74:8  $this->assertSame(320, $chunks[1]->start())
+tests/ParserTest.php:75:8  $this->assertSame(600, $chunks[2]->start())
+tests/ParserTest.php:144:8  $this->assertSame(49, $chunk->start())
+tests/ParserTest.php:145:8  $this->assertSame(49, $chunk->end())
+tests/ParserTest.php:146:8  $this->assertSame(9, $chunk->startRange())
+tests/ParserTest.php:147:8  $this->assertSame(8, $chunk->endRange())
+tests/ParserTest.php:154:8  $this->assertSame('A', $line->content())
+tests/ParserTest.php:155:8  $this->assertSame(Line::UNCHANGED, $line->type())
+tests/ParserTest.php:158:8  $this->assertSame('B', $line->content())
+tests/ParserTest.php:159:8  $this->assertSame(Line::REMOVED, $line->type())
+tests/ParserTest.php:185:8  $this->assertSame('a/Test.txt', $diff->from())
+tests/ParserTest.php:186:8  $this->assertSame('b/Test.txt', $diff->to())
+tests/ParserTest.php:190:8  $this->assertSame('a/Test2.txt', $diff->from())
+tests/ParserTest.php:191:8  $this->assertSame('b/Test2.txt', $diff->to())
+tests/ParserTest.php:217:8  $this->assertSame(49, $chunk->start())
+tests/ParserTest.php:218:8  $this->assertSame(49, $chunk->end())
+tests/ParserTest.php:219:8  $this->assertSame(0, $chunk->startRange())
+tests/ParserTest.php:220:8  $this->assertSame(0, $chunk->endRange())
+tests/ParserTest.php:223:8  $this->assertSame(50, $chunk->start())
+tests/ParserTest.php:224:8  $this->assertSame(50, $chunk->end())
+tests/ParserTest.php:225:8  $this->assertSame(1, $chunk->startRange())
+tests/ParserTest.php:226:8  $this->assertSame(1, $chunk->endRange())

@@ -1,0 +1,37 @@
+> tools/call find_duplicate_code {}
+isError: false
+--- text
+Found 10 duplicate group(s) in project 'uuid' (largest first; each function is in one group; 'exact' groups are certain copies, 'similar' groups link near-copies and carry a score range):
+1. exact (100% similar):
+   - uuid.uuid_test.BenchmarkParse  uuid_test.go:640-647
+   - uuid.uuid_test.BenchmarkParseBytes  uuid_test.go:649-656
+   - uuid.uuid_test.BenchmarkParseBytesUnsafe  uuid_test.go:663-670
+   - uuid.uuid_test.BenchmarkParseBytesCopy  uuid_test.go:677-684
+2. exact (100% similar):
+   - uuid.null_test.TestNullUUIDMarshalText  null_test.go:72-102
+   - uuid.null_test.TestNullUUIDUnmarshalText  null_test.go:104-134
+   - uuid.null_test.TestNullUUIDMarshalBinary  null_test.go:136-166
+3. exact (100% similar):
+   - uuid.uuid_test.TestVersion1  uuid_test.go:306-343
+   - uuid.uuid_test.TestVersion6  uuid_test.go:784-821
+4. exact (100% similar):
+   - uuid.uuid_test.BenchmarkUUID_String  uuid_test.go:692-702
+   - uuid.uuid_test.BenchmarkUUID_URN  uuid_test.go:704-714
+5. exact (100% similar):
+   - uuid.uuid_test.TestMD5  uuid_test.go:409-415
+   - uuid.uuid_test.TestSHA1  uuid_test.go:417-423
+6. exact (100% similar):
+   - uuid.time.GetTime  time.go:45-49
+   - uuid.time.ClockSequence  time.go:76-80
+7. exact (100% similar):
+   - uuid.dce.NewDCEPerson  dce.go:46-48
+   - uuid.dce.NewDCEGroup  dce.go:54-56
+8. exact (100% similar):
+   - uuid.hash.NewMD5  hash.go:49-51
+   - uuid.hash.NewSHA1  hash.go:57-59
+9. similar (83% similar):
+   - uuid.uuid_test.TestVersion7  uuid_test.go:825-845
+   - uuid.uuid_test.TestVersion7_pooled  uuid_test.go:849-872
+10. similar (81% similar):
+   - uuid.uuid_test.TestRandomUUID  uuid_test.go:168-184
+   - uuid.uuid_test.TestRandomUUID_Pooled  uuid_test.go:186-204
