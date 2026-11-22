@@ -296,6 +296,7 @@ def tools_answer(response: JsonObject) -> str:
         }
         for tool in (tools if isinstance(tools, list) else [])
         if isinstance(tool, dict)
+        and tool.get("name") not in cs.REFERENCE_ANSWERS_OPTIONAL_TOOLS
     ]
     text = json.dumps(listed, indent=2, sort_keys=True, ensure_ascii=False)
     return f"{header}\n{_section(cs.REFERENCE_ANSWERS_TOOLS, text)}"

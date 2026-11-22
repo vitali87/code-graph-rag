@@ -6,6 +6,7 @@
 # Python implementation answers today, surface by surface.
 from __future__ import annotations
 
+from .mcp import MCPToolName
 from .reference_graphs import REFERENCE_EXTRA_FLAGS
 
 REFERENCE_ANSWERS_DIR = "fixtures/reference_answers"
@@ -55,6 +56,10 @@ REFERENCE_ANSWERS_WORKSPACE = "reference"
 REFERENCE_ANSWERS_TARGET_REPO_ENV = "TARGET_REPO_PATH"
 # A case naming this method lists the tools instead of calling one.
 REFERENCE_ANSWERS_TOOLS_LIST = "tools/list"
+# Tools the server lists only when an optional extra is installed: the
+# recorded list holds the tools every reference install serves, since the
+# CI job installs `treesitter-full` and `ast-grep` but not `semantic`.
+REFERENCE_ANSWERS_OPTIONAL_TOOLS = frozenset({MCPToolName.SEMANTIC_SEARCH})
 REFERENCE_ANSWERS_TOOLS_CALL = "tools/call"
 REFERENCE_ANSWERS_INITIALIZE = "initialize"
 REFERENCE_ANSWERS_INITIALIZED = "notifications/initialized"

@@ -535,27 +535,6 @@
   {
     "inputSchema": {
       "properties": {
-        "natural_language_query": {
-          "type": "string"
-        },
-        "project": {
-          "type": "string"
-        },
-        "top_k": {
-          "default": 5,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "natural_language_query"
-      ],
-      "type": "object"
-    },
-    "name": "semantic_search"
-  },
-  {
-    "inputSchema": {
-      "properties": {
         "language": {
           "type": "string"
         },

@@ -172,8 +172,9 @@ def test_a_cases_arguments_name_the_checkout_and_nodes_by_name() -> None:
 
 @pytest.mark.parametrize("name", ["demo.C.m", "demo.missing"])
 def test_a_node_id_argument_must_name_exactly_one_node(name: str) -> None:
+    arguments = _Arguments(ROOT, EXPORT)
     with pytest.raises(SystemExit, match=name):
-        _Arguments(ROOT, EXPORT).text(f"<node_id:{name}>")
+        arguments.text(f"<node_id:{name}>")
 
 
 def test_a_command_lines_answer_holds_its_status_and_both_streams() -> None:
@@ -255,6 +256,25 @@ def test_the_tool_list_keeps_names_and_schemas_without_prose() -> None:
             },
         }
     ]
+
+
+def test_a_tool_an_optional_extra_adds_is_left_out_of_the_list() -> None:
+    # `semantic_search` is served only with the `semantic` extra, which the
+    # reference install leaves out, so the recorded list must not depend on it.
+    response = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "tools": [
+                {"name": "callers", "inputSchema": {"type": "object"}},
+                {"name": "semantic_search", "inputSchema": {"type": "object"}},
+            ]
+        },
+    }
+
+    listed = json.loads(tools_answer(response).split("--- tools\n", 1)[1])
+
+    assert [tool["name"] for tool in listed] == ["callers"]
 
 
 def test_difference_is_empty_only_when_the_answers_agree() -> None:
