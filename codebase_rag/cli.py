@@ -59,7 +59,7 @@ from .editor_links import (
     url_template_problem,
 )
 from .graph_cli import cli as graph_cli
-from .graph_dialects import DIALECT_MEMGRAPH
+from .graph_dialects import DIALECT_MEMGRAPH, DIALECT_NEO4J, DIALECT_SQLITE
 from .parser_loader import load_parsers
 from .port_cli import cli as port_cli
 from .project_selection import ProjectChoice, choose_project, scope_refusal
@@ -2704,21 +2704,38 @@ def status_command() -> None:
         f"qdrant={status.qdrant_endpoint} reachable={status.qdrant_reachable})"
     )
     app_context.console.print(f"compose:  {status.compose_file}")
-    syncs = _project_syncs() if status.memgraph_reachable else None
+    # The syncs are read from the graph the backend selects, as every command
+    # reads it. The stack's Memgraph answering decides them only when that
+    # Memgraph is the graph: the embedded graph is a file and Neo4j the user's
+    # own server, and `_project_syncs` returns None for a graph it cannot
+    # read (issue #3676).
+    on_memgraph = settings.GRAPH_BACKEND == DIALECT_MEMGRAPH
+    syncs = _project_syncs() if status.memgraph_reachable or not on_memgraph else None
+    engine, endpoint = _syncs_graph(status.memgraph_endpoint)
     if syncs is None:
         app_context.console.print(
-            cs.CLI_STATUS_SYNCS_NEED_GRAPH.format(endpoint=status.memgraph_endpoint)
+            cs.CLI_STATUS_SYNCS_NEED_GRAPH.format(engine=engine, endpoint=endpoint)
         )
         return
     if not syncs:
-        app_context.console.print(
-            cs.CLI_STATUS_SYNCS_NONE.format(endpoint=status.memgraph_endpoint)
-        )
+        app_context.console.print(cs.CLI_STATUS_SYNCS_NONE.format(endpoint=endpoint))
         return
     missing = _missing_root_candidates({sync.name: sync.root_path for sync in syncs})
     app_context.console.print(cs.CLI_STATUS_SYNCS_HEADER)
     for sync in syncs:
         app_context.console.print(_sync_row(sync, sync.name in missing))
+
+
+def _syncs_graph(memgraph_endpoint: str) -> tuple[str, str]:
+    """The graph `cgr status` reads the syncs from: its engine's name and
+    where it is, escaped for the console (issue #3676)."""
+    backend = settings.GRAPH_BACKEND
+    engine = cs.CLI_STATUS_GRAPH_ENGINES.get(backend, backend)
+    if backend == DIALECT_SQLITE:
+        return engine, escape(str(settings.graph_db_file))
+    if backend == DIALECT_NEO4J:
+        return engine, escape(settings.NEO4J_URI)
+    return engine, memgraph_endpoint
 
 
 def _stamp_text(stamp: ResultValue | None) -> str | None:
