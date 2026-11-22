@@ -1,0 +1,261 @@
+"""Issue #2890: a TS method call on a cast receiver binds the cast's type.
+
+`(s as Service).handle()` and `(<Service>s).handle()` name the receiver's
+type at the call site, yet the call name kept the cast's text, which the
+resolver cannot read, so the call bound nothing: a method reached only
+through a cast was reported dead.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import pytest
+
+from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
+
+SOURCE = """\
+class Service { handle(x: number): number { return x + 1; } }
+class Box<T> { get(): number { return 1; } }
+class Other { other(): number { return 2; } }
+
+function plain(s: Service) { return s.handle(1); }
+function casted(s: unknown) { return (s as Service).handle(2); }
+function angleCast(s: unknown) { return (<Service>s).handle(3); }
+function doubleCast(s: string) { return (s as unknown as Service).handle(4); }
+function nestedParens(s: unknown) { return ((s as Service)).handle(5); }
+function assertedCast(s: unknown) { return (s as Service)!.handle(6); }
+function genericCast(b: unknown) { return (b as Box<number>).get(); }
+function anyCast(s: unknown) { return (s as any).handle(7); }
+function otherCast(s: unknown) { return (s as Other).other(); }
+"""
+
+# Two classes sharing `run`, and a local VALUE named like the cast's type:
+# TypeScript keeps types and values apart, so `as Real` still names the
+# class Real (Greptile, PR #2959).
+SHADOW = """\
+class Real { run(): number { return 1; } }
+class Fake { run(): number { return 2; } }
+
+function shadowedCast(s: unknown) {
+  const Real = new Fake();
+  return (s as Real).run();
+}
+"""
+
+HANDLE = "m.Service.handle"
+
+
+@pytest.fixture(scope="module")
+def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
+    root = tmp_path_factory.mktemp("tscast") / "tscast"
+    _write(root, "m.ts", SOURCE)
+    _write(root, "shadow.ts", SHADOW)
+    return _index(root, MagicMock())
+
+
+def _callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
+    prefix = f"{graph.project}."
+    return {
+        dst.removeprefix(prefix): str(props.get("resolution"))
+        for src, rel, dst, props in graph.edges
+        if rel == "CALLS" and src == f"{prefix}m.{caller}"
+    }
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("casted", HANDLE),
+        ("angleCast", HANDLE),
+        ("doubleCast", HANDLE),
+        ("nestedParens", HANDLE),
+        ("assertedCast", HANDLE),
+        ("genericCast", "m.Box.get"),
+        ("otherCast", "m.Other.other"),
+    ],
+)
+def test_a_cast_receiver_binds_the_method_of_the_cast_type(
+    graph: RecordedGraph, caller: str, callee: str
+) -> None:
+    assert _callees(graph, caller) == {callee: "exact"}
+
+
+def test_a_local_value_named_like_the_cast_type_does_not_redirect_it(
+    graph: RecordedGraph,
+) -> None:
+    prefix = f"{graph.project}."
+    callees = {
+        dst.removeprefix(prefix): str(props.get("resolution"))
+        for src, rel, dst, props in graph.edges
+        if rel == "CALLS" and src == f"{prefix}shadow.shadowedCast"
+    }
+    assert callees == {"shadow.Real.run": "exact"}
+
+
+# TypeScript's member-preserving utilities keep their argument's members, so
+# `as Readonly<Service>` calls Service's method even where another class has
+# one of that name too; a `Readonly` the module declares is that class
+# instead (CodeRabbit, PR #2959).
+UTILITY = """\
+class Service { handle(): number { return 1; } }
+class Rival { handle(): number { return 2; } }
+
+function readonlyCast(s: unknown) { return (s as Readonly<Service>).handle(); }
+function nestedUtility(s: unknown) {
+  return (s as Readonly<Partial<Service>>).handle();
+}
+function angleUtility(s: unknown) { return (<Required<Service>>s).handle(); }
+"""
+
+OWN_READONLY = """\
+export class Service { handle(): number { return 1; } }
+export class Readonly<T> { handle(): number { return 3; } }
+
+export function ownReadonly(s: unknown) {
+  return (s as Readonly<Service>).handle();
+}
+"""
+
+
+# Greptile and CodeRabbit, PR #2959: a function's own `class Readonly<T>`
+# is not the utility, and a cast to a type parameter names the constraint's
+# members, never the module class sharing its name.
+SCOPED = """\
+export class Service { handle(): number { return 1; } }
+export class Other { handle(): number { return 2; } }
+
+export function localReadonly(s: unknown) {
+  class Readonly<T> { handle(): number { return 3; } }
+  return (s as Readonly<Service>).handle();
+}
+
+export function typeParameter<Service extends Other>(s: unknown) {
+  return (s as Service).handle();
+}
+
+export function localClass(s: unknown) {
+  class Service { handle(): number { return 4; } }
+  return (s as Service).handle();
+}
+
+export class Exported {
+  handle(): number { return 5; }
+  self(s: unknown) { return (s as Exported).handle(); }
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def utility_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
+    root = tmp_path_factory.mktemp("tsutility") / "tsutility"
+    _write(root, "util.ts", UTILITY)
+    _write(root, "own.ts", OWN_READONLY)
+    _write(root, "scoped.ts", SCOPED)
+    return _index(root, MagicMock())
+
+
+def _module_callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
+    prefix = f"{graph.project}."
+    return {
+        dst.removeprefix(prefix): str(props.get("resolution"))
+        for src, rel, dst, props in graph.edges
+        if rel == "CALLS" and src == f"{prefix}{caller}"
+    }
+
+
+@pytest.mark.parametrize(
+    "caller", ["util.readonlyCast", "util.nestedUtility", "util.angleUtility"]
+)
+def test_a_utility_cast_binds_the_method_of_its_argument_type(
+    utility_graph: RecordedGraph, caller: str
+) -> None:
+    assert _module_callees(utility_graph, caller) == {"util.Service.handle": "exact"}
+
+
+def test_a_readonly_the_module_declares_is_that_class(
+    utility_graph: RecordedGraph,
+) -> None:
+    assert _module_callees(utility_graph, "own.ownReadonly") == {
+        "own.Readonly.handle": "exact"
+    }
+
+
+@pytest.mark.parametrize(
+    "caller", ["scoped.localReadonly", "scoped.typeParameter", "scoped.localClass"]
+)
+def test_a_cast_to_a_name_declared_in_scope_is_not_the_module_class(
+    utility_graph: RecordedGraph, caller: str
+) -> None:
+    assert "scoped.Service.handle" not in _module_callees(utility_graph, caller)
+
+
+def test_a_cast_inside_an_exported_class_binds_that_class(
+    utility_graph: RecordedGraph,
+) -> None:
+    # Greptile, PR #2959: a module-level `export class` is no nested scope.
+    assert _module_callees(utility_graph, "scoped.Exported.self") == {
+        "scoped.Exported.handle": "exact"
+    }
+
+
+# A cast names an INSTANCE of its type, whose prototype chain holds no
+# static member: with a static `run` on Child and an instance `run` on Base,
+# `(s as Child).run()` runs Base's, while the call on the class itself is
+# the static one (Greptile, PR #2959; issue #3672).
+STATIC = """\
+class Base { run(): number { return 1; } }
+class Child extends Base { static run(): number { return 2; } }
+class Own extends Base {
+  static run(): number { return 3; }
+  run(): number { return 4; }
+}
+
+function castChild(s: unknown) { return (s as Child).run(); }
+function angleChild(s: unknown) { return (<Child>s).run(); }
+function readonlyChild(s: unknown) { return (s as Readonly<Child>).run(); }
+function castOwn(s: unknown) { return (s as Own).run(); }
+function onClass() { return Child.run(); }
+"""
+
+
+@pytest.fixture(scope="module")
+def static_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
+    root = tmp_path_factory.mktemp("tsstatic") / "tsstatic"
+    _write(root, "st.ts", STATIC)
+    return _index(root, MagicMock())
+
+
+@pytest.mark.parametrize(
+    "caller", ["st.castChild", "st.angleChild", "st.readonlyChild"]
+)
+def test_a_cast_binds_the_instance_member_not_a_static_one(
+    static_graph: RecordedGraph, caller: str
+) -> None:
+    assert _module_callees(static_graph, caller) == {"st.Base.run": "exact"}
+
+
+def test_a_cast_to_a_class_declaring_both_sides_binds_its_own_member(
+    static_graph: RecordedGraph,
+) -> None:
+    # `Own` declares `run` for its instances too, which hides Base's.
+    callees = _module_callees(static_graph, "st.castOwn")
+    assert callees
+    assert all(callee.startswith("st.Own.run") for callee in callees)
+
+
+def test_a_call_on_the_class_still_binds_its_static_member(
+    static_graph: RecordedGraph,
+) -> None:
+    assert _module_callees(static_graph, "st.onClass") == {"st.Child.run": "exact"}
+
+
+# Negative: what must not change.
+
+
+def test_a_plain_typed_receiver_still_binds(graph: RecordedGraph) -> None:
+    assert _callees(graph, "plain") == {HANDLE: "exact"}
+
+
+def test_a_cast_to_any_still_names_no_type(graph: RecordedGraph) -> None:
+    assert HANDLE not in _callees(graph, "anyCast")
