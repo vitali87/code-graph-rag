@@ -78,6 +78,7 @@ from .py.receiver_rebinding import (
     annotates_receiver,
     bound_receiver,
     receiver_annotation,
+    receiver_hidden_spans,
     receiver_rebinding,
 )
 from .py.type_inference import PythonTypeInferenceEngine
@@ -6258,10 +6259,18 @@ class CallProcessor:
             self._resolver.python_rebound_receivers.pop(caller_qn, None)
         # The method's bound receiver, if any: a static method binds none,
         # and `cls` in `def run(self, cls)` is a plain parameter.
+        # Where a nested def or lambda takes a parameter of its name, the
+        # receiver is that parameter instead (`(lambda self: self.name)`).
         if receiver := bound_receiver(caller_node):
             self._resolver.python_bound_receivers[caller_qn] = receiver
+            hidden = receiver_hidden_spans(caller_node, receiver)
         else:
             self._resolver.python_bound_receivers.pop(caller_qn, None)
+            hidden = ()
+        if hidden:
+            self._resolver.python_hidden_receiver_spans[caller_qn] = hidden
+        else:
+            self._resolver.python_hidden_receiver_spans.pop(caller_qn, None)
         self._record_python_name_typed_params(caller_node, caller_qn, module_qn)
 
     def _record_python_name_typed_params(

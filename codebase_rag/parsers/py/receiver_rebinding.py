@@ -139,6 +139,27 @@ def bound_receiver(caller: Node) -> str | None:
     return None
 
 
+def receiver_hidden_spans(caller: Node, receiver: str) -> tuple[tuple[int, int], ...]:
+    """The byte spans inside `caller` where `receiver` names something
+    else: the body of a nested def or lambda taking a parameter of that name
+    (`(lambda self: self.name)(None)`). A nested class holds its own."""
+    spans: list[tuple[int, int]] = []
+    stack = list(caller.named_children)
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_CLASS_DEFINITION:
+            continue
+        if (
+            node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA)
+            and receiver in set(_parameter_names(node))
+            and (body := node.child_by_field_name(cs.FIELD_BODY)) is not None
+        ):
+            spans.append((body.start_byte, body.end_byte))
+            continue
+        stack.extend(node.named_children)
+    return tuple(sorted(spans))
+
+
 def _methods(body: Node) -> Iterator[Node]:
     # The defs of a class body, including those under an `if`/`try`/`with`
     # block in it (Greptile, PR #2908); a nested class holds its own.

@@ -314,6 +314,7 @@ class CallResolver:
         "python_local_names",
         "python_rebound_receivers",
         "python_bound_receivers",
+        "python_hidden_receiver_spans",
         "_py_instance_attrs_memo",
         "js_parameter_names",
         "function_registry",
@@ -403,6 +404,10 @@ class CallResolver:
         # bound to: the method's first parameter, none for a static method,
         # filled alongside python_rebound_receivers.
         self.python_bound_receivers: dict[str, str] = {}
+        # Python caller qn -> the byte spans of its nested defs and lambdas
+        # that take a parameter named like its bound receiver, where that
+        # name is the parameter, not the instance.
+        self.python_hidden_receiver_spans: dict[str, tuple[tuple[int, int], ...]] = {}
         # Python module qn -> {class name: the attributes its methods assign
         # on their receiver}, read from the module's tree once per pass.
         self._py_instance_attrs_memo: dict[str, dict[str, frozenset[str]]] = {}
@@ -804,6 +809,16 @@ class CallResolver:
             call_name.split(cs.SEPARATOR_DOT, 1)[0] in guessed
         )
 
+    def _python_receiver_hidden_at(self, call: _CallSite) -> bool:
+        # Inside a nested def or lambda that takes a parameter named like the
+        # receiver, the name is that parameter; a call whose site is unknown
+        # cannot be placed, so it is not trusted either.
+        spans = self.python_hidden_receiver_spans.get(call.caller_qn or "")
+        if not spans:
+            return False
+        point = call.call_point
+        return point is None or any(start <= point < end for start, end in spans)
+
     def _resolve_python_self_method(self, call: _CallSite) -> tuple[str, str] | None:
         """`self.m()` / `cls.m()` on the method the enclosing class defines or
         inherits: the static target, `exact` as `this.m()` is in Java or C#.
@@ -841,6 +856,7 @@ class CallResolver:
             # is `cls` in `def run(self, cls)` (CodeRabbit, Greptile, PR
             # #2908).
             or self.python_bound_receivers.get(call.caller_qn or "") != receiver
+            or self._python_receiver_hidden_at(call)
         ):
             return None
         if method_name.startswith(cs.PY_NAME_DUNDER) and not method_name.endswith(
