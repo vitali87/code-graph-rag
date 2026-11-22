@@ -1425,7 +1425,6 @@ E	IMPORTS	Module	"body-parser.test.urlencoded"	ExternalModule	"supertest"	{"alia
 E	IMPORTS	Module	"body-parser.test.urlencoded"	Module	"body-parser.index"	{"alias":"bodyParser","col":0,"end_col":30,"end_line":8,"line":8}
 E	IMPORTS	Module	"body-parser.test.utils"	ExternalModule	"node:assert"	{"alias":"assert","col":0,"end_col":37,"end_line":3,"line":3}
 E	IMPORTS	Module	"body-parser.test.utils"	Module	"body-parser.lib.utils"	{"alias":"normalizeOptions","col":0,"end_col":55,"end_line":4,"imported_name":"normalizeOptions","line":4}
-E	IMPORTS	Module	"body-parser.test.utils"	Module	"body-parser.lib.utils"	{}
 E	LINKS_TO	Section	"body-parser.README_md.body-parser"	Section	"body-parser.README_md.body-parser.API.bodyParser_json([options])"	{"anchor":"bodyparserjsonoptions","col":4,"end_col":46,"end_line":35,"line":35,"text":"JSON body parser"}
 E	LINKS_TO	Section	"body-parser.README_md.body-parser"	Section	"body-parser.README_md.body-parser.API.bodyParser_raw([options])"	{"anchor":"bodyparserrawoptions","col":4,"end_col":44,"end_line":36,"line":36,"text":"Raw body parser"}
 E	LINKS_TO	Section	"body-parser.README_md.body-parser"	Section	"body-parser.README_md.body-parser.API.bodyParser_text([options])"	{"anchor":"bodyparsertextoptions","col":4,"end_col":46,"end_line":37,"line":37,"text":"Text body parser"}
