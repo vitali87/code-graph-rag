@@ -5954,6 +5954,12 @@ class CallResolver:
         )
         for method_qn in method_qns:
             if method_qn in self.function_registry:
+                if language in cs.JS_TS_LANGUAGES and self._js_static_only(
+                    class_qn, method_name
+                ):
+                    # The receiver is an instance of the class, and its
+                    # prototype chain never holds a static member (#3672).
+                    return self._js_instance_member(class_qn, method_name)
                 logger.debug(
                     ls.CALL_TYPE_INFERRED,
                     call_name=call_name,
@@ -5971,7 +5977,35 @@ class CallResolver:
                 obj=object_name,
                 var_type=var_type,
             )
+            if language in cs.JS_TS_LANGUAGES and self._js_static_only(
+                inherited[1].rpartition(cs.SEPARATOR_DOT)[0], method_name
+            ):
+                return self._js_instance_member(class_qn, method_name)
             return inherited
+        return None
+
+    def _js_static_only(self, class_qn: str, method: str) -> bool:
+        """Whether a JS/TS class declares `method` as a static member only."""
+        return self.type_inference.js_member_sides(class_qn, method) == (False, True)
+
+    def _js_instance_member(self, class_qn: str, method: str) -> tuple[str, str] | None:
+        """`(label, qn)` of the `method` an instance of the class runs: the
+        nearest class along its chain registering one it does not declare
+        static only. A static member lives on the class object, which an
+        instance never reaches, so it hides no base's instance member."""
+        queue: deque[str] = deque([class_qn])
+        seen = {class_qn}
+        while queue:
+            owner = self._follow_reexports(queue.popleft())
+            member_qn = f"{owner}{cs.SEPARATOR_DOT}{method}"
+            if member_qn in self.function_registry and not self._js_static_only(
+                owner, method
+            ):
+                return self.function_registry[member_qn], member_qn
+            for base in self.class_inheritance.get(owner, []):
+                if base not in seen:
+                    seen.add(base)
+                    queue.append(base)
         return None
 
     def _try_resolve_via_import(
