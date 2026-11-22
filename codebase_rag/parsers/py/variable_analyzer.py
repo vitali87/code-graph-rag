@@ -1043,7 +1043,14 @@ class PythonVariableAnalyzerMixin(_VarBase):
         results: dict[str, None] = {}
         left_members = _union_members(left) if left else []
         right_classes = self._get_project_classes(right, module_qn)
-        forward_missing = not left_members
+        # `"root" / builder`: a builtin's operator does not take a project
+        # class, so Python runs the right operand's reflected method, as for
+        # an untyped left operand (Greptile, PR #2912).
+        builtins = (
+            self._builtin_members(left_members, module_qn) if right_classes else []
+        )
+        left_members = [member for member in left_members if member not in builtins]
+        forward_missing = not left_members or bool(builtins)
         for member in left_members:
             class_qn = self._get_project_class_qn(member, module_qn)
             if class_qn is None:
@@ -1059,6 +1066,16 @@ class PythonVariableAnalyzerMixin(_VarBase):
         if not results:
             return None
         return f" {cs.PY_UNION_SEPARATOR} ".join(results)
+
+    def _builtin_members(self, members: list[str], module_qn: str) -> list[str]:
+        """The builtin value types (`str`, `list`) among `members` that no
+        project class of the name shadows."""
+        return [
+            member
+            for member in members
+            if member in cs.PY_BUILTIN_VALUE_TYPES
+            and self._get_project_class_qn(member, module_qn) is None
+        ]
 
     def _get_project_classes(self, union: str | None, module_qn: str) -> list[str]:
         return [

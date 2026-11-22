@@ -97,7 +97,15 @@ APP = (
     "def loop_then_literal():\n"
     "    for x in [Bag()]:\n        first = x.get(1)\n    x = {}\n    return first\n\n\n"
     "def with_then_literal():\n"
-    "    with make_bag() as x:\n        first = x.get(1)\n    x = {}\n    return first\n"
+    "    with make_bag() as x:\n        first = x.get(1)\n    x = {}\n    return first\n\n\n"
+    # Greptile, PR #2912: a builtin left operand hands an operator to the
+    # right operand's reflected method.
+    "class Product:\n    def run(self):\n        return 1\n\n\n"
+    "class Builder:\n"
+    "    def __rtruediv__(self, other):\n        return Product()\n\n\n"
+    "def reflected():\n"
+    '    prefix = "root"\n    builder = Builder()\n'
+    "    result = prefix / builder\n    return result.run()\n"
 )
 # A first-party class imported under a builtin's name is that class.
 ALIASED = (
@@ -241,3 +249,11 @@ def test_a_builtin_receiver_that_already_bound_nothing_still_does(
     # No first-party `upper`; a parenthesised tuple and an annotated `dict`
     # parameter were already typed.
     assert _callees(graph, caller) == {}
+
+
+def test_a_builtin_left_operand_hands_the_operator_to_the_reflected_method(
+    graph: RecordedGraph,
+) -> None:
+    # `str` defines no `/` for a project class, so `"root" / builder` runs
+    # `Builder.__rtruediv__`, whose `Product` the result holds.
+    assert "app.Product.run" in _callees(graph, "reflected")
