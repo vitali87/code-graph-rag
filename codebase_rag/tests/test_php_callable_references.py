@@ -1,0 +1,1507 @@
+# PHP forms that name a method without a direct `->m()` call produced no graph
+# edge, so dead-code reported the target dead (issue #3117). These tests index
+# a small project and read both the edges and the dead set. A public method is
+# an API root, so dead-code alone cannot prove the edge: each form asserts the
+# relationship, and a private callee is what makes the dead-set check mean
+# something.
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
+from codebase_rag.dead_code import (
+    _node_props,
+    dead_code_from_graph,
+    default_dead_code_config,
+)
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from evals.cgr_graph import _capture, _CapturingIngestor, _StatefulIngestor
+
+_PROJECT = "phpdc"
+
+_RESOLVER = r"""<?php
+namespace App;
+
+class Resolver
+{
+    private string $name;
+
+    public function __construct(string $name)
+    {
+        $this->name = $name;
+    }
+
+    public function create(): self
+    {
+        return new self($this->name);
+    }
+
+    public function createStatic(): static
+    {
+        return new static($this->name);
+    }
+
+    public function plain(): self
+    {
+        return new Resolver($this->name);
+    }
+
+    public function qualified(): self
+    {
+        return new \App\Resolver($this->name);
+    }
+
+    public function filterAll(array $items): array
+    {
+        return array_filter($items, [$this, 'isRoute']);
+    }
+
+    public function mapAll(array $items): array
+    {
+        return array_map([self::class, 'normalize'], $items);
+    }
+
+    public function sortAll(array $items): array
+    {
+        usort($items, [static::class, 'compare']);
+        return $items;
+    }
+
+    public function keyed(array $items): array
+    {
+        return array_filter($items, array(0 => $this, 1 => 'isRoute'));
+    }
+
+    public function wrapped(): array
+    {
+        return ([$this, 'isRoute']);
+    }
+
+    public function early(): mixed
+    {
+        return self::normalize(1);
+    }
+
+    public function late(): mixed
+    {
+        return static::normalize(1);
+    }
+
+    public function viaVariable(string $value): string
+    {
+        $upper = function (string $value): string {
+            return strtoupper($value);
+        };
+        return $upper($value);
+    }
+
+    public function viaArrow(string $value): string
+    {
+        $upper = fn(string $v): string => strtoupper($v);
+        return $upper($value);
+    }
+
+    public function direct(array $items): array
+    {
+        return array_map(function ($item) { return $item; }, $items);
+    }
+
+    public function byString(): void
+    {
+        $single = 'App\\Resolver::compare';
+        $double = "App\\Resolver::compare";
+        $folded = 'app\\resolver::isRoute';
+    }
+
+    public function invokeTyped(Resolver $obj): void
+    {
+        call_user_func([$obj, 'isRoute'], null);
+    }
+
+    public function invokeOptional(?Resolver $obj): void
+    {
+        call_user_func([$obj, 'isRoute'], null);
+    }
+
+    public function invokeUnion(Resolver|string $obj): void
+    {
+        call_user_func([$obj, 'isRoute'], null);
+    }
+
+    public function invokeUntyped($obj): void
+    {
+        call_user_func([$obj, 'isRoute'], null);
+    }
+
+    public function invokeAmbiguous(Resolver|Child $obj): void
+    {
+        call_user_func([$obj, 'isRoute'], null);
+    }
+
+    public function fromCallable(): void
+    {
+        \Closure::fromCallable([$this, 'isRoute']);
+    }
+
+    public function viaArrowValue(): void
+    {
+        $route = fn() => [$this, 'isRoute'];
+        $named = fn() => 'App\\Resolver::normalize';
+    }
+
+    public function captured(Resolver $obj): void
+    {
+        $held = function () use ($obj) {
+            return [$obj, 'isRoute'];
+        };
+        $arrow = fn() => [$obj, 'compare'];
+    }
+
+    public function shadowed(Resolver $obj): void
+    {
+        $held = function ($obj) {
+            return [$obj, 'isRoute'];
+        };
+    }
+
+    public function arrowOwn(Resolver $obj): void
+    {
+        $held = fn(Child $obj) => [$obj, 'normalize'];
+    }
+
+    public function choose(bool $flag): void
+    {
+        $chosen = $flag ? [$this, 'normalize'] : [$this, 'compare'];
+        $fallback = $flag ?: [$this, 'isRoute'];
+    }
+
+    public function negatives(mixed $name, string $c, string $class): void
+    {
+        $dynamic = [$this, $name];
+        $text = 'not a callable';
+        $interpolated = "{$c}::isRoute";
+        $relative = 'Resolver::isRoute';
+        $wide = [$this, 'isRoute', true];
+        new $class();
+    }
+
+    private function isRoute(mixed $item): bool
+    {
+        return true;
+    }
+
+    private static function normalize(mixed $item): mixed
+    {
+        return $item;
+    }
+
+    private static function compare(mixed $a, mixed $b): int
+    {
+        return 0;
+    }
+
+    private function unused(): int
+    {
+        return 0;
+    }
+}
+
+class Child extends Resolver
+{
+    public function __construct(string $name)
+    {
+        parent::__construct($name);
+    }
+
+    public function makeParent()
+    {
+        return new parent('x');
+    }
+
+    public function parentCall(): mixed
+    {
+        return parent::normalize(1);
+    }
+
+    private static function normalize(mixed $item): mixed
+    {
+        return $item;
+    }
+}
+
+class Grandchild extends Child
+{
+    public function marker(): int
+    {
+        return 1;
+    }
+}
+"""
+
+_THING = r"""<?php
+namespace Other;
+
+class Thing
+{
+    public static function compare(): int
+    {
+        return 0;
+    }
+
+    private static function secret(): int
+    {
+        return 1;
+    }
+}
+"""
+
+_BRIDGE = r"""<?php
+namespace App;
+
+use Other\Thing as Alias;
+
+class Bridge
+{
+    public function viaConst(): void
+    {
+        $f = [Alias::class, 'secret'];
+    }
+
+    public function viaAliasString(): void
+    {
+        $alias = 'Alias::secret';
+    }
+
+    public function viaAbsolute(): void
+    {
+        $absolute = 'Other\\Thing::secret';
+    }
+
+    public function makeAlias(): void
+    {
+        new Alias();
+    }
+}
+"""
+
+_BOX = r"""<?php
+namespace App\Sub {
+    class Box
+    {
+        public function ref(): void
+        {
+            $text = 'App\\Sub\\Box::hidden';
+            $const = [Box::class, 'hidden'];
+            new Box();
+        }
+
+        private function hidden(): void {}
+
+        private function __construct() {}
+    }
+}
+"""
+
+
+def _index(tmp_path: Path, files: dict[str, str]) -> _CapturingIngestor:
+    project = tmp_path / _PROJECT
+    for rel, source in files.items():
+        path = project / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+    return _capture(project, _PROJECT)
+
+
+def _dead(ingestor: _CapturingIngestor) -> set[str]:
+    nodes = {key: _node_props(props) for key, props in ingestor.nodes.items()}
+    return dead_code_from_graph(
+        nodes,
+        list(ingestor.rels),
+        f"{_PROJECT}.",
+        default_dead_code_config(include_tests=True, include_classes=False),
+    )
+
+
+def _edges(ingestor: _CapturingIngestor, rel: str) -> set[tuple[str, str]]:
+    return {
+        (str(src), str(dst))
+        for _from_label, src, kind, _to_label, dst in ingestor.rels
+        if kind == rel
+    }
+
+
+def _defined(ingestor: _CapturingIngestor, prefix: str) -> set[str]:
+    labels = {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value}
+    return {
+        str(uid)
+        for label, uid in ingestor.nodes
+        if label in labels and str(uid).startswith(prefix)
+    }
+
+
+def _one(items: set[str], description: str) -> str:
+    assert len(items) == 1, (description, sorted(items))
+    return next(iter(items))
+
+
+_RESOLVER_FILES = {"src/Resolver.php": _RESOLVER}
+_R = f"{_PROJECT}.src.Resolver.Resolver"
+_CHILD = f"{_PROJECT}.src.Resolver.Child"
+_GRAND = f"{_PROJECT}.src.Resolver.Grandchild"
+
+
+def test_relative_construction_calls_the_constructor(tmp_path: Path) -> None:
+    ingestor = _index(tmp_path, _RESOLVER_FILES)
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    instantiates = _edges(ingestor, cs.RelationshipType.INSTANTIATES.value)
+    ctor = f"{_R}.__construct"
+    child_ctor = f"{_CHILD}.__construct"
+
+    # `new self` is the enclosing class only. `new static` is that class plus
+    # every subclass. Grandchild declares no constructor and runs Child's.
+    assert (f"{_R}.create", _R) in instantiates
+    assert (f"{_R}.create", ctor) in calls
+    assert (f"{_R}.create", _CHILD) not in instantiates
+    assert (f"{_R}.createStatic", _R) in instantiates
+    assert (f"{_R}.createStatic", ctor) in calls
+    assert (f"{_R}.createStatic", _CHILD) in instantiates
+    assert (f"{_R}.createStatic", child_ctor) in calls
+    assert (f"{_R}.createStatic", _GRAND) in instantiates
+    assert not any(
+        src == f"{_R}.createStatic" and dst.startswith(f"{_GRAND}.")
+        for src, dst in calls
+    )
+
+    # `new parent` binds the extends parent. The protected-or-public parent
+    # constructor is already an API root, so the edge is the proof.
+    assert (f"{_CHILD}.makeParent", _R) in instantiates
+    assert (f"{_CHILD}.makeParent", ctor) in calls
+    assert (f"{_CHILD}.makeParent", _CHILD) not in instantiates
+
+    # A plain and a leading-slash construction must call `__construct`, not
+    # look for Python's `__init__`.
+    assert (f"{_R}.plain", _R) in instantiates
+    assert (f"{_R}.plain", ctor) in calls
+    assert (f"{_R}.qualified", _R) in instantiates
+    assert (f"{_R}.qualified", ctor) in calls
+    assert not any(dst.endswith(".__init__") for _src, dst in calls)
+
+
+def test_callable_values_reference_the_named_method(tmp_path: Path) -> None:
+    ingestor = _index(tmp_path, _RESOLVER_FILES)
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    is_route = f"{_R}.isRoute"
+    normalize = f"{_R}.normalize"
+    compare = f"{_R}.compare"
+
+    for caller in ("filterAll", "keyed", "wrapped", "fromCallable"):
+        assert (f"{_R}.{caller}", is_route) in refs, caller
+    assert (f"{_R}.mapAll", normalize) in refs
+    # `static::class` names the method on the enclosing class and on each
+    # subclass that declares it. Child does not declare `compare`.
+    assert (f"{_R}.sortAll", compare) in refs
+    assert (f"{_R}.sortAll", f"{_CHILD}.compare") not in refs
+
+    # A string callable is an absolute FQCN. Case is ASCII-insensitive, and
+    # a use-alias is not applied (there is none here; the alias file covers
+    # that split). An unqualified `'Resolver::isRoute'` is `\Resolver`.
+    assert (f"{_R}.byString", compare) in refs
+    assert (f"{_R}.byString", is_route) in refs
+    assert (f"{_R}.negatives", is_route) not in refs
+    # `new $class()`, `[$this, $name]` and an interpolated string name nothing.
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    instantiates = _edges(ingestor, cs.RelationshipType.INSTANTIATES.value)
+    assert not any(src == f"{_R}.negatives" for src, _dst in refs)
+    assert not any(src == f"{_R}.negatives" for src, _dst in calls)
+    assert not any(src == f"{_R}.negatives" for src, _dst in instantiates)
+    assert (f"{_R}.invokeUntyped", is_route) not in refs
+    assert (f"{_R}.invokeAmbiguous", is_route) not in refs
+    for caller in ("invokeTyped", "invokeOptional", "invokeUnion"):
+        assert (f"{_R}.{caller}", is_route) in refs, caller
+
+    # An arrow body is the value, and a closure sees a parameter it captures.
+    # Its own parameter, typed or not, hides that outer declaration.
+    assert (f"{_R}.viaArrowValue", is_route) in refs
+    assert (f"{_R}.viaArrowValue", normalize) in refs
+    assert (f"{_R}.captured", is_route) in refs
+    assert (f"{_R}.captured", compare) in refs
+    assert (f"{_R}.shadowed", is_route) not in refs
+    assert (f"{_R}.arrowOwn", f"{_CHILD}.normalize") in refs
+    assert (f"{_R}.arrowOwn", normalize) not in refs
+    # Both arms of a stored ternary are values. The elvis condition is not
+    # an array, so only its alternative adds an edge.
+    assert (f"{_R}.choose", normalize) in refs
+    assert (f"{_R}.choose", compare) in refs
+    assert (f"{_R}.choose", is_route) in refs
+
+
+def test_relative_scoped_calls_bind_early_late_and_parent(tmp_path: Path) -> None:
+    ingestor = _index(tmp_path, _RESOLVER_FILES)
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    own = f"{_R}.normalize"
+    overridden = f"{_CHILD}.normalize"
+
+    # `self::` is the enclosing method, not a subclass override. `static::`
+    # also reaches a subclass that declares the method. `parent::` is the
+    # single extends parent.
+    assert (f"{_R}.early", own) in calls
+    assert (f"{_R}.early", overridden) not in calls
+    assert (f"{_R}.late", own) in calls
+    assert (f"{_R}.late", overridden) in calls
+    assert (f"{_CHILD}.parentCall", own) in calls
+    assert (f"{_CHILD}.parentCall", overridden) not in calls
+    # `parent::__construct` inside Child is the parent constructor.
+    assert (f"{_CHILD}.__construct", f"{_R}.__construct") in calls
+
+
+_CONFIG_ERROR = """final class ConfigurationException extends {parent}
+{{
+    public function __construct(string $option, int $code = 0)
+    {{
+        parent::__construct(
+            sprintf('Option "%s" is invalid.', $option),
+            $code,
+        );
+    }}
+}}
+"""
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        pytest.param(
+            {
+                "src/Errors.php": "<?php\nnamespace App;\n\n"
+                + _CONFIG_ERROR.format(parent="\\Exception")
+            },
+            id="global-parent",
+        ),
+        pytest.param(
+            {
+                "src/Errors.php": "<?php\nnamespace App;\n\nuse Exception;\n\n"
+                + _CONFIG_ERROR.format(parent="Exception")
+            },
+            id="imported-parent",
+        ),
+        # sebastian/diff's shape: the project parent declares no constructor
+        # and extends a vendor class, so the constructor is outside the index.
+        pytest.param(
+            {
+                "src/InvalidArgumentException.php": r"""<?php
+namespace App;
+
+class InvalidArgumentException extends \InvalidArgumentException
+{
+}
+""",
+                "src/Errors.php": "<?php\nnamespace App;\n\n"
+                + _CONFIG_ERROR.format(parent="InvalidArgumentException"),
+            },
+            id="project-parent-without-constructor",
+        ),
+    ],
+)
+def test_parent_constructor_outside_the_index_is_not_the_own(
+    tmp_path: Path, files: dict[str, str]
+) -> None:
+    # `parent::__construct()` runs a constructor no indexed class declares.
+    # The name lookup would bind the caller's own `__construct`, an exact
+    # self-call that never happens, so the call keeps no edge.
+    ingestor = _index(tmp_path, files)
+    ctor = f"{_PROJECT}.src.Errors.ConfigurationException.__construct"
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    assert not {dst for src, dst in calls if src == ctor and "__construct" in dst}
+
+
+def test_stored_closures_and_direct_arguments_are_referenced(
+    tmp_path: Path,
+) -> None:
+    ingestor = _index(tmp_path, _RESOLVER_FILES)
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    dead = _dead(ingestor)
+
+    variable = _one(
+        {qn for qn in _defined(ingestor, f"{_R}.viaVariable.") if ".anonymous_" in qn},
+        "closure assigned in viaVariable",
+    )
+    arrow = _one(
+        {qn for qn in _defined(ingestor, f"{_R}.viaArrow.") if ".anonymous_" in qn},
+        "arrow function assigned in viaArrow",
+    )
+    direct = _one(
+        {qn for qn in _defined(ingestor, f"{_R}.direct.") if ".anonymous_" in qn},
+        "closure passed straight to array_map",
+    )
+
+    assert (f"{_R}.viaVariable", variable) in refs
+    assert (f"{_R}.viaArrow", arrow) in refs
+    # A closure passed directly as an argument is bound by the argument
+    # scan of issue #2925, not by this one; both must hold together.
+    assert (f"{_R}.direct", direct) in refs
+    assert variable not in dead, sorted(dead)
+    assert arrow not in dead, sorted(dead)
+    assert direct not in dead, sorted(dead)
+
+    # The private methods named by the repro stay live; a method nobody
+    # names does not. Public methods are roots either way.
+    for member in ("isRoute", "normalize", "compare", "__construct"):
+        assert f"{_R}.{member}" not in dead, (member, sorted(dead))
+    assert f"{_CHILD}.normalize" not in dead, sorted(dead)
+    assert f"{_CHILD}.__construct" not in dead, sorted(dead)
+    assert f"{_R}.unused" in dead, sorted(dead)
+
+
+def test_string_callable_ignores_aliases_and_class_const_follows_them(
+    tmp_path: Path,
+) -> None:
+    ingestor = _index(
+        tmp_path,
+        {"src/Other/Thing.php": _THING, "src/Bridge.php": _BRIDGE},
+    )
+    thing = f"{_PROJECT}.src.Other.Thing.Thing"
+    secret = f"{thing}.secret"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    instantiates = _edges(ingestor, cs.RelationshipType.INSTANTIATES.value)
+    bridge = f"{_PROJECT}.src.Bridge.Bridge"
+
+    assert (f"{bridge}.viaConst", secret) in refs
+    assert (f"{bridge}.viaAbsolute", secret) in refs
+    # `'Alias::secret'` is the global class Alias. A string callable does not
+    # consult `use` aliases or the current namespace.
+    assert not any(src == f"{bridge}.viaAliasString" for src, _dst in refs)
+    assert (f"{bridge}.makeAlias", thing) in instantiates
+
+
+def test_bracketed_namespace_resolves_by_declared_namespace(
+    tmp_path: Path,
+) -> None:
+    ingestor = _index(tmp_path, {"src/Boxed.php": _BOX})
+    hidden = _one(
+        {qn for qn in _defined(ingestor, f"{_PROJECT}.") if qn.endswith(".Box.hidden")},
+        "Box::hidden",
+    )
+    box = hidden.removesuffix(".hidden")
+    ctor = f"{box}.__construct"
+    ref = f"{box}.ref"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    instantiates = _edges(ingestor, cs.RelationshipType.INSTANTIATES.value)
+
+    assert (ref, hidden) in refs
+    assert (ref, box) in instantiates
+    assert (ref, ctor) in calls
+    dead = _dead(ingestor)
+    assert hidden not in dead, sorted(dead)
+    assert ctor not in dead, sorted(dead)
+
+
+_PARENT = r"""<?php
+namespace App;
+
+class Foo
+{
+    public function ref(): void
+    {
+        $f = 'App\\Bar::secret';
+    }
+}
+"""
+
+_NESTED = r"""<?php
+namespace App;
+
+class Bar
+{
+    private static function secret(): int
+    {
+        return 1;
+    }
+}
+"""
+
+
+def test_reparse_drops_only_that_files_classes(tmp_path: Path) -> None:
+    # `src/Foo.php` is a path prefix of `src/Foo/Bar.php`. Re-parsing the
+    # parent must not erase the nested class, and must not raise while the
+    # index still holds the previous parse.
+    project = tmp_path / _PROJECT
+    foo = project / "src" / "Foo.php"
+    nested = project / "src" / "Foo" / "Bar.php"
+    foo.parent.mkdir(parents=True)
+    nested.parent.mkdir(parents=True)
+    foo.write_text(_PARENT, encoding="utf-8")
+    nested.write_text(_NESTED, encoding="utf-8")
+    _parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=_CapturingIngestor(),
+        repo_path=project,
+        parsers=_parsers,
+        queries=queries,
+        project_name=_PROJECT,
+    )
+    updater.run(force=True)
+    foo_qn = f"{_PROJECT}.src.Foo.Foo"
+    bar_qn = f"{_PROJECT}.src.Foo.Bar.Bar"
+    index = updater.factory.import_processor.php_class_index
+    assert foo_qn in index["app.foo"]
+    assert bar_qn in index["app.bar"]
+
+    registry = updater.function_registry
+    for qn in list(registry.keys()):
+        if qn == foo_qn or qn.startswith(f"{foo_qn}."):
+            del registry[qn]
+    parsed = updater.factory.definition_processor.process_file(
+        foo,
+        cs.SupportedLanguage.PHP,
+        queries,
+        updater.factory.structure_processor.structural_elements,
+    )
+    assert parsed is not None
+    index = updater.factory.import_processor.php_class_index
+    assert index["app.foo"] == {foo_qn}
+    assert bar_qn in index["app.bar"]
+
+
+def _import_does_not_redirect_construction(tmp_path: Path, source: str) -> None:
+    ingestor = _index(tmp_path, {"src/Resolver.php": source})
+    class_qn = f"{_PROJECT}.src.Resolver.Resolver"
+    make = f"{class_qn}.make"
+    instantiates = _edges(ingestor, cs.RelationshipType.INSTANTIATES.value)
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    assert (make, class_qn) in instantiates
+    assert (make, f"{class_qn}.__construct") in calls
+    assert not any("Helpers" in dst for _src, dst in instantiates)
+
+
+def test_stored_callable_without_calls_stays_live(tmp_path: Path) -> None:
+    # A file whose methods never call anything still has to reach the class
+    # caller pass. Otherwise a stored array or closure gets no REFERENCES
+    # edge and the private target is reported dead.
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Quiet.php": r"""<?php
+namespace App;
+
+class Quiet
+{
+    public function hold(): callable
+    {
+        $cb = [$this, 'normalize'];
+        $upper = function (string $value): string {
+            return $value;
+        };
+        return $cb;
+    }
+
+    private function normalize(string $value): string
+    {
+        return $value;
+    }
+
+    private function unused(): void
+    {
+    }
+}
+"""
+        },
+    )
+    quiet = f"{_PROJECT}.src.Quiet.Quiet"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    closure = _one(
+        {qn for qn in _defined(ingestor, f"{quiet}.hold.") if ".anonymous_" in qn},
+        "closure assigned in hold",
+    )
+    assert (f"{quiet}.hold", f"{quiet}.normalize") in refs
+    assert (f"{quiet}.hold", closure) in refs
+    dead = _dead(ingestor)
+    assert f"{quiet}.normalize" not in dead, sorted(dead)
+    assert closure not in dead, sorted(dead)
+    assert f"{quiet}.unused" in dead, sorted(dead)
+
+
+def test_callable_array_requires_indexes_zero_and_one() -> None:
+    from codebase_rag.parsers.php.callables import callable_array
+
+    parsers, _queries = load_parsers()
+    root = (
+        parsers[cs.SupportedLanguage.PHP]
+        .parse(
+            b"<?php\n"
+            b"$ok = [$this, 'delete'];\n"
+            b"$keyed = array(0 => $this, 1 => 'delete');\n"
+            b"$numeric = array('0' => $this, '1' => 'delete');\n"
+            b"$swapped = [1 => 'delete', 0 => $this];\n"
+            b"$explicit = [$this, 1 => 'delete'];\n"
+            b"$hex = [0x0 => $this, 0x1 => 'delete'];\n"
+            b"$bits = [0b0 => $this, 0b1 => 'delete'];\n"
+            b"$octal = [0o0 => $this, 0o1 => 'delete'];\n"
+            b"$signed = [-0 => $this, +1 => 'delete'];\n"
+            b"$flags = [false => $this, true => 'delete'];\n"
+            b"$floats = [0.0 => $this, 1.0 => 'delete'];\n"
+            b"$named = ['object' => $this, 'action' => 'delete'];\n"
+            b"$padded = ['01' => $this, '1' => 'delete'];\n"
+            b"$gap = [2 => $this, 'delete'];\n"
+        )
+        .root_node
+    )
+    arrays = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PHP_ARRAY_CREATION_EXPRESSION:
+            arrays.append(node)
+        stack.extend(reversed(node.children))
+    parsed = [callable_array(node) for node in arrays]
+    assert [item[1] if item else None for item in parsed] == [
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        None,
+        None,
+        None,
+    ]
+    for item in parsed[:11]:
+        assert item is not None
+        assert item[0].text == b"$this"
+
+
+def test_grouped_alias_callback_binds_the_imported_class(tmp_path: Path) -> None:
+    # `use App\{Resolver as R}` must not fall back to a class named `R` in
+    # the enclosing namespace. The private method on Resolver stays live.
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Grouped.php": r"""<?php
+namespace App;
+
+use App\{Resolver as R};
+
+class Caller
+{
+    public function go(): void
+    {
+        $cb = [R::class, 'hidden'];
+    }
+}
+
+class R
+{
+    private function hidden(): void {}
+}
+
+class Resolver
+{
+    private function hidden(): void {}
+}
+"""
+        },
+    )
+    caller = f"{_PROJECT}.src.Grouped.Caller.go"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    hidden = {dst for src, dst in refs if src == caller and dst.endswith(".hidden")}
+    assert hidden == {f"{_PROJECT}.src.Grouped.Resolver.hidden"}
+    dead = _dead(ingestor)
+    assert f"{_PROJECT}.src.Grouped.Resolver.hidden" not in dead, sorted(dead)
+    assert f"{_PROJECT}.src.Grouped.R.hidden" in dead, sorted(dead)
+
+
+def test_cased_method_and_constructor_stay_bound(tmp_path: Path) -> None:
+    # `self::normalize()` names `Normalize`, and `new static` includes a
+    # subclass whose constructor is spelled `__CONSTRUCT`.
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Cased.php": r"""<?php
+namespace App;
+
+class Base
+{
+    public function early(): void
+    {
+        self::normalize();
+    }
+
+    public function make(): static
+    {
+        return new static();
+    }
+
+    private static function Normalize(): void {}
+
+    public function __construct() {}
+}
+
+class Child extends Base
+{
+    public function __CONSTRUCT()
+    {
+        parent::__construct();
+    }
+}
+"""
+        },
+    )
+    base = f"{_PROJECT}.src.Cased.Base"
+    child = f"{_PROJECT}.src.Cased.Child"
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    instantiates = _edges(ingestor, cs.RelationshipType.INSTANTIATES.value)
+    assert (f"{base}.early", f"{base}.Normalize") in calls
+    assert (f"{base}.make", base) in instantiates
+    assert (f"{base}.make", child) in instantiates
+    assert (f"{base}.make", f"{base}.__construct") in calls
+    assert (f"{base}.make", f"{child}.__CONSTRUCT") in calls
+    assert (f"{child}.__CONSTRUCT", f"{base}.__construct") in calls
+    dead = _dead(ingestor)
+    assert f"{base}.Normalize" not in dead, sorted(dead)
+
+
+def test_string_keyed_array_does_not_keep_the_method(tmp_path: Path) -> None:
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Keyed.php": r"""<?php
+namespace App;
+
+class Box
+{
+    public function hold(): void
+    {
+        $named = ['object' => $this, 'action' => 'delete'];
+        $real = [1 => 'keep', 0 => $this];
+    }
+
+    private function delete(): void {}
+
+    private function keep(): void {}
+}
+"""
+        },
+    )
+    box = f"{_PROJECT}.src.Keyed.Box"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    assert (f"{box}.hold", f"{box}.keep") in refs
+    assert (f"{box}.hold", f"{box}.delete") not in refs
+    dead = _dead(ingestor)
+    assert f"{box}.delete" in dead, sorted(dead)
+    assert f"{box}.keep" not in dead, sorted(dead)
+
+
+def test_function_import_does_not_redirect_construction(tmp_path: Path) -> None:
+    _import_does_not_redirect_construction(
+        tmp_path,
+        r"""<?php
+namespace App;
+
+use function Helpers\Resolver;
+
+class Resolver
+{
+    public function make(): void
+    {
+        new Resolver();
+    }
+
+    private function __construct() {}
+}
+""",
+    )
+
+
+def test_const_import_does_not_redirect_construction(tmp_path: Path) -> None:
+    _import_does_not_redirect_construction(
+        tmp_path,
+        r"""<?php
+namespace App;
+
+use const Helpers\Resolver;
+
+class Resolver
+{
+    public function make(): void
+    {
+        new Resolver();
+    }
+
+    private function __construct() {}
+}
+""",
+    )
+
+
+def test_closure_passed_to_relative_call_is_referenced(
+    tmp_path: Path,
+) -> None:
+    # A relative call takes the issue #3117 path instead of the name lookup. It
+    # must still run the argument scan of issue #2925, or a closure handed to
+    # `self::accept(...)` reports dead.
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Relay.php": r"""<?php
+namespace App;
+
+class Base
+{
+    protected static function accept(callable $cb): void {}
+}
+
+class Relay extends Base
+{
+    public function viaSelf(): void
+    {
+        self::accept(function () { return 1; });
+    }
+
+    public function viaStatic(): void
+    {
+        static::accept(fn () => 2);
+    }
+
+    public function viaParent(): void
+    {
+        parent::accept(function () { return 3; });
+    }
+}
+"""
+        },
+    )
+    relay = f"{_PROJECT}.src.Relay.Relay"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    dead = _dead(ingestor)
+    for method in ("viaSelf", "viaStatic", "viaParent"):
+        closure = _one(
+            {
+                qn
+                for qn in _defined(ingestor, f"{relay}.{method}.")
+                if ".anonymous_" in qn
+            },
+            f"closure passed in {method}",
+        )
+        assert (f"{relay}.{method}", closure) in refs, (method, sorted(refs))
+        assert closure not in dead, (method, sorted(dead))
+    # The relative binding itself still holds.
+    base = f"{_PROJECT}.src.Relay.Base"
+    assert (f"{relay}.viaParent", f"{base}.accept") in calls
+
+
+def test_namespace_relative_and_bare_global_imports_name_the_class(
+    tmp_path: Path,
+) -> None:
+    # `namespace\\Local::class` is `Local` in the enclosing namespace, and
+    # `use Shared;` in a namespace imports the global class `Shared`, not
+    # `App\\Shared`, which exists here too.
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Shared.php": r"""<?php
+class Shared
+{
+    private function handle(): void {}
+}
+""",
+            "src/App/Shared.php": r"""<?php
+namespace App;
+
+class Shared
+{
+    private function handle(): void {}
+}
+""",
+            "src/App/Local.php": r"""<?php
+namespace App;
+
+class Local
+{
+    private function handle(): void {}
+}
+""",
+            "src/App/Wiring.php": r"""<?php
+namespace App;
+
+use Shared;
+
+class Wiring
+{
+    public function relative(): array
+    {
+        return [namespace\Local::class, 'handle'];
+    }
+
+    public function global(): array
+    {
+        return [Shared::class, 'handle'];
+    }
+}
+""",
+        },
+    )
+    wiring = f"{_PROJECT}.src.App.Wiring.Wiring"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    local = f"{_PROJECT}.src.App.Local.Local.handle"
+    global_shared = f"{_PROJECT}.src.Shared.Shared.handle"
+    app_shared = f"{_PROJECT}.src.App.Shared.Shared.handle"
+    assert (f"{wiring}.relative", local) in refs, sorted(refs)
+    assert (f"{wiring}.global", global_shared) in refs, sorted(refs)
+    assert (f"{wiring}.global", app_shared) not in refs, sorted(refs)
+
+
+def test_absolute_use_clause_names_the_class(tmp_path: Path) -> None:
+    # `use \Vendor\Widget as W;` is the same import as without the leading
+    # slash, and so is `use \Gadget;` for a global class (PR #3652 review).
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Widget.php": r"""<?php
+namespace Vendor;
+
+class Widget
+{
+    private static function run(): void {}
+}
+""",
+            "src/Gadget.php": r"""<?php
+class Gadget
+{
+    private static function go(): void {}
+}
+""",
+            "src/Main.php": r"""<?php
+namespace App;
+
+use \Vendor\Widget as W;
+use \Gadget;
+
+class Main
+{
+    public function wire(): array
+    {
+        return [[W::class, 'run'], [Gadget::class, 'go']];
+    }
+}
+""",
+        },
+    )
+    wire = f"{_PROJECT}.src.Main.Main.wire"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    assert (wire, f"{_PROJECT}.src.Widget.Widget.run") in refs, sorted(refs)
+    assert (wire, f"{_PROJECT}.src.Gadget.Gadget.go") in refs, sorted(refs)
+
+
+def test_class_name_string_receiver_is_an_absolute_class(tmp_path: Path) -> None:
+    # PHP reads `['App\\Handler', 'm']` as it reads `'App\\Handler::m'`: an
+    # absolute class name, never an alias or the enclosing namespace
+    # (PR #3652 review).
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Handler.php": r"""<?php
+namespace App;
+
+class Handler
+{
+    private static function handle(): void {}
+
+    private static function other(): void {}
+}
+""",
+            "src/Sub/Handler.php": r"""<?php
+namespace App\Sub;
+
+class Handler
+{
+    private static function handle(): void {}
+}
+""",
+            "src/Sub/Wiring.php": r"""<?php
+namespace App\Sub;
+
+class Wiring
+{
+    public function single(): array
+    {
+        return ['App\\Handler', 'handle'];
+    }
+
+    public function double(): array
+    {
+        return array("\\App\\Handler", 'other');
+    }
+}
+""",
+        },
+    )
+    wiring = f"{_PROJECT}.src.Sub.Wiring.Wiring"
+    handler = f"{_PROJECT}.src.Handler.Handler"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    assert (f"{wiring}.single", f"{handler}.handle") in refs, sorted(refs)
+    assert (f"{wiring}.double", f"{handler}.other") in refs, sorted(refs)
+    sub_handle = f"{_PROJECT}.src.Sub.Handler.Handler.handle"
+    assert (f"{wiring}.single", sub_handle) not in refs, sorted(refs)
+
+
+def test_new_static_reaches_a_subclass_extending_an_imported_base(
+    tmp_path: Path,
+) -> None:
+    # `class Child extends Base` under `use App\Base` keeps its parent as the
+    # FQCN the import recorded. `new static` and `static::hook()` in Base
+    # still reach Child (PR #3652 review).
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Base.php": r"""<?php
+namespace App;
+
+class Base
+{
+    public static function make(): static
+    {
+        static::hook();
+        return new static();
+    }
+
+    public static function hook(): void {}
+}
+""",
+            "src/Sub/Child.php": r"""<?php
+namespace App\Sub;
+
+use App\Base;
+
+class Child extends Base
+{
+    public function __construct() {}
+
+    public static function hook(): void {}
+}
+""",
+        },
+    )
+    make = f"{_PROJECT}.src.Base.Base.make"
+    child = f"{_PROJECT}.src.Sub.Child.Child"
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    instantiates = _edges(ingestor, cs.RelationshipType.INSTANTIATES.value)
+    assert (make, child) in instantiates, sorted(instantiates)
+    assert (make, f"{child}.__construct") in calls, sorted(calls)
+    assert (make, f"{child}.hook") in calls, sorted(calls)
+
+
+def _run_updater(store: _StatefulIngestor, root: Path, force: bool) -> None:
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=root.name,
+    ).run(force=force)
+
+
+def test_restoring_unchanged_imports_keeps_its_classes(tmp_path: Path) -> None:
+    # The project is named after its namespace, so `use App\Resolver` names
+    # the module `App.Resolver` and an incremental run restores that
+    # unchanged file's imports. That must not drop the class the run read
+    # back from the graph, or the edited caller's callables bind nothing
+    # (PR #3652 review).
+    root = tmp_path / "App"
+    files = {
+        "Resolver.php": r"""<?php
+namespace App;
+
+class Resolver
+{
+    private static function handle(): void {}
+}
+""",
+        "Main.php": r"""<?php
+namespace App;
+
+use App\Resolver;
+
+class Main
+{
+    public function run(): array
+    {
+        return [[Resolver::class, 'handle'], 'App\\Resolver::handle'];
+    }
+}
+""",
+    }
+    for rel, source in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(source, encoding="utf-8")
+    store = _StatefulIngestor()
+    _run_updater(store, root, force=True)
+    edge = ("App.Main.Main.run", "App.Resolver.Resolver.handle")
+
+    def refs() -> set[tuple[str, str]]:
+        return {
+            (str(key[1]), str(key[4]))
+            for key in store.edge_props
+            if key[2] == cs.RelationshipType.REFERENCES.value
+        }
+
+    assert edge in refs(), sorted(refs())
+
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    main = root / "Main.php"
+    main.write_text(
+        files["Main.php"].replace("        return", "        // edit\n        return"),
+        encoding="utf-8",
+    )
+    os.utime(main, (cache_mtime + 1, cache_mtime + 1))
+    _run_updater(store, root, force=False)
+
+    assert edge in refs(), sorted(refs())
+
+
+def test_failed_class_restore_leaves_the_class_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Restoring an unchanged PHP class reads the graph for its module. When
+    # that read fails, the run is retried with the same updater, and a qn the
+    # registry already claimed is skipped, so its class-index entry never
+    # came back (PR #3652 review).
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=_StatefulIngestor(),
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name="App",
+    )
+    row = {
+        cs.KEY_QUALIFIED_NAME: "App.Resolver.Resolver",
+        cs.KEY_LABEL: cs.NodeLabel.CLASS.value,
+        cs.KEY_PATH: "Resolver.php",
+        cs.KEY_NAMESPACE: "App",
+        cs.KEY_NAME: "Resolver",
+    }
+    read_module_qns = updater._read_module_qns_by_path
+    attempts: list[int] = []
+
+    def fail_once() -> dict[str, str]:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise RuntimeError("graph read failed")
+        return read_module_qns()
+
+    monkeypatch.setattr(updater, "_read_module_qns_by_path", fail_once)
+    with pytest.raises(RuntimeError):
+        updater._rehydrate_definition_row(row)
+    assert updater._rehydrate_definition_row(row)
+    index = updater.factory.import_processor.php_class_index
+    assert "App.Resolver.Resolver" in index.get("app.resolver", set()), index
+
+
+def test_namespace_blocks_keep_their_own_aliases(tmp_path: Path) -> None:
+    # PHP scopes `use` to its namespace block. Two blocks importing different
+    # classes under one alias each reference their own (PR #3652 review).
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Vendor.php": r"""<?php
+namespace Vendor;
+
+class One
+{
+    private function run(): void {}
+}
+
+class Two
+{
+    private function run(): void {}
+}
+""",
+            "src/Blocks.php": r"""<?php
+namespace A {
+    use Vendor\One as R;
+
+    function a(): array { return [R::class, 'run']; }
+}
+
+namespace B {
+    use Vendor\Two as R;
+
+    function b(): array { return [R::class, 'run']; }
+}
+""",
+        },
+    )
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    one = f"{_PROJECT}.src.Vendor.One.run"
+    two = f"{_PROJECT}.src.Vendor.Two.run"
+    a = _one({src for src, dst in refs if src.endswith(".a")}, "function a")
+    b = _one({src for src, dst in refs if src.endswith(".b")}, "function b")
+    assert (a, one) in refs, sorted(refs)
+    assert (a, two) not in refs, sorted(refs)
+    assert (b, two) in refs, sorted(refs)
+    assert (b, one) not in refs, sorted(refs)
+
+
+def test_reassigned_typed_parameter_is_not_trusted(tmp_path: Path) -> None:
+    # `$h = new OtherHandler()` replaces what the typed parameter held, so
+    # `[$h, 'run']` must not name `Handler::run` (PR #3652 review).
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Wire.php": r"""<?php
+namespace App;
+
+class Handler
+{
+    private function run(): void {}
+}
+
+class OtherHandler
+{
+    private function run(): void {}
+}
+
+class Wire
+{
+    public function rebound(Handler $h): array
+    {
+        $h = new OtherHandler();
+        return [$h, 'run'];
+    }
+
+    public function kept(Handler $h): array
+    {
+        return [$h, 'run'];
+    }
+}
+""",
+        },
+    )
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    wire = f"{_PROJECT}.src.Wire.Wire"
+    handler_run = f"{_PROJECT}.src.Wire.Handler.run"
+    assert (f"{wire}.rebound", handler_run) not in refs, sorted(refs)
+    assert (f"{wire}.kept", handler_run) in refs, sorted(refs)
+
+
+def test_relative_calls_reach_the_methods_a_trait_supplies(tmp_path: Path) -> None:
+    # `use T;` copies T's methods into the class, ahead of an inherited one:
+    # `self::hidden()` is T's, `self::pick()` T's rather than Base's, and a
+    # private trait method so called is not dead (Greptile on #3652).
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Traits/Hides.php": r"""<?php
+namespace App\Traits;
+
+trait Hides
+{
+    private static function imported(): void {}
+}
+""",
+            "src/Uses.php": r"""<?php
+namespace App;
+
+use App\Traits\Hides;
+
+class Base
+{
+    public static function pick(): void {}
+}
+
+trait T
+{
+    private static function hidden(): void {}
+
+    public static function pick(): void {}
+}
+
+class C extends Base
+{
+    use T, Hides;
+
+    public function early(): void
+    {
+        self::hidden();
+    }
+
+    public function late(): void
+    {
+        static::hidden();
+    }
+
+    public function across(): void
+    {
+        self::imported();
+    }
+
+    public function overridden(): void
+    {
+        self::pick();
+    }
+}
+""",
+        },
+    )
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    c = f"{_PROJECT}.src.Uses.C"
+    hidden = f"{_PROJECT}.src.Uses.T.hidden"
+    imported = f"{_PROJECT}.src.Traits.Hides.Hides.imported"
+    assert (f"{c}.early", hidden) in calls, sorted(calls)
+    assert (f"{c}.late", hidden) in calls, sorted(calls)
+    assert (f"{c}.across", imported) in calls, sorted(calls)
+    assert (f"{c}.overridden", f"{_PROJECT}.src.Uses.T.pick") in calls, sorted(calls)
+    assert (f"{c}.overridden", f"{_PROJECT}.src.Uses.Base.pick") not in calls, sorted(
+        calls
+    )
+    dead = _dead(ingestor)
+    assert hidden not in dead, sorted(dead)
+    assert imported not in dead, sorted(dead)
+
+
+def test_a_relative_call_nothing_known_declares_keeps_the_name_lookup(
+    tmp_path: Path,
+) -> None:
+    # A parent's trait is not read at the call site: the name lookup still
+    # links `self::hidden()`, as it did before relative calls were bound.
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Parent.php": r"""<?php
+namespace App;
+
+trait T
+{
+    private static function hidden(): void {}
+}
+
+class P
+{
+    use T;
+}
+
+class C extends P
+{
+    public function run(): void
+    {
+        self::hidden();
+    }
+}
+""",
+        },
+    )
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    pair = (f"{_PROJECT}.src.Parent.C.run", f"{_PROJECT}.src.Parent.T.hidden")
+    assert pair in calls, sorted(calls)

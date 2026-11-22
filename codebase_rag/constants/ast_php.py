@@ -1,5 +1,7 @@
 # PHP tree-sitter node types.
 
+from enum import StrEnum
+
 TS_PHP_FUNCTION_DEFINITION = "function_definition"
 TS_PHP_METHOD_DECLARATION = "method_declaration"
 TS_PHP_TRAIT_DECLARATION = "trait_declaration"
@@ -27,7 +29,13 @@ TS_PHP_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
 TS_PHP_NAMESPACE_DEFINITION = "namespace_definition"
 TS_PHP_NAMESPACE_USE_DECLARATION = "namespace_use_declaration"
 TS_PHP_NAMESPACE_USE_CLAUSE = "namespace_use_clause"
+# `use App\{Resolver as R}`: the clauses sit in the group, under the prefix.
+TS_PHP_NAMESPACE_USE_GROUP = "namespace_use_group"
 TS_PHP_FUNCTION = "function"
+TS_PHP_CONST = "const"
+# `$flag ? [$this, 'a'] : [$this, 'b']`. Elvis (`?:`) is the same node
+# with no `body`.
+TS_PHP_CONDITIONAL_EXPRESSION = "conditional_expression"
 TS_PHP_INCLUDE_EXPRESSION = "include_expression"
 TS_PHP_INCLUDE_ONCE_EXPRESSION = "include_once_expression"
 TS_PHP_REQUIRE_EXPRESSION = "require_expression"
@@ -45,8 +53,6 @@ TS_PHP_PROPERTY_DECLARATION = "property_declaration"
 TS_PHP_PROPERTY_ELEMENT = "property_element"
 TS_PHP_DECLARATION_LIST = "declaration_list"
 TS_PHP_VARIABLE_NAME = "variable_name"
-# The receiver of `$this->m()`, as its `variable_name` node spells it.
-PHP_THIS_VARIABLE = "$this"
 TS_PHP_USE_DECLARATION = "use_declaration"
 # `use A, B { A::label insteadof B; }`: the braces of a trait use, and the
 # clause in them that picks one trait's method over another's.
@@ -55,6 +61,28 @@ TS_PHP_USE_INSTEAD_OF_CLAUSE = "use_instead_of_clause"
 # `use T { T::original as label; }`: the clause that copies a trait's method
 # under another name (or, with no new name, only changes its visibility).
 TS_PHP_USE_AS_CLAUSE = "use_as_clause"
+TS_PHP_ARRAY_CREATION_EXPRESSION = "array_creation_expression"
+TS_PHP_ARRAY_ELEMENT_INITIALIZER = "array_element_initializer"
+TS_PHP_INTEGER = "integer"
+TS_PHP_FLOAT = "float"
+TS_PHP_BOOLEAN = "boolean"
+TS_PHP_UNARY_OP_EXPRESSION = "unary_op_expression"
+TS_PHP_CLASS_CONSTANT_ACCESS_EXPRESSION = "class_constant_access_expression"
+TS_PHP_RELATIVE_SCOPE = "relative_scope"
+TS_PHP_OPTIONAL_TYPE = "optional_type"
+TS_PHP_UNION_TYPE = "union_type"
+TS_PHP_NAMED_TYPE = "named_type"
+TS_PHP_PRIMITIVE_TYPE = "primitive_type"
+PHP_CLASS_CONST = "class"
+# `$this` is case-sensitive. The relative scopes are not: PHP folds them.
+PHP_THIS = "$this"
+
+
+class PhpRelativeScope(StrEnum):
+    SELF = "self"
+    STATIC = "static"
+    PARENT = "parent"
+
 
 # FLOWS_TO lean-walk node types (issue #1174). PHP variables carry a `$` prefix
 # (`variable_name` -> `.text == "$s"`), so a local can never shadow a builtin sink.

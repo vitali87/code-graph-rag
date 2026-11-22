@@ -69,6 +69,7 @@ from .js_ts import utils as js_ts_utils
 from .julia import utils as julia_utils
 from .lua import utils as lua_utils
 from .php import class_names as php_class_names
+from .php import references as php_references
 from .php import utils as php_utils
 from .py import utils as py_utils
 from .py.class_aliases import scan_class_body_aliases
@@ -554,37 +555,36 @@ def _is_cpp_dereference(operand: Node) -> bool:
     )
 
 
-def _calls_own_member(language: cs.SupportedLanguage | None, call_node: Node) -> bool:
-    """Whether the call reaches a member of the caller's own object: with no
-    receiver (`label()`) or through `this` (`this->label()`, `$this->label()`).
+def _calls_through_this(language: cs.SupportedLanguage | None, call_node: Node) -> bool:
+    """Whether a call with a receiver makes it on the caller's own object:
+    `this->label()`, `(*this).label()`, `$this->label()`.
 
     PHP and C++ name a call on any other receiver by its bare method too
     (`$other->label()`, `a.b.label()`), so only the call's shape tells the
-    resolver which ones may reach an inherited method. Scala is left as on
-    main: nothing reads which names its parameters and locals bind where a
-    call sits, so a hidden bare call cannot be told apart (PR #3240).
+    resolver which ones may reach an inherited method. A Dart call's name
+    keeps every receiver but `this` / `super`, so each one its name leaves
+    bare is on the caller's own object, unless a parameter or local of the
+    name hides it. Scala is left as on main: nothing reads which names its
+    parameters and locals bind where a call sits, so a hidden bare call
+    cannot be told apart (PR #3240).
     """
     match language:
         case cs.SupportedLanguage.DART:
-            # dart_call_name keeps every receiver but `this` / `super`.
             return True
         case cs.SupportedLanguage.PHP:
-            # A bare PHP `label()` is a function call, never a method.
             receiver = call_node.child_by_field_name(cs.FIELD_OBJECT)
             return (
                 call_node.type in cs.PHP_MEMBER_CALL_TYPES
                 and receiver is not None
                 and receiver.type == cs.TS_PHP_VARIABLE_NAME
-                and safe_decode_text(receiver) == cs.PHP_THIS_VARIABLE
+                and safe_decode_text(receiver) == cs.PHP_THIS
             )
         case cs.SupportedLanguage.CPP:
             callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-            return callee is not None and (
-                _cpp_bare_callee(callee) is not None
-                or (
-                    callee.type == cs.TS_CPP_FIELD_EXPRESSION
-                    and _is_this_receiver(callee)
-                )
+            return (
+                callee is not None
+                and callee.type == cs.TS_CPP_FIELD_EXPRESSION
+                and _is_this_receiver(callee)
             )
     return False
 
@@ -685,6 +685,39 @@ def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
             calls += 1
             if calls >= cs.MAX_RECEIVER_CHAIN_HOPS:
                 return True
+    return False
+
+
+def _in_member_initializer(call_node: Node) -> bool:
+    # Whether a C++ call initializes a member: in a constructor's
+    # member-initializer list, or as a default member initializer
+    # (`int next_ = Start();`, Greptile on PR #2948). Both run in the
+    # class's scope though the module's calls read them.
+    node = call_node.parent
+    while node is not None and node.type not in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+        if node.type == cs.CppNodeType.FIELD_INITIALIZER_LIST or (
+            node.type == cs.CppNodeType.FIELD_DECLARATION
+            and node.parent is not None
+            and node.parent.type == cs.TS_CPP_FIELD_DECLARATION_LIST
+        ):
+            return True
+        node = node.parent
+    return False
+
+
+def _has_no_receiver(call_node: Node, language: cs.SupportedLanguage) -> bool:
+    # PHP and C/C++ name a member call by its bare method name too
+    # (`$bag->count()` and `count($xs)` both read `count`; `a.b.max()` reads
+    # `max`), so only the call's shape tells that it has no receiver and so
+    # names no method of another class (issue #2575). A C++ template call
+    # (`make<int>()`) is as bare as `make()` (PR #3240).
+    if language == cs.SupportedLanguage.PHP:
+        return call_node.type == cs.TS_PHP_FUNCTION_CALL_EXPRESSION
+    if language in _C_FAMILY_LANGUAGES:
+        return (
+            _cpp_bare_callee(call_node.child_by_field_name(cs.TS_FIELD_FUNCTION))
+            is not None
+        )
     return False
 
 
@@ -1060,7 +1093,14 @@ _JSX_COMPONENT_TARGET_TYPES = frozenset(
 # Generator expressions are inline function values like the other two
 # (issue #994): a registered node with no reference path is an orphan.
 _INLINE_FUNC_VALUE_TYPES = frozenset(
-    {cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION}
+    {
+        cs.TS_ARROW_FUNCTION,
+        cs.TS_FUNCTION_EXPRESSION,
+        cs.TS_GENERATOR_FUNCTION,
+        # PHP closures use their own node. The arrow form shares the JS
+        # `arrow_function` name, so it was already in this set (issue #3117).
+        cs.TS_PHP_ANONYMOUS_FUNCTION,
+    }
 )
 # JS/TS scopes that bind their own parameters (and, for a named function
 # expression, their own name) for the lexical receiver resolution of #988.
@@ -2409,6 +2449,130 @@ def _go_asserted_receiver_call_name(selector: Node) -> str | None:
     return f"{type_name}{cs.SEPARATOR_DOT}{decode_node_text(method.text)}"
 
 
+def _ts_cast_target(member: Node) -> tuple[Node, str] | None:
+    # The type a cast receiver is cast to and the method called on it:
+    # `(s as Service).handle()` and `(<Service>s).handle()` (issue #2890).
+    receiver = member.child_by_field_name(cs.FIELD_OBJECT)
+    method = member.child_by_field_name(cs.FIELD_PROPERTY)
+    while receiver is not None and receiver.type in cs.TS_TYPE_KEEPING_WRAPPERS:
+        receiver = receiver.named_child(0)
+    if receiver is None or method is None or method.text is None:
+        return None
+    target: Node | None = None
+    if receiver.type == cs.TS_AS_EXPRESSION and receiver.named_children:
+        target = receiver.named_children[-1]
+    elif receiver.type == cs.TS_TYPE_ASSERTION and (
+        (arguments := receiver.named_child(0)) is not None
+        and arguments.type == cs.TS_TYPE_ARGUMENTS
+    ):
+        target = arguments.named_child(0)
+    if target is None:
+        return None
+    return target, decode_node_text(method.text)
+
+
+def _ts_named_type_text(target: Node) -> str | None:
+    # `Service`, `ns.Service`, or the generic `Box<number>`'s `Box`; a cast
+    # to no named type (`any`, a union, an object type) names no class.
+    named: Node | None = target
+    if named.type == cs.TS_GENERIC_TYPE:
+        named = named.named_child(0)
+    if (
+        named is None
+        or named.type not in (cs.TS_TYPE_IDENTIFIER, cs.TS_NESTED_TYPE_IDENTIFIER)
+        or named.text is None
+    ):
+        return None
+    return decode_node_text(named.text)
+
+
+def _ts_names_scoped_type(anchor: Node, name: str) -> bool:
+    # Whether the nearest scope around `anchor` that declares the type `name`
+    # is not the module: a type parameter (`function f<Service>()`) names the
+    # constraint's members, and a class a function declares is that local
+    # class, so neither is the module class the bare name would bind
+    # (CodeRabbit and Greptile, PR #2959).
+    current = anchor.parent
+    while current is not None:
+        params = current.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+        if params is not None and any(
+            safe_decode_text(param.child_by_field_name(cs.FIELD_NAME)) == name
+            for param in params.named_children
+        ):
+            return True
+        for child in current.named_children:
+            declaration = (
+                child.child_by_field_name(cs.TS_DECLARATION)
+                if child.type == cs.TS_EXPORT_STATEMENT
+                else child
+            )
+            if (
+                declaration is not None
+                and declaration.type in cs.TS_TYPE_DECLARATION_NODES
+                and safe_decode_text(declaration.child_by_field_name(cs.FIELD_NAME))
+                == name
+            ):
+                return not _ts_is_module_level(current)
+        current = current.parent
+    return False
+
+
+def _ts_is_module_level(scope: Node) -> bool:
+    # The module itself, or a module-level `export` statement holding the
+    # declaration (`export class Service`), which is no nested scope
+    # (Greptile, PR #2959).
+    if scope.parent is None:
+        return True
+    return scope.type == cs.TS_EXPORT_STATEMENT and scope.parent.parent is None
+
+
+def _ts_cast_receiver_call_name(member: Node) -> str | None:
+    # `(s as Service).handle()` and `(<Service>s).handle()` name the
+    # receiver's type at the call site, so the call is `Service.handle`, which
+    # the resolver binds as it binds a typed receiver; the cast's own text was
+    # a call name it could not read (issue #2890). A cast to a type parameter
+    # or to a function's own class names no module class (PR #2959 review).
+    if (cast := _ts_cast_target(member)) is None:
+        return None
+    target, method = cast
+    if (type_name := _ts_named_type_text(target)) is None:
+        return None
+    if _ts_names_scoped_type(target, type_name.partition(cs.SEPARATOR_DOT)[0]):
+        return None
+    return f"{type_name}{cs.SEPARATOR_DOT}{method}"
+
+
+def _with_cast_receiver_type(
+    call_node: Node,
+    language: cs.SupportedLanguage | None,
+    call_name: str,
+    var_types: dict[str, str] | None,
+) -> dict[str, str] | None:
+    # `(s as Real).run()` is named `Real.run`, where `Real` is a TYPE: a local
+    # value of that name (`const Real = new Fake()`) lives in TypeScript's
+    # other namespace, so it must not type the receiver (Greptile, PR #2959).
+    if language not in _JS_TS_LANGUAGES:
+        return var_types
+    member = call_node.child_by_field_name(cs.FIELD_FUNCTION)
+    if member is None or member.type != cs.TS_MEMBER_EXPRESSION:
+        return var_types
+    if _ts_cast_receiver_call_name(member) is None:
+        return var_types
+    # The call name's root is the type the cast named, read through a
+    # utility (`as Readonly<Real>` is named `Real.run`).
+    type_name = call_name.rpartition(cs.SEPARATOR_DOT)[0]
+    if cs.SEPARATOR_DOT not in type_name:
+        # The cast's value is an INSTANCE of the type, so the receiver is
+        # typed by it, as `s: Real` types it: the instance lookup then skips
+        # a static member, which no prototype chain holds, where the call on
+        # the class itself would bind it (Greptile, PR #2959; issue #3672).
+        return {**(var_types or {}), type_name: type_name}
+    type_root = type_name.split(cs.SEPARATOR_DOT, 1)[0]
+    if not var_types or type_root not in var_types:
+        return var_types
+    return {name: kind for name, kind in var_types.items() if name != type_root}
+
+
 def _peel_ts_getter_receiver(recv: Node | None) -> tuple[Node | None, str | None]:
     """Peel type-transparent wrappers off a getter read's receiver.
 
@@ -3607,6 +3771,7 @@ class CallProcessor:
                     cs.SupportedLanguage.CSHARP,
                     cs.SupportedLanguage.CPP,
                     cs.SupportedLanguage.DART,
+                    cs.SupportedLanguage.PHP,
                 )
                 and language not in _JS_TS_LANGUAGES
                 and not has_python_property_reads
@@ -3617,10 +3782,12 @@ class CallProcessor:
                 # member initializer list (`: buffer(g, 0)`) runs base
                 # ctors without any call_expression node, Dart, where
                 # a getter body can read another getter (`=> _wonders.length`,
-                # issue #873), and JS/TS, where a method's inline callback
+                # issue #873), JS/TS, where a method's inline callback
                 # (`run() { return () => 1; }`) gets its REFERENCES edge only
-                # when the class pass runs (issue #970); these passes run per
-                # caller inside class processing, so they proceed.
+                # when the class pass runs (issue #970), and PHP, where a
+                # method can store `[$this, 'm']` or a closure without any
+                # call node (issue #3117). These passes run per caller inside
+                # class processing, so they proceed.
                 return
             field_initializer_starts = self._process_calls_in_classes(
                 root_node,
@@ -5617,6 +5784,10 @@ class CallProcessor:
                 asserted_call := _go_asserted_receiver_call_name(func_child)
             ):
                 return asserted_call
+            case cs.TS_MEMBER_EXPRESSION if language in _JS_TS_LANGUAGES and (
+                cast_call := _ts_cast_receiver_call_name(func_child)
+            ):
+                return cast_call
             case (
                 cs.TS_IDENTIFIER
                 | cs.TS_ATTRIBUTE
@@ -6142,6 +6313,8 @@ class CallProcessor:
             self._record_python_shadowed_imports(caller_node, caller_qn, module_qn)
         elif language == cs.SupportedLanguage.GO:
             self._record_go_local_names(caller_node, caller_qn, caller_type)
+        elif language == cs.SupportedLanguage.CPP:
+            self._record_cpp_local_names(caller_node, caller_qn, caller_type)
         elif language in _JS_TS_LANGUAGES:
             self._record_js_parameter_names(caller_node, caller_qn)
             self._record_js_local_names(caller_node, caller_qn)
@@ -6470,6 +6643,33 @@ class CallProcessor:
         else:
             self._resolver.go_local_scopes.pop(caller_qn, None)
 
+    def _record_cpp_local_names(
+        self, caller_node: Node, caller_qn: str, caller_type: str
+    ) -> None:
+        # Only a member function's bare call can find a base's member, and a
+        # parameter or local of that name hides it where in scope (PR #2948).
+        # The class's fields are left out: that walk also meets the
+        # parameters of the class's other member declarations.
+        scopes: dict[str, list[tuple[int, int]]] = {}
+        if caller_type == cs.NodeLabel.METHOD:
+            engine = CppTypeInferenceEngine()
+            for start, end, name, _ in engine.declaration_scopes(
+                caller_node, fields=False
+            ):
+                scopes.setdefault(name, []).append((start, end))
+            for start, end, name in (
+                *engine.range_for_bindings(caller_node),
+                *engine.structured_bindings(caller_node),
+                *engine.using_declarations(caller_node),
+            ):
+                scopes.setdefault(name, []).append((start, end))
+        if scopes:
+            self._resolver.cpp_local_scopes[caller_qn] = {
+                name: tuple(spans) for name, spans in scopes.items()
+            }
+        else:
+            self._resolver.cpp_local_scopes.pop(caller_qn, None)
+
     def _record_js_local_names(self, caller_node: Node, caller_qn: str) -> None:
         # What the caller and each function around it introduce: `api.run()`
         # on a parameter or local named `api` is that value's, never the
@@ -6623,20 +6823,36 @@ class CallProcessor:
             self._ingest_operator_dispatch_calls(
                 caller_node, caller_spec, module_qn, local_var_types
             )
-        if (
-            language == cs.SupportedLanguage.PYTHON
-            or language in _JS_TS_LANGUAGES
-            or language == cs.SupportedLanguage.GO
+        if language in _JS_TS_LANGUAGES or language in (
+            cs.SupportedLanguage.PYTHON,
+            cs.SupportedLanguage.GO,
+            cs.SupportedLanguage.PHP,
         ):
+            # A PHP closure is registered, but it gets no caller pass. Keep
+            # walking through it so a function stored inside it is still
+            # referenced from the enclosing method (issue #3117).
+            boundaries = self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG])
+            if language == cs.SupportedLanguage.PHP:
+                boundaries = frozenset(
+                    boundaries
+                    - {
+                        cs.TS_PHP_ANONYMOUS_FUNCTION,
+                        cs.TS_PHP_ARROW_FUNCTION,
+                    }
+                )
             self._ingest_assignment_function_references(
                 caller_node,
                 caller_spec,
                 module_qn,
                 local_var_types,
                 class_context,
-                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                boundaries,
                 caller_qn,
                 language=language,
+            )
+        if language == cs.SupportedLanguage.PHP:
+            php_references.ingest_php_callable_values(
+                self, caller_node, caller_spec, class_context
             )
         if language in _JS_TS_LANGUAGES:
             self._ingest_jsx_component_references(
@@ -6890,6 +7106,32 @@ class CallProcessor:
             arg_ref_rel=arg_ref_rel,
         )
 
+    def _ingest_nameless_call(self, ctx: _CallScanContext, call_node: Node) -> bool:
+        """Bind a call the name lookup must not see; True when it was bound."""
+        if ctx.is_java and call_node.type == cs.TS_JAVA_METHOD_REFERENCE:
+            self._ingest_java_method_reference(ctx, call_node)
+            return True
+        # `new self` has no name field, and `self::m()` is not a bare method.
+        # Handled here so the trie never binds the keyword (issue #3117).
+        if not php_references.ingest_php_call(self, ctx, call_node):
+            return False
+        # Only the name lookup is replaced. A closure handed to
+        # `self::accept(...)` or `new static(...)` still reaches the callee,
+        # so the argument scan of issue #2925 runs as for any call.
+        self._ingest_argument_function_references(
+            call_node,
+            ctx.caller_spec,
+            ctx.module_qn,
+            ctx.local_var_types,
+            ctx.class_context,
+            ctx.resolve_func,
+            ctx.ensure_rel,
+            ctx.caller_qn,
+            ctx.arg_ref_rel,
+            ctx.language,
+        )
+        return True
+
     def _ingest_call_node(self, ctx: _CallScanContext, call_node: Node) -> None:
         if _exceeds_receiver_chain_cap(call_node):
             # Left unresolved: resolving it would re-read the whole chain.
@@ -6903,8 +7145,7 @@ class CallProcessor:
         # label the previous call node left behind (issue #1526).
         self._resolver.last_resolution = cs.EdgeResolution.EXACT
         self._resolver.last_bound_member = None
-        if ctx.is_java and call_node.type == cs.TS_JAVA_METHOD_REFERENCE:
-            self._ingest_java_method_reference(ctx, call_node)
+        if self._ingest_nameless_call(ctx, call_node):
             return
         call_name = self._scan_call_name(ctx, call_node)
         if (
@@ -7023,6 +7264,8 @@ class CallProcessor:
             call_name = ctx.call_name_cache[node_id]
         else:
             call_name = self._get_call_target_name(call_node, ctx.language)
+            if call_name is not None and ctx.is_js_ts:
+                call_name = self._ts_utility_cast_call_name(ctx, call_node, call_name)
             if (
                 call_name is None
                 and ctx.is_csharp
@@ -7032,6 +7275,58 @@ class CallProcessor:
             if ctx.call_name_cache is not None:
                 ctx.call_name_cache[node_id] = call_name
         return call_name
+
+    def _ts_utility_cast_call_name(
+        self, ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> str:
+        # `(s as Readonly<Service>).handle()` calls `Service.handle`: the
+        # member-preserving utilities keep their argument's members. A
+        # `Readonly` the module declares, aliases or imports is that type
+        # instead, as `_ts_generic_declaration` reads it (CodeRabbit, PR #2959).
+        head = call_name.partition(cs.SEPARATOR_DOT)[0]
+        if head not in cs.TS_MEMBER_PRESERVING_UTILITY_TYPES:
+            return call_name
+        member = call_node.child_by_field_name(cs.FIELD_FUNCTION)
+        if member is None or member.type != cs.TS_MEMBER_EXPRESSION:
+            return call_name
+        if (cast := _ts_cast_target(member)) is None:
+            return call_name
+        target, method = cast
+        if (target := self._ts_peel_utility_types(ctx, target)) is None:
+            return call_name
+        type_name = _ts_named_type_text(target)
+        if type_name is None or _ts_names_scoped_type(
+            target, type_name.partition(cs.SEPARATOR_DOT)[0]
+        ):
+            return call_name
+        return f"{type_name}{cs.SEPARATOR_DOT}{method}"
+
+    def _ts_peel_utility_types(
+        self, ctx: _CallScanContext, target: Node
+    ) -> Node | None:
+        # The type a cast's member-preserving utilities wrap (`Service` in
+        # `Readonly<Partial<Service>>`), or None when one is given no type.
+        while target.type == cs.TS_GENERIC_TYPE:
+            name = _ts_named_type_text(target)
+            if name is None or name not in cs.TS_MEMBER_PRESERVING_UTILITY_TYPES:
+                break
+            arguments = target.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS)
+            # Any declaration of the name in scope, a function's own `class
+            # Readonly<T>` or a type parameter included, is not the utility
+            # (Greptile, PR #2959).
+            if (
+                self._ts_lexical_type(target, name) is not None
+                or self._ts_type_name_declaration(
+                    name, target, ctx.module_qn, arguments
+                )
+                is not None
+            ):
+                break
+            first = next(iter(arguments.named_children), None) if arguments else None
+            if first is None:
+                return None
+            target = first
+        return target
 
     def _csharp_argument_target_name(
         self, ctx: _CallScanContext, creation_node: Node
@@ -7211,6 +7506,9 @@ class CallProcessor:
                 for name, var_type in call_var_types.items()
                 if name != receiver
             }
+        call_var_types = _with_cast_receiver_type(
+            call_node, ctx.language, call_name, call_var_types
+        )
 
         if ctx.is_cpp:
             self._emit_cpp_template_dispatch(ctx, call_name, call_var_types)
@@ -7621,62 +7919,66 @@ class CallProcessor:
             # A Java/C#/Scala `new X(...)` names a type, never a method.
             constructing=ctx.language in _NEW_CONSTRUCTS_LANGUAGES
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
-            # `$this->label()` and `$other->label()` reach the resolver alike.
-            implicit_receiver=self._calls_unhidden_own_member(
-                ctx, call_node, call_name
-            ),
+            # PHP and C/C++ name `$bag->count()`, `count($xs)` and
+            # `$this->count()` all `count`: what the call is made on decides
+            # whether it may reach a method its class inherits, or none.
+            receiver=self._call_receiver(ctx, call_node, call_name),
         )
         return self._judge_resolved_callee(ctx, call_node, call_name, callee_info)
 
     @staticmethod
-    def _calls_unhidden_own_member(
+    def _call_receiver(
         ctx: _CallScanContext, call_node: Node, call_name: str
-    ) -> bool:
+    ) -> cs.CallReceiver:
         # A chain (`make()->label()`) is typed from its first call's callee,
-        # which may be an inherited method only where that call alone may
-        # be: `int run(Z* (*make)()) { return make()->label(); }` starts at
-        # the parameter, not at an inherited `make` (Greptile on PR #3240).
+        # so it is flagged as that call is: an inherited `make` may start it
+        # only where `make()` alone may reach one, not where a parameter or
+        # local `make` is the callable it starts from (Greptile on PR #3240).
         if cs.CHAR_PAREN_OPEN in call_name and cs.SEPARATOR_DOT in call_name:
             root = _chain_root_call(ctx.language, call_node)
-            return root is not None and CallProcessor._unhidden_own_call(ctx, *root)
-        return CallProcessor._unhidden_own_call(ctx, call_node, call_name)
+            if root is None:
+                return cs.CallReceiver.OTHER
+            call_node, call_name = root
+        if _has_no_receiver(call_node, ctx.language):
+            # A C++ constructor's member initializer (`head_(NewNode(0))`)
+            # is read with its module's calls, though it runs in the
+            # constructor and names the class's own members there; with no
+            # class to look in, that call keeps the name fallback
+            # (leveldb's `SkipList::NewNode`, `PosixWritableFile::Dirname`).
+            # A default member initializer is read the same way. Any other
+            # module-level call is not (CodeRabbit, PR #2948).
+            if (
+                ctx.is_cpp
+                and ctx.caller_spec[0] == cs.NodeLabel.MODULE
+                and _in_member_initializer(call_node)
+            ):
+                return cs.CallReceiver.OTHER
+            return cs.CallReceiver.NONE
+        if not _calls_through_this(
+            ctx.language, call_node
+        ) or CallProcessor._dart_bare_name_hidden(ctx, call_node, call_name):
+            return cs.CallReceiver.OTHER
+        return cs.CallReceiver.SELF
 
     @staticmethod
-    def _unhidden_own_call(
+    def _dart_bare_name_hidden(
         ctx: _CallScanContext, call_node: Node, call_name: str
     ) -> bool:
-        # On the caller's own object, and with no parameter or local of the
-        # name in scope there: `int run(int (*label)()) { return label(); }`
-        # calls the parameter, not an inherited `label` (Greptile and
-        # CodeRabbit on PR #3240). Only a bare name can be hidden: a Dart
-        # call names `this.label()` bare too, so its source decides.
-        if not _calls_own_member(ctx.language, call_node):
+        # A Dart call its name leaves bare, with a parameter or local of the
+        # name in scope there: `String run(String Function() label) =>
+        # label();` calls the parameter, not an inherited `label` (Greptile
+        # and CodeRabbit on PR #3240). Through `this` nothing hides it. A
+        # C++ name is hidden by what `cpp_local_scopes` records for its
+        # caller, which the resolver reads (PR #2948).
+        if (
+            ctx.language != cs.SupportedLanguage.DART
+            or cs.SEPARATOR_DOT in call_name
+            or _dart_through_this(call_node)
+        ):
             return False
-        if cs.SEPARATOR_DOT in call_name:
-            return True
         point = call_node.start_byte
-        if ctx.language == cs.SupportedLanguage.CPP:
-            if (
-                _cpp_bare_callee(call_node.child_by_field_name(cs.TS_FIELD_FUNCTION))
-                is None
-            ):
-                return True
-            return not any(
-                name == call_name and start <= point < end
-                for start, end, name, _ in CppTypeInferenceEngine().declaration_scopes(
-                    ctx.caller_node
-                )
-            )
-        if ctx.language == cs.SupportedLanguage.DART:
-            if _dart_through_this(call_node):
-                return True
-            spans = dart_utils.dart_binding_spans(
-                ctx.caller_node, frozenset({call_name})
-            )
-            return not any(
-                start <= point < end for start, end in spans.get(call_name, ())
-            )
-        return True
+        spans = dart_utils.dart_binding_spans(ctx.caller_node, frozenset({call_name}))
+        return any(start <= point < end for start, end in spans.get(call_name, ()))
 
     def _judge_resolved_callee(
         self,
@@ -9628,7 +9930,8 @@ class CallProcessor:
             return None
         if ctx.language == cs.SupportedLanguage.PHP:
             # A PHP `new X(...)` runs `__construct`, X's own or, when X
-            # declares none, the one it inherits (issue #2466).
+            # declares none, the one it inherits (issue #2466). Case folds,
+            # including a `__CONSTRUCT` the trie would skip (issue #3117).
             return self._resolver.php_constructor(callee_qn)
         # A JS/TS `new X(...)` runs X's `constructor` method (leaf name
         # `constructor`, not Python's `__init__`); redirect the CALLS

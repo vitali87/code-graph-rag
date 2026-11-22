@@ -1,5 +1,7 @@
 # Shared tree-sitter node types, field names, and query captures.
 
+from enum import StrEnum
+
 from .languages import SupportedLanguage
 
 FUNCTION_NODES_BASIC = ("function_declaration", "function_definition")
@@ -72,6 +74,37 @@ JS_TS_IMPORT_NODES = (
 JS_TS_LANGUAGES = frozenset(
     {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
 )
+# Languages where a bare call name never names a method: one is reached only
+# through a receiver (`this.`, `self.`, a value), which these spell in the
+# call name. PHP and C/C++ drop the receiver from a member call's name, so
+# the call processor flags their calls with no receiver instead
+# (`CallReceiver.NONE`, issue #2575).
+BARE_CALL_NO_METHOD_LANGUAGES = JS_TS_LANGUAGES | {
+    SupportedLanguage.GO,
+    SupportedLanguage.RUST,
+}
+
+
+class CallReceiver(StrEnum):
+    """What a call is made on, where its name does not say: PHP and C/C++
+    name `$bag->count()`, `count($xs)` and `$this->count()` all `count`, and
+    a Dart call's name drops `this.`. For a chain (`make()->label()`) it says
+    what the chain's first call is made on, since that call's callee types
+    the chain."""
+
+    # Another value, or a call the call processor does not tell apart.
+    OTHER = "other"
+    # Written with no receiver: a PHP function call, a C/C++ call of a bare
+    # or template name. It names no method but those C++ name lookup finds
+    # in the caller's class and bases (issue #2575).
+    NONE = "none"
+    # The caller's own object: `this->label()`, `(*this).label()`,
+    # `$this->label()`, or a Dart call its name leaves bare that no
+    # parameter or local of the name hides. It may reach a method the
+    # class inherits (issue #3169).
+    SELF = "self"
+
+
 # Languages whose functions `callable_parameter_indices` can find invoking
 # a parameter, and so whose callable-argument edges an incremental run must
 # re-derive from the passing files (issue #2911).
