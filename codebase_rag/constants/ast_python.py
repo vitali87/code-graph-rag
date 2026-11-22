@@ -583,6 +583,13 @@ PY_RECEIVER_LITERAL_TYPES: dict[str, str] = {
     TS_PY_LIST_COMPREHENSION: TYPE_INFERENCE_LIST,
 }
 PY_BUILTIN_VALUE_TYPES = frozenset(PY_LITERAL_BUILTIN_TYPES.values()) | {PY_TYPE_BYTES}
+# The operators a builtin answers for any right operand, so the right
+# operand's reflected method never runs: `"%s" % obj` is string formatting
+# whatever `obj` is, and stays a `str` (Greptile, PR #2912).
+PY_BUILTIN_TOTAL_OPERATORS: dict[str, frozenset[str]] = {
+    PY_TYPE_STR: frozenset({PY_BINARY_OPERATOR_DUNDERS["%"]}),
+    PY_TYPE_BYTES: frozenset({PY_BINARY_OPERATOR_DUNDERS["%"]}),
+}
 # Opens a generic annotation's arguments: `dict[str, int]` names `dict`.
 PY_GENERIC_ARGS_OPEN = "["
 # Only these can open a literal receiver's text: a quote, a bracket, a digit,

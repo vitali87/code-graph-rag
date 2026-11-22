@@ -1047,7 +1047,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
         # class, so Python runs the right operand's reflected method, as for
         # an untyped left operand (Greptile, PR #2912).
         builtins = (
-            self._builtin_members(left_members, module_qn) if right_classes else []
+            self._builtin_members(left_members, dunder, module_qn)
+            if right_classes
+            else []
         )
         left_members = [member for member in left_members if member not in builtins]
         forward_missing = not left_members or bool(builtins)
@@ -1067,13 +1069,17 @@ class PythonVariableAnalyzerMixin(_VarBase):
             return None
         return f" {cs.PY_UNION_SEPARATOR} ".join(results)
 
-    def _builtin_members(self, members: list[str], module_qn: str) -> list[str]:
+    def _builtin_members(
+        self, members: list[str], dunder: str, module_qn: str
+    ) -> list[str]:
         """The builtin value types (`str`, `list`) among `members` that no
-        project class of the name shadows."""
+        project class of the name shadows and that leave `dunder` to the
+        right operand: `str` answers `%` itself, for any operand."""
         return [
             member
             for member in members
             if member in cs.PY_BUILTIN_VALUE_TYPES
+            and dunder not in cs.PY_BUILTIN_TOTAL_OPERATORS.get(member, frozenset())
             and self._get_project_class_qn(member, module_qn) is None
         ]
 

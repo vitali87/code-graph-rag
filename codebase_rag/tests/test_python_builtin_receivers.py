@@ -105,7 +105,15 @@ APP = (
     "    def __rtruediv__(self, other):\n        return Product()\n\n\n"
     "def reflected():\n"
     '    prefix = "root"\n    builder = Builder()\n'
-    "    result = prefix / builder\n    return result.run()\n"
+    "    result = prefix / builder\n    return result.run()\n\n\n"
+    # Greptile, PR #2912: `str % x` is string formatting for any `x`, so the
+    # result is a `str` even when `x` defines `__rmod__`.
+    "class Shaped:\n    def strip(self):\n        return 1\n\n\n"
+    "class Formatter:\n"
+    "    def __rmod__(self, other):\n        return Shaped()\n\n\n"
+    "def formatted():\n"
+    '    template = "%s"\n    item = Formatter()\n'
+    "    rendered = template % item\n    return rendered.strip()\n"
 )
 # A first-party class imported under a builtin's name is that class.
 ALIASED = (
@@ -257,3 +265,11 @@ def test_a_builtin_left_operand_hands_the_operator_to_the_reflected_method(
     # `str` defines no `/` for a project class, so `"root" / builder` runs
     # `Builder.__rtruediv__`, whose `Product` the result holds.
     assert "app.Product.run" in _callees(graph, "reflected")
+
+
+def test_a_builtin_that_answers_the_operator_keeps_its_own_type(
+    graph: RecordedGraph,
+) -> None:
+    # `"%s" % item` formats `item` into a `str` whatever `item` defines, so
+    # `rendered.strip()` is the string's method, never `Shaped.strip`.
+    assert "app.Shaped.strip" not in _callees(graph, "formatted")
