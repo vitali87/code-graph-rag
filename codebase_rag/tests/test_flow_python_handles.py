@@ -128,6 +128,9 @@ log = None
 
 out = open("/tmp/out.txt", "w")
 
+ann = open("/tmp/ann.txt", "w")
+ann: io.TextIOWrapper
+
 
 def reread():
     rows = sqlite3.connect("/var/reread.db")
@@ -156,6 +159,10 @@ def emit_log():
 
 def emit_cfg():
     cfg.write(os.getenv("CFG_TOKEN"))
+
+
+def emit_ann():
+    ann.write(os.getenv("ANN_TOKEN"))
 
 
 def outer(buffer):
@@ -399,12 +406,15 @@ def test_a_read_on_a_value_that_is_not_a_handle_is_no_source(
         ("resource::ENV::CLOSER_TOKEN", "resource::FILE::/tmp/closer.txt"),
         ("resource::ENV::SWAP_TOKEN", "resource::FILE::/tmp/second.txt"),
         ("resource::ENV::ANNOTATED_TOKEN", "resource::FILE::/tmp/annotated.txt"),
+        ("resource::ENV::ANN_TOKEN", "resource::FILE::/tmp/ann.txt"),
     ],
     ids=[
         "a-conditional-rebinding-keeps-the-handle",
         "a-reset-in-another-method-keeps-the-handle",
         "the-later-self-binding-wins",
         "a-bare-annotation-keeps-the-handle",
+        # Greptile, PR #2770: as in the enclosing scope a function inherits.
+        "a-bare-annotation-in-an-enclosing-scope-keeps-the-handle",
     ],
 )
 def test_a_handle_the_name_may_still_hold_stays_a_flow_end(

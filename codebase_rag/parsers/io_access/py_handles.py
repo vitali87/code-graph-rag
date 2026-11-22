@@ -195,7 +195,7 @@ def _collect_scope_var_handles(
             continue
         stack.extend(node.children)
         target = python_bound_target(node)
-        if target is None or target.text is None:
+        if target is None or target.text is None or _annotates_only(node):
             continue
         name = target.text.decode(cs.ENCODING_UTF8)
         if name in decided or name in shadowed:
@@ -206,6 +206,15 @@ def _collect_scope_var_handles(
             handles.setdefault(name, bound[1])
         elif not _under_branch(node, scope_node):
             decided.add(name)
+
+
+def _annotates_only(node: Node) -> bool:
+    # `f: TextIO` binds nothing, so the handle `f` held stays (Greptile, PR
+    # #2770), as in the flow walk.
+    return (
+        node.type == cs.TS_PY_ASSIGNMENT
+        and node.child_by_field_name(cs.TS_FIELD_RIGHT) is None
+    )
 
 
 def _under_branch(node: Node, scope_node: Node) -> bool:
