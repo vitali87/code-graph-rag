@@ -717,6 +717,34 @@ _DANGLES = [("page", "util")]
             _DANGLES,
             id="an-alias-of-a-name-written-before-it",
         ),
+        pytest.param(
+            "function impl(s: string): string {\n  return s;\n}\n(() => {\n"
+            "  impl = null;\n})();\nconst alias = impl;\nexport default alias;\n",
+            _DANGLES,
+            id="an-alias-of-a-name-an-iife-writes",
+        ),
+        pytest.param(
+            "function impl(s: string): string {\n  return s;\n}\nclass Reset {\n"
+            "  static {\n    impl = null;\n  }\n}\nconst alias = impl;\n"
+            "export default alias;\n",
+            _DANGLES,
+            id="an-alias-of-a-name-a-static-block-writes",
+        ),
+        # Greptile, PR #3312: a function's body runs only when called, and a
+        # self-assignment leaves the name holding what it held.
+        pytest.param(
+            "function impl(s: string): string {\n  return s;\n}\n"
+            "function unrelated(impl: unknown): void {\n  impl = null;\n}\n"
+            "const alias = impl;\nexport default alias;\n",
+            [],
+            id="an-alias-of-a-name-a-function-body-writes",
+        ),
+        pytest.param(
+            "function impl(s: string): string {\n  return s;\n}\nimpl = impl;\n"
+            "const alias = impl;\nexport default alias;\n",
+            [],
+            id="an-alias-of-a-name-assigned-to-itself",
+        ),
         # Negative: a declaration of the module shadows the global.
         pytest.param(
             "const String = 5;\nexport default String;\n",

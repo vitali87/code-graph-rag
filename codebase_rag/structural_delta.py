@@ -1840,25 +1840,10 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
     local: dict[str, str] = {}
     inert: set[str] = set()
     declared: set[str] = set()
-    aliases: dict[str, str] = {}
-    # Aliases taken before the module declared their name.
-    early: set[str] = set()
-    # Names a function declaration binds before the module runs.
-    hoisted: set[str] = set()
-    # Names an earlier statement writes, and the aliases taken of one: the
-    # alias may hold what the write left (Greptile review on PR #3312).
-    written: set[str] = set()
-    overwritten: set[str] = set()
+    aliases = _JsAliases()
     for statement in root.children:
-        for alias, name, settled in _js_aliases(statement, declared):
-            aliases[alias] = name
-            if not settled:
-                early.add(alias)
-            if name in written:
-                overwritten.add(alias)
+        aliases.read(statement, declared)
         declared.update(_js_declared_names(statement))
-        hoisted.update(_js_hoisted_names(statement))
-        written.update(_js_written_names(statement))
         if statement.type not in (cs.TS_EXPORT_STATEMENT, cs.TS_IMPORT_STATEMENT):
             continue
         at = (statement.start_point[0] + 1, statement.start_point[1])
@@ -1884,17 +1869,53 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
         inert=frozenset(inert),
         commonjs=is_commonjs_module(root),
         declared=frozenset(declared),
-        # One taken before a name the module declares later holds
-        # `undefined`, or throws (Greptile review on PR #3312); a name it
-        # never declares is a global or an import, and one a function
-        # declaration binds is hoisted, both there from the start.
-        aliases={
-            alias: name
-            for alias, name in aliases.items()
-            if alias not in overwritten
-            and (alias not in early or name not in declared or name in hoisted)
-        },
+        aliases=aliases.held(declared),
     )
+
+
+class _JsAliases:
+    """The top-level `const alias = name` statements of a module, read in
+    order, and what tells whether each alias holds what its name holds."""
+
+    def __init__(self) -> None:
+        # `{alias: name}` for every alias read.
+        self.names: dict[str, str] = {}
+        # Aliases taken before the module declared their name.
+        self.early: set[str] = set()
+        # Names a function declaration binds before the module runs.
+        self.hoisted: set[str] = set()
+        # Names an earlier statement writes, and the aliases taken of one:
+        # the alias may hold what the write left (Greptile review on PR
+        # #3312).
+        self.written: set[str] = set()
+        self.overwritten: set[str] = set()
+
+    def read(self, statement: Node, declared: set[str]) -> None:
+        """Read one top-level statement; `declared` holds the names the
+        statements before it declare."""
+        for alias, name, settled in _js_aliases(statement, declared):
+            self.names[alias] = name
+            if not settled:
+                self.early.add(alias)
+            if name in self.written:
+                self.overwritten.add(alias)
+        self.hoisted.update(_js_hoisted_names(statement))
+        self.written.update(_js_written_names(statement))
+
+    def held(self, declared: set[str]) -> dict[str, str]:
+        """The aliases that hold what their name holds. One taken before a
+        name the module declares later holds `undefined`, or throws
+        (Greptile review on PR #3312); a name it never declares is a global
+        or an import, and one a function declaration binds is hoisted, both
+        there from the start."""
+        return {
+            alias: name
+            for alias, name in self.names.items()
+            if alias not in self.overwritten
+            and (
+                alias not in self.early or name not in declared or name in self.hoisted
+            )
+        }
 
 
 _JS_VALUE_DECLARATIONS = frozenset(
@@ -1951,22 +1972,55 @@ _JS_WRITES = frozenset(
 
 
 def _js_written_names(statement: Node) -> Iterator[str]:
-    """The names a statement assigns or updates (`impl = null`, `impl++`),
-    anywhere in it: one written in a function body may have run too."""
+    """The names a statement assigns or updates (`impl = null`, `impl++`)
+    as the module runs it. A function's body runs only when called, so its
+    writes count only in a function called where it is defined (`(() => {
+    ... })()`); a class's static block runs with the class. `impl = impl`
+    leaves the name holding what it held (Greptile review on PR #3312)."""
     pending = [statement]
     while pending:
         node = pending.pop()
-        if node.type in _JS_WRITES:
-            target = node.child_by_field_name(cs.FIELD_LEFT)
-        elif node.type == cs.TS_JS_UPDATE_EXPRESSION:
-            target = node.child_by_field_name(cs.TS_FIELD_ARGUMENT)
-        else:
-            target = None
-        if target is not None and (target := _js_unwrapped(target)).type == (
-            cs.TS_IDENTIFIER
-        ):
-            yield _node_text(target)
+        if node.type in cs.JS_TS_FUNCTION_NODES:
+            continue
+        if (name := _js_written_name(node)) is not None:
+            yield name
+        if node.type == cs.TS_CALL_EXPRESSION:
+            pending.extend(_js_called_body(node))
         pending.extend(node.named_children)
+
+
+def _js_written_name(node: Node) -> str | None:
+    """The name an assignment or an update writes, unless it assigns the
+    name to itself."""
+    if node.type in _JS_WRITES:
+        target = node.child_by_field_name(cs.FIELD_LEFT)
+    elif node.type == cs.TS_JS_UPDATE_EXPRESSION:
+        target = node.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+    else:
+        return None
+    if target is None or (target := _js_unwrapped(target)).type != cs.TS_IDENTIFIER:
+        return None
+    name = _node_text(target)
+    value = node.child_by_field_name(cs.FIELD_RIGHT)
+    if (
+        node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION
+        and value is not None
+        and (value := _js_unwrapped(value)).type == cs.TS_IDENTIFIER
+        and _node_text(value) == name
+    ):
+        return None
+    return name
+
+
+def _js_called_body(call: Node) -> Iterator[Node]:
+    """The body of the function a call defines and runs at once."""
+    function = call.child_by_field_name(cs.FIELD_FUNCTION)
+    if function is not None and (function := _js_unwrapped(function)).type in (
+        cs.JS_TS_FUNCTION_NODES
+    ):
+        body = function.child_by_field_name(cs.FIELD_BODY)
+        if body is not None:
+            yield body
 
 
 def _js_hoisted_names(statement: Node) -> Iterator[str]:
