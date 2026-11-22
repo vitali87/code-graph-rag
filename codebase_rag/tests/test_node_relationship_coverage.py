@@ -176,7 +176,8 @@ class TestFlushRelationshipsForAllTypes:
         queries = [c.args[0] for c in mock_cursor.execute.call_args_list]
         assert len(queries) == 2, queries
         assert not any("MERGE" in q for q in queries), queries
-        assert "IS NULL" in queries[0] and "CREATE" in queries[1], queries
+        assert "IS NULL" in queries[0], queries
+        assert "CREATE" in queries[1], queries
         assert ingestor._rel_count == 0
 
 
