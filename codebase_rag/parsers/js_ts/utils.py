@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from functools import lru_cache
 from typing import TYPE_CHECKING, NamedTuple
 
 from tree_sitter import Language, Node, QueryCursor
@@ -639,8 +640,9 @@ _OBJECT_LITERAL_WRAPPERS = frozenset(
 
 class JsLocalIntro(NamedTuple):
     """One introduction of a name by a function: the byte span it governs,
-    whether the name is bound to an object literal there (issue #2763), and
-    where the function owning it starts (its literals share one binding)."""
+    whether the name binds an object literal there whose members are reached
+    through it (issue #2763), and where the function owning it starts (its
+    literals share one binding)."""
 
     start: int
     end: int
@@ -653,11 +655,39 @@ class JsLocalIntro(NamedTuple):
 JsLocalIntros = dict[str, tuple[JsLocalIntro, ...]]
 
 
-def is_object_literal(value: Node | None) -> bool:
-    # `{ ... }`, also under `as const`, `satisfies T` or parentheses.
+# The function values an object literal's `pair` member registers as.
+_OBJECT_MEMBER_FUNCTIONS = frozenset(
+    {cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION}
+)
+
+
+def binds_object_literal(value: Node | None) -> bool:
+    """Whether `value` is an object literal (`{ ... }`, also under `as
+    const`, `satisfies T` or parentheses) that some member is reached
+    through its holder's name from (issue #2763). A `let` written again, or
+    a literal whose every member a later key or spread replaces, binds none:
+    a call through that name reads no literal's member, and must not reach
+    one bound further out (Greptile, PR #3118)."""
     while value is not None and value.type in _OBJECT_LITERAL_WRAPPERS:
         value = value.named_child(0)
-    return value is not None and value.type == cs.TS_OBJECT
+    if value is None or value.type != cs.TS_OBJECT:
+        return False
+    for member in value.named_children:
+        func = (
+            member.child_by_field_name(cs.FIELD_VALUE)
+            if member.type == cs.TS_PAIR
+            else member
+        )
+        if (
+            func is not None
+            and (
+                func.type == cs.TS_METHOD_DEFINITION
+                or func.type in _OBJECT_MEMBER_FUNCTIONS
+            )
+            and object_literal_binding(func) is not None
+        ):
+            return True
+    return False
 
 
 def object_literal_binding(func_node: Node) -> str | None:
@@ -780,6 +810,19 @@ def _written_again(declarator: Node, name: str) -> bool:
     root = declarator
     while root.parent is not None:
         root = root.parent
+    return name in _file_written_names(root)
+
+
+# The files whose writes stay indexed: each caller's local introductions ask
+# about the file being processed.
+_WRITTEN_NAMES_CACHE_SIZE = 8
+
+
+@lru_cache(maxsize=_WRITTEN_NAMES_CACHE_SIZE)
+def _file_written_names(root: Node) -> frozenset[str]:
+    # Every plain name the file writes, collected once per tree: each
+    # caller's introductions ask about the literals around it.
+    names: set[str] = set()
     pending = [root]
     while pending:
         node = pending.pop()
@@ -789,10 +832,10 @@ def _written_again(declarator: Node, name: str) -> bool:
             target = node.child_by_field_name(cs.TS_FIELD_ARGUMENT)
         else:
             target = None
-        if target is not None and name in _written_names(target):
-            return True
+        if target is not None:
+            names |= _written_names(target)
         pending.extend(node.named_children)
-    return False
+    return frozenset(names)
 
 
 def _written_names(target: Node) -> set[str]:

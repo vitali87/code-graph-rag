@@ -210,6 +210,30 @@ _FILES = {
         "let api = { run() { return 1; } };\n"
         "export function use() { return api.run(); }\n"
     ),
+    # Greptile, PR #3118: `inner`'s own `api` binds no literal (rewritten, or
+    # its only member replaced by a spread), so the call reads neither
+    # `inner`'s literal nor `outer`'s.
+    "rewritteninner.mjs": (
+        "export function outer() {\n"
+        "  const api = { run() { return 1; } };\n"
+        "  function inner(s) {\n"
+        "    let api = { run() { return 2; } };\n"
+        "    api = JSON.parse(s);\n"
+        "    return api.run();\n"
+        "  }\n"
+        "  return [inner, api.run()];\n"
+        "}\n"
+    ),
+    "spreadinner.mjs": (
+        "export function outer(base) {\n"
+        "  const api = { run() { return 1; } };\n"
+        "  function inner() {\n"
+        "    const api = { run() { return 2; }, ...base };\n"
+        "    return api.run();\n"
+        "  }\n"
+        "  return inner;\n"
+        "}\n"
+    ),
 }
 
 
@@ -364,7 +388,8 @@ def test_an_import_reaches_the_binding_the_module_exports(
     exact = [
         callee for callee, res in targets.items() if res == cs.EdgeResolution.EXACT
     ]
-    assert len(exact) == 1 and exact[0].startswith("exported.run@"), targets
+    assert len(exact) == 1, targets
+    assert exact[0].startswith("exported.run@"), targets
 
 
 def test_sibling_blocks_with_different_keys_pick_no_member(
@@ -460,3 +485,20 @@ def test_a_let_binding_nothing_writes_stays_exact(
     assert _targets(calls, "letkept.use").get("letkept.run") == (
         cs.EdgeResolution.EXACT
     ), calls
+
+
+@pytest.mark.parametrize("module", ["rewritteninner", "spreadinner"])
+def test_an_inner_name_binding_no_literal_reaches_no_outer_member(
+    calls: dict[tuple[str, str], str], module: str
+) -> None:
+    # `outer.run` is `outer`'s own `api.run`; `inner`'s `api` shadows it.
+    targets = _targets(calls, f"{module}.outer.inner")
+    assert targets.get(f"{module}.outer.run") != cs.EdgeResolution.EXACT, targets
+
+
+def test_the_outer_call_through_its_own_literal_stays_exact(
+    calls: dict[tuple[str, str], str],
+) -> None:
+    # `inner`'s rewritten `api` costs `outer` nothing.
+    targets = _targets(calls, "rewritteninner.outer")
+    assert targets.get("rewritteninner.outer.run") == cs.EdgeResolution.EXACT, targets

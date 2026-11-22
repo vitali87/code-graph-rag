@@ -2389,7 +2389,8 @@ def _js_enclosing_introductions(caller_node: Node) -> js_ts_utils.JsLocalIntros:
                     js_ts_utils.JsLocalIntro(
                         start,
                         end,
-                        kind == _JS_DECL_PLAIN and js_ts_utils.is_object_literal(value),
+                        kind == _JS_DECL_PLAIN
+                        and js_ts_utils.binds_object_literal(value),
                         scope.start_byte,
                     )
                     for start, end, kind, value in intros
