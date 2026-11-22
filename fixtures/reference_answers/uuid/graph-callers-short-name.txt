@@ -1,0 +1,81 @@
+$ cgr -q graph callers ParseBytes --project uuid
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 1,
+    "callee_path": "uuid.go",
+    "col": 12,
+    "depth": 1,
+    "end_col": 28,
+    "end_line": 90,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 90,
+    "path": "null.go",
+    "qualified_name": "uuid.null.NullUUID.UnmarshalText",
+    "resolution": "exact",
+    "through": "uuid.uuid.ParseBytes"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "uuid.go",
+    "col": 12,
+    "depth": 1,
+    "end_col": 28,
+    "end_line": 18,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 18,
+    "path": "marshal.go",
+    "qualified_name": "uuid.uuid.UUID.UnmarshalText",
+    "resolution": "exact",
+    "through": "uuid.uuid.ParseBytes"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "uuid.go",
+    "col": 12,
+    "depth": 1,
+    "end_col": 31,
+    "end_line": 651,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 651,
+    "path": "uuid_test.go",
+    "qualified_name": "uuid.uuid_test.BenchmarkParseBytes",
+    "resolution": "exact",
+    "through": "uuid.uuid.ParseBytes"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "uuid.go",
+    "col": 2,
+    "depth": 1,
+    "end_col": 16,
+    "end_line": 591,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 591,
+    "path": "uuid_test.go",
+    "qualified_name": "uuid.uuid_test.FuzzParseBytes",
+    "resolution": "exact",
+    "through": "uuid.uuid.ParseBytes"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "uuid.go",
+    "col": 14,
+    "depth": 1,
+    "end_col": 28,
+    "end_line": 116,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 116,
+    "path": "uuid_test.go",
+    "qualified_name": "uuid.uuid_test.testBytes",
+    "resolution": "exact",
+    "through": "uuid.uuid.ParseBytes"
+  }
+]
+--- stderr

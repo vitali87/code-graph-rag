@@ -1,0 +1,94 @@
+$ cgr -q dead-code --project uuid --no-public-roots --format json
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "name": "MarshalJSON",
+    "qualified_name": "uuid.null.NullUUID.MarshalJSON",
+    "path": "null.go",
+    "start_line": 101,
+    "end_line": 107
+  },
+  {
+    "label": "Method",
+    "name": "UnmarshalBinary",
+    "qualified_name": "uuid.null.NullUUID.UnmarshalBinary",
+    "path": "null.go",
+    "start_line": 70,
+    "end_line": 77
+  },
+  {
+    "label": "Method",
+    "name": "UnmarshalJSON",
+    "qualified_name": "uuid.null.NullUUID.UnmarshalJSON",
+    "path": "null.go",
+    "start_line": 110,
+    "end_line": 118
+  },
+  {
+    "label": "Method",
+    "name": "UnmarshalText",
+    "qualified_name": "uuid.null.NullUUID.UnmarshalText",
+    "path": "null.go",
+    "start_line": 89,
+    "end_line": 98
+  },
+  {
+    "label": "Function",
+    "name": "ClockSequence",
+    "qualified_name": "uuid.time.ClockSequence",
+    "path": "time.go",
+    "start_line": 76,
+    "end_line": 80
+  },
+  {
+    "label": "Function",
+    "name": "clockSequence",
+    "qualified_name": "uuid.time.clockSequence",
+    "path": "time.go",
+    "start_line": 82,
+    "end_line": 87
+  },
+  {
+    "label": "Method",
+    "name": "MarshalBinary",
+    "qualified_name": "uuid.uuid.UUID.MarshalBinary",
+    "path": "marshal.go",
+    "start_line": 27,
+    "end_line": 29
+  },
+  {
+    "label": "Method",
+    "name": "UnmarshalText",
+    "qualified_name": "uuid.uuid.UUID.UnmarshalText",
+    "path": "marshal.go",
+    "start_line": 17,
+    "end_line": 24
+  },
+  {
+    "label": "Method",
+    "name": "String",
+    "qualified_name": "uuid.uuid.Variant.String",
+    "path": "uuid.go",
+    "start_line": 297,
+    "end_line": 311
+  },
+  {
+    "label": "Method",
+    "name": "String",
+    "qualified_name": "uuid.uuid.Version.String",
+    "path": "uuid.go",
+    "start_line": 290,
+    "end_line": 295
+  },
+  {
+    "label": "Function",
+    "name": "NewString",
+    "qualified_name": "uuid.version4.NewString",
+    "path": "version4.go",
+    "start_line": 21,
+    "end_line": 23
+  }
+]
+--- stderr

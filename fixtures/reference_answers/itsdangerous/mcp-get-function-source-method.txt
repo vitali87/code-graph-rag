@@ -1,0 +1,4 @@
+> tools/call get_function_source {"node_id": "<node_id:itsdangerous.src.itsdangerous.signer.Signer.sign>"}
+isError: false
+--- text
+Could not retrieve source code for node ID <node_id>. The node may not exist or source file may be unavailable.

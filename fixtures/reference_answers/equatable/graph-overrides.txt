@@ -1,0 +1,102 @@
+$ cgr -q graph overrides equatable.lib.src.equatable.Equatable.props --project equatable
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "path": "benchmarks/main.dart",
+    "qualified_name": "equatable.benchmarks.main.CollectionEquatable.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "benchmarks/main.dart",
+    "qualified_name": "equatable.benchmarks.main.EmptyEquatable.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "benchmarks/main.dart",
+    "qualified_name": "equatable.benchmarks.main.PrimitiveEquatable.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "example/main.dart",
+    "qualified_name": "equatable.example.main.Credentials.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/equatable_config_test.dart",
+    "qualified_name": "equatable.test.equatable_config_test.Credentials.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/equatable_test.dart",
+    "qualified_name": "equatable.test.equatable_test.ComplexEquatable.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/equatable_test.dart",
+    "qualified_name": "equatable.test.equatable_test.ComplexStringify.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/equatable_test.dart",
+    "qualified_name": "equatable.test.equatable_test.ConstTest.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/equatable_test.dart",
+    "qualified_name": "equatable.test.equatable_test.Credentials.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/equatable_test.dart",
+    "qualified_name": "equatable.test.equatable_test.EmptyEquatable.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/equatable_test.dart",
+    "qualified_name": "equatable.test.equatable_test.EquatableData.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/equatable_test.dart",
+    "qualified_name": "equatable.test.equatable_test.ExplicitStringifyFalse.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/equatable_test.dart",
+    "qualified_name": "equatable.test.equatable_test.MultipartEquatable.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/equatable_test.dart",
+    "qualified_name": "equatable.test.equatable_test.OtherEquatable.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/equatable_test.dart",
+    "qualified_name": "equatable.test.equatable_test.SimpleEquatable.props",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "test/equatable_test.dart",
+    "qualified_name": "equatable.test.equatable_test.SuperLongPropertiesStringify.props",
+    "relationship": "OVERRIDES"
+  }
+]
+--- stderr

@@ -1,0 +1,197 @@
+> tools/call importers {"module_qualified_name": "mediatr.src.MediatR.MicrosoftExtensionsDI.MediatrServiceConfiguration"}
+isError: false
+--- text
+[
+  {
+    "module": "mediatr.samples.MediatR.Examples.AspNetCore.Program",
+    "path": "samples/MediatR.Examples.AspNetCore/Program.cs",
+    "line": 5,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 5,
+    "end_col": 47,
+    "end_col_char": 47,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.src.MediatR.Registration.ServiceRegistrar",
+    "path": "src/MediatR/Registration/ServiceRegistrar.cs",
+    "line": 7,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 7,
+    "end_col": 47,
+    "end_col_char": 47,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.test.MediatR.Benchmarks.Benchmarks",
+    "path": "test/MediatR.Benchmarks/Benchmarks.cs",
+    "line": 4,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 4,
+    "end_col": 47,
+    "end_col_char": 47,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.test.MediatR.Tests.GenericRequestHandlerTests",
+    "path": "test/MediatR.Tests/GenericRequestHandlerTests.cs",
+    "line": 2,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 2,
+    "end_col": 47,
+    "end_col_char": 47,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.AssemblyResolutionTests",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/AssemblyResolutionTests.cs",
+    "line": 1,
+    "col": 3,
+    "col_char": 1,
+    "end_line": 1,
+    "end_col": 50,
+    "end_col_char": 48,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.CustomMediatorTests",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/CustomMediatorTests.cs",
+    "line": 1,
+    "col": 3,
+    "col_char": 1,
+    "end_line": 1,
+    "end_col": 50,
+    "end_col_char": 48,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.DerivingRequestsTests",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/DerivingRequestsTests.cs",
+    "line": 3,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 3,
+    "end_col": 47,
+    "end_col_char": 47,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.DuplicateAssemblyResolutionTests",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/DuplicateAssemblyResolutionTests.cs",
+    "line": 1,
+    "col": 3,
+    "col_char": 1,
+    "end_line": 1,
+    "end_col": 50,
+    "end_col_char": 48,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.NotificationPublisherTests",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/NotificationPublisherTests.cs",
+    "line": 1,
+    "col": 3,
+    "col_char": 1,
+    "end_line": 1,
+    "end_col": 50,
+    "end_col_char": 48,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipeLineMultiCallToConstructorTest",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipeLineMultiCallToConstructorTest.cs",
+    "line": 2,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 2,
+    "end_col": 47,
+    "end_col_char": 47,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.PipelineTests",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/PipelineTests.cs",
+    "line": 2,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 2,
+    "end_col": 47,
+    "end_col_char": 47,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.StreamPipelineTests",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/StreamPipelineTests.cs",
+    "line": 2,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 2,
+    "end_col": 47,
+    "end_col_char": 47,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeEvaluatorTests",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeEvaluatorTests.cs",
+    "line": 2,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 2,
+    "end_col": 47,
+    "end_col_char": 47,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.TypeResolutionTests",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/TypeResolutionTests.cs",
+    "line": 2,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 2,
+    "end_col": 47,
+    "end_col_char": 47,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.test.MediatR.Tests.NotificationPublisherTests",
+    "path": "test/MediatR.Tests/NotificationPublisherTests.cs",
+    "line": 5,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 5,
+    "end_col": 47,
+    "end_col_char": 47,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  },
+  {
+    "module": "mediatr.test.MediatR.Tests.SendTests",
+    "path": "test/MediatR.Tests/SendTests.cs",
+    "line": 7,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 7,
+    "end_col": 47,
+    "end_col_char": 47,
+    "alias": "DependencyInjection",
+    "imported_name": "DependencyInjection"
+  }
+]

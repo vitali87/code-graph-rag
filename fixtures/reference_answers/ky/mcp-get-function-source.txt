@@ -1,0 +1,16 @@
+> tools/call get_function_source {"node_id": "<node_id:ky.source.utils.merge.validateAndMerge>"}
+isError: false
+--- text
+Source code for node ID <node_id>:
+
+```
+export const validateAndMerge = (...sources: Array<Partial<Options> | undefined>): Partial<Options> => {
+	for (const source of sources) {
+		if ((!isObject(source) || Array.isArray(source)) && source !== undefined) {
+			throw new TypeError('The `options` argument must be an object');
+		}
+	}
+
+	return deepMerge({}, ...sources);
+};
+```

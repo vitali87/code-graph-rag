@@ -1,0 +1,46 @@
+$ cgr -q stats --project ky
+status: 0
+--- stdout
+Scoped to: ky
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ Function    │   408 │
+│ Section     │    54 │
+│ File        │    49 │
+│ Type        │    40 │
+│ Module      │    36 │
+│ Method      │    10 │
+│ Folder      │    10 │
+│ Class       │     4 │
+│ Interface   │     3 │
+│ Project     │     1 │
+├─────────────┼───────┤
+│ Total Nodes │   615 │
+└─────────────┴───────┘
+
+    Relationship Statistics    
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Relationship Type   ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ CALLS               │   701 │
+│ REFERENCES          │   477 │
+│ DEFINES             │   455 │
+│ IMPORTS             │   153 │
+│ CONTAINS_SECTION    │    54 │
+│ CONTAINS_FILE       │    49 │
+│ CONTAINS_MODULE     │    36 │
+│ ACCEPTS             │    25 │
+│ DEPENDS_ON_EXTERNAL │    19 │
+│ INSTANTIATES        │    12 │
+│ RETURNS             │    10 │
+│ DEFINES_METHOD      │    10 │
+│ CONTAINS_FOLDER     │    10 │
+│ INHERITS            │     6 │
+│ LINKS_TO            │     5 │
+├─────────────────────┼───────┤
+│ Total Relationships │ 2,022 │
+└─────────────────────┴───────┘
+--- stderr
+Fetching graph statistics...

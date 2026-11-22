@@ -1,0 +1,17 @@
+> tools/call definition {"qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get(Type)"}
+isError: false
+--- text
+{
+  "label": "Method",
+  "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get(Type)",
+  "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+  "start_line": 322,
+  "end_line": 324,
+  "start_col": 2,
+  "name_line": 322,
+  "decorators": [],
+  "name": "get",
+  "docstring": "Returns a type name equivalent to {@code type}.",
+  "source": "public static TypeName get(Type type) {\n    return get(type, new LinkedHashMap<>());\n  }",
+  "found": true
+}

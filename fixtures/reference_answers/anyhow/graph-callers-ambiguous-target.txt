@@ -1,0 +1,5 @@
+$ cgr -q graph callers context --project anyhow
+status: 5
+--- stdout
+--- stderr
+'context' names 5 definitions: anyhow.src.context, anyhow.src.context.Option.context, anyhow.src.context.Result.context, anyhow.src.error.Error.context, anyhow.src.lib.Context.context. Pass one of their qualified names.

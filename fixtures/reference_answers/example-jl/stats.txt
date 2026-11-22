@@ -1,0 +1,34 @@
+$ cgr -q stats --project example-jl
+status: 0
+--- stdout
+Scoped to: example-jl
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ File        │    16 │
+│ Module      │     8 │
+│ Folder      │     7 │
+│ Function    │     2 │
+│ Section     │     1 │
+│ Project     │     1 │
+├─────────────┼───────┤
+│ Total Nodes │    35 │
+└─────────────┴───────┘
+
+    Relationship Statistics    
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Relationship Type   ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ CONTAINS_FILE       │    16 │
+│ CONTAINS_MODULE     │     8 │
+│ CONTAINS_FOLDER     │     7 │
+│ IMPORTS             │     4 │
+│ DEFINES             │     2 │
+│ CALLS               │     2 │
+│ CONTAINS_SECTION    │     1 │
+├─────────────────────┼───────┤
+│ Total Relationships │    40 │
+└─────────────────────┴───────┘
+--- stderr
+Fetching graph statistics...

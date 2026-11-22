@@ -1,0 +1,20 @@
+$ cgr -q graph tests-reaching lume.lume.lume.trim --project lume
+status: 0
+--- stdout
+[
+  {
+    "depth": 1,
+    "label": "Function",
+    "path": "test/test.lua",
+    "qualified_name": "lume.test.test.anonymous_518_21",
+    "through": "lume.lume.lume.trim"
+  },
+  {
+    "depth": 2,
+    "label": "Function",
+    "path": "test/test.lua",
+    "qualified_name": "lume.test.test.anonymous_575_24",
+    "through": "lume.lume.lume.hotswap"
+  }
+]
+--- stderr

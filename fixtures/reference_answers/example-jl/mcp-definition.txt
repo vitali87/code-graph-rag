@@ -1,0 +1,17 @@
+> tools/call definition {"qualified_name": "example-jl.src.Example.Example.domath"}
+isError: false
+--- text
+{
+  "label": "Function",
+  "qualified_name": "example-jl.src.Example.Example.domath",
+  "path": "src/Example.jl",
+  "start_line": 16,
+  "end_line": 16,
+  "start_col": 0,
+  "name_line": 16,
+  "decorators": [],
+  "name": "domath",
+  "docstring": null,
+  "source": "domath(x::Number) = x + 5",
+  "found": true
+}

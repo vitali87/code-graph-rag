@@ -1,0 +1,12 @@
+> tools/call tests_reaching {"qualified_name": "example-jl.src.Example.Example.domath"}
+isError: false
+--- text
+[
+  {
+    "label": "Module",
+    "qualified_name": "example-jl.test.runtests",
+    "path": "test/runtests.jl",
+    "depth": 1,
+    "through": "example-jl.src.Example.Example.domath"
+  }
+]

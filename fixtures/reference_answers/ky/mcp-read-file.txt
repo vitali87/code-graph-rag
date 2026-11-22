@@ -1,0 +1,29 @@
+> tools/call read_file {"file_path": "source/utils/merge.ts", "limit": 25, "offset": 0}
+isError: false
+--- text
+# Lines 1-25 of 81
+import type {KyHeadersInit, Options} from '../types/options.js';
+import type {Hooks} from '../types/hooks.js';
+import {isObject} from './is.js';
+
+export const validateAndMerge = (...sources: Array<Partial<Options> | undefined>): Partial<Options> => {
+	for (const source of sources) {
+		if ((!isObject(source) || Array.isArray(source)) && source !== undefined) {
+			throw new TypeError('The `options` argument must be an object');
+		}
+	}
+
+	return deepMerge({}, ...sources);
+};
+
+export const mergeHeaders = (source1: KyHeadersInit = {}, source2: KyHeadersInit = {}) => {
+	const result = new globalThis.Headers(source1 as RequestInit['headers']);
+	const isHeadersInstance = source2 instanceof globalThis.Headers;
+	const source = new globalThis.Headers(source2 as RequestInit['headers']);
+
+	for (const [key, value] of source.entries()) {
+		if ((isHeadersInstance && value === 'undefined') || value === undefined) {
+			result.delete(key);
+		} else {
+			result.set(key, value);
+		}

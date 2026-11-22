@@ -1,0 +1,13 @@
+$ cgr -q dead-code --project javapoet
+status: 0
+--- stdout
+                                                                Dead Code Candidates (javapoet)                                                                 
+┏━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+┃ Kind   ┃ Qualified Name                                                                        ┃ Path                                              ┃   Lines ┃
+┡━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+│ Method │ javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.arrayComponent(TypeNam │ src/main/java/com/squareup/javapoet/TypeName.java │ 372-376 │
+│        │ e)                                                                                    │                                                   │         │
+│ Method │ javapoet.src.main.java.com.squareup.javapoet.Util.Util.Util()                         │ src/main/java/com/squareup/javapoet/Util.java     │   36-37 │
+└────────┴───────────────────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────┴─────────┘
+2 candidate(s) for review.
+--- stderr

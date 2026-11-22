@@ -1,0 +1,5 @@
+$ cgr -q graph callers parseJson --project ky
+status: 5
+--- stdout
+--- stderr
+'parseJson' names 2 definitions: ky.test.hooks.parseJson, ky.test.main.parseJson. Pass one of their qualified names.

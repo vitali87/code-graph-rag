@@ -1,0 +1,12 @@
+> tools/call tests_reaching {"qualified_name": "ky.source.utils.timeout.timeout"}
+isError: false
+--- text
+[
+  {
+    "label": "Module",
+    "qualified_name": "ky.test.headers",
+    "path": "test/headers.ts",
+    "depth": 1,
+    "through": "ky.source.utils.timeout.timeout"
+  }
+]

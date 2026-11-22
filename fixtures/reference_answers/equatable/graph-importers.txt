@@ -1,0 +1,56 @@
+$ cgr -q graph importers equatable.lib.src.equatable_utils --project equatable
+status: 0
+--- stdout
+[
+  {
+    "alias": "equatable_utils",
+    "col": 0,
+    "end_col": 52,
+    "end_line": 2,
+    "imported_name": "package:equatable/src/equatable_utils.dart",
+    "line": 2,
+    "module": "equatable.lib.src.equatable",
+    "path": "lib/src/equatable.dart"
+  },
+  {
+    "alias": "equatable_utils",
+    "col": 0,
+    "end_col": 52,
+    "end_line": 3,
+    "imported_name": "package:equatable/src/equatable_utils.dart",
+    "line": 3,
+    "module": "equatable.lib.src.equatable_mixin",
+    "path": "lib/src/equatable_mixin.dart"
+  },
+  {
+    "alias": "equatable_utils",
+    "col": 0,
+    "end_col": 52,
+    "end_line": 5,
+    "imported_name": "package:equatable/src/equatable_utils.dart",
+    "line": 5,
+    "module": "equatable.test.equatable_mixin_test",
+    "path": "test/equatable_mixin_test.dart"
+  },
+  {
+    "alias": "equatable_utils",
+    "col": 0,
+    "end_col": 52,
+    "end_line": 7,
+    "imported_name": "package:equatable/src/equatable_utils.dart",
+    "line": 7,
+    "module": "equatable.test.equatable_test",
+    "path": "test/equatable_test.dart"
+  },
+  {
+    "alias": "equatable_utils",
+    "col": 0,
+    "end_col": 52,
+    "end_line": 2,
+    "imported_name": "package:equatable/src/equatable_utils.dart",
+    "line": 2,
+    "module": "equatable.test.equatable_utils_test",
+    "path": "test/equatable_utils_test.dart"
+  }
+]
+--- stderr

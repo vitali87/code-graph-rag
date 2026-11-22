@@ -1,0 +1,708 @@
+> tools/list
+--- tools
+[
+  {
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "list_projects"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "project_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_name"
+      ],
+      "type": "object"
+    },
+    "name": "delete_project"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "confirm": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "confirm"
+      ],
+      "type": "object"
+    },
+    "name": "wipe_database"
+  },
+  {
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "index_repository"
+  },
+  {
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "update_repository"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "deleted": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "paths"
+      ],
+      "type": "object"
+    },
+    "name": "reingest"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "project": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "name": "resolve"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "project": {
+          "type": "string"
+        },
+        "qualified_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "qualified_name"
+      ],
+      "type": "object"
+    },
+    "name": "definition"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "depth": {
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "qualified_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "qualified_name"
+      ],
+      "type": "object"
+    },
+    "name": "callers"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "depth": {
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "qualified_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "qualified_name"
+      ],
+      "type": "object"
+    },
+    "name": "callees"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "depth": {
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "qualified_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "qualified_name"
+      ],
+      "type": "object"
+    },
+    "name": "implementors"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "depth": {
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "qualified_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "qualified_name"
+      ],
+      "type": "object"
+    },
+    "name": "overrides"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "mentions": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "body",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "name": "annotate"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "project": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "name": "glosses"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "module_qualified_name": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "through_reexports": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "module_qualified_name"
+      ],
+      "type": "object"
+    },
+    "name": "importers"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "project": {
+          "type": "string"
+        },
+        "qualified_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "qualified_name"
+      ],
+      "type": "object"
+    },
+    "name": "tests_reaching"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "project": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "endpoints"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "project": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "name": "endpoint_callers"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "project": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "remote_dependencies"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "allow_external_override": {
+          "type": "boolean"
+        },
+        "allow_heuristic": {
+          "type": "boolean"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "new_name": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "qualified_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "qualified_name",
+        "new_name"
+      ],
+      "type": "object"
+    },
+    "name": "rename"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "allow_heuristic": {
+          "type": "boolean"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "mapping": {
+          "type": "object"
+        },
+        "new_params": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "project": {
+          "type": "string"
+        },
+        "qualified_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "qualified_name",
+        "new_params"
+      ],
+      "type": "object"
+    },
+    "name": "change_signature"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "dry_run": {
+          "type": "boolean"
+        },
+        "keep_alias": {
+          "type": "boolean"
+        },
+        "project": {
+          "type": "string"
+        },
+        "qualified_name": {
+          "type": "string"
+        },
+        "target_module": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "qualified_name",
+        "target_module"
+      ],
+      "type": "object"
+    },
+    "name": "move"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "budget_tokens": {
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "name": "context"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "natural_language_query": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "natural_language_query"
+      ],
+      "type": "object"
+    },
+    "name": "query_code_graph"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "qualified_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "qualified_name"
+      ],
+      "type": "object"
+    },
+    "name": "get_code_snippet"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "file_path": {
+          "type": "string"
+        },
+        "replacement_code": {
+          "type": "string"
+        },
+        "target_code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_path",
+        "target_code",
+        "replacement_code"
+      ],
+      "type": "object"
+    },
+    "name": "surgical_replace_code"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "file_path": {
+          "type": "string"
+        },
+        "limit": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "file_path"
+      ],
+      "type": "object"
+    },
+    "name": "read_file"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "file_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file_path",
+        "content"
+      ],
+      "type": "object"
+    },
+    "name": "write_file"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "directory_path": {
+          "default": ".",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "list_directory"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "natural_language_query": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "top_k": {
+          "default": 5,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "natural_language_query"
+      ],
+      "type": "object"
+    },
+    "name": "semantic_search"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "language": {
+          "type": "string"
+        },
+        "pattern": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern"
+      ],
+      "type": "object"
+    },
+    "name": "structural_search"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "dry_run": {
+          "default": true,
+          "type": "boolean"
+        },
+        "language": {
+          "type": "string"
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "rewrite": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern",
+        "rewrite"
+      ],
+      "type": "object"
+    },
+    "name": "structural_replace"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 20,
+          "type": "integer"
+        },
+        "min_size": {
+          "default": 15,
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "threshold": {
+          "default": 0.8,
+          "type": "number"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "find_duplicate_code"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "node_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_function_source"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "question": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "type": "object"
+    },
+    "name": "ask_agent"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "sink_qualified_name": {
+          "type": "string"
+        },
+        "source_qualified_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_qualified_name",
+        "sink_qualified_name"
+      ],
+      "type": "object"
+    },
+    "name": "flow_verdict"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "path_prefix_map": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "traceback_text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "traceback_text"
+      ],
+      "type": "object"
+    },
+    "name": "explain_traceback"
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "path_prefix_map": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "traceback_text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "traceback_text"
+      ],
+      "type": "object"
+    },
+    "name": "rank_root_causes"
+  }
+]

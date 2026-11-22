@@ -1,0 +1,41 @@
+$ cgr -q graph resolve context --project anyhow
+status: 0
+--- stdout
+[
+  {
+    "end_line": null,
+    "label": "Module",
+    "path": "src/context.rs",
+    "qualified_name": "anyhow.src.context",
+    "start_line": null
+  },
+  {
+    "end_line": 101,
+    "label": "Method",
+    "path": "src/context.rs",
+    "qualified_name": "anyhow.src.context.Option.context",
+    "start_line": 91
+  },
+  {
+    "end_line": 56,
+    "label": "Method",
+    "path": "src/context.rs",
+    "qualified_name": "anyhow.src.context.Result.context",
+    "start_line": 46
+  },
+  {
+    "end_line": 414,
+    "label": "Method",
+    "path": "src/error.rs",
+    "qualified_name": "anyhow.src.error.Error.context",
+    "start_line": 383
+  },
+  {
+    "end_line": 620,
+    "label": "Method",
+    "path": "src/lib.rs",
+    "qualified_name": "anyhow.src.lib.Context.context",
+    "start_line": 618
+  }
+]
+--- stderr

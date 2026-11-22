@@ -1,0 +1,32 @@
+> tools/call list_directory {"directory_path": "."}
+isError: false
+--- text
+.git
+.github
+CHANGELOG.md
+CONTRIBUTING.md
+CONTRIBUTORS
+LICENSE
+README.md
+dce.go
+doc.go
+go.mod
+hash.go
+json_test.go
+marshal.go
+node.go
+node_js.go
+node_net.go
+null.go
+null_test.go
+seq_test.go
+sql.go
+sql_test.go
+time.go
+util.go
+uuid.go
+uuid_test.go
+version1.go
+version4.go
+version6.go
+version7.go

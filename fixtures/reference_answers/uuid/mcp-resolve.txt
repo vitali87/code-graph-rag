@@ -1,0 +1,33 @@
+> tools/call resolve {"target": "String"}
+isError: false
+--- text
+[
+  {
+    "label": "Method",
+    "qualified_name": "uuid.dce.Domain.String",
+    "path": "dce.go",
+    "start_line": 70,
+    "end_line": 80
+  },
+  {
+    "label": "Method",
+    "qualified_name": "uuid.uuid.UUID.String",
+    "path": "uuid.go",
+    "start_line": 244,
+    "end_line": 248
+  },
+  {
+    "label": "Method",
+    "qualified_name": "uuid.uuid.Variant.String",
+    "path": "uuid.go",
+    "start_line": 297,
+    "end_line": 311
+  },
+  {
+    "label": "Method",
+    "qualified_name": "uuid.uuid.Version.String",
+    "path": "uuid.go",
+    "start_line": 290,
+    "end_line": 295
+  }
+]

@@ -1,0 +1,23 @@
+$ cgr -q dead-code --project mediatr
+status: 0
+--- stdout
+                                                                 Dead Code Candidates (mediatr)                                                                 
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+┃ Kind     ┃ Qualified Name                                                                    ┃ Path                                                ┃   Lines ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+│ Method   │ mediatr.samples.MediatR.Examples.Windsor.Program.Program.CreateArraysOutOfResolve │ samples/MediatR.Examples.Windsor/Program.cs         │ 160-173 │
+│          │ dTypeAndEnumerableInterfaceTypes(Type, object, ServiceFactory, Type)              │                                                     │         │
+│ Method   │ mediatr.samples.MediatR.Examples.Windsor.Program.Program.ResolveRequestExceptionA │ samples/MediatR.Examples.Windsor/Program.cs         │ 125-158 │
+│          │ ction(IKernel, Type, Type, object, Type[])                                        │                                                     │         │
+│ Method   │ mediatr.samples.MediatR.Examples.Windsor.Program.Program.ResolveRequestExceptionH │ samples/MediatR.Examples.Windsor/Program.cs         │  89-123 │
+│          │ andler(IKernel, Type, Type, object, Type[])                                       │                                                     │         │
+│ Method   │ mediatr.src.MediatR.Registration.ServiceRegistrar.ServiceRegistrar.Fill(IList, T) │ src/MediatR/Registration/ServiceRegistrar.cs        │ 381-385 │
+│ Function │ mediatr.src.MediatR.Wrappers.RequestHandlerWrapper.RequestHandlerWrapperImpl`1.Ha │ src/MediatR/Wrappers/RequestHandlerWrapper.cs       │   58-64 │
+│          │ ndle.Handler                                                                      │                                                     │         │
+│ Function │ mediatr.src.MediatR.Wrappers.RequestHandlerWrapper.RequestHandlerWrapperImpl`2.Ha │ src/MediatR/Wrappers/RequestHandlerWrapper.cs       │   37-38 │
+│          │ ndle.Handler                                                                      │                                                     │         │
+│ Function │ mediatr.src.MediatR.Wrappers.StreamRequestHandlerWrapper.StreamRequestHandlerWrap │ src/MediatR/Wrappers/StreamRequestHandlerWrapper.cs │   41-43 │
+│          │ perImpl.Handle.Handler                                                            │                                                     │         │
+└──────────┴───────────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────┴─────────┘
+7 candidate(s) for review.
+--- stderr

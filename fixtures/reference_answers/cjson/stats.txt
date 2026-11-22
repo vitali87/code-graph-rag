@@ -1,0 +1,44 @@
+$ cgr -q stats --project cjson
+status: 0
+--- stdout
+Scoped to: cjson
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ Function    │   558 │
+│ Section     │   399 │
+│ File        │   161 │
+│ Module      │    83 │
+│ Folder      │    23 │
+│ Class       │    22 │
+│ Method      │    12 │
+│ Package     │     3 │
+│ Enum        │     2 │
+│ Project     │     1 │
+├─────────────┼───────┤
+│ Total Nodes │ 1,264 │
+└─────────────┴───────┘
+
+    Relationship Statistics    
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Relationship Type   ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ CALLS               │ 1,531 │
+│ DEFINES             │   582 │
+│ CONTAINS_SECTION    │   399 │
+│ IMPORTS             │   221 │
+│ REFERENCES          │   166 │
+│ CONTAINS_FILE       │   161 │
+│ CONTAINS_MODULE     │    83 │
+│ RETURNS             │    60 │
+│ LINKS_TO            │    31 │
+│ CONTAINS_FOLDER     │    23 │
+│ DEFINES_METHOD      │    12 │
+│ CONTAINS_PACKAGE    │     3 │
+│ INSTANTIATES        │     2 │
+├─────────────────────┼───────┤
+│ Total Relationships │ 3,274 │
+└─────────────────────┴───────┘
+--- stderr
+Fetching graph statistics...

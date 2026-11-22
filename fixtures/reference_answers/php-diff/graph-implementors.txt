@@ -1,0 +1,24 @@
+$ cgr -q graph implementors php-diff.src.Output.DiffOutputBuilderInterface.DiffOutputBuilderInterface --project php-diff
+status: 0
+--- stdout
+[
+  {
+    "label": "Class",
+    "path": "src/Output/AbstractChunkOutputBuilder.php",
+    "qualified_name": "php-diff.src.Output.AbstractChunkOutputBuilder.AbstractChunkOutputBuilder",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "src/Output/DiffOnlyOutputBuilder.php",
+    "qualified_name": "php-diff.src.Output.DiffOnlyOutputBuilder.DiffOnlyOutputBuilder",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "src/Output/StrictUnifiedDiffOutputBuilder.php",
+    "qualified_name": "php-diff.src.Output.StrictUnifiedDiffOutputBuilder.StrictUnifiedDiffOutputBuilder",
+    "relationship": "IMPLEMENTS"
+  }
+]
+--- stderr

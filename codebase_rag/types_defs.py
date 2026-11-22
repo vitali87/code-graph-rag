@@ -1117,6 +1117,17 @@ class ReferenceRepo(TypedDict):
     commit: str
 
 
+class ReferenceCase(TypedDict):
+    """One question asked of `cgr` on a pinned repository
+    (scripts/reference_answers.py): a command line, or an MCP tool call or
+    `tools/list`. `<root>` in an argument is the checkout's directory."""
+
+    name: str
+    cli: NotRequired[list[str]]
+    tool: NotRequired[str]
+    arguments: NotRequired[dict[str, JsonValue]]
+
+
 class ReingestToolResult(TypedDict, total=False):
     """MCP ``reingest`` payload: what was re-parsed and how long it took."""
 

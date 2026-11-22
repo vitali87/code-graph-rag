@@ -1,0 +1,81 @@
+$ cgr -q graph callees uuid.uuid.ParseBytes --project uuid
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 2,
+    "callee_path": "util.go",
+    "col": 19,
+    "depth": 1,
+    "end_col": 37,
+    "end_line": 134,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 134,
+    "path": "uuid.go",
+    "qualified_name": "uuid.util.xtob",
+    "resolution": "exact",
+    "through": "uuid.uuid.ParseBytes"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "util.go",
+    "col": 11,
+    "depth": 1,
+    "end_col": 29,
+    "end_line": 155,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 155,
+    "path": "uuid.go",
+    "qualified_name": "uuid.util.xtob",
+    "resolution": "exact",
+    "through": "uuid.uuid.ParseBytes"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "version4.go",
+    "col": 24,
+    "depth": 1,
+    "end_col": 50,
+    "end_line": 136,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 136,
+    "path": "uuid.go",
+    "qualified_name": "uuid.version4.New",
+    "resolution": "heuristic",
+    "through": "uuid.uuid.ParseBytes"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "version4.go",
+    "col": 22,
+    "depth": 1,
+    "end_col": 48,
+    "end_line": 146,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 146,
+    "path": "uuid.go",
+    "qualified_name": "uuid.version4.New",
+    "resolution": "heuristic",
+    "through": "uuid.uuid.ParseBytes"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "version4.go",
+    "col": 23,
+    "depth": 1,
+    "end_col": 49,
+    "end_line": 157,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 157,
+    "path": "uuid.go",
+    "qualified_name": "uuid.version4.New",
+    "resolution": "heuristic",
+    "through": "uuid.uuid.ParseBytes"
+  }
+]
+--- stderr

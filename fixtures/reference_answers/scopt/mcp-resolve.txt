@@ -1,0 +1,40 @@
+> tools/call resolve {"target": "reportError"}
+isError: false
+--- text
+[
+  {
+    "label": "Method",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.DefaultOEffectSetup.reportError",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "start_line": 27,
+    "end_line": 29
+  },
+  {
+    "label": "Method",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OEffect.OEffectSetup.reportError",
+    "path": "shared/src/main/scala/scopt/OEffect.scala",
+    "start_line": 15,
+    "end_line": 15
+  },
+  {
+    "label": "Function",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.reportError",
+    "path": "shared/src/main/scala/scopt/ORunner.scala",
+    "start_line": 231,
+    "end_line": 231
+  },
+  {
+    "label": "Function",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.reportError",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 191,
+    "end_line": 191
+  },
+  {
+    "label": "Method",
+    "qualified_name": "scopt.shared.src.main.scala.scopt.OptionParser.OptionParser.reportError@85",
+    "path": "shared/src/main/scala/scopt/OptionParser.scala",
+    "start_line": 85,
+    "end_line": 85
+  }
+]

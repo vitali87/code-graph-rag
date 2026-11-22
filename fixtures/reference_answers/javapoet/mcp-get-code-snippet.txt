@@ -1,0 +1,13 @@
+> tools/call get_code_snippet {"qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get(Type)"}
+isError: false
+--- text
+{
+  "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.get(Type)",
+  "source_code": "  public static TypeName get(Type type) {\n    return get(type, new LinkedHashMap<>());\n  }\n",
+  "file_path": "src/main/java/com/squareup/javapoet/TypeName.java",
+  "line_start": 322,
+  "line_end": 324,
+  "docstring": "Returns a type name equivalent to {@code type}.",
+  "found": true,
+  "error_message": null
+}

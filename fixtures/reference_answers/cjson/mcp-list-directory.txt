@@ -1,0 +1,13 @@
+> tools/call list_directory {"directory_path": "fuzzing"}
+isError: false
+--- text
+.gitignore
+CMakeLists.txt
+afl-prepare-linux.sh
+afl.c
+afl.sh
+cjson_read_fuzzer.c
+fuzz_main.c
+inputs
+json.dict
+ossfuzz.sh

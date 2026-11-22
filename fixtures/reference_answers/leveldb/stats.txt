@@ -1,0 +1,46 @@
+$ cgr -q stats --project leveldb
+status: 0
+--- stdout
+Scoped to: leveldb
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ Method      │ 1,329 │
+│ Function    │   311 │
+│ Class       │   230 │
+│ File        │   152 │
+│ Module      │   139 │
+│ Section     │    61 │
+│ Enum        │    18 │
+│ Folder      │    15 │
+│ Project     │     1 │
+│ Package     │     1 │
+├─────────────┼───────┤
+│ Total Nodes │ 2,257 │
+└─────────────┴───────┘
+
+    Relationship Statistics     
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ Relationship Type   ┃  Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ CALLS               │  5,900 │
+│ DEFINES_METHOD      │  1,328 │
+│ IMPORTS             │    763 │
+│ INSTANTIATES        │    575 │
+│ DEFINES             │    560 │
+│ REFERENCES          │    446 │
+│ RETURNS             │    393 │
+│ OVERRIDES           │    256 │
+│ CONTAINS_FILE       │    152 │
+│ CONTAINS_MODULE     │    139 │
+│ INHERITS            │     68 │
+│ CONTAINS_SECTION    │     61 │
+│ CONTAINS_FOLDER     │     15 │
+│ LINKS_TO            │      5 │
+│ CONTAINS_PACKAGE    │      1 │
+├─────────────────────┼────────┤
+│ Total Relationships │ 10,662 │
+└─────────────────────┴────────┘
+--- stderr
+Fetching graph statistics...

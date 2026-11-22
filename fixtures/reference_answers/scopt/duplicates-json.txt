@@ -1,0 +1,992 @@
+$ cgr -q duplicates --project scopt --format json
+status: 0
+--- stdout
+{
+  "groups": [
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 23,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.jvm.src.test.scala.scopt.ImmutableParserSpecJVM.ImmutableParserSpecJVM.calendarParserFail",
+          "name": "calendarParserFail",
+          "path": "jvm/src/test/scala/scopt/ImmutableParserSpecJVM.scala",
+          "start_line": 59,
+          "end_line": 62
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.intParserFail",
+          "name": "intParserFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 422,
+          "end_line": 425
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.charParserFail",
+          "name": "charParserFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 487,
+          "end_line": 490
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.doubleParserFail",
+          "name": "doubleParserFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 501,
+          "end_line": 504
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.boolParserFail",
+          "name": "boolParserFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 515,
+          "end_line": 518
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.bigDecimalParserFail",
+          "name": "bigDecimalParserFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 529,
+          "end_line": 532
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.pairParserFail",
+          "name": "pairParserFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 565,
+          "end_line": 568
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.seqParserFail",
+          "name": "seqParserFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 581,
+          "end_line": 584
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.mapParserFail",
+          "name": "mapParserFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 597,
+          "end_line": 600
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.seqTupleParserFail",
+          "name": "seqTupleParserFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 613,
+          "end_line": 616
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.requiredFail",
+          "name": "requiredFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 637,
+          "end_line": 640
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.validFail",
+          "name": "validFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 662,
+          "end_line": 665
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.checkFail",
+          "name": "checkFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 679,
+          "end_line": 682
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.intArgFail",
+          "name": "intArgFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 693,
+          "end_line": 696
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.cmdParserFail",
+          "name": "cmdParserFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 737,
+          "end_line": 740
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.cmdPosParserFail",
+          "name": "cmdPosParserFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 758,
+          "end_line": 761
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.nestedCmdParserFail",
+          "name": "nestedCmdParserFail",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 783,
+          "end_line": 786
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 27,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.unitParser",
+          "name": "unitParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 392,
+          "end_line": 395
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.unitParserHidden",
+          "name": "unitParserHidden",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 396,
+          "end_line": 399
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.intParser",
+          "name": "intParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 418,
+          "end_line": 421
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.longParser",
+          "name": "longParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 432,
+          "end_line": 435
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.shortParser",
+          "name": "shortParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 442,
+          "end_line": 445
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.stringParser",
+          "name": "stringParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 453,
+          "end_line": 456
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.emptyStringParser",
+          "name": "emptyStringParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 457,
+          "end_line": 460
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.charParser",
+          "name": "charParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 479,
+          "end_line": 482
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.charParserUTF16",
+          "name": "charParserUTF16",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 483,
+          "end_line": 486
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.doubleParser",
+          "name": "doubleParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 497,
+          "end_line": 500
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.intArg",
+          "name": "intArg",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 689,
+          "end_line": 692
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.cmdPosParser",
+          "name": "cmdPosParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 754,
+          "end_line": 757
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.nestedCmdParser",
+          "name": "nestedCmdParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 779,
+          "end_line": 782
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 61,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.stringParser",
+          "name": "stringParser",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 209,
+          "end_line": 218
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.doubleParser",
+          "name": "doubleParser",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 220,
+          "end_line": 229
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.trueParser",
+          "name": "trueParser",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 241,
+          "end_line": 250
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.intArg",
+          "name": "intArg",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 332,
+          "end_line": 341
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 39,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.pairParser",
+          "name": "pairParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 561,
+          "end_line": 564
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.multipleArgs",
+          "name": "multipleArgs",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 704,
+          "end_line": 707
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.unboundedArgs",
+          "name": "unboundedArgs",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 715,
+          "end_line": 718
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.emptyArgs",
+          "name": "emptyArgs",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 719,
+          "end_line": 722
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 30,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.emptyOptStringParser",
+          "name": "emptyOptStringParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 465,
+          "end_line": 468
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.bazOptStringParser",
+          "name": "bazOptStringParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 469,
+          "end_line": 472
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.bigDecimalParser",
+          "name": "bigDecimalParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 525,
+          "end_line": 528
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.nonEmptyLiftedOptionParser",
+          "name": "nonEmptyLiftedOptionParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 625,
+          "end_line": 628
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 28,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.main.scala.scopt.OParser.OParser@257.parse",
+          "name": "parse",
+          "path": "shared/src/main/scala/scopt/OParser.scala",
+          "start_line": 289,
+          "end_line": 296
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.main.scala.scopt.OParser.OParser@257.parse@296",
+          "name": "parse",
+          "path": "shared/src/main/scala/scopt/OParser.scala",
+          "start_line": 296,
+          "end_line": 309
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.main.scala.scopt.OParser.OParser@257.parse@309",
+          "name": "parse",
+          "path": "shared/src/main/scala/scopt/OParser.scala",
+          "start_line": 309,
+          "end_line": 321
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.main.scala.scopt.OParser.OParser@257.parse@321",
+          "name": "parse",
+          "path": "shared/src/main/scala/scopt/OParser.scala",
+          "start_line": 321,
+          "end_line": 333
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 27,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.jvm.src.test.scala.scopt.ImmutableParserSpecJVM.ImmutableParserSpecJVM.urlParser",
+          "name": "urlParser",
+          "path": "jvm/src/test/scala/scopt/ImmutableParserSpecJVM.scala",
+          "start_line": 106,
+          "end_line": 109
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.jvm.src.test.scala.scopt.ImmutableParserSpecJVM.ImmutableParserSpecJVM.uriParser",
+          "name": "uriParser",
+          "path": "jvm/src/test/scala/scopt/ImmutableParserSpecJVM.scala",
+          "start_line": 116,
+          "end_line": 119
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.noneOptStringParser",
+          "name": "noneOptStringParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 461,
+          "end_line": 464
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.emptyLiftedOptionParser",
+          "name": "emptyLiftedOptionParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 621,
+          "end_line": 624
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 24,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.groupParser",
+          "name": "groupParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 408,
+          "end_line": 411
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.trueParser",
+          "name": "trueParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 511,
+          "end_line": 514
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.checkSuccess",
+          "name": "checkSuccess",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 675,
+          "end_line": 678
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.cmdParser",
+          "name": "cmdParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 733,
+          "end_line": 736
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 62,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.doubleParserFail",
+          "name": "doubleParserFail",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 231,
+          "end_line": 239
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.boolParserFail",
+          "name": "boolParserFail",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 252,
+          "end_line": 260
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.intArgFail",
+          "name": "intArgFail",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 343,
+          "end_line": 351
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 32,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read@17.mapRead",
+          "name": "mapRead",
+          "path": "shared/src/main/scala/scopt/Read.scala",
+          "start_line": 119,
+          "end_line": 121
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read@17.seqTupleRead",
+          "name": "seqTupleRead",
+          "path": "shared/src/main/scala/scopt/Read.scala",
+          "start_line": 124,
+          "end_line": 126
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read@17.immutableSeqTupleRead",
+          "name": "immutableSeqTupleRead",
+          "path": "shared/src/main/scala/scopt/Read.scala",
+          "start_line": 128,
+          "end_line": 130
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 69,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.printParserError",
+          "name": "printParserError",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 549,
+          "end_line": 558
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.printParserOut",
+          "name": "printParserOut",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 559,
+          "end_line": 568
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 67,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleArgument",
+          "name": "handleArgument",
+          "path": "shared/src/main/scala/scopt/ORunner.scala",
+          "start_line": 268,
+          "end_line": 283
+        },
+        {
+          "label": "Function",
+          "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleFallback",
+          "name": "handleFallback",
+          "path": "shared/src/main/scala/scopt/ORunner.scala",
+          "start_line": 284,
+          "end_line": 299
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 64,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.intParser",
+          "name": "intParser",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 177,
+          "end_line": 186
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.longParser",
+          "name": "longParser",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 188,
+          "end_line": 197
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 49,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MonadicParserSpec.MonadicParserSpec.parser1",
+          "name": "parser1",
+          "path": "shared/src/test/scala/scopttest/MonadicParserSpec.scala",
+          "start_line": 127,
+          "end_line": 134
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MonadicParserSpec.MonadicParserSpec.parser2",
+          "name": "parser2",
+          "path": "shared/src/test/scala/scopttest/MonadicParserSpec.scala",
+          "start_line": 139,
+          "end_line": 146
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 37,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.mapParser",
+          "name": "mapParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 593,
+          "end_line": 596
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.seqTupleParser",
+          "name": "seqTupleParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 609,
+          "end_line": 612
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 31,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.jvm.src.test.scala.scopt.ImmutableParserSpecJVM.ImmutableParserSpecJVM.fileParser",
+          "name": "fileParser",
+          "path": "jvm/src/test/scala/scopt/ImmutableParserSpecJVM.scala",
+          "start_line": 69,
+          "end_line": 72
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.UriSpec.UriSpec.uriParser",
+          "name": "uriParser",
+          "path": "shared/src/test/scala/scopttest/UriSpec.scala",
+          "start_line": 17,
+          "end_line": 20
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 30,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read@17.seqRead",
+          "name": "seqRead",
+          "path": "shared/src/main/scala/scopt/Read.scala",
+          "start_line": 110,
+          "end_line": 112
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.main.scala.scopt.Read.Read@17.immutableSeqRead",
+          "name": "immutableSeqRead",
+          "path": "shared/src/main/scala/scopt/Read.scala",
+          "start_line": 114,
+          "end_line": 116
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 29,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.durationParser",
+          "name": "durationParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 539,
+          "end_line": 542
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.ImmutableParserSpec.ImmutableParserSpec.finiteDurationParser",
+          "name": "finiteDurationParser",
+          "path": "shared/src/test/scala/scopttest/ImmutableParserSpec.scala",
+          "start_line": 549,
+          "end_line": 552
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 28,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MonadicParserSpec.MonadicParserSpec.unitParser",
+          "name": "unitParser",
+          "path": "shared/src/test/scala/scopttest/MonadicParserSpec.scala",
+          "start_line": 224,
+          "end_line": 227
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MonadicParserSpec.MonadicParserSpec.intParser",
+          "name": "intParser",
+          "path": "shared/src/test/scala/scopttest/MonadicParserSpec.scala",
+          "start_line": 309,
+          "end_line": 312
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 24,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MonadicParserSpec.MonadicParserSpec.intParserFail",
+          "name": "intParserFail",
+          "path": "shared/src/test/scala/scopttest/MonadicParserSpec.scala",
+          "start_line": 313,
+          "end_line": 316
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MonadicParserSpec.MonadicParserSpec.bigDecimalParserFail",
+          "name": "bigDecimalParserFail",
+          "path": "shared/src/test/scala/scopttest/MonadicParserSpec.scala",
+          "start_line": 370,
+          "end_line": 373
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 24,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.SpecUtil.SpecUtil.printParserOut",
+          "name": "printParserOut",
+          "path": "shared/src/test/scala/scopttest/SpecUtil.scala",
+          "start_line": 17,
+          "end_line": 21
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.SpecUtil.SpecUtil.printParserError",
+          "name": "printParserError",
+          "path": "shared/src/test/scala/scopttest/SpecUtil.scala",
+          "start_line": 23,
+          "end_line": 27
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 19,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.main.scala.scopt.OParser.OParserBuilder.note",
+          "name": "note",
+          "path": "shared/src/main/scala/scopt/OParser.scala",
+          "start_line": 27,
+          "end_line": 33
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.main.scala.scopt.OParser.OParserBuilder.checkConfig",
+          "name": "checkConfig",
+          "path": "shared/src/main/scala/scopt/OParser.scala",
+          "start_line": 43,
+          "end_line": 49
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 19,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.reportErrorParser",
+          "name": "reportErrorParser",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 569,
+          "end_line": 571
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.reportWarningParser",
+          "name": "reportWarningParser",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 572,
+          "end_line": 574
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.824,
+      "max_similarity": 0.824,
+      "node_count": 407,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.helpParserOneColumn",
+          "name": "helpParserOneColumn",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 402,
+          "end_line": 477
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.helpParserTwoColumns",
+          "name": "helpParserTwoColumns",
+          "path": "shared/src/test/scala/scopttest/MutableParserSpec.scala",
+          "start_line": 479,
+          "end_line": 547
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.helpParserOneColumn",
+          "second": "scopt.shared.src.test.scala.scopttest.MutableParserSpec.MutableParserSpec.helpParserTwoColumns",
+          "similarity": 0.824
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 69,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "scopt.js.src.main.scala.PlatformReadInstances.platform.applyArgumentExHandler",
+          "name": "applyArgumentExHandler",
+          "path": "js/src/main/scala/PlatformReadInstances.scala",
+          "start_line": 25,
+          "end_line": 34
+        },
+        {
+          "label": "Method",
+          "qualified_name": "scopt.native.src.main.scala.PlatformReadInstances.platform.applyArgumentExHandler",
+          "name": "applyArgumentExHandler",
+          "path": "native/src/main/scala/PlatformReadInstances.scala",
+          "start_line": 19,
+          "end_line": 26
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "scopt.js.src.main.scala.PlatformReadInstances.platform.applyArgumentExHandler",
+          "second": "scopt.native.src.main.scala.PlatformReadInstances.platform.applyArgumentExHandler",
+          "similarity": 1.0
+        }
+      ]
+    }
+  ],
+  "skipped_symbols": 13,
+  "truncated": false
+}
+--- stderr

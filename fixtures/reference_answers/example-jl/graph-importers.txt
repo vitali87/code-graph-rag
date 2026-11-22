@@ -1,0 +1,26 @@
+$ cgr -q graph importers example-jl.src.Example --project example-jl
+status: 0
+--- stdout
+[
+  {
+    "alias": "Example",
+    "col": 0,
+    "end_col": 25,
+    "end_line": 1,
+    "imported_name": "Example",
+    "line": 1,
+    "module": "example-jl.docs.make",
+    "path": "docs/make.jl"
+  },
+  {
+    "alias": "Example",
+    "col": 0,
+    "end_col": 19,
+    "end_line": 1,
+    "imported_name": "Example",
+    "line": 1,
+    "module": "example-jl.test.runtests",
+    "path": "test/runtests.jl"
+  }
+]
+--- stderr

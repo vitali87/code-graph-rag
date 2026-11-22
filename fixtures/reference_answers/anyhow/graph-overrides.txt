@@ -1,0 +1,30 @@
+$ cgr -q graph overrides anyhow.src.lib.StdError.source --project anyhow
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "path": "src/context.rs",
+    "qualified_name": "anyhow.src.context.ContextError.source",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "src/context.rs",
+    "qualified_name": "anyhow.src.context.ContextError.source@156",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "src/error.rs",
+    "qualified_name": "anyhow.src.error.ErrorImpl.source",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "src/wrapper.rs",
+    "qualified_name": "anyhow.src.wrapper.BoxedError.source",
+    "relationship": "OVERRIDES"
+  }
+]
+--- stderr

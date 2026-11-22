@@ -1,0 +1,34 @@
+$ cgr -q graph resolve loads --project itsdangerous
+status: 0
+--- stdout
+[
+  {
+    "end_line": 12,
+    "label": "Method",
+    "path": "src/itsdangerous/_json.py",
+    "qualified_name": "itsdangerous.src.itsdangerous._json._CompactJSON.loads",
+    "start_line": 11
+  },
+  {
+    "end_line": 345,
+    "label": "Method",
+    "path": "src/itsdangerous/serializer.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.serializer.Serializer.loads",
+    "start_line": 330
+  },
+  {
+    "end_line": 27,
+    "label": "Method",
+    "path": "src/itsdangerous/serializer.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.serializer._PDataSerializer.loads",
+    "start_line": 27
+  },
+  {
+    "end_line": 220,
+    "label": "Method",
+    "path": "src/itsdangerous/timed.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.timed.TimedSerializer.loads",
+    "start_line": 185
+  }
+]
+--- stderr

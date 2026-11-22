@@ -1,0 +1,20 @@
+$ cgr -q graph resolve serialize --project lume
+status: 0
+--- stdout
+[
+  {
+    "end_line": 577,
+    "label": "Function",
+    "path": "lume.lua",
+    "qualified_name": "lume.lume.lume.serialize",
+    "start_line": 575
+  },
+  {
+    "end_line": 573,
+    "label": "Function",
+    "path": "lume.lua",
+    "qualified_name": "lume.lume.serialize",
+    "start_line": 571
+  }
+]
+--- stderr

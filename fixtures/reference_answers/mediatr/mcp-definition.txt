@@ -1,0 +1,17 @@
+> tools/call definition {"qualified_name": "mediatr.src.MediatR.Mediator.Mediator.Send(TRequest, CancellationToken)"}
+isError: false
+--- text
+{
+  "label": "Method",
+  "qualified_name": "mediatr.src.MediatR.Mediator.Mediator.Send(TRequest, CancellationToken)",
+  "path": "src/MediatR/Mediator.cs",
+  "start_line": 59,
+  "end_line": 75,
+  "start_col": 4,
+  "name_line": 59,
+  "decorators": [],
+  "name": "Send",
+  "docstring": null,
+  "source": "public Task Send<TRequest>(TRequest request, CancellationToken cancellationToken = default)\r\n        where TRequest : IRequest\r\n    {\r\n        if (request == null)\r\n        {\r\n            throw new ArgumentNullException(nameof(request));\r\n        }\r\n\r\n        var handler = (RequestHandlerWrapper)_requestHandlers.GetOrAdd(request.GetType(), static requestType =>\r\n        {\r\n            var wrapperType = typeof(RequestHandlerWrapperImpl<>).MakeGenericType(requestType);\r\n            var wrapper = Activator.CreateInstance(wrapperType) ?? throw new InvalidOperationException($\"Could not create wrapper type for {requestType}\");\r\n            return (RequestHandlerBase)wrapper;\r\n        });\r\n\r\n        return handler.Handle(request, _serviceProvider, cancellationToken);\r\n    }",
+  "found": true
+}

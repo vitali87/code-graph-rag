@@ -1,0 +1,18 @@
+$ cgr -q graph definition uuid.uuid.UUID.String --project uuid --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "decorators": [],
+  "docstring": "String returns the string form of uuid, xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\n, or \"\" if uuid is invalid.",
+  "end_line": 248,
+  "found": true,
+  "label": "Method",
+  "name": "String",
+  "name_line": 244,
+  "path": "uuid.go",
+  "qualified_name": "uuid.uuid.UUID.String",
+  "source": "func (uuid UUID) String() string {\n\tvar buf [36]byte\n\tencodeHex(buf[:], uuid)\n\treturn string(buf[:])\n}",
+  "start_col": 0,
+  "start_line": 244
+}
+--- stderr
