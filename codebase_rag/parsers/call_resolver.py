@@ -2555,9 +2555,28 @@ class CallResolver:
             if base not in seen
         ]
         traits = [base for base in bases if _php_simple(base) in composition.traits]
+        aliased = self._php_alias_member(composition, folded, traits, seen)
+        if aliased is not None:
+            return aliased
+        for base in [*traits, *(base for base in bases if base not in traits)]:
+            if base in traits and (folded, _php_simple(base)) in composition.exclusions:
+                continue
+            if hit := self._php_member(base, name, seen | {base}):
+                return hit
+        return None
+
+    def _php_alias_member(
+        self,
+        composition: PhpTraitComposition,
+        folded: str,
+        traits: list[str],
+        seen: frozenset[str],
+    ) -> tuple[str, str] | None:
         # `use T { T::original as label; }` gives the class a `label` that
         # runs T's `original`, ahead of a parent's own `label`; it reaches a
-        # method an `insteadof` excluded too (Greptile on PR #3240).
+        # method an `insteadof` excluded too (Greptile on PR #3240). None
+        # when no alias names `folded`; an alias whose method is not found
+        # answers _PHP_ALIAS_UNRESOLVED.
         for alias in composition.aliases:
             if alias.alias != folded:
                 continue
@@ -2567,11 +2586,6 @@ class CallResolver:
                 if hit := self._php_member(base, alias.method, seen | {base}):
                     return hit
             return _PHP_ALIAS_UNRESOLVED
-        for base in [*traits, *(base for base in bases if base not in traits)]:
-            if base in traits and (folded, _php_simple(base)) in composition.exclusions:
-                continue
-            if hit := self._php_member(base, name, seen | {base}):
-                return hit
         return None
 
     def _php_composition(self, class_qn: str) -> PhpTraitComposition:

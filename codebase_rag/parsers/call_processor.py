@@ -614,11 +614,22 @@ def _chain_root_call(
     right after the chain's first name; in C++ the innermost call of the
     call's own type down its left spine."""
     if language == cs.SupportedLanguage.DART:
-        start = _dart_chain_start(call_node)
-        root = start.next_named_sibling if start is not None else None
-        if root is None or root.type != cs.TS_DART_SELECTOR:
-            return None
-        return root, safe_decode_text(start) or ""
+        return _dart_chain_root_call(call_node)
+    return _cpp_chain_root_call(call_node)
+
+
+def _dart_chain_root_call(call_node: Node) -> tuple[Node, str] | None:
+    # The selector right after the chain's first name, and that name.
+    start = _dart_chain_start(call_node)
+    root = start.next_named_sibling if start is not None else None
+    if root is None or root.type != cs.TS_DART_SELECTOR:
+        return None
+    return root, safe_decode_text(start) or ""
+
+
+def _cpp_chain_root_call(call_node: Node) -> tuple[Node, str] | None:
+    # The innermost call of the call's own type down its left spine, and
+    # the name it calls.
     root = None
     node = call_node
     for _ in range(_CHAIN_SPINE_WALK_LIMIT):

@@ -46,19 +46,24 @@ def php_trait_composition(type_node: Node) -> PhpTraitComposition:
     traits: set[str] = set()
     exclusions: set[tuple[str, str]] = set()
     aliases: list[PhpTraitAlias] = []
+    for use in _use_declarations(type_node):
+        for listed in use.children:
+            if listed.type == cs.TS_PHP_USE_LIST:
+                exclusions.update(_insteadof_pairs(listed))
+                aliases.extend(_as_aliases(listed))
+            elif simple := _simple_name(listed):
+                traits.add(ascii_fold(simple))
+    return PhpTraitComposition(frozenset(traits), frozenset(exclusions), tuple(aliases))
+
+
+def _use_declarations(type_node: Node) -> Iterator[Node]:
+    # The `use` declarations in a type's own body, in source order.
     for body in type_node.children:
         if body.type != cs.TS_PHP_DECLARATION_LIST:
             continue
         for use in body.children:
-            if use.type != cs.TS_PHP_USE_DECLARATION:
-                continue
-            for listed in use.children:
-                if listed.type == cs.TS_PHP_USE_LIST:
-                    exclusions.update(_insteadof_pairs(listed))
-                    aliases.extend(_as_aliases(listed))
-                elif simple := _simple_name(listed):
-                    traits.add(ascii_fold(simple))
-    return PhpTraitComposition(frozenset(traits), frozenset(exclusions), tuple(aliases))
+            if use.type == cs.TS_PHP_USE_DECLARATION:
+                yield use
 
 
 def _simple_name(node: Node) -> str | None:
@@ -88,19 +93,23 @@ def _as_aliases(use_list: Node) -> Iterator[PhpTraitAlias]:
     for clause in use_list.named_children:
         if clause.type != cs.TS_PHP_USE_AS_CLAUSE or not clause.named_children:
             continue
-        # `T::original` or a bare `original`, then an optional visibility,
-        # then the new name. `original as protected` names nothing new.
-        source, *rest = clause.named_children
-        if not rest or rest[-1].type != cs.TS_PHP_NAME:
-            continue
-        alias = safe_decode_text(rest[-1])
-        parts = source.named_children if source.type != cs.TS_PHP_NAME else []
-        trait = _simple_name(parts[0]) if len(parts) > 1 else None
-        method = safe_decode_text(parts[-1] if parts else source)
-        if alias and method:
-            yield PhpTraitAlias(
-                ascii_fold(alias), ascii_fold(trait or ""), ascii_fold(method)
-            )
+        if (alias := _as_alias(clause)) is not None:
+            yield alias
+
+
+def _as_alias(clause: Node) -> PhpTraitAlias | None:
+    # `T::original` or a bare `original`, then an optional visibility,
+    # then the new name. `original as protected` names nothing new.
+    source, *rest = clause.named_children
+    if not rest or rest[-1].type != cs.TS_PHP_NAME:
+        return None
+    alias = safe_decode_text(rest[-1])
+    parts = source.named_children if source.type != cs.TS_PHP_NAME else []
+    trait = _simple_name(parts[0]) if len(parts) > 1 else None
+    method = safe_decode_text(parts[-1] if parts else source)
+    if not (alias and method):
+        return None
+    return PhpTraitAlias(ascii_fold(alias), ascii_fold(trait or ""), ascii_fold(method))
 
 
 def _positional_name(node: Node) -> str:
