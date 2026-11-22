@@ -60,11 +60,20 @@ def anyio_backend() -> str:
 
 
 @pytest.fixture
-def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+def repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Iterator[Path]:
+    # The line ending is written as bytes, so a Windows run indexes the same
+    # file as any other: `definition` keeps a file's own endings, and text
+    # mode would give it CRLF there. A test asks for CRLF by parametrizing
+    # this fixture.
+    line_ending = getattr(request, "param", "\n")
     root = tmp_path / PROJECT
     (root / "pkg").mkdir(parents=True)
-    (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
-    (root / "pkg" / "signer.py").write_text(SIGNER, encoding="utf-8")
+    (root / "pkg" / "__init__.py").write_bytes(b"")
+    (root / "pkg" / "signer.py").write_bytes(
+        SIGNER.replace("\n", line_ending).encode("utf-8")
+    )
     monkeypatch.setattr(settings, "GRAPH_BACKEND", DIALECT_SQLITE)
     monkeypatch.setenv(cs.MCPEnvVar.TARGET_REPO_PATH, str(root))
     parsers, queries = load_parsers()
@@ -161,6 +170,36 @@ async def test_a_method_is_read_as_its_own_span(repo: Path) -> None:
 
     assert "def unsign(self, value):\n        return value[:-1]" in _text(result)
     assert "def sign" not in _text(result)
+
+
+@pytest.mark.parametrize("repo", [pytest.param("\r\n", id="crlf")], indirect=True)
+@pytest.mark.parametrize(
+    "qualified_name",
+    [
+        pytest.param(f"{PROJECT}.pkg.signer.Signer.unsign", id="method"),
+        pytest.param(f"{PROJECT}.pkg.signer.Signer", id="class"),
+    ],
+)
+async def test_a_crlf_file_reads_as_get_code_snippet_reads_it(
+    repo: Path, qualified_name: str
+) -> None:
+    # `get_code_snippet` reads in text mode, which folds "\r\n" to "\n"; the
+    # same span of a CRLF checkout must read the same from both tools, on
+    # every OS.
+    node_id = _node_id(qualified_name)
+
+    result = await _call(cs.MCPToolName.GET_FUNCTION_SOURCE, {"node_id": node_id})
+
+    assert result.is_error is False, _text(result)
+    snippet = await _source_from(
+        cs.MCPToolName.GET_CODE_SNIPPET,
+        "source_code",
+        {"qualified_name": qualified_name},
+    )
+    assert "\r" not in snippet
+    assert _text(result) == cs.MSG_SEMANTIC_SOURCE_FORMAT.format(
+        id=node_id, code=snippet.strip()
+    )
 
 
 async def test_no_source_is_flagged_as_an_error(repo: Path) -> None:

@@ -174,7 +174,16 @@ def get_function_source_code(
             return None
         file_path_obj = located.path
 
-        return extract_source_lines(file_path_obj, start_line, end_line)
+        source = extract_source_lines(file_path_obj, start_line, end_line)
+        if source is None:
+            return None
+        # The text `get_code_snippet` returns for the same span: it reads in
+        # text mode, whose universal newlines fold "\r\n" and a lone "\r" to
+        # "\n", while the shared reader keeps the file's own endings. Fold
+        # "\r\n" first, or each CRLF break would become two.
+        return source.replace(cs.CRLF, cs.LINE_FEED).replace(
+            cs.CARRIAGE_RETURN, cs.LINE_FEED
+        )
 
     except Exception as e:
         logger.error(ls.SEMANTIC_SOURCE_FAILED.format(id=node_id, error=e))
