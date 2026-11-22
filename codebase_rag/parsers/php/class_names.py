@@ -57,12 +57,25 @@ def new_expression_class_path(creation: Node) -> ClassPath | None:
     written = next(
         (c for c in creation.named_children if c.type in _WRITTEN_CLASS_TYPES), None
     )
-    if written is None or not (text := safe_decode_text(written)):
+    return written_class_path(written) if written is not None else None
+
+
+def written_class_path(written: Node) -> ClassPath | None:
+    """The fully qualified path a written class name compiles to.
+
+    `Box` takes a `use` alias of its own namespace block or that block's
+    namespace, `namespace\\Box` the block's namespace, `\\Box` is absolute.
+    None for an empty name and for `self` / `static` / `parent`, which name a
+    class by position.
+    """
+    if written.type not in _WRITTEN_CLASS_TYPES or not (
+        text := safe_decode_text(written)
+    ):
         return None
     segments = tuple(text.split(cs.PHP_NAMESPACE_SEPARATOR))
     if written.type == cs.TS_PHP_QUALIFIED_NAME and not segments[0]:
         return segments[1:]
-    namespace, uses = _namespace_scope(creation)
+    namespace, uses = _namespace_scope(written)
     if written.type == cs.TS_PHP_RELATIVE_NAME:
         return (*namespace, *segments[1:])
     if written.type == cs.TS_PHP_NAME and (
@@ -219,6 +232,20 @@ def _variable_scope(node: Node) -> Node:
     while scope.parent is not None and scope.type not in _VARIABLE_SCOPE_TYPES:
         scope = scope.parent
     return scope
+
+
+def variable_rebound(scope: Node, variable: Node) -> bool:
+    """True when `scope`'s own body binds `variable` again.
+
+    An assignment, a `foreach` target, a by-reference `use` and the like
+    replace what the parameter held, so its declared type no longer says
+    what the variable is (PR #3652 review).
+    """
+    body = scope.child_by_field_name(cs.FIELD_BODY)
+    name = _variable_identifier(variable)
+    if body is None or name is None:
+        return False
+    return any(bound == name for bound, _ in _variable_bindings(body))
 
 
 def _scope_variable_classes(scope: Node) -> dict[str, ClassPath]:

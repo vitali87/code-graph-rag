@@ -2694,6 +2694,8 @@ class MCPToolsRegistry:
             ):
                 return refusal
             result = await _plain_function(self._function_source_tool)(node_id=node_id)
+        if isinstance(result, te.ToolFailure):
+            return result
         return str(result)
 
     async def structural_search(self, pattern: str, language: str | None = None) -> str:
