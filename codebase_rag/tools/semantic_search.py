@@ -9,6 +9,7 @@ from pydantic_ai import Tool
 from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
+from .. import tool_errors as te
 from ..cypher_queries import (
     CYPHER_GET_FUNCTION_SOURCE_LOCATION,
     CYPHER_LIST_PROJECTS,
@@ -237,7 +238,9 @@ def create_get_function_source_tool(
         )
 
         if source_code is None:
-            return cs.MSG_SEMANTIC_SOURCE_UNAVAILABLE.format(id=node_id)
+            # A ToolFailure, so the MCP server reports it with `isError:
+            # true`; an agent reads the same text (issue #3677).
+            return te.ToolFailure(cs.MSG_SEMANTIC_SOURCE_UNAVAILABLE.format(id=node_id))
 
         if read_record is not None:
             # Feed the egress taint gate (issue #1128).

@@ -873,13 +873,6 @@ CYPHER_RETURN_COUNT = (
 )
 CYPHER_SET_PROPS_RETURN_COUNT = f"SET r += row.props\n{CYPHER_RETURN_COUNT}"
 
-CYPHER_GET_FUNCTION_SOURCE_LOCATION = """
-MATCH (m:Module)-[:DEFINES]->(n)
-WHERE id(n) = $node_id
-RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
-       n.end_line AS end_line, m.path AS path, n.absolute_path AS absolute_path
-"""
-
 # One source for every definition lookup (issue #1925): see
 # DEFINITION_NODE_LABELS. Sorted so the generated Cypher is stable across runs
 # rather than varying with frozenset iteration order.
@@ -952,6 +945,22 @@ OPTIONAL MATCH (m:Module)-[:{_SNIPPET_CONTAINMENT}*1..{SNIPPET_MODULE_FALLBACK_M
 RETURN n.name AS name, n.start_line AS start, n.end_line AS end, coalesce(n.path, m.path) AS path,
        n.absolute_path AS absolute_path, n.docstring AS docstring
 ORDER BY labels(n)[0], coalesce(n.path, m.path), n.start_line
+LIMIT 1
+"""
+
+# Any definition by node id, read as the lookup above reads it (issue #3677).
+# Matching only what a Module DEFINES directly missed every method (its class
+# DEFINES_METHOD it) and every nested or local function (its parent DEFINES
+# it), so in a method-only language almost no id had source. The node's own
+# path comes first; the module reached through the containment edges serves a
+# node without one.
+CYPHER_GET_FUNCTION_SOURCE_LOCATION = f"""
+MATCH (n) WHERE id(n) = $node_id AND {_any_label("n", _GRAPH_DEFINITION_LABELS)}
+OPTIONAL MATCH (m:Module)-[:{_SNIPPET_CONTAINMENT}*1..{SNIPPET_MODULE_FALLBACK_MAX_DEPTH}]->(n)
+RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
+       n.end_line AS end_line, coalesce(n.path, m.path) AS path,
+       n.absolute_path AS absolute_path
+ORDER BY coalesce(n.path, m.path)
 LIMIT 1
 """
 
