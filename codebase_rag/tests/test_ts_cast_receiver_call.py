@@ -199,6 +199,57 @@ def test_a_cast_inside_an_exported_class_binds_that_class(
     }
 
 
+# A cast names an INSTANCE of its type, whose prototype chain holds no
+# static member: with a static `run` on Child and an instance `run` on Base,
+# `(s as Child).run()` runs Base's, while the call on the class itself is
+# the static one (Greptile, PR #2959; issue #3672).
+STATIC = """\
+class Base { run(): number { return 1; } }
+class Child extends Base { static run(): number { return 2; } }
+class Own extends Base {
+  static run(): number { return 3; }
+  run(): number { return 4; }
+}
+
+function castChild(s: unknown) { return (s as Child).run(); }
+function angleChild(s: unknown) { return (<Child>s).run(); }
+function readonlyChild(s: unknown) { return (s as Readonly<Child>).run(); }
+function castOwn(s: unknown) { return (s as Own).run(); }
+function onClass() { return Child.run(); }
+"""
+
+
+@pytest.fixture(scope="module")
+def static_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
+    root = tmp_path_factory.mktemp("tsstatic") / "tsstatic"
+    _write(root, "st.ts", STATIC)
+    return _index(root, MagicMock())
+
+
+@pytest.mark.parametrize(
+    "caller", ["st.castChild", "st.angleChild", "st.readonlyChild"]
+)
+def test_a_cast_binds_the_instance_member_not_a_static_one(
+    static_graph: RecordedGraph, caller: str
+) -> None:
+    assert _module_callees(static_graph, caller) == {"st.Base.run": "exact"}
+
+
+def test_a_cast_to_a_class_declaring_both_sides_binds_its_own_member(
+    static_graph: RecordedGraph,
+) -> None:
+    # `Own` declares `run` for its instances too, which hides Base's.
+    callees = _module_callees(static_graph, "st.castOwn")
+    assert callees
+    assert all(callee.startswith("st.Own.run") for callee in callees)
+
+
+def test_a_call_on_the_class_still_binds_its_static_member(
+    static_graph: RecordedGraph,
+) -> None:
+    assert _module_callees(static_graph, "st.onClass") == {"st.Child.run": "exact"}
+
+
 # Negative: what must not change.
 
 

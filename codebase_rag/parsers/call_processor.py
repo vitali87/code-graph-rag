@@ -2393,7 +2393,7 @@ def _ts_cast_receiver_call_name(member: Node) -> str | None:
     return f"{type_name}{cs.SEPARATOR_DOT}{method}"
 
 
-def _without_cast_type_value(
+def _with_cast_receiver_type(
     call_node: Node,
     language: cs.SupportedLanguage | None,
     call_name: str,
@@ -2402,7 +2402,7 @@ def _without_cast_type_value(
     # `(s as Real).run()` is named `Real.run`, where `Real` is a TYPE: a local
     # value of that name (`const Real = new Fake()`) lives in TypeScript's
     # other namespace, so it must not type the receiver (Greptile, PR #2959).
-    if language not in _JS_TS_LANGUAGES or not var_types:
+    if language not in _JS_TS_LANGUAGES:
         return var_types
     member = call_node.child_by_field_name(cs.FIELD_FUNCTION)
     if member is None or member.type != cs.TS_MEMBER_EXPRESSION:
@@ -2411,8 +2411,15 @@ def _without_cast_type_value(
         return var_types
     # The call name's root is the type the cast named, read through a
     # utility (`as Readonly<Real>` is named `Real.run`).
-    type_root = call_name.split(cs.SEPARATOR_DOT, 1)[0]
-    if type_root not in var_types:
+    type_name = call_name.rpartition(cs.SEPARATOR_DOT)[0]
+    if cs.SEPARATOR_DOT not in type_name:
+        # The cast's value is an INSTANCE of the type, so the receiver is
+        # typed by it, as `s: Real` types it: the instance lookup then skips
+        # a static member, which no prototype chain holds, where the call on
+        # the class itself would bind it (Greptile, PR #2959; issue #3672).
+        return {**(var_types or {}), type_name: type_name}
+    type_root = type_name.split(cs.SEPARATOR_DOT, 1)[0]
+    if not var_types or type_root not in var_types:
         return var_types
     return {name: kind for name, kind in var_types.items() if name != type_root}
 
@@ -7268,7 +7275,7 @@ class CallProcessor:
                 for name, var_type in call_var_types.items()
                 if name != receiver
             }
-        call_var_types = _without_cast_type_value(
+        call_var_types = _with_cast_receiver_type(
             call_node, ctx.language, call_name, call_var_types
         )
 
