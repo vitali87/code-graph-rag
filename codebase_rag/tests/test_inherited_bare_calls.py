@@ -899,3 +899,60 @@ def test_same_named_php_classes_in_two_namespaces_compose_apart(
 ) -> None:
     calls = fields_and_namespaces["php"]
     assert _callees(calls, caller) == {callee: "exact"}, calls
+
+
+_CPP_TWO_BASES = {
+    "two.cpp": """\
+struct A { int label() { return 1; } };
+struct B { int label() { return 2; } };
+struct Other { int other() { return 3; } };
+struct C : A, B {
+  using B::label;
+  int run() { return label(); }
+  int runThis() { return this->label(); }
+};
+struct E : B, A {
+  using A::label;
+  int run() { return label(); }
+};
+struct G : A, Other {
+  int run() { return label(); }
+};
+struct L : virtual A {};
+struct R : virtual A {};
+struct V : L, R {
+  int run() { return label(); }
+};
+""",
+}
+
+
+@pytest.fixture(scope="module")
+def two_bases(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
+    return _calls(tmp_path_factory.mktemp("cpp3240u") / "u", _CPP_TWO_BASES, "cpp")
+
+
+@pytest.mark.parametrize(
+    "caller",
+    ["two.C.run", "two.C.runThis", "two.E.run"],
+    ids=["using-second-base", "using-second-base-this", "using-first-listed-later"],
+)
+def test_cpp_bases_reaching_different_methods_leave_the_call_inexact(
+    two_bases: _Calls, caller: str
+) -> None:
+    # `struct E : B, A { using A::label; }` calls A::label: which of two
+    # bases' `label` a bare call reaches is the class's own `using`
+    # choice, so the first base in source order is no exact answer
+    # (Greptile on PR #3240).
+    assert "exact" not in _callees(two_bases, caller).values(), two_bases
+
+
+@pytest.mark.parametrize(
+    "caller",
+    ["two.G.run", "two.V.run"],
+    ids=["one-base-reaches-it", "shared-virtual-base"],
+)
+def test_cpp_bases_agreeing_on_one_method_stay_exact(
+    two_bases: _Calls, caller: str
+) -> None:
+    assert _callees(two_bases, caller) == {"two.A.label": "exact"}, two_bases

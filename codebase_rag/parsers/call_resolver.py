@@ -2512,9 +2512,37 @@ class CallResolver:
             hit = self._linearized_method(class_qn, name)
         else:
             hit = self._resolve_inherited_method(class_qn, name)
-        if hit is None or hit[0] != cs.NodeLabel.METHOD.value:
+        if (
+            hit is None
+            or hit[0] != cs.NodeLabel.METHOD.value
+            or self._cpp_bases_disagree(call.language, class_qn, name)
+        ):
             return None
         return hit
+
+    def _cpp_bases_disagree(
+        self, language: cs.SupportedLanguage | None, class_qn: str, name: str
+    ) -> bool:
+        # `struct C : A, B` where A and B each reach their own `label`: C++
+        # rejects a bare `label()` unless C picks one (`using B::label;`),
+        # which is not read here, so the first base in source order is no
+        # exact answer (Greptile on PR #3240). Bases reaching one shared
+        # method (a virtual base) agree.
+        if language != cs.SupportedLanguage.CPP:
+            return False
+        reached = {
+            found[1]
+            for base in self.class_inheritance.get(class_qn, [])
+            if (found := self._cpp_base_member(base, name)) is not None
+        }
+        return len(reached) > 1
+
+    def _cpp_base_member(self, base: str, name: str) -> tuple[str, str] | None:
+        # `name` as base `base` declares or inherits it.
+        member_qn = f"{base}{cs.SEPARATOR_DOT}{name}"
+        if member_qn in self.function_registry:
+            return self.function_registry[member_qn], member_qn
+        return self._resolve_inherited_method(base, name)
 
     def _cpp_field_may_answer(
         self, language: cs.SupportedLanguage | None, class_qn: str, name: str
