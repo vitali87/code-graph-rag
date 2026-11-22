@@ -580,6 +580,36 @@ def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
     return False
 
 
+def _in_member_initializer(call_node: Node) -> bool:
+    # Whether a C++ call initializes a member: in a constructor's
+    # member-initializer list, or as a default member initializer
+    # (`int next_ = Start();`, Greptile on PR #2948). Both run in the
+    # class's scope though the module's calls read them.
+    node = call_node.parent
+    while node is not None and node.type not in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+        if node.type == cs.CppNodeType.FIELD_INITIALIZER_LIST or (
+            node.type == cs.CppNodeType.FIELD_DECLARATION
+            and node.parent is not None
+            and node.parent.type == cs.TS_CPP_FIELD_DECLARATION_LIST
+        ):
+            return True
+        node = node.parent
+    return False
+
+
+def _has_no_receiver(call_node: Node, language: cs.SupportedLanguage) -> bool:
+    # PHP and C/C++ name a member call by its bare method name too
+    # (`$bag->count()` and `count($xs)` both read `count`; `a.b.max()` reads
+    # `max`), so only the call's shape tells that it has no receiver and so
+    # names no method of another class (issue #2575).
+    if language == cs.SupportedLanguage.PHP:
+        return call_node.type == cs.TS_PHP_FUNCTION_CALL_EXPRESSION
+    if language in _C_FAMILY_LANGUAGES:
+        callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        return callee is not None and callee.type == cs.TS_IDENTIFIER
+    return False
+
+
 def _class_qn_for_calls(
     class_node: Node,
     module_qn: str,
@@ -6044,6 +6074,8 @@ class CallProcessor:
             self._record_python_shadowed_imports(caller_node, caller_qn, module_qn)
         elif language == cs.SupportedLanguage.GO:
             self._record_go_local_names(caller_node, caller_qn, caller_type)
+        elif language == cs.SupportedLanguage.CPP:
+            self._record_cpp_local_names(caller_node, caller_qn, caller_type)
         elif language in _JS_TS_LANGUAGES:
             self._record_js_parameter_names(caller_node, caller_qn)
             self._record_js_local_names(caller_node, caller_qn)
@@ -6371,6 +6403,33 @@ class CallProcessor:
             self._resolver.go_local_scopes[caller_qn] = scopes
         else:
             self._resolver.go_local_scopes.pop(caller_qn, None)
+
+    def _record_cpp_local_names(
+        self, caller_node: Node, caller_qn: str, caller_type: str
+    ) -> None:
+        # Only a member function's bare call can find a base's member, and a
+        # parameter or local of that name hides it where in scope (PR #2948).
+        # The class's fields are left out: that walk also meets the
+        # parameters of the class's other member declarations.
+        scopes: dict[str, list[tuple[int, int]]] = {}
+        if caller_type == cs.NodeLabel.METHOD:
+            engine = CppTypeInferenceEngine()
+            for start, end, name, _ in engine.declaration_scopes(
+                caller_node, fields=False
+            ):
+                scopes.setdefault(name, []).append((start, end))
+            for start, end, name in (
+                *engine.range_for_bindings(caller_node),
+                *engine.structured_bindings(caller_node),
+                *engine.using_declarations(caller_node),
+            ):
+                scopes.setdefault(name, []).append((start, end))
+        if scopes:
+            self._resolver.cpp_local_scopes[caller_qn] = {
+                name: tuple(spans) for name, spans in scopes.items()
+            }
+        else:
+            self._resolver.cpp_local_scopes.pop(caller_qn, None)
 
     def _record_js_local_names(self, caller_node: Node, caller_qn: str) -> None:
         # What the caller and each function around it introduce: `api.run()`
@@ -7564,6 +7623,19 @@ class CallProcessor:
             # A Java/C#/Scala `new X(...)` names a type, never a method.
             constructing=ctx.language in _NEW_CONSTRUCTS_LANGUAGES
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
+            receiverless=_has_no_receiver(call_node, ctx.language)
+            # A C++ constructor's member initializer (`head_(NewNode(0))`)
+            # is read with its module's calls, though it runs in the
+            # constructor and names the class's own members there; with no
+            # class to look in, that call keeps the name fallback
+            # (leveldb's `SkipList::NewNode`, `PosixWritableFile::Dirname`).
+            # A default member initializer is read the same way. Any other
+            # module-level call is not (CodeRabbit, PR #2948).
+            and not (
+                ctx.is_cpp
+                and ctx.caller_spec[0] == cs.NodeLabel.MODULE
+                and _in_member_initializer(call_node)
+            ),
         )
         return self._judge_resolved_callee(ctx, call_node, call_name, callee_info)
 
