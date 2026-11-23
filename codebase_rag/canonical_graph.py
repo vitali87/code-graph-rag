@@ -85,6 +85,77 @@ def _properties(record: ExportRecord, roots: Sequence[str]) -> dict[str, JsonVal
     }
 
 
+def _labels(node: ExportRecord) -> list[str]:
+    raw_labels = node.get(cs.KEY_LABELS) or []
+    return (
+        sorted(str(label) for label in raw_labels)
+        if isinstance(raw_labels, list)
+        else []
+    )
+
+
+def _key_name(labels: Sequence[str]) -> str | None:
+    """The property the graph keys a node on: the key of the first of its
+    sorted labels that has one."""
+    return next(
+        (
+            cs.NODE_UNIQUE_CONSTRAINTS[label]
+            for label in labels
+            if label in cs.NODE_UNIQUE_CONSTRAINTS
+        ),
+        None,
+    )
+
+
+def _node(node: JsonValue, roots: Sequence[str]) -> tuple[int, str, str]:
+    """A node's row number, the name its edges' lines call it by, and its
+    own line."""
+    node_id = node.get(cs.KEY_NODE_ID) if isinstance(node, dict) else None
+    if not isinstance(node, dict) or not isinstance(node_id, int):
+        raise SystemExit(ex.CANONICAL_NO_NODE_ID.format(node=node))
+    labels = _labels(node)
+    properties = _properties(node, roots)
+    key_name = _key_name(labels)
+    key = properties.pop(key_name, None) if key_name else None
+    label_text = cs.REFERENCE_LABEL_SEPARATOR.join(labels)
+    sep = cs.REFERENCE_FIELD_SEPARATOR
+    name = sep.join((label_text, canonical_json(key)))
+    line = sep.join(
+        (
+            cs.REFERENCE_NODE_TAG,
+            label_text,
+            canonical_json(key),
+            canonical_json(properties),
+        )
+    )
+    return node_id, name, line
+
+
+def _edge(relationship: JsonValue, names: dict[int, str], roots: Sequence[str]) -> str:
+    """A relationship's line, its ends named as `names` has them."""
+    if not isinstance(relationship, dict):
+        raise SystemExit(
+            ex.CANONICAL_RELATIONSHIP_NOT_A_RECORD.format(relationship=relationship)
+        )
+    from_id = relationship.get(cs.KEY_FROM_ID)
+    to_id = relationship.get(cs.KEY_TO_ID)
+    source_name = names.get(from_id) if isinstance(from_id, int) else None
+    target_name = names.get(to_id) if isinstance(to_id, int) else None
+    if source_name is None or target_name is None:
+        raise SystemExit(
+            ex.CANONICAL_UNKNOWN_ENDPOINT.format(relationship=relationship)
+        )
+    return cs.REFERENCE_FIELD_SEPARATOR.join(
+        (
+            cs.REFERENCE_EDGE_TAG,
+            str(relationship.get(cs.KEY_TYPE)),
+            source_name,
+            target_name,
+            canonical_json(_properties(relationship, roots)),
+        )
+    )
+
+
 def canonical(export: ExportRecord, source: Path) -> list[str]:
     """The export as sorted lines, the same wherever and whenever it ran.
 
@@ -94,71 +165,20 @@ def canonical(export: ExportRecord, source: Path) -> list[str]:
     lines are kept: an edge recorded twice is a difference.
     """
     roots = root_spellings(source)
-    sep = cs.REFERENCE_FIELD_SEPARATOR
-    names: dict[int, str] = {}
-    lines: list[str] = []
     # Both lists must be there, even empty: an export missing one would read
     # as an empty graph and `record` would write it over a full one.
     nodes = export.get(cs.KEY_NODES)
     relationships = export.get(cs.KEY_RELATIONSHIPS)
     if not isinstance(nodes, list) or not isinstance(relationships, list):
         raise SystemExit(ex.CANONICAL_NO_LISTS)
+    names: dict[int, str] = {}
+    lines: list[str] = []
+    # Every node first: an edge's line names its ends as their nodes' lines do.
     for node in nodes:
-        node_id = node.get(cs.KEY_NODE_ID) if isinstance(node, dict) else None
-        if not isinstance(node, dict) or not isinstance(node_id, int):
-            raise SystemExit(ex.CANONICAL_NO_NODE_ID.format(node=node))
-        raw_labels = node.get(cs.KEY_LABELS) or []
-        labels = (
-            sorted(str(label) for label in raw_labels)
-            if isinstance(raw_labels, list)
-            else []
-        )
-        properties = _properties(node, roots)
-        key_name = next(
-            (
-                cs.NODE_UNIQUE_CONSTRAINTS[label]
-                for label in labels
-                if label in cs.NODE_UNIQUE_CONSTRAINTS
-            ),
-            None,
-        )
-        key = properties.pop(key_name, None) if key_name else None
-        label_text = cs.REFERENCE_LABEL_SEPARATOR.join(labels)
-        names[node_id] = sep.join((label_text, canonical_json(key)))
-        lines.append(
-            sep.join(
-                (
-                    cs.REFERENCE_NODE_TAG,
-                    label_text,
-                    canonical_json(key),
-                    canonical_json(properties),
-                )
-            )
-        )
-    for relationship in relationships:
-        if not isinstance(relationship, dict):
-            raise SystemExit(
-                ex.CANONICAL_RELATIONSHIP_NOT_A_RECORD.format(relationship=relationship)
-            )
-        from_id = relationship.get(cs.KEY_FROM_ID)
-        to_id = relationship.get(cs.KEY_TO_ID)
-        source_name = names.get(from_id) if isinstance(from_id, int) else None
-        target_name = names.get(to_id) if isinstance(to_id, int) else None
-        if source_name is None or target_name is None:
-            raise SystemExit(
-                ex.CANONICAL_UNKNOWN_ENDPOINT.format(relationship=relationship)
-            )
-        lines.append(
-            sep.join(
-                (
-                    cs.REFERENCE_EDGE_TAG,
-                    str(relationship.get(cs.KEY_TYPE)),
-                    source_name,
-                    target_name,
-                    canonical_json(_properties(relationship, roots)),
-                )
-            )
-        )
+        node_id, name, line = _node(node, roots)
+        names[node_id] = name
+        lines.append(line)
+    lines.extend(_edge(relationship, names, roots) for relationship in relationships)
     return sorted(lines)
 
 
