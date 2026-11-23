@@ -2032,9 +2032,9 @@ class GraphUpdater:
         engine selection; it keeps its sync state in `state_dir` and makes
         no embeddings, so its runs neither read nor change this updater's.
         """
-        return type(self)(
+        replica = type(self)(
             ingestor=ingestor,
-            repo_path=self._single_file or self.repo_path,
+            repo_path=self.repo_path,
             parsers=self.parsers,
             queries=self.queries,
             unignore_paths=self._configured_unignore_paths,
@@ -2046,6 +2046,11 @@ class GraphUpdater:
             state_dir=state_dir,
             index_engine=self.index_engine if index_engine is None else index_engine,
         )
+        # A single-file target keeps the root this updater found for it when
+        # it was made: handed the file, the replica would look for the root on
+        # disk again, and a marker added since would key it under another.
+        replica._single_file = self._single_file
+        return replica
 
     def _run_emitting_frontends(self, phase: FrontendPhase) -> None:
         """Run every registered emitting frontend declaring this phase.

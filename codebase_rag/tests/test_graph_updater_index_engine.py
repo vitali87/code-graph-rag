@@ -774,6 +774,26 @@ class TestReplica:
         )
         assert replica.repo_path == original.repo_path
 
+    def test_a_single_file_replica_keeps_its_originals_root(
+        self, tmp_path: Path, make_updater: Callable[..., GraphUpdater]
+    ) -> None:
+        # The root a single-file target is keyed under is found on disk when
+        # the original is made; a marker that appears afterwards must not move
+        # the replica's, or its file and Project would get other identities.
+        repo = _write(tmp_path / "repo", LANGUAGE_FIXTURES[L.PYTHON])
+        (repo / ".git").mkdir()
+        original = make_updater(repo / "pkg" / "util.py")
+        (repo / "pkg" / ".git").mkdir()
+
+        replica = original.replica(
+            _MockIngestor(), state_dir=tmp_path / "replica-state"
+        )
+
+        assert original.repo_path == repo.resolve()
+        assert replica.repo_path == original.repo_path
+        assert replica._single_file == original._single_file
+        assert replica.project_name == original.project_name
+
     def test_it_indexes_what_its_original_does_and_keeps_its_own_state(
         self,
         tmp_path: Path,
