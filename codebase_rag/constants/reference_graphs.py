@@ -49,6 +49,11 @@ REFERENCE_NODE_TAG = "N"
 REFERENCE_EDGE_TAG = "E"
 REFERENCE_FIELD_SEPARATOR = "\t"
 REFERENCE_LABEL_SEPARATOR = ":"
+# JSON in a line: sorted keys, no spaces (codebase_rag/canonical_graph.py).
+REFERENCE_JSON_SEPARATORS = (",", ":")
+# A line only the expected side has, and one only the actual side has.
+REFERENCE_ONLY_EXPECTED = "- {line}"
+REFERENCE_ONLY_ACTUAL = "+ {line}"
 
 # Languages with no repository of their own yet: TSX is the TypeScript
 # grammar's JSX dialect, and the SQL indexer reads only stored routines,

@@ -21,20 +21,21 @@ import pytest
 import yaml
 
 from codebase_rag import constants as cs
-from codebase_rag.types_defs import ReferenceRepo
+from codebase_rag.canonical_graph import (
+    canonical,
+    difference,
+    read_graph,
+    write_graph,
+)
+from codebase_rag.types_defs import ExportRecord, ReferenceRepo
 from scripts import reference_graphs
 from scripts.reference_graphs import (
     REFERENCE_DIR,
-    ExportRecord,
     _index_env,
-    canonical,
     cgr_command,
-    difference,
     environment_path,
     graph_path,
     load_manifest,
-    read_graph,
-    write_graph,
 )
 
 ROOT = Path("/work/checkout/demo")
