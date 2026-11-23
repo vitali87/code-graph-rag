@@ -1,0 +1,18 @@
+$ cgr -q graph definition php-diff.src.Differ.Differ.diff --project php-diff --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "decorators": [],
+  "docstring": "@param list<string>|string $from\n@param list<string>|string $to",
+  "end_line": 54,
+  "found": true,
+  "label": "Method",
+  "name": "diff",
+  "name_line": 49,
+  "path": "src/Differ.php",
+  "qualified_name": "php-diff.src.Differ.Differ.diff",
+  "source": "public function diff(array|string $from, array|string $to, ?LongestCommonSubsequenceCalculator $lcs = null): string\n    {\n        $diff = $this->diffToArray($from, $to, $lcs);\n\n        return $this->outputBuilder->getDiff($diff);\n    }",
+  "start_col": 4,
+  "start_line": 49
+}
+--- stderr

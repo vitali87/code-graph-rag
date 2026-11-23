@@ -1,0 +1,66 @@
+$ cgr -q graph callers base64_encode --project itsdangerous
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 1,
+    "callee_path": "src/itsdangerous/encoding.py",
+    "col": 15,
+    "depth": 1,
+    "end_col": 33,
+    "end_line": 220,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 220,
+    "path": "src/itsdangerous/signer.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.signer.Signer.get_signature",
+    "resolution": "exact",
+    "through": "itsdangerous.src.itsdangerous.encoding.base64_encode"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/itsdangerous/encoding.py",
+    "col": 20,
+    "depth": 1,
+    "end_col": 69,
+    "end_line": 48,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 48,
+    "path": "src/itsdangerous/timed.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.timed.TimestampSigner.sign",
+    "resolution": "exact",
+    "through": "itsdangerous.src.itsdangerous.encoding.base64_encode"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/itsdangerous/encoding.py",
+    "col": 18,
+    "depth": 1,
+    "end_col": 37,
+    "end_line": 64,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 64,
+    "path": "src/itsdangerous/url_safe.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.url_safe.URLSafeSerializerMixin.dump_payload",
+    "resolution": "exact",
+    "through": "itsdangerous.src.itsdangerous.encoding.base64_encode"
+  },
+  {
+    "arg_count": 1,
+    "callee_path": "src/itsdangerous/encoding.py",
+    "col": 10,
+    "depth": 1,
+    "end_col": 30,
+    "end_line": 19,
+    "kwarg_names": [],
+    "label": "Function",
+    "line": 19,
+    "path": "tests/test_itsdangerous/test_encoding.py",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_encoding.test_base64",
+    "resolution": "heuristic",
+    "through": "itsdangerous.src.itsdangerous.encoding.base64_encode"
+  }
+]
+--- stderr

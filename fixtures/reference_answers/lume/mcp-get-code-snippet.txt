@@ -1,0 +1,13 @@
+> tools/call get_code_snippet {"qualified_name": "lume.lume.lume.round"}
+isError: false
+--- text
+{
+  "qualified_name": "lume.lume.lume.round",
+  "source_code": "function lume.round(x, increment)\n  if increment then return lume.round(x / increment) * increment end\n  return x >= 0 and math_floor(x + .5) or math_ceil(x - .5)\nend\n",
+  "file_path": "lume.lua",
+  "line_start": 72,
+  "line_end": 75,
+  "docstring": null,
+  "found": true,
+  "error_message": null
+}

@@ -1,0 +1,157 @@
+> tools/call context {"budget_tokens": 1500, "target": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.get(Class<?>)"}
+isError: false
+--- text
+{
+  "target": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.get(Class<?>)",
+  "resolved": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.get(Class<?>)",
+  "budget_tokens": 1500,
+  "used_tokens": 1463,
+  "pieces": [
+    {
+      "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.get(Class<?>)",
+      "file": "src/main/java/com/squareup/javapoet/ClassName.java",
+      "span": [
+        162,
+        184
+      ],
+      "why_included": "target",
+      "source": "public static ClassName get(Class<?> clazz) {\n    checkNotNull(clazz, \"clazz == null\");\n    checkArgument(!clazz.isPrimitive(), \"primitive types cannot be represented as a ClassName\");\n    checkArgument(!void.class.equals(clazz), \"'void' type cannot be represented as a ClassName\");\n    checkArgument(!clazz.isArray(), \"array types cannot be represented as a ClassName\");\n\n    String anonymousSuffix = \"\";\n    while (clazz.isAnonymousClass()) {\n      int lastDollar = clazz.getName().lastIndexOf('$');\n      anonymousSuffix = clazz.getName().substring(lastDollar) + anonymousSuffix;\n      clazz = clazz.getEnclosingClass();\n    }\n    String name = clazz.getSimpleName() + anonymousSuffix;\n\n    if (clazz.getEnclosingClass() == null) {\n      // Avoid unreliable Class.getPackage(). https://github.com/square/javapoet/issues/295\n      int lastDot = clazz.getName().lastIndexOf('.');\n      String packageName = (lastDot != -1) ? clazz.getName().substring(0, lastDot) : NO_PACKAGE;\n      return new ClassName(packageName, null, name);\n    }\n\n    return ClassName.get(clazz.getEnclosingClass()).nestedClass(name);\n  }",
+      "tokens": 362
+    },
+    {
+      "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.AnnotationSpec.AnnotationSpec.builder(Class<?>)",
+      "file": "src/main/java/com/squareup/javapoet/AnnotationSpec.java",
+      "span": [
+        160,
+        160
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "return builder(ClassName.get(type));",
+      "tokens": 99
+    },
+    {
+      "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName",
+      "file": "src/main/java/com/squareup/javapoet/ClassName.java",
+      "span": [
+        34,
+        34
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "public static final ClassName OBJECT = ClassName.get(Object.class);",
+      "tokens": 96
+    },
+    {
+      "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName",
+      "file": "src/main/java/com/squareup/javapoet/ClassName.java",
+      "span": [
+        33,
+        33
+      ],
+      "why_included": "type it returns",
+      "source": "public final class ClassName extends TypeName implements Comparable<ClassName> {",
+      "tokens": 96
+    },
+    {
+      "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.ClassName(String,ClassName,String)",
+      "file": "src/main/java/com/squareup/javapoet/ClassName.java",
+      "span": [
+        53,
+        53
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "private ClassName(String packageName, ClassName enclosingClassName, String simpleName) {",
+      "tokens": 106
+    },
+    {
+      "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.get(Class<?>)",
+      "file": "src/main/java/com/squareup/javapoet/ClassName.java",
+      "span": [
+        183,
+        183
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "return ClassName.get(clazz.getEnclosingClass()).nestedClass(name);",
+      "tokens": 104
+    },
+    {
+      "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.get(Class<?>)",
+      "file": "src/main/java/com/squareup/javapoet/ClassName.java",
+      "span": [
+        162,
+        162
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "public static ClassName get(Class<?> clazz) {",
+      "tokens": 99
+    },
+    {
+      "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.get(TypeElement)",
+      "file": "src/main/java/com/squareup/javapoet/ClassName.java",
+      "span": [
+        227,
+        227
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "public static ClassName get(TypeElement element) {",
+      "tokens": 98
+    },
+    {
+      "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.get.visitUnknown",
+      "file": "src/main/java/com/squareup/javapoet/ClassName.java",
+      "span": [
+        241,
+        241
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "return get(\"\", simpleName);",
+      "tokens": 97
+    },
+    {
+      "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.nestedClass(String)",
+      "file": "src/main/java/com/squareup/javapoet/ClassName.java",
+      "span": [
+        145,
+        145
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "public ClassName nestedClass(String name) {",
+      "tokens": 98
+    },
+    {
+      "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeWriter.CodeWriter.resolve(String)",
+      "file": "src/main/java/com/squareup/javapoet/CodeWriter.java",
+      "span": [
+        445,
+        445
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "return ClassName.get(packageName, simpleName);",
+      "tokens": 99
+    },
+    {
+      "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.CodeWriter.CodeWriter.stackClassName(int,String)",
+      "file": "src/main/java/com/squareup/javapoet/CodeWriter.java",
+      "span": [
+        458,
+        458
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "ClassName className = ClassName.get(packageName, typeSpecStack.get(0).name);",
+      "tokens": 109
+    }
+  ],
+  "omitted": [
+    "javapoet.src.main.java.com.squareup.javapoet.FieldSpec.FieldSpec.Builder.addAnnotation(Class<?>) (direct caller: the call line)",
+    "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.Builder.addStaticImport(Class<?>,String...) (direct caller: the call line)",
+    "javapoet.src.main.java.com.squareup.javapoet.JavaFile.JavaFile.Builder.addStaticImport(Enum<?>) (direct caller: the call line)",
+    "javapoet.src.main.java.com.squareup.javapoet.MethodSpec.MethodSpec.Builder.addAnnotation(Class<?>) (direct caller: the call line)",
+    "javapoet.src.main.java.com.squareup.javapoet.ParameterSpec.ParameterSpec.Builder.addAnnotation(Class<?>) (direct caller: the call line)",
+    "javapoet.src.main.java.com.squareup.javapoet.ParameterizedTypeName.ParameterizedTypeName.get(Class<?>,Type...) (direct caller: the call line)",
+    "javapoet.src.main.java.com.squareup.javapoet.ParameterizedTypeName.ParameterizedTypeName.get(ParameterizedType,Map<Type, TypeVariableName>) (direct caller: the call line)",
+    "javapoet.src.main.java.com.squareup.javapoet.TypeName (direct caller: the call line)",
+    "javapoet.src.main.java.com.squareup.javapoet.TypeName (direct caller: the call line)",
+    "javapoet.src.main.java.com.squareup.javapoet.TypeName (direct caller: the call line)"
+  ],
+  "omitted_count": 105,
+  "truncated": false
+}

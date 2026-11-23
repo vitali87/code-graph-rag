@@ -1,0 +1,45 @@
+$ cgr -q stats --project itsdangerous
+status: 0
+--- stdout
+Scoped to: itsdangerous
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ Method      │    91 │
+│ File        │    60 │
+│ Class       │    29 │
+│ Module      │    20 │
+│ Function    │    16 │
+│ Folder      │     8 │
+│ Section     │     3 │
+│ Package     │     3 │
+│ Project     │     1 │
+├─────────────┼───────┤
+│ Total Nodes │   231 │
+└─────────────┴───────┘
+
+    Relationship Statistics    
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Relationship Type   ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ CALLS               │   168 │
+│ IMPORTS             │   125 │
+│ DEFINES_METHOD      │    91 │
+│ CONTAINS_FILE       │    60 │
+│ DEFINES             │    45 │
+│ INHERITS            │    28 │
+│ INSTANTIATES        │    21 │
+│ OVERRIDES           │    20 │
+│ CONTAINS_MODULE     │    20 │
+│ ACCEPTS             │    14 │
+│ CONTAINS_FOLDER     │     8 │
+│ RETURNS             │     4 │
+│ REFERENCES          │     3 │
+│ CONTAINS_SECTION    │     3 │
+│ CONTAINS_PACKAGE    │     3 │
+├─────────────────────┼───────┤
+│ Total Relationships │   613 │
+└─────────────────────┴───────┘
+--- stderr
+Fetching graph statistics...

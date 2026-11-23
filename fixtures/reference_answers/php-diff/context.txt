@@ -1,0 +1,136 @@
+$ cgr -q context php-diff.src.Differ.Differ.diffToArray --budget 1500 --project php-diff --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "target": "php-diff.src.Differ.Differ.diffToArray",
+  "resolved": "php-diff.src.Differ.Differ.diffToArray",
+  "budget_tokens": 1500,
+  "used_tokens": 1463,
+  "pieces": [
+    {
+      "qualified_name": "php-diff.src.Differ.Differ.diffToArray",
+      "file": "src/Differ.php",
+      "span": [
+        60,
+        118
+      ],
+      "why_included": "target",
+      "source": "public function diffToArray(array|string $from, array|string $to, ?LongestCommonSubsequenceCalculator $lcs = null): array\n    {\n        if (is_string($from)) {\n            $from = $this->splitStringByLines($from);\n        }\n\n        if (is_string($to)) {\n            $to = $this->splitStringByLines($to);\n        }\n\n        [$from, $to, $start, $end] = self::getArrayDiffParted($from, $to);\n\n        if ($lcs === null) {\n            $lcs = $this->selectLcsImplementation($from, $to);\n        }\n\n        $common = $lcs->calculate(array_values($from), array_values($to));\n        $diff   = [];\n\n        foreach ($start as $token) {\n            $diff[] = [$token, self::OLD];\n        }\n\n        reset($from);\n        reset($to);\n\n        foreach ($common as $token) {\n            while (($fromToken = reset($from)) !== $token) {\n                $diff[] = [array_shift($from), self::REMOVED];\n            }\n\n            while (($toToken = reset($to)) !== $token) {\n                $diff[] = [array_shift($to), self::ADDED];\n            }\n\n            $diff[] = [$token, self::OLD];\n\n            array_shift($from);\n            array_shift($to);\n        }\n\n        while (($token = array_shift($from)) !== null) {\n            $diff[] = [$token, self::REMOVED];\n        }\n\n        while (($token = array_shift($to)) !== null) {\n            $diff[] = [$token, self::ADDED];\n        }\n\n        foreach ($end as $token) {\n            $diff[] = [$token, self::OLD];\n        }\n\n        if ($this->detectUnmatchedLineEndings($diff)) {\n            array_unshift($diff, [\"#Warning: Strings contain different line endings!\\n\", self::DIFF_LINE_END_WARNING]);\n        }\n\n        return $diff;\n    }",
+      "tokens": 564
+    },
+    {
+      "qualified_name": "php-diff.src.Differ.Differ.detectUnmatchedLineEndings",
+      "file": "src/Differ.php",
+      "span": [
+        147,
+        147
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "private function detectUnmatchedLineEndings(array $diff): bool",
+      "tokens": 89
+    },
+    {
+      "qualified_name": "php-diff.src.Differ.Differ.diff",
+      "file": "src/Differ.php",
+      "span": [
+        51,
+        51
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "$diff = $this->diffToArray($from, $to, $lcs);",
+      "tokens": 89
+    },
+    {
+      "qualified_name": "php-diff.src.Differ.Differ.getArrayDiffParted",
+      "file": "src/Differ.php",
+      "span": [
+        208,
+        208
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "private static function getArrayDiffParted(array &$from, array &$to): array",
+      "tokens": 92
+    },
+    {
+      "qualified_name": "php-diff.src.Differ.Differ.selectLcsImplementation",
+      "file": "src/Differ.php",
+      "span": [
+        125,
+        125
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "private function selectLcsImplementation(array $from, array $to): LongestCommonSubsequenceCalculator",
+      "tokens": 94
+    },
+    {
+      "qualified_name": "php-diff.src.Differ.Differ.splitStringByLines",
+      "file": "src/Differ.php",
+      "span": [
+        120,
+        120
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "private function splitStringByLines(string $input): array",
+      "tokens": 85
+    },
+    {
+      "qualified_name": "php-diff.src.LongestCommonSubsequenceCalculator.LongestCommonSubsequenceCalculator.calculate",
+      "file": "src/LongestCommonSubsequenceCalculator.php",
+      "span": [
+        17,
+        17
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "public function calculate(array $from, array $to): array;",
+      "tokens": 96
+    },
+    {
+      "qualified_name": "php-diff.tests.DifferTest.DifferTest.testArrayRepresentationOfDiffCanBeRenderedUsingMemoryEfficientLcsImplementation",
+      "file": "tests/DifferTest.php",
+      "span": [
+        344,
+        344
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "$this->assertSame($expected, $this->differ->diffToArray($from, $to, new MemoryEfficientLongestCommonSubsequenceCalculator));",
+      "tokens": 120
+    },
+    {
+      "qualified_name": "php-diff.tests.DifferTest.DifferTest.testArrayRepresentationOfDiffCanBeRenderedUsingTimeEfficientLcsImplementation",
+      "file": "tests/DifferTest.php",
+      "span": [
+        332,
+        332
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "$this->assertSame($expected, $this->differ->diffToArray($from, $to, new TimeEfficientLongestCommonSubsequenceCalculator));",
+      "tokens": 120
+    },
+    {
+      "qualified_name": "php-diff.tests.Output.AbstractChunkOutputBuilderTest.AbstractChunkOutputBuilderTest.testGetCommonChunks",
+      "file": "tests/Output/AbstractChunkOutputBuilderTest.php",
+      "span": [
+        143,
+        143
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "$output->getChunks((new Differ(new UnifiedDiffOutputBuilder))->diffToArray($from, $to), $lineThreshold),",
+      "tokens": 114
+    }
+  ],
+  "omitted": [
+    "php-diff.tests.DifferTest.DifferTest.testArrayRepresentationOfDiffCanBeRenderedUsingMemoryEfficientLcsImplementation (test reaching it at depth 1 through php-diff.src.Differ.Differ.diffToArray)",
+    "php-diff.tests.DifferTest.DifferTest.testArrayRepresentationOfDiffCanBeRenderedUsingTimeEfficientLcsImplementation (test reaching it at depth 1 through php-diff.src.Differ.Differ.diffToArray)",
+    "php-diff.tests.Output.AbstractChunkOutputBuilderTest.AbstractChunkOutputBuilderTest.testGetCommonChunks (test reaching it at depth 1 through php-diff.src.Differ.Differ.diffToArray)",
+    "php-diff.tests.DifferTest.DifferTest.testArrayDiffs (test reaching it at depth 2 through php-diff.src.Differ.Differ.diff)",
+    "php-diff.tests.DifferTest.DifferTest.testTextRepresentationOfDiffCanBeRenderedUsingMemoryEfficientLcsImplementation (test reaching it at depth 2 through php-diff.src.Differ.Differ.diff)",
+    "php-diff.tests.DifferTest.DifferTest.testTextRepresentationOfDiffCanBeRenderedUsingTimeEfficientLcsImplementation (test reaching it at depth 2 through php-diff.src.Differ.Differ.diff)",
+    "php-diff.tests.Output.DiffOnlyOutputBuilderTest.DiffOnlyOutputBuilderTest.testDiffDoNotShowNonDiffLines (test reaching it at depth 2 through php-diff.src.Differ.Differ.diff)",
+    "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.testIntegrationUsingPHPFileInVendorGitApply (test reaching it at depth 2 through php-diff.src.Differ.Differ.diff)",
+    "php-diff.tests.Output.Integration.StrictUnifiedDiffOutputBuilderIntegrationTest.StrictUnifiedDiffOutputBuilderIntegrationTest.testIntegrationUsingPHPFileInVendorPatch (test reaching it at depth 2 through php-diff.src.Differ.Differ.diff)",
+    "php-diff.tests.Output.StrictUnifiedDiffOutputBuilderTest.StrictUnifiedDiffOutputBuilderTest.testBasicDiffGeneration (test reaching it at depth 2 through php-diff.src.Differ.Differ.diff)"
+  ],
+  "omitted_count": 19,
+  "truncated": false
+}
+--- stderr

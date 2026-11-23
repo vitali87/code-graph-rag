@@ -1,0 +1,17 @@
+> tools/call definition {"qualified_name": "itsdangerous.src.itsdangerous.signer.Signer.sign"}
+isError: false
+--- text
+{
+  "label": "Method",
+  "qualified_name": "itsdangerous.src.itsdangerous.signer.Signer.sign",
+  "path": "src/itsdangerous/signer.py",
+  "start_line": 222,
+  "end_line": 225,
+  "start_col": 4,
+  "name_line": 222,
+  "decorators": [],
+  "name": "sign",
+  "docstring": "Signs the given string.",
+  "source": "def sign(self, value: str | bytes) -> bytes:\n        \"\"\"Signs the given string.\"\"\"\n        value = want_bytes(value)\n        return value + self.sep + self.get_signature(value)",
+  "found": true
+}

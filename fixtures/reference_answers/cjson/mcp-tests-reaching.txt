@@ -1,0 +1,75 @@
+> tools/call tests_reaching {"qualified_name": "cjson.cJSON.cJSON_Minify"}
+isError: false
+--- text
+[
+  {
+    "label": "Function",
+    "qualified_name": "cjson.tests.minify_tests.cjson_minify_should_minify_json",
+    "path": "tests/minify_tests.c",
+    "depth": 1,
+    "through": "cjson.cJSON.cJSON_Minify"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "cjson.tests.minify_tests.cjson_minify_should_not_loop_infinitely",
+    "path": "tests/minify_tests.c",
+    "depth": 1,
+    "through": "cjson.cJSON.cJSON_Minify"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "cjson.tests.minify_tests.cjson_minify_should_not_modify_strings",
+    "path": "tests/minify_tests.c",
+    "depth": 1,
+    "through": "cjson.cJSON.cJSON_Minify"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "cjson.tests.minify_tests.cjson_minify_should_not_overflow_buffer",
+    "path": "tests/minify_tests.c",
+    "depth": 1,
+    "through": "cjson.cJSON.cJSON_Minify"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "cjson.tests.minify_tests.cjson_minify_should_remove_multiline_comments",
+    "path": "tests/minify_tests.c",
+    "depth": 1,
+    "through": "cjson.cJSON.cJSON_Minify"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "cjson.tests.minify_tests.cjson_minify_should_remove_single_line_comments",
+    "path": "tests/minify_tests.c",
+    "depth": 1,
+    "through": "cjson.cJSON.cJSON_Minify"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "cjson.tests.minify_tests.cjson_minify_should_remove_spaces",
+    "path": "tests/minify_tests.c",
+    "depth": 1,
+    "through": "cjson.cJSON.cJSON_Minify"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "cjson.tests.misc_tests.cjson_functions_should_not_crash_with_null_pointers",
+    "path": "tests/misc_tests.c",
+    "depth": 1,
+    "through": "cjson.cJSON.cJSON_Minify"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "cjson.tests.minify_tests.main",
+    "path": "tests/minify_tests.c",
+    "depth": 2,
+    "through": "cjson.tests.minify_tests.cjson_minify_should_minify_json"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "cjson.tests.misc_tests.main",
+    "path": "tests/misc_tests.c",
+    "depth": 2,
+    "through": "cjson.tests.misc_tests.cjson_functions_should_not_crash_with_null_pointers"
+  }
+]

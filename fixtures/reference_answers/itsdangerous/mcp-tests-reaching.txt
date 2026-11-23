@@ -1,0 +1,40 @@
+> tools/call tests_reaching {"qualified_name": "itsdangerous.src.itsdangerous.encoding.base64_decode"}
+isError: false
+--- text
+[
+  {
+    "label": "Function",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_encoding.test_base64",
+    "path": "tests/test_itsdangerous/test_encoding.py",
+    "depth": 1,
+    "through": "itsdangerous.src.itsdangerous.encoding.base64_decode"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_encoding.test_base64_bad",
+    "path": "tests/test_itsdangerous/test_encoding.py",
+    "depth": 1,
+    "through": "itsdangerous.src.itsdangerous.encoding.base64_decode"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_signer.TestSigner.test_secret_keys",
+    "path": "tests/test_itsdangerous/test_signer.py",
+    "depth": 3,
+    "through": "itsdangerous.src.itsdangerous.signer.Signer.validate"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_serializer.TestSerializer.test_file",
+    "path": "tests/test_itsdangerous/test_serializer.py",
+    "depth": 4,
+    "through": "itsdangerous.src.itsdangerous.serializer.Serializer.load"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_serializer.TestSerializer.test_loads_unsafe",
+    "path": "tests/test_itsdangerous/test_serializer.py",
+    "depth": 4,
+    "through": "itsdangerous.src.itsdangerous.serializer.Serializer.loads_unsafe"
+  }
+]

@@ -1,0 +1,12 @@
+> tools/call list_directory {"directory_path": "shared/src/main/scala/scopt"}
+isError: false
+--- text
+OEffect.scala
+OParser.scala
+OParserSetup.scala
+ORunner.scala
+OptionDef.scala
+OptionParser.scala
+Read.scala
+RenderingMode.scala
+Validation.scala

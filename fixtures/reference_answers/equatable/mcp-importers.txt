@@ -1,0 +1,65 @@
+> tools/call importers {"module_qualified_name": "equatable.lib.src.equatable_utils"}
+isError: false
+--- text
+[
+  {
+    "module": "equatable.lib.src.equatable",
+    "path": "lib/src/equatable.dart",
+    "line": 2,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 2,
+    "end_col": 52,
+    "end_col_char": 52,
+    "alias": "equatable_utils",
+    "imported_name": "package:equatable/src/equatable_utils.dart"
+  },
+  {
+    "module": "equatable.lib.src.equatable_mixin",
+    "path": "lib/src/equatable_mixin.dart",
+    "line": 3,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 3,
+    "end_col": 52,
+    "end_col_char": 52,
+    "alias": "equatable_utils",
+    "imported_name": "package:equatable/src/equatable_utils.dart"
+  },
+  {
+    "module": "equatable.test.equatable_mixin_test",
+    "path": "test/equatable_mixin_test.dart",
+    "line": 5,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 5,
+    "end_col": 52,
+    "end_col_char": 52,
+    "alias": "equatable_utils",
+    "imported_name": "package:equatable/src/equatable_utils.dart"
+  },
+  {
+    "module": "equatable.test.equatable_test",
+    "path": "test/equatable_test.dart",
+    "line": 7,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 7,
+    "end_col": 52,
+    "end_col_char": 52,
+    "alias": "equatable_utils",
+    "imported_name": "package:equatable/src/equatable_utils.dart"
+  },
+  {
+    "module": "equatable.test.equatable_utils_test",
+    "path": "test/equatable_utils_test.dart",
+    "line": 2,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 2,
+    "end_col": 52,
+    "end_col_char": 52,
+    "alias": "equatable_utils",
+    "imported_name": "package:equatable/src/equatable_utils.dart"
+  }
+]

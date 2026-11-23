@@ -1,0 +1,24 @@
+$ cgr -q graph implementors itsdangerous.src.itsdangerous.signer.SigningAlgorithm --project itsdangerous
+status: 0
+--- stdout
+[
+  {
+    "label": "Class",
+    "path": "src/itsdangerous/signer.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.signer.HMACAlgorithm",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "src/itsdangerous/signer.py",
+    "qualified_name": "itsdangerous.src.itsdangerous.signer.NoneAlgorithm",
+    "relationship": "INHERITS"
+  },
+  {
+    "label": "Class",
+    "path": "tests/test_itsdangerous/test_signer.py",
+    "qualified_name": "itsdangerous.tests.test_itsdangerous.test_signer._ReverseAlgorithm",
+    "relationship": "INHERITS"
+  }
+]
+--- stderr

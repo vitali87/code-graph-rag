@@ -15,11 +15,31 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.editing.rename import QueryFn, rename
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.py.receiver_rebinding import receiver_annotation
 from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
 from codebase_rag.types_defs import PropertyParams, ResultRow
 
 FILES = {
+    # Python resolves `self.m()` in D along D's C3 MRO, D, B, A, C: A.m,
+    # though a breadth-first walk of the bases meets C first (Greptile, PR
+    # #2908).
+    "mro.py": (
+        "class A:\n    def m(self):\n        return 1\n\n\n"
+        "class B(A):\n    pass\n\n\n"
+        "class C:\n    def m(self):\n        return 2\n\n\n"
+        "class D(B, C):\n    def run(self):\n        return self.m()\n"
+    ),
+    # A static method's `self` is an ordinary parameter, typed here.
+    "static_self.py": (
+        "class Other:\n    def m(self):\n        return 3\n\n\n"
+        "class Host:\n"
+        "    def m(self):\n        return 4\n\n"
+        "    @staticmethod\n"
+        "    def run(self: Other):\n        return self.m()\n"
+    ),
     "leaf.py": (
         "class Leaf:\n"
         "    def helper(self):\n        return 1\n\n"
@@ -66,71 +86,124 @@ FILES = {
         "class Mine:\n    def m(self):\n        return 1\n\n"
         "    def typed(self: Other2):\n        return self.m()\n"
     ),
-    "annotated_rebind.py": (
-        "class Entry:\n    def m(self):\n        return 1\n\n\n"
-        "class Later:\n    def m(self):\n        return 2\n\n\n"
-        "class Holder:\n    def m(self):\n        return 3\n\n"
-        "    def typed(self: Entry):\n"
-        "        self.m()\n"
-        "        self = Later()\n"
-        "        return self.m()\n"
+    # `self` assigned a value nothing types: the later call may run on it,
+    # not on the class (CodeRabbit, PR #2908).
+    "rebound.py": (
+        "def factory():\n    return make_thing()\n\n\n"
+        "class Rebound:\n    def rb_m(self):\n        return 1\n\n"
+        "    def run(self):\n        self = factory()\n        return self.rb_m()\n"
     ),
-    "c3.py": (
-        "class Z:\n    def m(self):\n        return 1\n\n\n"
-        "class X(Z):\n    pass\n\n\n"
-        "class Y:\n    def m(self):\n        return 2\n\n\n"
-        "class A(X, Y):\n    def run(self):\n        return self.m()\n"
+    # Second review round (Greptile, CodeRabbit, PR #2908).
+    # An annotation naming the class itself still dispatches to overrides.
+    "annotated_own.py": (
+        "class OwnBase:\n    def hook2(self):\n        return 1\n\n"
+        '    def run(self: "OwnBase"):\n        return self.hook2()\n\n\n'
+        "class OwnSub(OwnBase):\n    def hook2(self):\n        return 2\n"
     ),
-    # Greptile review on PR #2951: a `@staticmethod`'s `self`, or a nested
-    # def's or lambda's own `self`, holds whatever its caller passes.
-    "unbound.py": (
-        "class Other3:\n    def m(self):\n        return 2\n\n\n"
-        "class Host3:\n    def m(self):\n        return 1\n\n"
-        "    @staticmethod\n    def bridge(self):\n        return self.m()\n\n"
-        "    def outer(self):\n"
-        "        def inner(self):\n            return self.m()\n\n"
-        "        def closure():\n            return self.m()\n\n"
-        "        return inner(Other3()) + closure()\n\n"
-        "    def lam(self):\n"
-        "        f = lambda self: self.m()\n        return f(Other3())\n\n"
-        "    @classmethod\n    def make(cls):\n        return cls.m(cls())\n"
+    # A later rebinding of an annotated receiver does not type the call
+    # before it.
+    "rebind_later.py": (
+        "class RA:\n    def m2(self):\n        return 1\n\n\n"
+        "class RB:\n    def m2(self):\n        return 2\n\n\n"
+        "class RHost:\n    @staticmethod\n    def run(self: RA):\n"
+        "        first = self.m2()\n        self = RB()\n        return first\n"
     ),
-    "rebind_unknown.py": (
-        "def pick():\n    return object()\n\n\n"
-        "class Host:\n    def m(self):\n        return 1\n\n"
-        "    def after(self):\n"
-        "        self.m()\n"
-        "        self = pick()\n"
-        "        return self.m()\n\n"
-        "    def maybe(self, flag):\n"
-        "        if flag:\n"
-        "            self = pick()\n"
-        "        return self.m()\n\n"
-        "    def looped(self, items):\n"
-        "        for _ in items:\n"
-        "            self.m()\n"
-        "            self = pick()\n"
+    # An instance attribute is found before the class's method.
+    "shadowed.py": (
+        "def callback():\n    return 0\n\n\n"
+        "class Holder:\n    def __init__(self):\n        self.m3 = callback\n\n"
+        "    def m3(self):\n        return 1\n\n"
+        "    def run(self):\n        return self.m3()\n"
     ),
-    # Greptile, PR #2951: every other way Python binds the receiver's name.
-    "rebind_other.py": (
-        "class Host4:\n    def m(self):\n        return 1\n\n"
-        "    def looped(self, items):\n"
-        "        for self in items:\n"
-        "            self.m()\n\n"
-        "    def unpacked(self, pair):\n"
-        "        self, _ = pair\n"
-        "        return self.m()\n\n"
-        "    def walrus(self, x):\n"
-        "        if self := x:\n"
-        "            return self.m()\n"
-        "        return None\n\n"
-        "    def managed(self, cm):\n"
-        "        with cm as self:\n"
-        "            return self.m()\n\n"
-        "    def comprehension(self, items):\n"
-        "        return [self.m() for self in items]\n\n"
-        "    def plain(self):\n"
-        "        return self.m()\n"
+    # `self.__pm()` in MD looks up `_MD__pm`, never MB's `_MB__pm`.
+    "mangled.py": (
+        "class MB:\n    def __pm(self):\n        return 1\n\n\n"
+        "class MD(MB):\n    def run(self):\n        return self.__pm()\n"
+    ),
+    # A `case` pattern can bind the receiver.
+    "matched.py": (
+        "class Mine3:\n    def mm(self):\n        return 1\n\n"
+        "    def run(self, supplied):\n        match supplied:\n"
+        "            case _ as self:\n                return self.mm()\n"
+    ),
+    # Third review round (Greptile, CodeRabbit, PR #2908).
+    # A qualified annotation naming the class itself still dispatches.
+    "qualpkg/__init__.py": "",
+    "qualpkg/qbase.py": (
+        "class QBase:\n    def qh(self):\n        return 1\n\n"
+        '    def run(self: "qualpkg.qbase.QBase"):\n        return self.qh()\n\n\n'
+        "class QSub(QBase):\n    def qh(self):\n        return 2\n"
+    ),
+    # Fifth review round (Greptile, PR #2908): only the bound receiver is
+    # the instance, and a write through any name it is bound to, or by a
+    # `for` target, replaces the method.
+    "receivers.py": (
+        "def cb():\n    return 0\n\n\n"
+        "class RHolder:\n"
+        "    def __init__(this, callback):\n        this.r1 = callback\n\n"
+        "    def load(self, callback):\n"
+        "        for self.r2 in [callback]:\n            pass\n\n"
+        "    def r1(self):\n        return 1\n\n"
+        "    def r2(self):\n        return 2\n\n"
+        "    def r3(self):\n        return 3\n\n"
+        "    def call_r1(self):\n        return self.r1()\n\n"
+        "    def call_r2(self):\n        return self.r2()\n\n"
+        "    def other(self, cls):\n        return cls.r3()\n"
+    ),
+    # A method under a class-body `if` still writes the instance.
+    "conditional.py": (
+        "def cb():\n    return 0\n\n\n"
+        "class CHolder:\n    if True:\n\n"
+        "        def __init__(self, callback):\n            self.c5 = callback\n\n"
+        "    def c5(self):\n        return 1\n\n"
+        "    def run(self):\n        return self.c5()\n"
+    ),
+    # A lambda or nested def taking its own `self` names that parameter, not
+    # the instance, and so does a lambda whose body binds `self` with `:=`;
+    # one that takes or binds other names leaves `self` alone.
+    "nested_self.py": (
+        "class NHolder:\n    def nm(self):\n        return 1\n\n"
+        "    def run(self):\n        return (lambda self: self.nm())(None)\n\n"
+        "    def run_def(self):\n"
+        "        def inner(self):\n            return self.nm()\n\n"
+        "        return inner(None)\n\n"
+        "    def run_other(self):\n        return (lambda x: self.nm())(1)\n\n"
+        "    def pool(self):\n        return []\n\n"
+        "    def run_comp(self, items):\n"
+        "        return [self.nm() for self in items]\n\n"
+        "    def run_comp_iter(self):\n"
+        "        return [self.nm() for self in self.pool()]\n\n"
+        "    def run_comp_attr(self, items):\n"
+        "        return [self.nm() for self.slot in items]\n\n"
+        "    def run_lambda_walrus(self, make):\n"
+        "        return (lambda: ((self := make()), self.nm()))()\n\n"
+        "    def run_lambda_walrus_other(self, make):\n"
+        "        return (lambda: ((x := make()), self.nm()))()\n"
+    ),
+    # A static method's `self` is whatever its caller passed.
+    "static_untyped.py": (
+        "class SHost:\n    def sm(self):\n        return 1\n\n"
+        "    @staticmethod\n    def run(self):\n        return self.sm()\n"
+    ),
+    # A tuple target writes the instance attribute too.
+    "tuple_attr.py": (
+        "def cb():\n    return 0\n\n\n"
+        "class THolder:\n    def __init__(self):\n        self.tm2, self.x = cb, 0\n\n"
+        "    def tm2(self):\n        return 1\n\n"
+        "    def run(self):\n        return self.tm2()\n"
+    ),
+    # A base the graph holds no class for, ahead of the one defining the
+    # method, may define it first; a builtin one is read for the name
+    # (CodeRabbit, PR #2908).
+    "extbase.py": (
+        "from somelib import ExternalBase\n\n\n"
+        "class Local:\n    def ext_m(self):\n        return 1\n\n\n"
+        "class ExternalFirst(ExternalBase, Local):\n"
+        "    def run(self):\n        return self.ext_m()\n\n\n"
+        "class ExternalLast(Local, ExternalBase):\n"
+        "    def run(self):\n        return self.ext_m()\n\n\n"
+        "class BuiltinFirst(Exception, Local):\n"
+        "    def run(self):\n        return self.ext_m()\n"
     ),
 }
 
@@ -159,17 +232,6 @@ def _calls(graph: RecordedGraph, caller: str) -> dict[str, str]:
     }
 
 
-def _calls_at(graph: RecordedGraph, caller: str, line: int) -> dict[str, str]:
-    """`_calls` for the one call site on `line`."""
-    return {
-        dst.removeprefix(f"{graph.project}."): str(props.get("resolution"))
-        for src, rel, dst, props in graph.edges
-        if rel == "CALLS"
-        and src == f"{graph.project}.{caller}"
-        and props.get("line") == line
-    }
-
-
 @pytest.mark.parametrize(
     ("caller", "callee"),
     [
@@ -180,6 +242,12 @@ def _calls_at(graph: RecordedGraph, caller: str, line: int) -> dict[str, str]:
         ("leaf.Leaf.make", "leaf.Leaf.build"),
         ("inherit.Child.run", "inherit.Base.shared"),
         ("overridden.P.run", "overridden.P.hook"),
+        ("extbase.ExternalLast.run", "extbase.Local.ext_m"),
+        ("extbase.BuiltinFirst.run", "extbase.Local.ext_m"),
+        ("nested_self.NHolder.run_other", "nested_self.NHolder.nm"),
+        ("nested_self.NHolder.run_comp_iter", "nested_self.NHolder.pool"),
+        ("nested_self.NHolder.run_comp_attr", "nested_self.NHolder.nm"),
+        ("nested_self.NHolder.run_lambda_walrus_other", "nested_self.NHolder.nm"),
     ],
 )
 def test_a_self_call_on_the_enclosing_class_is_exact(
@@ -221,6 +289,20 @@ def test_a_self_call_the_class_does_not_define_stays_heuristic(
     assert _calls(graph, "nodef.NoDef.run") == {"other.Other.orphan": "heuristic"}
 
 
+def test_a_self_call_through_a_rebound_receiver_stays_heuristic(
+    graph: RecordedGraph,
+) -> None:
+    assert _calls(graph, "rebound.Rebound.run")["rebound.Rebound.rb_m"] == ("heuristic")
+
+
+def test_a_self_call_an_unknown_earlier_base_may_take_stays_heuristic(
+    graph: RecordedGraph,
+) -> None:
+    assert _calls(graph, "extbase.ExternalFirst.run")["extbase.Local.ext_m"] == (
+        "heuristic"
+    )
+
+
 def test_an_abstract_self_call_still_reaches_the_implementation(
     graph: RecordedGraph,
 ) -> None:
@@ -245,99 +327,96 @@ def test_an_annotated_receiver_binds_its_own_type(graph: RecordedGraph) -> None:
     assert _calls(graph, "annotated.Mine.typed").get("annotated.Other2.m") == "exact"
 
 
-def test_an_annotated_receiver_keeps_its_type_until_rebound(
+def test_an_inherited_self_call_follows_the_python_mro(graph: RecordedGraph) -> None:
+    calls = _calls(graph, "mro.D.run")
+    assert calls.get("mro.A.m") == "exact"
+    assert "mro.C.m" not in calls
+
+
+def test_a_static_methods_typed_self_binds_its_type(graph: RecordedGraph) -> None:
+    calls = _calls(graph, "static_self.Host.run")
+    assert calls.get("static_self.Other.m") == "exact"
+    assert "static_self.Host.m" not in calls
+
+
+def test_an_annotation_naming_the_class_still_dispatches_to_overrides(
     graph: RecordedGraph,
 ) -> None:
-    # `self: Entry` holds from the def's entry: the call before
-    # `self = Later()` runs on Entry, though the method-wide type map holds
-    # Later (CodeRabbit, PR #2951). The call after it runs on Later.
-    caller = "annotated_rebind.Holder.typed"
-    before = _calls_at(graph, caller, 16)
-    assert before.get("annotated_rebind.Entry.m") == "exact"
-    assert "annotated_rebind.Later.m" not in before
-    assert _calls_at(graph, caller, 18) == {"annotated_rebind.Later.m": "exact"}
-
-
-def test_an_inherited_self_call_follows_the_c3_order(graph: RecordedGraph) -> None:
-    # `class A(X, Y)` with `X(Z)`: Python reaches Z's `m` through X before
-    # Y's, where a breadth-first walk takes Y's (CodeRabbit, PR #2951).
-    assert _calls(graph, "c3.A.run") == {"c3.Z.m": "exact"}
-
-
-def test_a_call_before_an_unknown_rebinding_stays_exact(graph: RecordedGraph) -> None:
-    # No `self = pick()` can run before it, so it runs on the instance.
-    assert _calls_at(graph, "rebind_unknown.Host.after", 10) == {
-        "rebind_unknown.Host.m": "exact"
-    }
+    assert "annotated_own.OwnSub.hook2" in _calls(graph, "annotated_own.OwnBase.run")
 
 
 @pytest.mark.parametrize(
-    ("caller", "line"),
+    ("caller", "callee"),
     [
-        ("rebind_unknown.Host.after", 12),
-        ("rebind_unknown.Host.maybe", 17),
-        ("rebind_unknown.Host.looped", 21),
+        ("rebind_later.RHost.run", "rebind_later.RB.m2"),
+        ("shadowed.Holder.run", "shadowed.Holder.m3"),
+        ("mangled.MD.run", "mangled.MB.__pm"),
+        ("matched.Mine3.run", "matched.Mine3.mm"),
+        ("static_untyped.SHost.run", "static_untyped.SHost.sm"),
+        ("tuple_attr.THolder.run", "tuple_attr.THolder.tm2"),
+        ("receivers.RHolder.call_r1", "receivers.RHolder.r1"),
+        ("receivers.RHolder.call_r2", "receivers.RHolder.r2"),
+        ("receivers.RHolder.other", "receivers.RHolder.r3"),
+        ("conditional.CHolder.run", "conditional.CHolder.c5"),
+        ("nested_self.NHolder.run", "nested_self.NHolder.nm"),
+        ("nested_self.NHolder.run_def.inner", "nested_self.NHolder.nm"),
+        ("nested_self.NHolder.run_comp", "nested_self.NHolder.nm"),
+        ("nested_self.NHolder.run_comp_iter", "nested_self.NHolder.nm"),
+        ("nested_self.NHolder.run_lambda_walrus", "nested_self.NHolder.nm"),
     ],
-    ids=["after", "conditional-before", "later-in-a-loop"],
+    ids=[
+        "later-rebinding",
+        "instance-attribute",
+        "mangled-private",
+        "pattern-binding",
+        "static-untyped-self",
+        "tuple-target-attribute",
+        "write-through-another-receiver-name",
+        "for-target-attribute",
+        "unbound-cls-parameter",
+        "conditional-method-write",
+        "lambda-own-self",
+        "nested-def-own-self",
+        "comprehension-target-self",
+        "comprehension-target-self-past-its-iterable",
+        "lambda-walrus-self",
+    ],
 )
-def test_a_call_an_unknown_rebinding_may_precede_is_not_exact(
-    graph: RecordedGraph, caller: str, line: int
+def test_a_self_call_the_class_may_not_answer_is_not_exact(
+    graph: RecordedGraph, caller: str, callee: str
 ) -> None:
-    # `self = pick()` leaves `self` untyped, so the type map cannot tell it
-    # from the instance; the call may run on what `pick()` returned, so the
-    # enclosing class's method is only a guess (CodeRabbit, PR #2951).
-    assert _calls_at(graph, caller, line) == {"rebind_unknown.Host.m": "heuristic"}
+    assert _calls(graph, caller).get(callee) != "exact"
 
 
 @pytest.mark.parametrize(
-    ("caller", "line"),
+    ("annotation", "named"),
     [
-        ("unbound.Host3.bridge", 12),
-        ("unbound.Host3.outer.inner", 16),
-        ("unbound.Host3.lam", 24),
+        ('type["TBase"]', "TBase"),
+        ("typing.Type[TBase]", "TBase"),
+        ('"pkg.Host"', "pkg.Host"),
+        ("Other", "Other"),
     ],
-    ids=["staticmethod", "nested-def-parameter", "lambda-parameter"],
 )
-def test_a_receiver_the_method_does_not_bind_is_not_exact(
-    graph: RecordedGraph, caller: str, line: int
+def test_a_receiver_annotation_names_the_class_it_holds(
+    annotation: str, named: str
 ) -> None:
-    # `Host3.bridge(Other3())` runs `Other3.m`: the enclosing class's method
-    # is only a guess there (Greptile, PR #2951).
-    assert _calls_at(graph, caller, line) == {"unbound.Host3.m": "heuristic"}
+    # `type[X]` holds the class X itself, so a classmethod's `cls: type[X]`
+    # names X; a qualifier is kept for the full-name check (CodeRabbit,
+    # Greptile, PR #2908).
+    parsers, _ = load_parsers()
+    source = f"def run(cls: {annotation}):\n    return cls.m()\n".encode()
+    tree = parsers[cs.SupportedLanguage.PYTHON].parse(source)
+    call = tree.root_node.descendant_for_byte_range(
+        source.index(b"cls.m()"), source.index(b"cls.m()") + len(b"cls.m()")
+    )
+    assert call is not None
+    assert receiver_annotation(call, "cls") == named
 
 
-@pytest.mark.parametrize(
-    ("caller", "line"),
-    [("unbound.Host3.outer.closure", 19), ("unbound.Host3.make", 29)],
-    ids=["closure-over-self", "classmethod-cls"],
-)
-def test_a_receiver_the_method_binds_stays_exact(
-    graph: RecordedGraph, caller: str, line: int
+def test_a_qualified_annotation_naming_the_class_still_dispatches(
+    graph: RecordedGraph,
 ) -> None:
-    assert _calls_at(graph, caller, line) == {"unbound.Host3.m": "exact"}
-
-
-@pytest.mark.parametrize(
-    ("caller", "line"),
-    [
-        ("rebind_other.Host4.looped", 7),
-        ("rebind_other.Host4.unpacked", 11),
-        ("rebind_other.Host4.walrus", 15),
-        ("rebind_other.Host4.managed", 20),
-        ("rebind_other.Host4.comprehension", 23),
-    ],
-    ids=["for-target", "unpacking", "walrus", "with-target", "comprehension"],
-)
-def test_a_receiver_another_binding_rebinds_is_not_exact(
-    graph: RecordedGraph, caller: str, line: int
-) -> None:
-    # `for self in items: self.m()` runs each item's `m`, which the type map
-    # cannot name: the enclosing class's method is only a guess (Greptile,
-    # PR #2951).
-    assert _calls_at(graph, caller, line).get("rebind_other.Host4.m") != "exact"
-
-
-def test_a_receiver_no_binding_touches_stays_exact(graph: RecordedGraph) -> None:
-    assert _calls_at(graph, "rebind_other.Host4.plain", 26) == {
-        "rebind_other.Host4.m": "exact"
-    }
+    # `self: "qualpkg.qbase.QBase"` ends the class's qn: overrides still get
+    # their edges (Greptile, PR #2908).
+    calls = _calls(graph, "qualpkg.qbase.QBase.run")
+    assert "qualpkg.qbase.QSub.qh" in calls, calls

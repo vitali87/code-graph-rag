@@ -1,0 +1,23 @@
+> tools/call implementors {"qualified_name": "php-diff.src.Output.DiffOutputBuilderInterface.DiffOutputBuilderInterface"}
+isError: false
+--- text
+[
+  {
+    "label": "Class",
+    "qualified_name": "php-diff.src.Output.AbstractChunkOutputBuilder.AbstractChunkOutputBuilder",
+    "path": "src/Output/AbstractChunkOutputBuilder.php",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "php-diff.src.Output.DiffOnlyOutputBuilder.DiffOnlyOutputBuilder",
+    "path": "src/Output/DiffOnlyOutputBuilder.php",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "php-diff.src.Output.StrictUnifiedDiffOutputBuilder.StrictUnifiedDiffOutputBuilder",
+    "path": "src/Output/StrictUnifiedDiffOutputBuilder.php",
+    "relationship": "IMPLEMENTS"
+  }
+]

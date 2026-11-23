@@ -1,0 +1,110 @@
+> tools/call resolve {"target": "Publish"}
+isError: false
+--- text
+[
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.Publish(TNotification)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 28,
+    "end_line": 31
+  },
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.Publish(TNotification, CancellationToken)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 38,
+    "end_line": 41
+  },
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.Publish(TNotification, PublishStrategy)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 33,
+    "end_line": 36
+  },
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.samples.MediatR.Examples.PublishStrategies.Publisher.Publisher.Publish(TNotification, PublishStrategy, CancellationToken)",
+    "path": "samples/MediatR.Examples.PublishStrategies/Publisher.cs",
+    "start_line": 43,
+    "end_line": 51
+  },
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.src.MediatR.INotificationPublisher.INotificationPublisher.Publish(IEnumerable, INotification, CancellationToken)",
+    "path": "src/MediatR/INotificationPublisher.cs",
+    "start_line": 9,
+    "end_line": 10
+  },
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.src.MediatR.IPublisher.IPublisher.Publish(TNotification, CancellationToken)",
+    "path": "src/MediatR/IPublisher.cs",
+    "start_line": 25,
+    "end_line": 26
+  },
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.src.MediatR.IPublisher.IPublisher.Publish(object, CancellationToken)",
+    "path": "src/MediatR/IPublisher.cs",
+    "start_line": 17,
+    "end_line": 17
+  },
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.src.MediatR.Mediator.Mediator.Publish(TNotification, CancellationToken)",
+    "path": "src/MediatR/Mediator.cs",
+    "start_line": 113,
+    "end_line": 122
+  },
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.src.MediatR.Mediator.Mediator.Publish(object, CancellationToken)",
+    "path": "src/MediatR/Mediator.cs",
+    "start_line": 124,
+    "end_line": 130
+  },
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.src.MediatR.NotificationPublishers.ForeachAwaitPublisher.ForeachAwaitPublisher.Publish(IEnumerable, INotification, CancellationToken)",
+    "path": "src/MediatR/NotificationPublishers/ForeachAwaitPublisher.cs",
+    "start_line": 17,
+    "end_line": 23
+  },
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.src.MediatR.NotificationPublishers.TaskWhenAllPublisher.TaskWhenAllPublisher.Publish(IEnumerable, INotification, CancellationToken)",
+    "path": "src/MediatR/NotificationPublishers/TaskWhenAllPublisher.cs",
+    "start_line": 20,
+    "end_line": 27
+  },
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.Handlers.MediatR.Extensions.Microsoft.DependencyInjection.Tests.MyCustomMediator.Publish(TNotification, CancellationToken)",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/Handlers.cs",
+    "start_line": 201,
+    "end_line": 204
+  },
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.Handlers.MediatR.Extensions.Microsoft.DependencyInjection.Tests.MyCustomMediator.Publish(object, CancellationToken)",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/Handlers.cs",
+    "start_line": 196,
+    "end_line": 199
+  },
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.test.MediatR.Tests.MicrosoftExtensionsDI.NotificationPublisherTests.MediatR.Extensions.Microsoft.DependencyInjection.Tests.NotificationPublisherTests.MockPublisher.Publish(IEnumerable, INotification, CancellationToken)",
+    "path": "test/MediatR.Tests/MicrosoftExtensionsDI/NotificationPublisherTests.cs",
+    "start_line": 19,
+    "end_line": 26
+  },
+  {
+    "label": "Method",
+    "qualified_name": "mediatr.test.MediatR.Tests.PublishTests.PublishTests.SequentialPublisher.Publish(IEnumerable, INotification, CancellationToken)",
+    "path": "test/MediatR.Tests/PublishTests.cs",
+    "start_line": 128,
+    "end_line": 135
+  }
+]

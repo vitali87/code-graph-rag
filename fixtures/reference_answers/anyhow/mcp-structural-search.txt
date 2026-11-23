@@ -1,0 +1,22 @@
+> tools/call structural_search {"language": "rust", "pattern": "$E.context($M)"}
+isError: false
+--- text
+src/context.rs:37:12  self.context(context)
+tests/test_boxed.rs:42:16  anyhow!("oh no!").context("it failed")
+tests/test_chain.rs:4:4  anyhow!({ 0 }).context(1).context(2).context(3)
+tests/test_chain.rs:4:4  anyhow!({ 0 }).context(1).context(2)
+tests/test_chain.rs:4:4  anyhow!({ 0 }).context(1)
+tests/test_context.rs:17:17  x.parse().context("...")
+tests/test_context.rs:78:14  Err::<(), LowLevel>(low)
+        .context(MidLevel {
+            message: "failed to load config",
+            drop: DetectDrop::new(&dropped.mid),
+        })
+tests/test_context.rs:86:15  Err::<(), Error>(mid)
+        .context(HighLevel {
+            message: "failed to start server",
+            drop: DetectDrop::new(&dropped.high),
+        })
+tests/test_fmt.rs:9:4  f().context("f failed")
+tests/test_fmt.rs:13:4  g().context("g failed")
+tests/test_source.rs:59:16  anyhow!("oh no!").context("context")

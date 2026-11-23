@@ -1,0 +1,5 @@
+$ cgr -q dead-code --project example-jl --no-public-roots --format json
+status: 0
+--- stdout
+[]
+--- stderr

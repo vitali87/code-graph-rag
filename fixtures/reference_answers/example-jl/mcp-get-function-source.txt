@@ -1,0 +1,8 @@
+> tools/call get_function_source {"node_id": "<node_id:example-jl.src.Example.Example.hello>"}
+isError: false
+--- text
+Source code for node ID <node_id>:
+
+```
+hello(who::String) = "Hello, $who"
+```

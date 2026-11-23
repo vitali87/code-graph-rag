@@ -1,0 +1,18 @@
+$ cgr -q graph definition anyhow.src.chain.Chain.next --project anyhow --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "decorators": [],
+  "docstring": null,
+  "end_line": 48,
+  "found": true,
+  "label": "Method",
+  "name": "next",
+  "name_line": 38,
+  "path": "src/chain.rs",
+  "qualified_name": "anyhow.src.chain.Chain.next",
+  "source": "fn next(&mut self) -> Option<Self::Item> {\n        match &mut self.state {\n            Linked { next } => {\n                let error = (*next)?;\n                *next = error.source();\n                Some(error)\n            }\n            #[cfg(any(feature = \"std\", not(anyhow_no_core_error)))]\n            Buffered { rest } => rest.next(),\n        }\n    }",
+  "start_col": 4,
+  "start_line": 38
+}
+--- stderr

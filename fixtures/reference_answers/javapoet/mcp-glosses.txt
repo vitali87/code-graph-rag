@@ -1,0 +1,14 @@
+> tools/call glosses {"target": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName"}
+isError: false
+--- text
+{
+  "target": {
+    "label": "Class",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName",
+    "path": "src/main/java/com/squareup/javapoet/TypeName.java",
+    "start_line": 68,
+    "end_line": 385
+  },
+  "annotating": [],
+  "mentioning": []
+}

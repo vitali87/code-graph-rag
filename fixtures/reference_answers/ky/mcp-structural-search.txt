@@ -1,0 +1,7 @@
+> tools/call structural_search {"language": "typescript", "pattern": "validateAndMerge($$$ARGS)"}
+isError: false
+--- text
+source/index.ts:12:96  validateAndMerge(defaults, options)
+source/index.ts:16:69  validateAndMerge(defaults, options, {method})
+source/index.ts:19:64  validateAndMerge(newDefaults)
+source/index.ts:25:24  validateAndMerge(defaults, newDefaults)

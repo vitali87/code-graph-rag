@@ -1,0 +1,13 @@
+> tools/call get_code_snippet {"qualified_name": "leveldb.include.leveldb.status.leveldb.Status.ToString"}
+isError: false
+--- text
+{
+  "qualified_name": "leveldb.include.leveldb.status.leveldb.Status.ToString",
+  "source_code": "std::string Status::ToString() const {\n  if (state_ == nullptr) {\n    return \"OK\";\n  } else {\n    char tmp[30];\n    const char* type;\n    switch (code()) {\n      case kOk:\n        type = \"OK\";\n        break;\n      case kNotFound:\n        type = \"NotFound: \";\n        break;\n      case kCorruption:\n        type = \"Corruption: \";\n        break;\n      case kNotSupported:\n        type = \"Not implemented: \";\n        break;\n      case kInvalidArgument:\n        type = \"Invalid argument: \";\n        break;\n      case kIOError:\n        type = \"IO error: \";\n        break;\n      default:\n        std::snprintf(tmp, sizeof(tmp),\n                      \"Unknown code(%d): \", static_cast<int>(code()));\n        type = tmp;\n        break;\n    }\n    std::string result(type);\n    uint32_t length;\n    std::memcpy(&length, state_, sizeof(length));\n    result.append(state_ + 5, length);\n    return result;\n  }\n}\n",
+  "file_path": "util/status.cc",
+  "line_start": 38,
+  "line_end": 75,
+  "docstring": null,
+  "found": true,
+  "error_message": null
+}

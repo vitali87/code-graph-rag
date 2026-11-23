@@ -1,0 +1,14 @@
+> tools/call get_function_source {"node_id": "<node_id:mediatr.src.MediatR.Wrappers.RequestHandlerWrapper.RequestHandlerWrapperImpl`1.Handle.Handler>"}
+isError: false
+--- text
+Source code for node ID <node_id>:
+
+```
+async Task<Unit> Handler()
+        {
+            await serviceProvider.GetRequiredService<IRequestHandler<TRequest>>()
+                .Handle((TRequest) request, cancellationToken);
+
+            return Unit.Value;
+        }
+```

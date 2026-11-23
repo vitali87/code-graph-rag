@@ -39,6 +39,7 @@ from .constants import (
     KEY_TO_VAL,
     NODE_UNIQUE_CONSTRAINTS,
     SNIPPET_NODE_LABELS,
+    TRACE_CONFIRMED_PROPS,
     GlossAnchorState,
     NodeLabel,
     RelationshipType,
@@ -873,13 +874,6 @@ CYPHER_RETURN_COUNT = (
 )
 CYPHER_SET_PROPS_RETURN_COUNT = f"SET r += row.props\n{CYPHER_RETURN_COUNT}"
 
-CYPHER_GET_FUNCTION_SOURCE_LOCATION = """
-MATCH (m:Module)-[:DEFINES]->(n)
-WHERE id(n) = $node_id
-RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
-       n.end_line AS end_line, m.path AS path, n.absolute_path AS absolute_path
-"""
-
 # One source for every definition lookup (issue #1925): see
 # DEFINITION_NODE_LABELS. Sorted so the generated Cypher is stable across runs
 # rather than varying with frozenset iteration order.
@@ -952,6 +946,22 @@ OPTIONAL MATCH (m:Module)-[:{_SNIPPET_CONTAINMENT}*1..{SNIPPET_MODULE_FALLBACK_M
 RETURN n.name AS name, n.start_line AS start, n.end_line AS end, coalesce(n.path, m.path) AS path,
        n.absolute_path AS absolute_path, n.docstring AS docstring
 ORDER BY labels(n)[0], coalesce(n.path, m.path), n.start_line
+LIMIT 1
+"""
+
+# Any definition by node id, read as the lookup above reads it (issue #3677).
+# Matching only what a Module DEFINES directly missed every method (its class
+# DEFINES_METHOD it) and every nested or local function (its parent DEFINES
+# it), so in a method-only language almost no id had source. The node's own
+# path comes first; the module reached through the containment edges serves a
+# node without one.
+CYPHER_GET_FUNCTION_SOURCE_LOCATION = f"""
+MATCH (n) WHERE id(n) = $node_id AND {_any_label("n", _GRAPH_DEFINITION_LABELS)}
+OPTIONAL MATCH (m:Module)-[:{_SNIPPET_CONTAINMENT}*1..{SNIPPET_MODULE_FALLBACK_MAX_DEPTH}]->(n)
+RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
+       n.end_line AS end_line, coalesce(n.path, m.path) AS path,
+       n.absolute_path AS absolute_path
+ORDER BY coalesce(n.path, m.path)
 LIMIT 1
 """
 
@@ -1244,6 +1254,45 @@ def build_merge_relationship_query(
     )
     query += CYPHER_SET_PROPS_RETURN_COUNT if has_props else CYPHER_RETURN_COUNT
     return query
+
+
+def build_update_site_less_relationship_query(
+    from_label: str,
+    from_key: str,
+    rel_type: str,
+    to_label: str,
+    to_key: str,
+    site_keys: tuple[str, ...],
+) -> str:
+    # A row without its relationship's site keys belongs on the pair's
+    # site-less edge. A MERGE cannot name "the edge with none of these", and
+    # on the endpoints alone it matches every located edge too (issue #2879).
+    site_less = " AND ".join(f"r.{key} IS NULL" for key in site_keys)
+    return (
+        f"MATCH (a:{from_label} {{{from_key}: row.from_val}})"
+        f"-[r:{rel_type}]->(b:{to_label} {{{to_key}: row.to_val}})\n"
+        f"WHERE {site_less}\n"
+        "SET r += row.props\n"
+        f"RETURN DISTINCT row.{KEY_ROW_INDEX} AS {KEY_ROW_INDEX}"
+    )
+
+
+def build_create_site_less_relationship_query(
+    from_label: str,
+    from_key: str,
+    rel_type: str,
+    to_label: str,
+    to_key: str,
+) -> str:
+    # Returns each written row's ordinal, so a caller that folded several
+    # rows into one edge can count every row it stands for.
+    return (
+        f"MATCH (a:{from_label} {{{from_key}: row.from_val}}), "
+        f"(b:{to_label} {{{to_key}: row.to_val}})\n"
+        f"CREATE (a)-[r:{rel_type}]->(b)\n"
+        "SET r += row.props\n"
+        f"RETURN row.{KEY_ROW_INDEX} AS {KEY_ROW_INDEX}"
+    )
 
 
 def build_create_node_query(label: str, id_key: str) -> str:
@@ -2167,7 +2216,11 @@ DETACH DELETE n"""
 
 # Trace write-back (issue #1526): a static edge the runtime observed is
 # upgraded in place, on every site it has, so the upgrade never creates a
-# site-less duplicate beside the located ones.
+# site-less duplicate beside the located ones. It carries the whole
+# observation, `resolution` and the `dynamic_*` properties alike: a
+# site-less row would land on a site-less edge of its own (issue #2879).
+# Each property is named, with `coalesce` so one the observation lacks
+# keeps the edge's value, as `SET r += map` would.
 # Only the static edge(s) of the pair are confirmed: a trace-only edge from
 # an earlier run can sit beside a static one on the same pair and must keep
 # its `dynamic` label.
@@ -2180,6 +2233,11 @@ _TRACE_CALLABLE_LABELS = frozenset(
 )
 
 
+_TRACE_CONFIRM_ASSIGNMENTS = ", ".join(
+    f"r.{key} = coalesce(${key}, r.{key})" for key in TRACE_CONFIRMED_PROPS
+)
+
+
 def build_trace_confirm_calls_query(from_label: str, to_label: str) -> str:
     for label in (from_label, to_label):
         if label not in _TRACE_CALLABLE_LABELS:
@@ -2188,7 +2246,7 @@ def build_trace_confirm_calls_query(from_label: str, to_label: str) -> str:
         f"MATCH (a:{from_label} {{qualified_name: $from_qn}})"
         f"-[r:CALLS]->(b:{to_label} {{qualified_name: $to_qn}})\n"
         "WHERE coalesce(r.static_missed, false) = false\n"
-        "SET r.resolution = $resolution"
+        f"SET {_TRACE_CONFIRM_ASSIGNMENTS}"
     )
 
 

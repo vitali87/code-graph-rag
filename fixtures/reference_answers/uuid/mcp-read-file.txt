@@ -1,0 +1,24 @@
+> tools/call read_file {"file_path": "uuid.go", "limit": 20, "offset": 60}
+isError: false
+--- text
+# Lines 61-80 of 365
+// (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx and
+// urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) are decoded.  In addition,
+// Parse accepts non-standard strings such as the raw hex encoding
+// xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx and 38 byte "Microsoft style" encodings,
+// e.g.  {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}.  Only the middle 36 bytes are
+// examined in the latter case.  Parse should not be used to validate strings as
+// it parses non-standard encodings as indicated above.
+func Parse(s string) (UUID, error) {
+	var uuid UUID
+	switch len(s) {
+	// xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+	case 36:
+
+	// urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+	case 36 + 9:
+		if !strings.EqualFold(s[:9], "urn:uuid:") {
+			return uuid, fmt.Errorf("invalid urn prefix: %q", s[:9])
+		}
+		s = s[9:]
+

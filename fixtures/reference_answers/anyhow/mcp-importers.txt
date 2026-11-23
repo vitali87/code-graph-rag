@@ -1,0 +1,65 @@
+> tools/call importers {"module_qualified_name": "anyhow.src.ptr"}
+isError: false
+--- text
+[
+  {
+    "module": "anyhow.src.error",
+    "path": "src/error.rs",
+    "line": 4,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 4,
+    "end_col": 20,
+    "end_col_char": 20,
+    "alias": "Mut",
+    "imported_name": "Mut"
+  },
+  {
+    "module": "anyhow.src.error",
+    "path": "src/error.rs",
+    "line": 5,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 5,
+    "end_col": 27,
+    "end_col_char": 27,
+    "alias": "Own",
+    "imported_name": "Own"
+  },
+  {
+    "module": "anyhow.src.error",
+    "path": "src/error.rs",
+    "line": 5,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 5,
+    "end_col": 27,
+    "end_col_char": 27,
+    "alias": "Ref",
+    "imported_name": "Ref"
+  },
+  {
+    "module": "anyhow.src.fmt",
+    "path": "src/fmt.rs",
+    "line": 3,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 3,
+    "end_col": 20,
+    "end_col_char": 20,
+    "alias": "Ref",
+    "imported_name": "Ref"
+  },
+  {
+    "module": "anyhow.src.lib",
+    "path": "src/lib.rs",
+    "line": 266,
+    "col": 0,
+    "col_char": 0,
+    "end_line": 266,
+    "end_col": 20,
+    "end_col_char": 20,
+    "alias": "Own",
+    "imported_name": "Own"
+  }
+]

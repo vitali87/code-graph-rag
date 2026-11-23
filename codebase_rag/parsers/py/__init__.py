@@ -1,7 +1,13 @@
 from .ast_analyzer import PythonAstAnalyzerMixin, under_type_checking
 from .expression_analyzer import PythonExpressionAnalyzerMixin
 from .type_inference import PythonTypeInferenceEngine
-from .utils import external_stdlib_base_method_names, resolve_class_name
+from .utils import (
+    external_class_members,
+    external_stdlib_base_method_names,
+    module_binds_name,
+    python_literal_text_type,
+    resolve_class_name,
+)
 from .variable_analyzer import PythonVariableAnalyzerMixin
 
 __all__ = [
@@ -9,7 +15,10 @@ __all__ = [
     "PythonExpressionAnalyzerMixin",
     "PythonTypeInferenceEngine",
     "PythonVariableAnalyzerMixin",
+    "external_class_members",
     "external_stdlib_base_method_names",
+    "module_binds_name",
+    "python_literal_text_type",
     "resolve_class_name",
     "under_type_checking",
 ]

@@ -1,0 +1,110 @@
+$ cgr -q dead-code --project lume --no-public-roots --format json
+status: 0
+--- stdout
+[
+  {
+    "label": "Function",
+    "name": "__call",
+    "qualified_name": "lume.lume.__call",
+    "path": "lume.lua",
+    "start_line": 766,
+    "end_line": 768
+  },
+  {
+    "label": "Function",
+    "name": "__index",
+    "qualified_name": "lume.lume.__index",
+    "path": "lume.lua",
+    "start_line": 568,
+    "end_line": 568
+  },
+  {
+    "label": "Function",
+    "name": "chain_mt.__index",
+    "qualified_name": "lume.lume.chain_mt.__index@754",
+    "path": "lume.lua",
+    "start_line": 754,
+    "end_line": 757
+  },
+  {
+    "label": "Function",
+    "name": "identity",
+    "qualified_name": "lume.lume.identity",
+    "path": "lume.lua",
+    "start_line": 24,
+    "end_line": 26
+  },
+  {
+    "label": "Function",
+    "name": "anonymous_508_9",
+    "qualified_name": "lume.lume.lume.combine.anonymous_508_9",
+    "path": "lume.lua",
+    "start_line": 509,
+    "end_line": 511
+  },
+  {
+    "label": "Function",
+    "name": "anonymous_455_9",
+    "qualified_name": "lume.lume.lume.fn.anonymous_455_9",
+    "path": "lume.lua",
+    "start_line": 456,
+    "end_line": 459
+  },
+  {
+    "label": "Function",
+    "name": "anonymous_478_9",
+    "qualified_name": "lume.lume.lume.memoize.anonymous_478_9",
+    "path": "lume.lua",
+    "start_line": 479,
+    "end_line": 488
+  },
+  {
+    "label": "Function",
+    "name": "anonymous_465_9",
+    "qualified_name": "lume.lume.lume.once.anonymous_465_9",
+    "path": "lume.lua",
+    "start_line": 466,
+    "end_line": 470
+  },
+  {
+    "label": "Function",
+    "name": "noop",
+    "qualified_name": "lume.lume.noop",
+    "path": "lume.lua",
+    "start_line": 21,
+    "end_line": 22
+  },
+  {
+    "label": "Function",
+    "name": "ripairs_iter",
+    "qualified_name": "lume.lume.ripairs_iter",
+    "path": "lume.lua",
+    "start_line": 709,
+    "end_line": 713
+  },
+  {
+    "label": "Function",
+    "name": "number",
+    "qualified_name": "lume.lume.serialize_map.number",
+    "path": "lume.lua",
+    "start_line": 548,
+    "end_line": 553
+  },
+  {
+    "label": "Function",
+    "name": "string",
+    "qualified_name": "lume.lume.serialize_map.string",
+    "path": "lume.lua",
+    "start_line": 547,
+    "end_line": 547
+  },
+  {
+    "label": "Function",
+    "name": "table",
+    "qualified_name": "lume.lume.serialize_map.table",
+    "path": "lume.lua",
+    "start_line": 554,
+    "end_line": 564
+  }
+]
+--- stderr

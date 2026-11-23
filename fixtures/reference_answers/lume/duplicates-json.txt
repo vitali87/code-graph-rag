@@ -1,0 +1,178 @@
+$ cgr -q duplicates --project lume --format json
+status: 0
+--- stdout
+{
+  "groups": [
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 57,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "lume.test.test.anonymous_364_22",
+          "name": "anonymous_364_22",
+          "path": "test/test.lua",
+          "start_line": 365,
+          "end_line": 370
+        },
+        {
+          "label": "Function",
+          "qualified_name": "lume.test.test.anonymous_372_21",
+          "name": "anonymous_372_21",
+          "path": "test/test.lua",
+          "start_line": 373,
+          "end_line": 378
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 36,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "lume.lume.lume.invert",
+          "name": "invert",
+          "path": "lume.lua",
+          "start_line": 421,
+          "end_line": 425
+        },
+        {
+          "label": "Function",
+          "qualified_name": "lume.lume.lume.clone",
+          "name": "clone",
+          "path": "lume.lua",
+          "start_line": 446,
+          "end_line": 450
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 23,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "lume.test.util.tester.dopass",
+          "name": "dopass",
+          "path": "test/util/tester.lua",
+          "start_line": 69,
+          "end_line": 72
+        },
+        {
+          "label": "Function",
+          "qualified_name": "lume.test.util.tester.dofail",
+          "name": "dofail",
+          "path": "test/util/tester.lua",
+          "start_line": 75,
+          "end_line": 78
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 16,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "lume.test.test.cmp",
+          "name": "cmp",
+          "path": "test/test.lua",
+          "start_line": 85,
+          "end_line": 85
+        },
+        {
+          "label": "Function",
+          "qualified_name": "lume.test.util.tester.t.number",
+          "name": "number",
+          "path": "test/util/tester.lua",
+          "start_line": 20,
+          "end_line": 20
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 63,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "lume.test.test.anonymous_39_21",
+          "name": "anonymous_39_21",
+          "path": "test/test.lua",
+          "start_line": 40,
+          "end_line": 45
+        },
+        {
+          "label": "Function",
+          "qualified_name": "lume.test.test.anonymous_47_23",
+          "name": "anonymous_47_23",
+          "path": "test/test.lua",
+          "start_line": 48,
+          "end_line": 54
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "lume.test.test.anonymous_39_21",
+          "second": "lume.test.test.anonymous_47_23",
+          "similarity": 1.0
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 55,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "lume.test.test.anonymous_415_19",
+          "name": "anonymous_415_19",
+          "path": "test/test.lua",
+          "start_line": 416,
+          "end_line": 420
+        },
+        {
+          "label": "Function",
+          "qualified_name": "lume.test.test.anonymous_422_21",
+          "name": "anonymous_422_21",
+          "path": "test/test.lua",
+          "start_line": 423,
+          "end_line": 428
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "lume.test.test.anonymous_415_19",
+          "second": "lume.test.test.anonymous_422_21",
+          "similarity": 1.0
+        }
+      ]
+    }
+  ],
+  "skipped_symbols": 3,
+  "truncated": false
+}
+--- stderr

@@ -1,0 +1,8 @@
+> tools/call list_directory {"directory_path": "src/Output"}
+isError: false
+--- text
+AbstractChunkOutputBuilder.php
+DiffOnlyOutputBuilder.php
+DiffOutputBuilderInterface.php
+StrictUnifiedDiffOutputBuilder.php
+UnifiedDiffOutputBuilder.php

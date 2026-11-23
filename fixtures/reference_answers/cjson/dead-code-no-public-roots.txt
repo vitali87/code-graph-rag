@@ -1,0 +1,22 @@
+$ cgr -q dead-code --project cjson --no-public-roots --format json
+status: 0
+--- stdout
+[
+  {
+    "label": "Function",
+    "name": "cJSON_SetNumberHelper",
+    "qualified_name": "cjson.cJSON.cJSON_SetNumberHelper",
+    "path": "cJSON.c",
+    "start_line": 384,
+    "end_line": 400
+  },
+  {
+    "label": "Function",
+    "name": "cJSONUtils_GenerateMergePatchCaseSensitive",
+    "qualified_name": "cjson.cJSON_Utils.cJSONUtils_GenerateMergePatchCaseSensitive",
+    "path": "cJSON_Utils.c",
+    "start_line": 1478,
+    "end_line": 1481
+  }
+]
+--- stderr

@@ -1,0 +1,241 @@
+> tools/call structural_search {"language": "scala", "pattern": "OParser.sequence($$$ARGS)"}
+isError: false
+--- text
+jvm/src/test/scala/scopt/MonadicParserSpecJVM.scala:40:4  OParser.sequence(
+      programName("scopt"),
+      head("scopt", "4.x"),
+      opt[Int]('f', "foo")
+        .action((x, c) => c.copy(foo = x))
+        .text("foo is an integer property"),
+      opt[File]('o', "out")
+        .required()
+        .valueName("<file>")
+        .action((x, c) => c.copy(out = x))
+        .text("out is a required file property"),
+      opt[(String, Int)]("max")
+        .action({ case ((k, v), c) => c.copy(libName = k, maxCount = v) })
+        .validate(x =>
+          if (x._2 > 0) success
+          else failure("Value <max> must be >0")
+        )
+        .keyValueName("<libname>", "<max>")
+        .text("maximum count for <libname>"),
+      opt[Seq[File]]('j', "jars")
+        .valueName("<jar1>,<jar2>...")
+        .action((x, c) => c.copy(jars = x))
+        .text("jars to include"),
+      opt[Map[String, String]]("kwargs")
+        .valueName("k1=v1,k2=v2...")
+        .action((x, c) => c.copy(kwargs = x))
+        .text("other arguments"),
+      opt[Unit]("verbose")
+        .action((_, c) => c.copy(verbose = true))
+        .text("verbose is a flag"),
+      opt[Unit]("debug")
+        .hidden()
+        .action((_, c) => c.copy(debug = true))
+        .text("this option is hidden in the usage text"),
+      help("help").text("prints this usage text"),
+      arg[File]("<file>...")
+        .unbounded()
+        .optional()
+        .action((x, c) => c.copy(files = c.files :+ x))
+        .text("optional unbounded args"),
+      note("some notes." + sys.props("line.separator")),
+      cmd("update")
+        .action((_, c) => c.copy(mode = "update"))
+        .text("update is a command.")
+        .children(
+          opt[Unit]("not-keepalive")
+            .abbr("nk")
+            .action((_, c) => c.copy(keepalive = false))
+            .text("disable keepalive"),
+          opt[Boolean]("xyz")
+            .action((x, c) => c.copy(xyz = x))
+            .text("xyz is a boolean property"),
+          opt[Unit]("debug-update")
+            .hidden()
+            .action((_, c) => c.copy(debug = true))
+            .text("this option is hidden in the usage text"),
+          checkConfig(c =>
+            if (c.keepalive && c.xyz) failure("xyz cannot keep alive")
+            else success
+          )
+        )
+    )
+shared/src/test/scala/scopttest/Issue264.scala:15:6  OParser.sequence(
+        cmd("clients")
+          .action((_, c) => c.copy(cmd = Option("clients")))
+          .children(
+            cmd("add")
+              .action((_, c) => c.copy(cmd = c.cmd.map(cmd => s"${cmd}_add")))
+              .children(
+                arg[String]("<clientName>")
+                  .action((x, c) => c.copy(clientName = Option(x)))
+              ),
+            cmd("remove")
+              .action((_, c) => c.copy(cmd = c.cmd.map(cmd => s"${cmd}_remove")))
+              .children(
+                arg[String]("<clientId>")
+                  .action((x, c) => c.copy(id = Option(x)))
+              )
+          )
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:88:6  OParser.sequence(
+        opt[Int]('f', "foo")
+          .action((x, c) => c.copy(intValue = x))
+          .text("foo is an integer property"),
+        opt[Unit]("debug")
+          .action((_, c) => c.copy(debug = true))
+          .text("debug is a flag")
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:97:6  OParser.sequence(
+        arg[String]("<source>")
+          .action((x, c) => c.copy(a = x)),
+        arg[String]("<dest>")
+          .action((x, c) => c.copy(b = x))
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:104:6  OParser.sequence(
+        head("scopt", "4.x"),
+        programName("scopt"),
+        p1,
+        p2
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:130:6  OParser.sequence(
+        opt[Unit]("debug").action((_, c) => c.withDebug(true)),
+        note("something")
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:142:6  OParser.sequence(
+        opt[Unit]("verbose").action((_, c) => c.withVerbose(true)),
+        note("something else")
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:156:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        parser1,
+        parser2
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:176:6  OParser.sequence(
+        head("scopt", "4.x"),
+        programName("scopt"),
+        parser1.text("text"),
+        parser1
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:198:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        opt[Unit]('f', "foo").action((x, c: Config) => c.copy(flag = true))
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:218:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        opt[Unit]('f', "foo").action((x, c: Config) => c.copy(flag = true))
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:236:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        opt[Unit]('a', "alice"),
+        opt[Unit]('b', "bob"),
+        opt[Unit]("alicebob").abbr("ab").action((x, c) => c.copy(flag = true))
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:260:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        opt[Unit]('a', "alice"),
+        opt[Unit]('b', "bob"),
+        opt[Unit]("alicebob").abbr("ab").action((x, c) => c.copy(flag = true))
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:280:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        opt[Int]('f', "foo").action((x, c) => c.copy(intValue = x)),
+        help("help")
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:302:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        opt[Int]('f', "foo").action((x, c) => c.copy(intValue = x)),
+        help("help")
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:337:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        opt[BigDecimal]('f', "foo").action((x, c) => c.copy(bigDecimalValue = x)),
+        help("help")
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:359:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        opt[BigDecimal]('f', "foo").action((x, c) => c.copy(bigDecimalValue = x)),
+        help("help")
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:384:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        opt[String]("foo").required().action((x, c) => c.copy(stringValue = x)),
+        help("help")
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:400:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        opt[Int]('f', "foo")
+          .action((x, c) => c.copy(intValue = x))
+          .validate(x =>
+            if (x > 0) success
+            else failure("Option --foo must be >0")
+          )
+          .validate(x => failure("Just because"))
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:421:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        cmd("update")
+          .action((x, c) => c.copy(flag = true))
+          .children(
+            OParser.sequence(
+              opt[Unit]("foo").action((x, c) => c.copy(stringValue = "foo")),
+              opt[Int]("bar").action((x, c) => c.copy(intValue = x))
+            )
+          )
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:427:12  OParser.sequence(
+              opt[Unit]("foo").action((x, c) => c.copy(stringValue = "foo")),
+              opt[Int]("bar").action((x, c) => c.copy(intValue = x))
+            )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:451:6  OParser.sequence(
+        opt[Unit]("foo").action((x, c) => c.copy(stringValue = "foo")),
+        opt[Int]("bar").action((x, c) => c.copy(intValue = x)),
+        note("")
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:459:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        cmd("update")
+          .action((x, c) => c.copy(flag = true))
+          .children(suboptionParser1),
+        cmd("status")
+          .action((x, c) => c.copy(flag = true))
+          .children(suboptionParser1)
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:493:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        version("version")
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:517:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        help("help").text("prints this usage text")
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:548:6  OParser.sequence(
+        programName("scopt"),
+        cmd("issue_271").children()
+      )
+shared/src/test/scala/scopttest/MonadicParserSpec.scala:563:6  OParser.sequence(
+        programName("scopt"),
+        head("scopt", "4.x"),
+        help("help").text(
+          """|prints this usage text
+             |here's a second line of text""".stripMargin
+        )
+      )

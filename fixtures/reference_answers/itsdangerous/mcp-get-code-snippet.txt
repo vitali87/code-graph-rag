@@ -1,0 +1,13 @@
+> tools/call get_code_snippet {"qualified_name": "itsdangerous.src.itsdangerous.signer.Signer.sign"}
+isError: false
+--- text
+{
+  "qualified_name": "itsdangerous.src.itsdangerous.signer.Signer.sign",
+  "source_code": "    def sign(self, value: str | bytes) -> bytes:\n        \"\"\"Signs the given string.\"\"\"\n        value = want_bytes(value)\n        return value + self.sep + self.get_signature(value)\n",
+  "file_path": "src/itsdangerous/signer.py",
+  "line_start": 222,
+  "line_end": 225,
+  "docstring": "Signs the given string.",
+  "found": true,
+  "error_message": null
+}

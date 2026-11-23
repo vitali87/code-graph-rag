@@ -1,0 +1,5 @@
+$ cgr -q graph callers body-parser.lib.utils.no_such_function --project body-parser
+status: 4
+--- stdout
+--- stderr
+'body-parser.lib.utils.no_such_function' is not in the graph. 'cgr graph resolve NAME' lists the qualified names a name matches.

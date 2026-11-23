@@ -1,0 +1,13 @@
+> tools/call get_code_snippet {"qualified_name": "mediatr.src.MediatR.Mediator.Mediator.Send(TRequest, CancellationToken)"}
+isError: false
+--- text
+{
+  "qualified_name": "mediatr.src.MediatR.Mediator.Mediator.Send(TRequest, CancellationToken)",
+  "source_code": "    public Task Send<TRequest>(TRequest request, CancellationToken cancellationToken = default)\n        where TRequest : IRequest\n    {\n        if (request == null)\n        {\n            throw new ArgumentNullException(nameof(request));\n        }\n\n        var handler = (RequestHandlerWrapper)_requestHandlers.GetOrAdd(request.GetType(), static requestType =>\n        {\n            var wrapperType = typeof(RequestHandlerWrapperImpl<>).MakeGenericType(requestType);\n            var wrapper = Activator.CreateInstance(wrapperType) ?? throw new InvalidOperationException($\"Could not create wrapper type for {requestType}\");\n            return (RequestHandlerBase)wrapper;\n        });\n\n        return handler.Handle(request, _serviceProvider, cancellationToken);\n    }\n",
+  "file_path": "src/MediatR/Mediator.cs",
+  "line_start": 59,
+  "line_end": 75,
+  "docstring": null,
+  "found": true,
+  "error_message": null
+}

@@ -14,14 +14,14 @@ counts the rebinding only when the assignment can run first:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import NamedTuple
 
 from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
-from .ast_analyzer import _bindings_in, _identifiers_in
-from .forward_refs import unquote_forward_refs
+from .ast_analyzer import _parameter_names, _walrus_nodes_under, _walrus_parts
 
 # Scopes whose assignments bind their own locals, not the method's receiver.
 _NESTED_SCOPES = frozenset(
@@ -49,45 +49,20 @@ def receiver_rebinding(call: Node, receiver: str) -> ReceiverRebinding:
     return ReceiverRebinding(always=always, sometimes=sometimes)
 
 
-def rebound_receivers(function: Node) -> frozenset[str]:
-    """The receivers (`self`, `cls`) the def's own body rebinds, by a
-    `self = Other()` or any other binding: only a call through one of them
-    needs `receiver_bound_otherwise` and `receiver_rebinding`."""
-    bound = {safe_decode_text(name) for _binder, name in _bindings_in(function)}
-    return frozenset(
-        receiver
-        for receiver in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
-        if receiver in bound
-    )
+def annotates_receiver(call: Node, receiver: str) -> bool:
+    """Whether the def enclosing `call` declares `receiver` with an annotation.
 
-
-def receiver_bound_otherwise(function: Node, receiver: str) -> bool:
-    """Whether the def's own body binds `receiver` other than by a plain
-    `self = value`: a `for` or `with` target, an unpacking, a walrus, an
-    `except` alias, an import, a `case` capture. `receiver_rebinding` orders
-    only plain assignments against a call, so the receiver may then hold
-    anything at any call (Greptile review on PR #2951)."""
-    for binder, name in _bindings_in(function):
-        if safe_decode_text(name) != receiver:
-            continue
-        left = (
-            binder.child_by_field_name(cs.TS_FIELD_LEFT)
-            if binder.type == cs.TS_PY_ASSIGNMENT
-            else None
-        )
-        if left is None or left.id != name.id:
-            return True
-    return False
+    `def typed(self: Other)` types the receiver from the def's entry, so that
+    type holds for a call no rebinding precedes, unlike the one a body
+    `self = Other()` puts in the method-wide map.
+    """
+    return receiver_annotation(call, receiver) is not None
 
 
 def receiver_annotation(call: Node, receiver: str) -> str | None:
-    """The annotation the def enclosing `call` declares `receiver` with.
-
-    `def typed(self: Other)` types the receiver from the def's entry, so a
-    call no rebinding precedes runs on `Other`, whatever later type a body
-    `self = Later()` puts in the method-wide map. The text is the one the
-    type map records for the parameter.
-    """
+    """The class name the annotation of `receiver` in the def enclosing
+    `call` spells, unquoted and without its arguments or module (`Other` for
+    `self: "pkg.Other"`), or None when the parameter has none."""
     function = _enclosing_function(call)
     params = (
         function.child_by_field_name(cs.TS_FIELD_PARAMETERS)
@@ -106,98 +81,217 @@ def receiver_annotation(call: Node, receiver: str) -> str | None:
         else:
             continue
         if name is not None and safe_decode_text(name) == receiver:
-            annotation = safe_decode_text(param.child_by_field_name(cs.TS_FIELD_TYPE))
-            return unquote_forward_refs(annotation) if annotation else None
+            text = safe_decode_text(param.child_by_field_name(cs.TS_FIELD_TYPE))
+            return _annotated_class(text or "")
     return None
 
 
-def receiver_is_bound(call: Node, receiver: str) -> bool:
-    """Whether `receiver` at `call` holds what a method binds: the instance
-    a plain method's first parameter receives, or a `@classmethod`'s class.
+def _annotated_class(text: str) -> str:
+    # The class an annotation names, without quotes or arguments and keeping
+    # a qualifier: `type["A"]` / `typing.Type[A]` name the class `A` itself,
+    # as a classmethod's `cls` holds it (CodeRabbit, PR #2908).
+    spelled = text.strip().strip(cs.PY_ANNOTATION_QUOTES).strip()
+    head, _, rest = spelled.partition(cs.PY_ANNOTATION_ARGS_OPEN)
+    head = head.strip()
+    if rest and head.rsplit(cs.SEPARATOR_DOT, 1)[-1] in cs.PY_CLASS_OBJECT_TYPES:
+        return _annotated_class(rest.rsplit(cs.PY_ANNOTATION_ARGS_CLOSE, 1)[0])
+    return head
 
-    A `@staticmethod` binds nothing, and a nested def or lambda that takes a
-    parameter of the name holds whatever its own caller passes, so neither
-    names the enclosing class (Greptile review on PR #2951). A closure that
-    does not take the name sees its method's.
-    """
-    current = call.parent
-    while current is not None and current.type != cs.TS_PY_CLASS_DEFINITION:
-        # `[self.m() for self in items]`: the comprehension's own variable.
+
+def instance_attribute_names(class_node: Node) -> frozenset[str]:
+    """The attributes a class's methods assign on their bound receiver,
+    whatever it is named (`self.m = callback`, `this.m = callback`), by an
+    assignment, a `for` target or a `with ... as` target: an instance
+    attribute is found before the class's method of that name, so `self.m()`
+    then calls the value (CodeRabbit, Greptile, PR #2908). A class nested in
+    this one assigns its own."""
+    names: set[str] = set()
+    body = class_node.child_by_field_name(cs.FIELD_BODY)
+    for method in _methods(body) if body is not None else ():
+        if (receiver := _receiver_parameter(method)) is None:
+            continue
+        stack = list(method.children)
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_PY_CLASS_DEFINITION:
+                continue
+            for target in _written_targets(node):
+                names.update(_receiver_attributes(target, receiver))
+            stack.extend(node.children)
+    return frozenset(names)
+
+
+def bound_receiver(caller: Node) -> str | None:
+    """The name `caller` reaches its class's instance (or, in a
+    classmethod, the class) by: the first parameter of the method around
+    it, unless that is a static method, which binds none, or a def or
+    lambda in between takes a parameter of the name (`def run(self, cls)`
+    binds only `self`; Greptile, PR #2908)."""
+    hidden: set[str] = set()
+    node: Node | None = caller
+    while node is not None and node.type != cs.TS_PY_CLASS_DEFINITION:
+        if node.type == cs.TS_PY_FUNCTION_DEFINITION and _is_method(node):
+            first = _receiver_parameter(node)
+            return None if first is None or first in hidden else first
+        if node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA):
+            hidden.update(_parameter_names(node))
+        node = node.parent
+    return None
+
+
+def receiver_hidden_spans(caller: Node, receiver: str) -> tuple[tuple[int, int], ...]:
+    """The byte spans inside `caller` where `receiver` names something
+    else: the body of a nested def or lambda taking a parameter of that name
+    (`(lambda self: self.name)(None)`) or of a lambda binding it with `:=`,
+    and a comprehension whose `for` binds it. A nested class holds its
+    own."""
+    spans: list[tuple[int, int]] = []
+    stack = list(caller.named_children)
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_CLASS_DEFINITION:
+            continue
         if (
-            current.type in cs.PY_COMPREHENSION_TYPES
-            and receiver in _comprehension_names(current)
+            node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA)
+            and (body := node.child_by_field_name(cs.FIELD_BODY)) is not None
+            and _scope_binds(node, body, receiver)
         ):
-            return False
-        if current.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA):
-            names = _parameter_names(current)
-            if _is_method(current):
-                return names[:1] == [receiver] and not _is_static(current)
-            if receiver in names:
-                return False
-        current = current.parent
-    return False
+            spans.append((body.start_byte, body.end_byte))
+            continue
+        if node.type in cs.PY_COMPREHENSION_TYPES and (
+            hidden := _comprehension_hides(node, receiver)
+        ):
+            spans.extend(hidden)
+        stack.extend(node.named_children)
+    return tuple(sorted(spans))
 
 
-def _comprehension_names(comprehension: Node) -> set[str | None]:
-    return {
-        safe_decode_text(name)
-        for clause in comprehension.named_children
-        if clause.type == cs.TS_PY_FOR_IN_CLAUSE
-        and (left := clause.child_by_field_name(cs.TS_FIELD_LEFT)) is not None
-        for name in _identifiers_in(left)
-    }
+def _scope_binds(scope: Node, body: Node, receiver: str) -> bool:
+    # A def or lambda taking a parameter of the name, or a lambda whose body
+    # binds it with `:=` (`lambda: ((self := make()), self.m())`), which makes
+    # it the lambda's own name throughout that body (Greptile, PR #2908). A
+    # nested def is its own caller, whose scope facts read its body's binds.
+    if receiver in set(_parameter_names(scope)):
+        return True
+    return scope.type == cs.TS_PY_LAMBDA and any(
+        _walrus_parts(walrus)[0] == receiver for walrus in _walrus_nodes_under(body)
+    )
 
 
-def _parameter_names(function: Node) -> list[str]:
-    params = function.child_by_field_name(cs.TS_FIELD_PARAMETERS)
-    names: list[str] = []
-    for param in params.named_children if params is not None else ():
-        name = (
-            param
-            if param.type == cs.TS_PY_IDENTIFIER
-            else param.child_by_field_name(cs.TS_FIELD_NAME)
-            or next(
-                (c for c in param.named_children if c.type == cs.TS_PY_IDENTIFIER),
-                None,
-            )
-        )
-        if name is not None and (text := safe_decode_text(name)):
-            names.append(text)
+def _comprehension_hides(comprehension: Node, receiver: str) -> list[tuple[int, int]]:
+    # `[self.m() for self in items]` binds `self` to each item for the whole
+    # comprehension but its first iterable, which runs in the enclosing
+    # scope (Greptile, PR #2908).
+    clauses = [
+        child
+        for child in comprehension.named_children
+        if child.type == cs.TS_PY_FOR_IN_CLAUSE
+    ]
+    if not any(receiver in _target_names(clause) for clause in clauses):
+        return []
+    first = clauses[0].child_by_field_name(cs.FIELD_RIGHT)
+    if first is None:
+        return [(comprehension.start_byte, comprehension.end_byte)]
+    return [
+        (comprehension.start_byte, first.start_byte),
+        (first.end_byte, comprehension.end_byte),
+    ]
+
+
+def _target_names(clause: Node) -> set[str]:
+    # Every name a `for ... in` clause's target binds (`self`, `a, self`).
+    # An attribute or subscript target (`for self.slot in items`) writes
+    # into an object and binds no name, so the walk stops there (Greptile,
+    # PR #2908).
+    target = clause.child_by_field_name(cs.FIELD_LEFT)
+    names: set[str] = set()
+    stack = [target] if target is not None else []
+    while stack:
+        node = stack.pop()
+        if node.type in (cs.TS_PY_ATTRIBUTE, cs.TS_PY_SUBSCRIPT):
+            continue
+        if node.type == cs.TS_PY_IDENTIFIER and (name := safe_decode_text(node)):
+            names.add(name)
+        stack.extend(node.named_children)
     return names
 
 
-def _definition_holder(function: Node) -> Node | None:
-    # What holds a def: its `decorated_definition` when it has decorators.
-    parent = function.parent
-    if parent is not None and parent.type == cs.TS_PY_DECORATED_DEFINITION:
-        return parent
-    return function
+def _methods(body: Node) -> Iterator[Node]:
+    # The defs of a class body, including those under an `if`/`try`/`with`
+    # block in it (Greptile, PR #2908); a nested class holds its own.
+    stack = list(body.named_children)
+    while stack:
+        child = stack.pop()
+        if child.type == cs.TS_PY_DECORATED_DEFINITION:
+            child = child.child_by_field_name(cs.FIELD_DEFINITION) or child
+        if child.type == cs.TS_PY_FUNCTION_DEFINITION:
+            yield child
+        elif child.type != cs.TS_PY_CLASS_DEFINITION:
+            stack.extend(child.named_children)
 
 
 def _is_method(function: Node) -> bool:
-    if function.type != cs.TS_PY_FUNCTION_DEFINITION:
-        return False
-    holder = _definition_holder(function)
-    block = holder.parent if holder is not None else None
+    parent = function.parent
+    if parent is not None and parent.type == cs.TS_PY_DECORATED_DEFINITION:
+        parent = parent.parent
     return (
-        block is not None
-        and block.type == cs.TS_PY_BLOCK
-        and block.parent is not None
-        and block.parent.type == cs.TS_PY_CLASS_DEFINITION
+        parent is not None
+        and parent.type == cs.TS_PY_BLOCK
+        and parent.parent is not None
+        and parent.parent.type == cs.TS_PY_CLASS_DEFINITION
     )
 
 
-def _is_static(function: Node) -> bool:
-    holder = _definition_holder(function)
-    if holder is None or holder.type != cs.TS_PY_DECORATED_DEFINITION:
-        return False
-    return any(
-        decorator.type == cs.TS_PY_DECORATOR
-        and (text := safe_decode_text(decorator.named_children[0]))
-        and text.rpartition(cs.SEPARATOR_DOT)[2] == cs.PY_STATICMETHOD
-        for decorator in holder.children
-        if decorator.named_children
-    )
+def _receiver_parameter(method: Node) -> str | None:
+    # A method's first parameter, or None for a static method.
+    decorated = method.parent
+    if decorated is not None and decorated.type == cs.TS_PY_DECORATED_DEFINITION:
+        for decorator in decorated.named_children:
+            text = (safe_decode_text(decorator) or "").lstrip(cs.DECORATOR_AT)
+            head = text.split(cs.CHAR_PAREN_OPEN, 1)[0].strip()
+            if (
+                decorator.type == cs.TS_PY_DECORATOR
+                and head.rsplit(cs.SEPARATOR_DOT, 1)[-1] in cs.STATIC_DECORATORS
+            ):
+                return None
+    return next(iter(_parameter_names(method)), None)
+
+
+def _written_targets(node: Node) -> Iterator[Node]:
+    # The targets one statement writes: an assignment's, a `for`'s, and a
+    # `with ... as` item's.
+    if node.type in (
+        cs.TS_PY_ASSIGNMENT,
+        cs.TS_PY_AUGMENTED_ASSIGNMENT,
+        cs.TS_PY_FOR_STATEMENT,
+    ):
+        if (target := node.child_by_field_name(cs.TS_FIELD_LEFT)) is not None:
+            yield target
+    elif node.type == cs.TS_PY_AS_PATTERN_TARGET:
+        yield from node.named_children
+
+
+def _receiver_attributes(target: Node, receiver: str) -> Iterator[str]:
+    # The receiver attributes an assignment target writes, through tuple,
+    # list and parenthesised targets (`self.m, self.x = cb, 0`; CodeRabbit,
+    # PR #2908). An attribute's own object is a read, never a write.
+    pending = [target]
+    while pending:
+        node = pending.pop()
+        if node.type == cs.TS_PY_ATTRIBUTE:
+            obj = node.child_by_field_name(cs.FIELD_OBJECT)
+            if (
+                obj is not None
+                and safe_decode_text(obj) == receiver
+                and (
+                    name := safe_decode_text(
+                        node.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+                    )
+                )
+            ):
+                yield name
+        elif node.type in cs.PY_ATTRIBUTE_TARGET_CONTAINERS:
+            pending.extend(node.named_children)
 
 
 def _enclosing_function(node: Node) -> Node | None:

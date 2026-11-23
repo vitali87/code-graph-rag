@@ -1,0 +1,30 @@
+> tools/call flow_verdict {"sink_qualified_name": "itsdangerous.src.itsdangerous.signer.Signer.get_signature", "source_qualified_name": "itsdangerous.src.itsdangerous.signer.Signer.sign"}
+isError: false
+--- text
+{
+  "verdict": "UNKNOWN",
+  "path": [],
+  "gaps": [
+    ".devcontainer/on-create-command.sh",
+    ".github/ISSUE_TEMPLATE/bug-report.md",
+    ".github/ISSUE_TEMPLATE/feature-request.md",
+    ".github/pull_request_template.md",
+    "README.md",
+    "docs/conf.py",
+    "src/itsdangerous/__init__.py",
+    "src/itsdangerous/_json.py",
+    "src/itsdangerous/encoding.py",
+    "src/itsdangerous/exc.py",
+    "src/itsdangerous/serializer.py",
+    "src/itsdangerous/signer.py",
+    "src/itsdangerous/timed.py",
+    "src/itsdangerous/url_safe.py",
+    "tests/test_itsdangerous/__init__.py",
+    "tests/test_itsdangerous/test_encoding.py",
+    "tests/test_itsdangerous/test_serializer.py",
+    "tests/test_itsdangerous/test_signer.py",
+    "tests/test_itsdangerous/test_timed.py",
+    "tests/test_itsdangerous/test_url_safe.py"
+  ],
+  "remote_hops": []
+}

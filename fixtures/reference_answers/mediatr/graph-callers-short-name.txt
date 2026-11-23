@@ -1,0 +1,36 @@
+$ cgr -q graph callers Prioritize --project mediatr
+status: 0
+--- stdout
+[
+  {
+    "arg_count": 2,
+    "callee_path": "src/MediatR/Internal/HandlersOrderer.cs",
+    "col": 31,
+    "depth": 1,
+    "end_col": 80,
+    "end_line": 77,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 77,
+    "path": "src/MediatR/Pipeline/RequestExceptionActionProcessorBehavior.cs",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestExceptionActionProcessorBehavior.RequestExceptionActionProcessorBehavior.GetActionsForException(Type, TRequest)",
+    "resolution": "exact",
+    "through": "mediatr.src.MediatR.Internal.HandlersOrderer.HandlersOrderer.Prioritize(IList, TRequest)"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "src/MediatR/Internal/HandlersOrderer.cs",
+    "col": 31,
+    "depth": 1,
+    "end_col": 78,
+    "end_line": 93,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 93,
+    "path": "src/MediatR/Pipeline/RequestExceptionProcessorBehavior.cs",
+    "qualified_name": "mediatr.src.MediatR.Pipeline.RequestExceptionProcessorBehavior.RequestExceptionProcessorBehavior.GetHandlersForException(Type, TRequest)",
+    "resolution": "exact",
+    "through": "mediatr.src.MediatR.Internal.HandlersOrderer.HandlersOrderer.Prioritize(IList, TRequest)"
+  }
+]
+--- stderr

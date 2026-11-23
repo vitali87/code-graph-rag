@@ -28,7 +28,13 @@ from .parameter_nodes import c_family_parameter_list
 from .php import class_names as php_class_names
 from .php.class_names import ClassPath as PhpClassPath
 from .php.class_names import ascii_fold as _php_fold
-from .py import resolve_class_name
+from .py import (
+    external_class_members,
+    module_binds_name,
+    python_literal_text_type,
+    resolve_class_name,
+)
+from .py.receiver_rebinding import instance_attribute_names
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
@@ -130,7 +136,12 @@ class _CallSite(NamedTuple):
     language: cs.SupportedLanguage | None
     call_point: int | None
     constructing: bool
-    receiver_uncertain: bool = False
+    receiverless: bool
+
+
+# A cached answer is keyed by the call name, the module and the two flags that
+# change the question: `constructing` and `receiverless`.
+_ResolutionKey = tuple[str, str, bool, bool]
 
 
 def _rust_assoc_path(call: _CallSite) -> tuple[list[str], str] | None:
@@ -311,7 +322,13 @@ class CallResolver:
         "python_name_typed_params",
         "python_shadowed_imports",
         "go_local_scopes",
+        "cpp_local_scopes",
+        "js_local_scopes",
         "python_local_names",
+        "python_rebound_receivers",
+        "python_bound_receivers",
+        "python_hidden_receiver_spans",
+        "_py_instance_attrs_memo",
         "js_parameter_names",
         "function_registry",
         "import_processor",
@@ -331,6 +348,7 @@ class CallResolver:
         "_interface_impl_cache",
         "_simple_resolution_cache",
         "last_resolution",
+        "last_bound_member",
         "_resolution_labels",
         "_wildcard_cache",
         "_protocol_impl_cache",
@@ -353,6 +371,7 @@ class CallResolver:
         "go_package_names",
         "_php_class_namespaces",
         "_php_cased_index",
+        "_php_fqcn_bases_cache",
         "_js_return_class_cache",
     )
 
@@ -388,9 +407,34 @@ class CallResolver:
         # call processor before the caller's calls resolve: a bare call to
         # one of them inside its span calls that value (#2571).
         self.go_local_scopes: dict[str, go_utils.GoLocalScopes] = {}
+        # C++ member qn -> its parameters and locals and the byte spans each
+        # is in scope over, filled the same way: a bare call to one of them
+        # there calls that value, not a base's member it hides (PR #2948).
+        self.cpp_local_scopes: dict[str, dict[str, tuple[tuple[int, int], ...]]] = {}
+        # JS/TS caller qn -> the names it and each function around it
+        # introduce, filled by the call processor before the caller's calls
+        # resolve: `api.run()` on one of them is that local's, never the
+        # module's or an import's `api` (#2763 review).
+        self.js_local_scopes: dict[str, js_ts_utils.JsLocalIntros] = {}
         # caller qn -> every name that Python function binds itself (#2666);
         # filled alongside python_shadowed_imports.
         self.python_local_names: dict[str, frozenset[str]] = {}
+        # Python caller qn -> the receivers (`self`, `cls`) its body, or an
+        # enclosing def's, binds anew; filled alongside python_local_names. A
+        # call through one may run on whatever was assigned (CodeRabbit, PR
+        # #2908).
+        self.python_rebound_receivers: dict[str, frozenset[str]] = {}
+        # Python caller qn -> the name its method's instance (or class) is
+        # bound to: the method's first parameter, none for a static method,
+        # filled alongside python_rebound_receivers.
+        self.python_bound_receivers: dict[str, str] = {}
+        # Python caller qn -> the byte spans of its nested defs and lambdas
+        # that take a parameter named like its bound receiver, where that
+        # name is the parameter, not the instance.
+        self.python_hidden_receiver_spans: dict[str, tuple[tuple[int, int], ...]] = {}
+        # Python module qn -> {class name: the attributes its methods assign
+        # on their receiver}, read from the module's tree once per pass.
+        self._py_instance_attrs_memo: dict[str, dict[str, frozenset[str]]] = {}
         # JS/TS caller qn -> the names its own parameters bind: a bare call to
         # one calls the argument, never the import or module function of the
         # name (`function run(pad) { pad("x") }`), filled the same way.
@@ -446,13 +490,15 @@ class CallResolver:
         # C++ typedef/using alias -> underlying bare type, consulted when a
         # receiver type name is mapped to a class (empty for other languages).
         self.type_aliases = type_aliases if type_aliases is not None else {}
-        self._simple_resolution_cache: dict[
-            tuple[str, str, bool], tuple[str, str] | None
-        ] = {}
+        self._simple_resolution_cache: dict[_ResolutionKey, tuple[str, str] | None] = {}
         # The branch that produced the last answer (issue #1526), memoised
         # beside the cache so a hit reports the same confidence as the miss.
         self.last_resolution: str = cs.EdgeResolution.EXACT
-        self._resolution_labels: dict[tuple[str, str, bool], str] = {}
+        # The object member the last call named through its literal's binding
+        # (`a.go()` -> a's `go`, issue #2763): that one member, not the
+        # same-key members of other objects that share its `@line` group.
+        self.last_bound_member: str | None = None
+        self._resolution_labels: dict[_ResolutionKey, str] = {}
         self._wildcard_cache: dict[int, list[tuple[str, str]]] = {}
         self._protocol_impl_cache: dict[str, str] | None = None
         self._field_bindings: dict[tuple[str, str], set[str]] = {}
@@ -483,6 +529,9 @@ class CallResolver:
         # read off each file's declarations on first use (issue #2466).
         self._php_class_namespaces: dict[str, dict[str, PhpClassPath]] = {}
         self._php_cased_index: _PhpCasedIndex | None = None
+        # {PHP class qn: the dotted-FQCN bases in `_subclass_map` that name
+        # it}, built on first use.
+        self._php_fqcn_bases_cache: dict[str, list[str]] | None = None
         # {JS/TS callable qn: the class a call to it returns}, read off its
         # declaration on first use (issue #2468).
         self._js_return_class_cache: dict[tuple[str, bool], str | None] = {}
@@ -668,11 +717,7 @@ class CallResolver:
         return self._rust_scope_type(followed) or followed
 
     def _try_resolve_method(
-        self,
-        class_qn: str,
-        method_name: str,
-        separator: str = cs.SEPARATOR_DOT,
-        c3: bool = False,
+        self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
     ) -> tuple[str, str] | None:
         # A class-body alias of the name (issue #2620) lists every method
         # the member may hold, its own `def` included when that survives.
@@ -681,7 +726,7 @@ class CallResolver:
         method_qn = f"{class_qn}{separator}{method_name}"
         if method_qn in self.function_registry:
             return self.function_registry[method_qn], method_qn
-        return self._resolve_inherited_method(class_qn, method_name, c3=c3)
+        return self._resolve_inherited_method(class_qn, method_name)
 
     def reset_resolution_caches(self) -> None:
         # The watch pass deletes EVERY CALLS edge and recomputes them
@@ -710,7 +755,10 @@ class CallResolver:
         self._c_unit_reach_cache.clear()
         # A re-parsed PHP file may have moved a class between namespaces.
         self._php_class_namespaces.clear()
+        # Or a re-parsed Python one assign other instance attributes.
+        self._py_instance_attrs_memo.clear()
         self._php_cased_index = None
+        self._php_fqcn_bases_cache = None
         # A re-parsed TS file may declare a different return.
         self._js_return_class_cache.clear()
         # The rel-path -> module qn inverse rebuilds only when its size
@@ -741,15 +789,15 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
-        receiver_uncertain: bool = False,
+        receiverless: bool = False,
     ) -> tuple[str, str] | None:
         """`constructing`: the call is a Java/C# `new X(...)`, so `call_name`
         names a TYPE and the simple-name fallback must not offer a method or
-        function that merely shares the name. `receiver_uncertain`: this
-        untyped Python `self.m()` may not run on the enclosing class's
-        instance or class (a `@staticmethod`'s or a nested def's parameter,
-        or a `self = pick()` that may run first)."""
+        function that merely shares the name. `receiverless`: a PHP or C/C++
+        call written with no receiver (`count($xs)`, `max(a, b)`), which
+        those languages' call names do not tell apart from a member call."""
         self.last_resolution = cs.EdgeResolution.EXACT
+        self.last_bound_member = None
         result = self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
                 self._resolve_function_call(
@@ -761,7 +809,7 @@ class CallResolver:
                     language,
                     call_point,
                     constructing,
-                    receiver_uncertain,
+                    receiverless,
                 )
             ),
             call_name,
@@ -796,6 +844,16 @@ class CallResolver:
             call_name.split(cs.SEPARATOR_DOT, 1)[0] in guessed
         )
 
+    def _python_receiver_hidden_at(self, call: _CallSite) -> bool:
+        # Inside a nested def or lambda that takes a parameter named like the
+        # receiver, the name is that parameter; a call whose site is unknown
+        # cannot be placed, so it is not trusted either.
+        spans = self.python_hidden_receiver_spans.get(call.caller_qn or "")
+        if not spans:
+            return False
+        point = call.call_point
+        return point is None or any(start <= point < end for start, end in spans)
+
     def _resolve_python_self_method(self, call: _CallSite) -> tuple[str, str] | None:
         """`self.m()` / `cls.m()` on the method the enclosing class defines or
         inherits: the static target, `exact` as `this.m()` is in Java or C#.
@@ -823,25 +881,115 @@ class CallResolver:
             # own type; the typed-receiver lookup below honours it, where
             # the enclosing class would bind `A.m` (Greptile, PR #2953).
             or (call.local_var_types and receiver in call.local_var_types)
-            # A `@staticmethod`'s or a nested def's own parameter, or an
-            # untyped `self = pick()` that may run first, leaves the receiver
-            # something the enclosing class does not name (CodeRabbit and
-            # Greptile, PR #2951); the paths below guess, as before.
-            or call.receiver_uncertain
+            # A body that assigns the receiver (`self = factory()`) may call
+            # through a value whose type nothing inferred, so the enclosing
+            # class is no certain target (CodeRabbit, PR #2908).
+            or receiver
+            in self.python_rebound_receivers.get(call.caller_qn or "", frozenset())
+            # Only the method's bound receiver is the class's instance: a
+            # static method's `self` is whatever its caller passed, and so
+            # is `cls` in `def run(self, cls)` (CodeRabbit, Greptile, PR
+            # #2908).
+            or self.python_bound_receivers.get(call.caller_qn or "") != receiver
+            or self._python_receiver_hidden_at(call)
         ):
             return None
-        own_qn = f"{call.class_context}{cs.SEPARATOR_DOT}{method_name}"
-        target = (
-            (self.function_registry[own_qn], own_qn)
-            if own_qn in self.function_registry
-            else self._resolve_inherited_method(
-                call.class_context, method_name, c3=True
+        if method_name.startswith(cs.PY_NAME_DUNDER) and not method_name.endswith(
+            cs.PY_NAME_DUNDER
+        ):
+            # `self.__m()` in `D` looks up `_D__m`: only D's own `__m` is it,
+            # never a base's, which Python stores as `_B__m` (CodeRabbit, PR
+            # #2908).
+            own_qn = f"{call.class_context}{cs.SEPARATOR_DOT}{method_name}"
+            target = (
+                (self.function_registry[own_qn], own_qn)
+                if own_qn in self.function_registry
+                else None
             )
-        )
-        if target is None or self.function_registry.is_abstract(target[1]):
+        else:
+            target = self._method_by_mro(call.class_context, method_name)
+        if (
+            target is None
+            or self.function_registry.is_abstract(target[1])
+            or self._unknown_base_may_bind_first(call.class_context, method_name)
+            or self._instance_attribute_shadows(call.class_context, method_name)
+        ):
             return None
         self.last_resolution = cs.EdgeResolution.EXACT
         return target
+
+    def python_class_mro(self, class_qn: str) -> list[str]:
+        """The class and its bases in Python's method resolution order."""
+        return self._c3_mro(class_qn)
+
+    def _instance_attribute_shadows(self, class_qn: str, name: str) -> bool:
+        # An attribute the class or a base assigns on its instances
+        # (`self.m = callback`) is found before any class's `m`, so
+        # `self.m()` may call the value (CodeRabbit, PR #2908).
+        return any(
+            name in self._python_instance_attributes(owner)
+            for owner in self._c3_mro(class_qn)
+        )
+
+    def _python_instance_attributes(self, class_qn: str) -> frozenset[str]:
+        module_qn = module_qn_for_entity(
+            class_qn, self.type_inference.module_qn_to_file_path
+        )
+        if module_qn is None:
+            return frozenset()
+        if (by_class := self._py_instance_attrs_memo.get(module_qn)) is None:
+            by_class = {}
+            root = self._cached_module_root(module_qn)
+            stack = [root] if root is not None else []
+            while stack:
+                node = stack.pop()
+                if node.type == cs.TS_PY_CLASS_DEFINITION and (
+                    name := safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
+                ):
+                    # Same-named classes in one module: either may be it.
+                    by_class[name] = by_class.get(
+                        name, frozenset()
+                    ) | instance_attribute_names(node)
+                stack.extend(node.children)
+            self._py_instance_attrs_memo[module_qn] = by_class
+        return by_class.get(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1], frozenset())
+
+    def _unknown_base_may_bind_first(self, class_qn: str, method_name: str) -> bool:
+        """Whether a base the graph holds no class for may bind `method_name`
+        ahead of the class that does along the C3 order: in
+        `class D(ExternalBase, B)`, `self.m()` runs `ExternalBase.m` if it
+        has one, not `B.m` (CodeRabbit, PR #2908). A builtin or stdlib base
+        is read for the name; any other one may bind anything."""
+        registry = self.function_registry
+        for owner in self._c3_mro(class_qn):
+            if registry.get(owner) is None:
+                members = external_class_members(owner)
+                if members is None or method_name in members:
+                    return True
+                continue
+            if (
+                f"{owner}{cs.SEPARATOR_DOT}{method_name}" in registry
+                or self._member_alias(owner, method_name)
+                or registry.binds_non_method(owner, method_name)
+            ):
+                return False
+        return False
+
+    def _method_by_mro(self, class_qn: str, method_name: str) -> tuple[str, str] | None:
+        """The `method_name` a lookup on `class_qn` runs: its own, else the
+        first base in its C3 method resolution order that binds it. For
+        `D(B, C)` with `B(A)` that is D, B, A, C, where a breadth-first walk
+        of the bases meets C before A (Greptile, PR #2908). A class-body alias
+        or value binds the name along the same order (issue #2620), as in
+        `_try_resolve_method`."""
+        if alias := self._member_alias(class_qn, method_name):
+            return alias
+        own_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+        if own_qn in self.function_registry:
+            return self.function_registry[own_qn], own_qn
+        if self.function_registry.binds_non_method(class_qn, method_name):
+            return None
+        return self._resolve_inherited_along_mro(self._c3_mro(class_qn), method_name)
 
     def _is_python_local_name(self, call: _CallSite) -> bool:
         if not call.caller_qn or cs.SEPARATOR_DOT in call.call_name:
@@ -1496,7 +1644,7 @@ class CallResolver:
         return targets
 
     def self_dispatch_targets(
-        self, class_context: str, method_name: str, c3: bool = False
+        self, class_context: str, method_name: str
     ) -> set[tuple[str, str]]:
         # self.M()/cls.M() statically targets the enclosing class's own or inherited
         # M, and dynamically dispatches to any concrete subclass override of M. Anchor
@@ -1512,7 +1660,7 @@ class CallResolver:
         # override does), so it must not be a call target; a concrete sibling/impl
         # wins. Abstract methods only "reached" polymorphically are handled as
         # dead-code roots, not by a spurious CALLS edge.
-        if (base := self._try_resolve_method(class_context, method_name, c3=c3)) and (
+        if (base := self._method_by_mro(class_context, method_name)) and (
             not self.function_registry.is_abstract(base[1])
         ):
             targets.add(base)
@@ -2121,7 +2269,7 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
-        receiver_uncertain: bool = False,
+        receiverless: bool = False,
     ) -> tuple[str, str] | None:
         call = _CallSite(
             call_name,
@@ -2134,18 +2282,11 @@ class CallResolver:
             language,
             call_point,
             constructing,
-            receiver_uncertain,
+            receiverless,
         )
         handled, result = self._resolve_caller_scoped_stages(call)
         if handled:
             return result
-        # After the scope walk, which answers a nested def or class of the
-        # name: any other local is a value the graph cannot follow, and the
-        # same-module, class, import and trie stages below would bind it to
-        # the definition it shadows (issue #2666). Before the cache, whose
-        # answers are caller-independent.
-        if self._is_python_local_name(call) or self._is_js_parameter_name(call):
-            return None
 
         cache_key = self._resolution_cache_key(call)
         if cache_key is not None and cache_key in self._simple_resolution_cache:
@@ -2168,7 +2309,7 @@ class CallResolver:
             return result
         # Ahead of the import probe: for a receiver it cannot place, that probe
         # binds `subprocess.run` to a same-module function named `run`.
-        if self._receiver_is_external_python_module(call):
+        if self._python_receiver_is_not_first_party(call):
             self._remember_cacheable(cache_key, None)
             return None
         handled, result = self._resolve_imported_or_module_member(call, cache_key)
@@ -2195,6 +2336,7 @@ class CallResolver:
             call_point,
             constructing,
             call.local_var_types,
+            call.receiverless,
         )
         self._remember_cacheable(cache_key, result)
         return result
@@ -2333,20 +2475,28 @@ class CallResolver:
             self._resolve_receiver_shadow,
             self._resolve_rust_block_scope,
             self._resolve_caller_scope,
-            self._resolve_python_self_stage,
+            self._resolve_c_family_inherited_member,
+            self._resolve_js_object_member,
+            self._resolve_local_name_or_self_method,
         ):
             handled, result = stage(call)
             if handled:
                 return True, result
         return False, None
 
-    def _resolve_python_self_stage(
+    def _resolve_local_name_or_self_method(
         self, call: _CallSite
     ) -> tuple[bool, tuple[str, str] | None]:
-        # `self.m()` answered from the enclosing class; a dotted name, so it
-        # never meets the local-name checks after these stages.
-        result = self._resolve_python_self_method(call)
-        return result is not None, result
+        # After the scope walk, which answers a nested def or class of the
+        # name: any other local is a value the graph cannot follow, and the
+        # same-module, class, import and trie stages below would bind it to
+        # the definition it shadows (issue #2666). Before the cache, whose
+        # answers are caller-independent.
+        if self._is_python_local_name(call) or self._is_js_parameter_name(call):
+            return True, None
+        if (result := self._resolve_python_self_method(call)) is not None:
+            return True, result
+        return False, None
 
     def _resolve_receiver_shadow(
         self, call: _CallSite
@@ -2500,15 +2650,258 @@ class CallResolver:
         # block's `helper := ...`, or after that block closes, is the
         # package's function (#2616 review). A call with no position falls
         # back to the whole function.
+        return self._local_in_scope(call, self.go_local_scopes)
+
+    @staticmethod
+    def _local_in_scope(
+        call: _CallSite,
+        scopes: Mapping[str, Mapping[str, tuple[tuple[int, int], ...]]],
+    ) -> bool:
         if not call.caller_qn or cs.SEPARATOR_DOT in call.call_name:
             return False
-        spans = self.go_local_scopes.get(call.caller_qn, {}).get(call.call_name)
+        spans = scopes.get(call.caller_qn, {}).get(call.call_name)
         if not spans:
             return False
         point = call.call_point
         return point is None or any(start <= point < end for start, end in spans)
 
-    def _resolution_cache_key(self, call: _CallSite) -> tuple[str, str, bool] | None:
+    def _resolve_c_family_inherited_member(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # Inside a C/C++ member function a call with no receiver finds a
+        # member of the class or of a base, nearest class first: the one way
+        # such a call reaches a method, so the simple-name fallback offers
+        # none (issue #2575). The scope walk already answered the class's own
+        # members; this answers the inherited ones. Caller-specific, so it
+        # runs ahead of the module-keyed cache. Handled only when a method is
+        # found; anything else falls through to the later stages.
+        if not call.receiverless or not call.caller_qn:
+            return False, None
+        language = call.language or self._module_language(call.module_qn)
+        if language not in cs.C_FAMILY_LANGUAGES:
+            return False, None
+        # A parameter or local of the name hides every member where it is in
+        # scope: `void D::run(void (*dispatch)()) { dispatch(); }` calls the
+        # parameter, not an inherited `B::dispatch` (CodeRabbit, PR #2948).
+        if self._local_in_scope(call, self.cpp_local_scopes):
+            return False, None
+        # A class nested in another looks the name up in its own scope and
+        # bases first, then in each enclosing class's: `Outer::Inner::run`
+        # reaches `Base::ping` through `Outer : Base` (CodeRabbit, PR #2948).
+        # The first class scope declaring the name ends the walk.
+        owner = self._enclosing_class(call.caller_qn)
+        while owner is not None:
+            if definers := self._cpp_member_definers(owner, call.call_name):
+                method = self._cpp_unique_member_method(definers, call.call_name)
+                return method is not None, method
+            owner = self._enclosing_class(owner)
+        return False, None
+
+    def _cpp_member_definers(self, owner: str, call_name: str) -> list[str]:
+        """Every class C++ unqualified lookup of `call_name` visits from
+        `owner` (itself and its bases) that declares the name, as a method
+        or as a data member; empty when this class scope declares none."""
+        # `Base(1)` names the class, not its constructor: unqualified lookup
+        # never finds a constructor, so the construction path must bind it
+        # (INSTANTIATES and the destructor edge) instead (CodeRabbit, PR #2948).
+        # A data member of the name hides a base's method as a member
+        # function does: `void (*dispatch)();` in `D` makes `dispatch()` call
+        # the pointer, not `B::dispatch` (Greptile, PR #2948). So lookup runs
+        # over every class declaring the name, field or method.
+        return [
+            class_qn
+            for class_qn in self._mro(owner)
+            if qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+            != call_name
+            and (
+                self._declares_cpp_method(class_qn, call_name)
+                or self._declares_cpp_field(class_qn, call_name)
+            )
+        ]
+
+    def _cpp_unique_member_method(
+        self, definers: list[str], call_name: str
+    ) -> tuple[str, str] | None:
+        """The method lookup of `call_name` finds among `definers`, or None
+        when the name it finds is no single method (a data member, or an
+        ambiguous lookup)."""
+        # A member hides the name in every base its class derives from, so
+        # lookup finds the definers no other definer derives from: in a
+        # virtual diamond, DB::probe over DA::probe, though a breadth-first
+        # walk meets DA first (Greptile, PR #2948). Two left is a lookup C++
+        # rejects as ambiguous, and nothing is guessed.
+        found = [
+            class_qn
+            for class_qn in definers
+            if not any(
+                other != class_qn and class_qn in self._mro(other) for other in definers
+            )
+        ]
+        if len(found) != 1 or not self._declares_cpp_method(found[0], call_name):
+            return None
+        return (
+            cs.NodeLabel.METHOD.value,
+            f"{found[0]}{cs.SEPARATOR_DOT}{call_name}",
+        )
+
+    def _declares_cpp_method(self, class_qn: str, name: str) -> bool:
+        return (
+            self.function_registry.get(f"{class_qn}{cs.SEPARATOR_DOT}{name}")
+            == cs.NodeLabel.METHOD.value
+        )
+
+    def _declares_cpp_field(self, class_qn: str, name: str) -> bool:
+        # A function-pointer or `std::function` member, or any typed field
+        # (an object with `operator()`).
+        return class_qn in self.cpp_callable_fields.get(
+            name, ()
+        ) or name in self.type_inference.class_field_types.get(class_qn, {})
+
+    def _enclosing_class(self, qualified_name: str) -> str | None:
+        # The nearest class above a definition, through any functions it is
+        # nested in; the module boundary (not in the registry) ends the walk.
+        scope = qualified_name
+        while cs.SEPARATOR_DOT in scope:
+            scope = self._parent_qn(scope)
+            label = self.function_registry.get(scope)
+            if label == cs.NodeLabel.CLASS.value:
+                return scope
+            if label is None:
+                return None
+        return None
+
+    def _js_object_member_call(self, call: _CallSite) -> tuple[str, str, str] | None:
+        # `<receiver>.<key>(...)` split as (head, rest of the receiver, key)
+        # for a JS/TS call when some object literal is bound to a name; None
+        # otherwise. A receiver the type map holds is a typed value, which
+        # the typed paths own.
+        if (
+            call.language not in cs.JS_TS_LANGUAGES
+            or not self.function_registry.has_object_bindings()
+        ):
+            return None
+        receiver, sep, key = call.call_name.rpartition(cs.SEPARATOR_DOT)
+        if not sep or not receiver:
+            return None
+        head, _, rest = receiver.partition(cs.SEPARATOR_DOT)
+        if call.local_var_types and head in call.local_var_types:
+            return None
+        return head, rest, key
+
+    def _object_member_result(
+        self, binding_qn: str, key: str
+    ) -> tuple[str, str] | None:
+        member = self.function_registry.object_binding_member(binding_qn, key)
+        if member is None or member not in self.function_registry:
+            return None
+        return self.function_registry[member].value, member
+
+    def _js_local_receiver(
+        self, call: _CallSite, head: str
+    ) -> js_ts_utils.JsLocalIntro | None:
+        # The innermost introduction of `head` around the call by the calling
+        # function or one enclosing it; None when only the module or an
+        # import binds the name there.
+        if not call.caller_qn:
+            return None
+        intros = self.js_local_scopes.get(call.caller_qn, {}).get(head, ())
+        point = call.call_point
+        enclosing = [i for i in intros if point is None or i.start <= point < i.end]
+        if not enclosing:
+            return None
+        return max(enclosing, key=lambda intro: intro.start)
+
+    def _resolve_js_object_member(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # `api.fetchUser()` on a name an object literal is bound to: that
+        # literal's member (issue #2763). Caller-specific, as a parameter or
+        # other local of the receiver's name shadows the module's or an
+        # import's `api` (#2763 review), so ahead of the cache.
+        parts = self._js_object_member_call(call)
+        if parts is None:
+            return False, None
+        head, rest, key = parts
+        local = self._js_local_receiver(call, head)
+        if local is None:
+            result = self._js_module_object_member(call, head, rest, key)
+        elif (
+            local.object_literal
+            and not rest
+            and not self._js_shared_binding(call, head, local)
+            and not self._js_inner_binding(call, head, local)
+        ):
+            result = self._js_local_object_member(call, head, key)
+        else:
+            result = None
+        if result is None:
+            return False, None
+        self.last_bound_member = result[1]
+        return True, result
+
+    def _js_shared_binding(
+        self, call: _CallSite, head: str, local: js_ts_utils.JsLocalIntro
+    ) -> bool:
+        # Two literals one function binds to the name (in sibling blocks)
+        # register their members under one binding qn, whatever keys each
+        # has, so which literal a call means is not known there (#2763
+        # review).
+        intros = self.js_local_scopes.get(call.caller_qn or "", {}).get(head, ())
+        return sum(1 for i in intros if i.object_literal and i.owner == local.owner) > 1
+
+    def _js_inner_binding(
+        self, call: _CallSite, head: str, local: js_ts_utils.JsLocalIntro
+    ) -> bool:
+        # A function nested in the one whose literal the call reads that
+        # binds the name to a literal of its own, in a block the call is
+        # past (`if (flag) { const api = {...} }`): the walk up from the
+        # caller would reach that function's binding first (Greptile, PR
+        # #3118).
+        intros = self.js_local_scopes.get(call.caller_qn or "", {}).get(head, ())
+        return any(i.object_literal and i.owner > local.owner for i in intros)
+
+    def _js_local_object_member(
+        self, call: _CallSite, head: str, key: str
+    ) -> tuple[str, str] | None:
+        # `tools.build()` where `const tools = { build: () => 2 }` is written
+        # in the calling function or one enclosing it.
+        scope = call.caller_qn
+        while scope and scope != call.module_qn:
+            binding_qn = f"{scope}{cs.SEPARATOR_DOT}{head}"
+            if self.function_registry.has_object_binding(binding_qn):
+                # The nearest function binding the name decides, also when
+                # two of its blocks bind it and no member is chosen (bot
+                # review on PR #3118).
+                return self._object_member_result(binding_qn, key)
+            scope = scope.rpartition(cs.SEPARATOR_DOT)[0]
+        return None
+
+    def _js_module_object_member(
+        self, call: _CallSite, head: str, rest: str, key: str
+    ) -> tuple[str, str] | None:
+        # An object literal bound at module level, here or in the module an
+        # import names (`import { api }`, `import * as ns` + `ns.api.f()`, a
+        # CommonJS destructure, or `import api` of an `export default
+        # { ... }`): its member registers under its module without the
+        # object's name.
+        import_map = self.import_processor.import_mapping.get(call.module_qn, {})
+        base = import_map.get(head) or f"{call.module_qn}{cs.SEPARATOR_DOT}{head}"
+        binding_qn = f"{base}{cs.SEPARATOR_DOT}{rest}" if rest else base
+        if head in import_map:
+            # What the source module exports under the name, through its
+            # export table: `export { publicApi as api }` beside a private
+            # `const api` gives the importer `publicApi` (bot review on PR
+            # #3118).
+            followed = self.import_processor.follow_js_reexports(
+                binding_qn,
+                self.type_inference.module_qn_to_file_path,
+                self.function_registry,
+            )
+            if followed != binding_qn:
+                return self._object_member_result(followed, key)
+        return self._object_member_result(binding_qn, key)
+
+    def _resolution_cache_key(self, call: _CallSite) -> _ResolutionKey | None:
         module_qn, caller_qn = call.module_qn, call.caller_qn
         # The cache is keyed by (call_name, module_qn) only, so a caller whose
         # class carries extends-clause type arguments must bypass it: its
@@ -2551,8 +2944,9 @@ class CallResolver:
         if not use_cache:
             return None
         # `new X()` and a bare `X()` in one module are different
-        # questions with different answers, so they never share a slot.
-        return (call.call_name, module_qn, call.constructing)
+        # questions with different answers, so they never share a slot; so
+        # are PHP's `count($xs)` and `$bag->count()`, both named `count`.
+        return (call.call_name, module_qn, call.constructing, call.receiverless)
 
     def _resolve_structural_call(
         self, call: _CallSite
@@ -2658,7 +3052,7 @@ class CallResolver:
         )
 
     def _resolve_rust_prefixed_or_local(
-        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+        self, call: _CallSite, cache_key: _ResolutionKey | None
     ) -> tuple[bool, tuple[str, str] | None]:
         call_name, module_qn = call.call_name, call.module_qn
         # A `crate::`/`self::`/`super::` path says outright which module holds
@@ -2740,7 +3134,7 @@ class CallResolver:
         return False, None
 
     def _resolve_imported_or_module_member(
-        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+        self, call: _CallSite, cache_key: _ResolutionKey | None
     ) -> tuple[bool, tuple[str, str] | None]:
         call_name, module_qn = call.call_name, call.module_qn
         if result := self._try_resolve_via_imports(
@@ -2827,7 +3221,7 @@ class CallResolver:
         return NodeType.CLASS.value, qn
 
     def _resolve_external_target(
-        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+        self, call: _CallSite, cache_key: _ResolutionKey | None
     ) -> tuple[bool, tuple[str, str] | None]:
         call_name, module_qn = call.call_name, call.module_qn
         # A bare name explicitly imported from outside the project binds to that
@@ -2873,7 +3267,7 @@ class CallResolver:
         return False, None
 
     def _resolve_untyped_member_or_unresolvable(
-        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+        self, call: _CallSite, cache_key: _ResolutionKey | None
     ) -> tuple[bool, tuple[str, str] | None]:
         call_name, module_qn, language = call.call_name, call.module_qn, call.language
         # A JS/TS/Dart member call on an UNTYPED receiver (`view.render(...)`
@@ -2921,13 +3315,13 @@ class CallResolver:
         return False, None
 
     def _remember_cacheable(
-        self, cache_key: tuple[str, str, bool] | None, result: tuple[str, str] | None
+        self, cache_key: _ResolutionKey | None, result: tuple[str, str] | None
     ) -> None:
         if cache_key is not None:
             self._remember(cache_key, result)
 
     def _remember(
-        self, cache_key: tuple[str, str, bool], result: tuple[str, str] | None
+        self, cache_key: _ResolutionKey, result: tuple[str, str] | None
     ) -> None:
         self._simple_resolution_cache[cache_key] = result
         self._resolution_labels[cache_key] = self.last_resolution
@@ -2942,7 +3336,7 @@ class CallResolver:
         return False
 
     def _resolve_rust_external_path(
-        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+        self, call: _CallSite, cache_key: _ResolutionKey | None
     ) -> tuple[bool, tuple[str, str] | None]:
         # A Rust path whose head binds an item outside the project names
         # that crate's associated function: `String::new()`,
@@ -2969,7 +3363,7 @@ class CallResolver:
         return True, result
 
     def _resolve_rust_named_owner(
-        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+        self, call: _CallSite, cache_key: _ResolutionKey | None
     ) -> tuple[bool, tuple[str, str] | None]:
         # The last stop before the bare-name trie for a Rust call that names
         # the type owning its target: `Type::f()` or `Self::f()` on a
@@ -3511,6 +3905,12 @@ class CallResolver:
         php_imports = self.import_processor.php_function_imports.get(module_qn)
         if php_imports and call_name in php_imports:
             return False
+        # PHP keeps functions apart from classes and constants, so a bare call
+        # never names what a class `use` or a `use const` brings in, grouped
+        # (`use Vendor\{const helper}`) or not: `helper()` still looks its
+        # namespace up, as with no import of the name (Greptile on PR #3652).
+        if language == cs.SupportedLanguage.PHP:
+            return False
         # A JS/TS import with a non-standard scheme (deno `ext:deno_node/x`) does
         # not resolve to a file-path module qn, so its target is unregistered and
         # looks external even though it aliases first-party code. Defer to the
@@ -3702,6 +4102,39 @@ class CallResolver:
         # pre-pass cache the very guess the scan is meant to refuse.
         language = call.language or self._module_language(call.module_qn)
         return language == cs.SupportedLanguage.PYTHON
+
+    def _python_receiver_is_not_first_party(self, call: _CallSite) -> bool:
+        # An external module's (`subprocess.run`) or a builtin value's
+        # (`"-".join(...)`, `self.cache.get(k)` on `self.cache = {}`): the
+        # probes after it match the name alone, and bound it to any
+        # first-party definition that shares it (issue #2859).
+        if self._receiver_is_external_python_module(call):
+            return True
+        return self._receiver_is_python_builtin_value(call)
+
+    def _receiver_is_python_builtin_value(self, call: _CallSite) -> bool:
+        # A literal receiver (`"-"`, `{}`, `[x for x in y]`), or one whose
+        # type is a builtin's: a local or attribute assigned a literal, or
+        # annotated as one. `rpartition`, so `self.cache` is the receiver of
+        # `self.cache.get` and `"a.b"` of `"a.b".join`.
+        if call.constructing or not self._is_python_call(call):
+            return False
+        receiver, sep, _method = call.call_name.rpartition(cs.SEPARATOR_DOT)
+        if not sep or not receiver:
+            return False
+        typed = (call.local_var_types or {}).get(receiver)
+        if typed is not None:
+            # A builtin's name the module binds itself (`from lib import Bag
+            # as dict`) is that binding, not the builtin (Greptile, PR #2912).
+            return typed in cs.PY_BUILTIN_VALUE_TYPES and not self._module_binds(
+                call.module_qn, typed
+            )
+        return python_literal_text_type(receiver) is not None
+
+    def _module_binds(self, module_qn: str, name: str) -> bool:
+        return module_binds_name(
+            module_qn, name, self.import_processor, self.function_registry
+        )
 
     def _receiver_is_external_python_module(self, call: _CallSite) -> bool:
         # True for a Python `mod.attr(...)` whose `mod` is bound by an import
@@ -4430,7 +4863,7 @@ class CallResolver:
             )
 
         return self._resolve_multi_part_call(
-            parts, call_name, import_map, module_qn, local_var_types
+            parts, call_name, import_map, module_qn, local_var_types, language
         )
 
     def _try_resolve_csharp_qualified_call(
@@ -5440,6 +5873,7 @@ class CallResolver:
         call_point: int | None = None,
         constructing: bool = False,
         local_var_types: dict[str, str] | None = None,
+        receiverless: bool = False,
     ) -> tuple[str, str] | None:
         search_name = _trie_search_name(call_name)
         possible_matches = self._trie_candidates(call_name, module_qn, call_point)
@@ -5485,7 +5919,7 @@ class CallResolver:
                 if self.function_registry[qn] == cs.NodeLabel.METHOD.value
             ]
         possible_matches = self._drop_unreachable_bare_names(
-            possible_matches, call_name, search_name, module_qn, language
+            possible_matches, call_name, search_name, module_qn, language, receiverless
         )
         if language in cs.C_FAMILY_LANGUAGES:
             possible_matches = self._linkable_from(possible_matches, module_qn)
@@ -5509,23 +5943,28 @@ class CallResolver:
         search_name: str,
         module_qn: str,
         language: cs.SupportedLanguage | None,
+        receiverless: bool = False,
     ) -> list[str]:
         """The candidates a bare call can name under its language's scoping."""
-        if language == cs.SupportedLanguage.RUST and search_name == call_name:
-            # A bare Rust path NEVER names a method (inherent methods need
-            # self./Self::/Type::), so a same-named method must not soak
-            # up the edge when the real target is external, prelude, or a
-            # shadowing closure the graph cannot see (issue #1011).
+        caller_language = (
+            (language or self._module_language(module_qn))
+            if search_name == call_name
+            else None
+        )
+        if receiverless or caller_language in cs.BARE_CALL_NO_METHOD_LANGUAGES:
+            # A call with no receiver names no method here: a Rust inherent
+            # method needs self./Self::/Type:: (issue #1011), and a C/C++
+            # member's own and inherited methods were answered by name lookup
+            # above. So a same-named method must not soak up the edge when the
+            # real target is a builtin (`count($xs)`, `parseInt(s)`,
+            # `max(a, b)`), external, or a closure the graph cannot see
+            # (issue #2575).
             matches = [
                 qn
                 for qn in matches
                 if self.function_registry[qn] != cs.NodeLabel.METHOD.value
             ]
-        elif (
-            search_name == call_name
-            and (language or self._module_language(module_qn))
-            == cs.SupportedLanguage.PYTHON
-        ):
+        elif caller_language == cs.SupportedLanguage.PYTHON:
             # A bare Python name is looked up in local, enclosing, global and
             # builtin scope; a method answers to its bare name only inside
             # its own class body, which lives in the caller's module. So a
@@ -6022,6 +6461,12 @@ class CallResolver:
         )
         for method_qn in method_qns:
             if method_qn in self.function_registry:
+                if language in cs.JS_TS_LANGUAGES and self._js_static_only(
+                    class_qn, method_name
+                ):
+                    # The receiver is an instance of the class, and its
+                    # prototype chain never holds a static member (#3672).
+                    return self._js_instance_member(class_qn, method_name)
                 logger.debug(
                     ls.CALL_TYPE_INFERRED,
                     call_name=call_name,
@@ -6039,8 +6484,53 @@ class CallResolver:
                 obj=object_name,
                 var_type=var_type,
             )
+            if language in cs.JS_TS_LANGUAGES and self._js_static_only(
+                inherited[1].rpartition(cs.SEPARATOR_DOT)[0], method_name
+            ):
+                return self._js_instance_member(class_qn, method_name)
             return inherited
         return None
+
+    def _js_static_only(self, class_qn: str, method: str) -> bool:
+        """Whether a JS/TS class declares `method` as a static member only."""
+        return self.type_inference.js_member_sides(class_qn, method) == (False, True)
+
+    def _js_instance_member(self, class_qn: str, method: str) -> tuple[str, str] | None:
+        """`(label, qn)` of the `method` an instance of the class runs: the
+        nearest class along its chain declaring `method` for its instances.
+        A static member lives on the class object, which an instance never
+        reaches, so it hides nothing. An instance field hides every base's
+        method and names none to bind."""
+        queue: deque[str] = deque([class_qn])
+        seen = {class_qn}
+        while queue:
+            owner = self._follow_reexports(queue.popleft())
+            member_qn = f"{owner}{cs.SEPARATOR_DOT}{method}"
+            registered = member_qn in self.function_registry
+            if self._js_declares_for_instances(owner, method, registered):
+                return (
+                    (self.function_registry[member_qn], member_qn)
+                    if registered
+                    else None
+                )
+            for base in self.class_inheritance.get(owner, []):
+                if base not in seen:
+                    seen.add(base)
+                    queue.append(base)
+        return None
+
+    def _js_declares_for_instances(
+        self, class_qn: str, method: str, registered: bool
+    ) -> bool:
+        # As a method, accessor, field or signature in the body; or, with no
+        # declaration there, through a registration from outside it (a
+        # prototype write, a merged interface). With no class body to read,
+        # the registered member is the declaration.
+        sides = self.type_inference.js_member_sides(class_qn, method)
+        if sides is None:
+            return registered
+        instance, static = sides
+        return instance or (registered and not static)
 
     def _try_resolve_via_import(
         self,
@@ -6329,58 +6819,84 @@ class CallResolver:
         import_map: dict[str, str],
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         class_name = parts[0]
         method_name = cs.SEPARATOR_DOT.join(parts[1:])
 
-        if class_name in import_map:
-            class_qn = import_map[class_name]
-            method_qn = f"{class_qn}.{method_name}"
-            if method_qn in self.function_registry:
-                logger.debug(
-                    ls.CALL_IMPORT_QUALIFIED,
-                    call_name=call_name,
-                    method_qn=method_qn,
-                )
-                return self.function_registry[method_qn], method_qn
-            # `import pkg.util` is recorded as `pkg -> proj.pkg.util`, so a
-            # call spelled `pkg.util.helper` repeats the module's tail; the
-            # import names the module exactly, so the call is exact too and
-            # must not fall to the name-only trie (issue #1526).
-            if module_qn_hit := self._import_tail_qualified(class_qn, parts, call_name):
-                return module_qn_hit
+        if class_name in import_map and (
+            imported := self._import_qualified_method(
+                import_map[class_name], parts, method_name, call_name
+            )
+        ):
+            return imported
 
         if local_var_types and class_name in local_var_types:
             var_type = local_var_types[class_name]
             if class_qn := self._resolve_class_qn_from_type(
                 var_type, import_map, module_qn
             ):
-                method_qn = f"{class_qn}.{method_name}"
-                if method_qn in self.function_registry:
-                    logger.debug(
-                        ls.CALL_INSTANCE_QUALIFIED,
-                        call_name=call_name,
-                        method_qn=method_qn,
-                        class_name=class_name,
-                        var_type=var_type,
-                    )
-                    return self.function_registry[method_qn], method_qn
-
-                if inherited_method := self._resolve_inherited_method(
-                    class_qn, method_name
+                if language in cs.JS_TS_LANGUAGES and len(parts) == 2:
+                    # The typed lookup answered for this instance already,
+                    # nothing when a field hides the method (issue #3672).
+                    return self._js_instance_member(class_qn, method_name)
+                if typed := self._typed_local_method(
+                    class_qn, method_name, call_name, class_name, var_type
                 ):
-                    logger.debug(
-                        ls.CALL_INSTANCE_INHERITED,
-                        call_name=call_name,
-                        method_qn=inherited_method[1],
-                        class_name=class_name,
-                        var_type=var_type,
-                    )
-                    return inherited_method
+                    return typed
 
         return self._resolve_field_hop_method(
             parts, call_name, import_map, module_qn, local_var_types
         )
+
+    def _import_qualified_method(
+        self, class_qn: str, parts: list[str], method_name: str, call_name: str
+    ) -> tuple[str, str] | None:
+        """`method_name` on the module or class the call's first part imports."""
+        method_qn = f"{class_qn}.{method_name}"
+        if method_qn in self.function_registry:
+            logger.debug(
+                ls.CALL_IMPORT_QUALIFIED,
+                call_name=call_name,
+                method_qn=method_qn,
+            )
+            return self.function_registry[method_qn], method_qn
+        # `import pkg.util` is recorded as `pkg -> proj.pkg.util`, so a
+        # call spelled `pkg.util.helper` repeats the module's tail; the
+        # import names the module exactly, so the call is exact too and
+        # must not fall to the name-only trie (issue #1526).
+        return self._import_tail_qualified(class_qn, parts, call_name)
+
+    def _typed_local_method(
+        self,
+        class_qn: str,
+        method_name: str,
+        call_name: str,
+        class_name: str,
+        var_type: str,
+    ) -> tuple[str, str] | None:
+        """`method_name` on a typed local's class, or inherited by it."""
+        method_qn = f"{class_qn}.{method_name}"
+        if method_qn in self.function_registry:
+            logger.debug(
+                ls.CALL_INSTANCE_QUALIFIED,
+                call_name=call_name,
+                method_qn=method_qn,
+                class_name=class_name,
+                var_type=var_type,
+            )
+            return self.function_registry[method_qn], method_qn
+
+        if inherited_method := self._resolve_inherited_method(class_qn, method_name):
+            logger.debug(
+                ls.CALL_INSTANCE_INHERITED,
+                call_name=call_name,
+                method_qn=inherited_method[1],
+                class_name=class_name,
+                var_type=var_type,
+            )
+            return inherited_method
+        return None
 
     def _import_tail_qualified(
         self, class_qn: str, parts: list[str], call_name: str
@@ -7039,6 +7555,7 @@ class CallResolver:
                 caller_qn,
                 language,
                 call_point,
+                False,
                 False,
             ),
         )
@@ -8112,6 +8629,41 @@ class CallResolver:
             stack.extend(subclass_map.get(current, ()))
         return found
 
+    def php_concrete_subclasses(self, class_qn: str) -> set[str]:
+        """`_concrete_subclasses` for a PHP class.
+
+        `class Child extends Base` under `use App\\Base` in another file can
+        keep its parent as the dotted FQCN the import recorded (`App.Base`),
+        which no class qn in `_subclass_map` matches, so `new static` and
+        `static::m()` left Child out (PR #3652 review). Such a base counts
+        for the one class the FQCN index names, as `parent::` reads it.
+        Other languages keep `_concrete_subclasses` as it is.
+        """
+        subclass_map = self._subclass_map()
+        fqcn_bases = self._php_fqcn_bases()
+        found: set[str] = set()
+        stack = [class_qn]
+        while stack:
+            current = stack.pop()
+            for base in (current, *fqcn_bases.get(current, ())):
+                for subclass_qn in subclass_map.get(base, ()):
+                    if subclass_qn not in found:
+                        found.add(subclass_qn)
+                        stack.append(subclass_qn)
+        return found
+
+    def _php_fqcn_bases(self) -> dict[str, list[str]]:
+        if self._php_fqcn_bases_cache is None:
+            # Deferred: the PHP module imports this one.
+            from .php.references import php_class_for_base
+
+            bases: dict[str, list[str]] = {}
+            for base in self._subclass_map():
+                if (named := php_class_for_base(self, base)) not in (None, base):
+                    bases.setdefault(named, []).append(base)
+            self._php_fqcn_bases_cache = bases
+        return self._php_fqcn_bases_cache
+
     def _binding_aware_mro(self, class_qn: str, member: str) -> list[str] | None:
         """class_qn's C3 MRO when a class body in it binds `member` by assignment.
 
@@ -8175,11 +8727,7 @@ class CallResolver:
         return order
 
     def _resolve_inherited_method(
-        self,
-        class_qn: str,
-        method_name: str,
-        own_members: bool = True,
-        c3: bool = False,
+        self, class_qn: str, method_name: str, own_members: bool = True
     ) -> tuple[str, str] | None:
         # Every caller has already looked for a def of the name on class_qn
         # itself. A class-body alias there (`run = _plain`, issue #2620) is
@@ -8192,14 +8740,6 @@ class CallResolver:
                 return alias
             if self.function_registry.binds_non_method(class_qn, method_name):
                 return None
-        if c3:
-            # A Python lookup the caller marks exact goes in Python's own
-            # order: `class A(X, Y)` with `X(Z)` reaches Z's `m` through X
-            # before Y's, where the breadth-first walk takes Y's
-            # (CodeRabbit, PR #2951).
-            return self._resolve_inherited_along_mro(
-                self._c3_mro(class_qn), method_name
-            )
         if found := self._go_variant_method(class_qn, method_name):
             return found
         if class_qn not in self.class_inheritance:

@@ -31,6 +31,87 @@ if TYPE_CHECKING:
 # to emit no first-party edge at all.
 JAVA_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
+# How the type map keys an instance's field: `this.codec`.
+_THIS_PREFIX = f"{cs.JAVA_KEYWORD_THIS}{cs.SEPARATOR_DOT}"
+
+
+def _capture_site(scope_node: ASTNode) -> tuple[ASTNode, ASTNode, ASTNode] | None:
+    """For a method of an anonymous or local class: the method whose locals
+    it captures, the node that creates or declares the class (where the
+    captures are read), and the class body. None for a method of a member or
+    top-level class."""
+    body = scope_node.parent
+    if body is None or body.type != cs.TS_CLASS_BODY or body.parent is None:
+        return None
+    # The class body belongs to `new T() { ... }` or to a class declaration;
+    # above either, a method comes before any named type only when the class
+    # is declared inside that method.
+    site = body.parent
+    current = site.parent
+    while current is not None:
+        if current.type in cs.JAVA_METHOD_NODE_TYPES:
+            return current, site, body
+        if current.type in cs.JAVA_CLASS_NODE_TYPES:
+            return None
+        current = current.parent
+    return None
+
+
+def _declared_field_names(class_body: ASTNode) -> set[str]:
+    return {
+        name
+        for field in class_body.children
+        if field.type == cs.TS_FIELD_DECLARATION
+        for declarator in field.children_by_field_name(cs.FIELD_DECLARATOR)
+        if (name_node := declarator.child_by_field_name(cs.FIELD_NAME))
+        and (name := safe_decode_text(name_node))
+    }
+
+
+def _capture_base_name(site: ASTNode) -> str | None:
+    """The superclass the class created or declared at `site` names: `Base`
+    in `new Base() { ... }` or `class Local extends Base { ... }`."""
+    if site.type == cs.TS_OBJECT_CREATION_EXPRESSION:
+        type_node = site.child_by_field_name(cs.FIELD_TYPE)
+    elif (clause := site.child_by_field_name(cs.FIELD_SUPERCLASS)) is not None:
+        type_node = clause.named_child(0)
+    else:
+        return None
+    text = safe_decode_text(type_node) if type_node is not None else None
+    return text.split(cs.CHAR_ANGLE_OPEN, 1)[0] if text else None
+
+
+def _resource_in_scope_at(resource: ASTNode, site: ASTNode) -> bool:
+    # A try-with-resources variable is in scope in the later resources and
+    # the try block, never in its `catch` or `finally` (JLS 14.20.3; bot
+    # review on PR #2991).
+    specification = resource.parent
+    if specification is None or resource.end_byte > site.start_byte:
+        return False
+    if (statement := specification.parent) is None:
+        return False
+    body = statement.child_by_field_name(cs.FIELD_BODY)
+    return (body is not None and _encloses(body, site)) or _encloses(
+        specification, site
+    )
+
+
+def _encloses(container: ASTNode, node: ASTNode) -> bool:
+    return (
+        container.start_byte <= node.start_byte and node.end_byte <= container.end_byte
+    )
+
+
+def _nodes_of_type(root: ASTNode, node_type: str) -> list[ASTNode]:
+    found: list[ASTNode] = []
+    pending = [root]
+    while pending:
+        current = pending.pop()
+        if current.type == node_type:
+            found.append(current)
+        pending.extend(reversed(current.children))
+    return found
+
 
 class JavaTypeInferenceEngine(
     JavaTypeResolverMixin,
@@ -200,6 +281,14 @@ class JavaTypeInferenceEngine(
         local_var_types: dict[str, str] = {}
 
         try:
+            # A method of an anonymous or local class sees the parameters and
+            # locals of the method that declares the class (effectively final
+            # captures, so their declared types hold): `codec.encode(in)` in a
+            # `new Handler() { ... }` bound nothing where the same call from a
+            # lambda bound exactly (issue #2937). They are seeded first, so the
+            # method's own locals infer through them (`var alias = codec;`) and
+            # its own names shadow them (bot review on PR #2991).
+            self._seed_captures(scope_node, local_var_types, module_qn)
             self._collect_all_variable_types(scope_node, local_var_types, module_qn)
             logger.debug(ls.JAVA_VAR_TYPE_MAP_BUILT, count=len(local_var_types))
 
@@ -207,6 +296,111 @@ class JavaTypeInferenceEngine(
             logger.error(ls.JAVA_VAR_TYPE_MAP_FAILED, error=e)
 
         return local_var_types
+
+    def _seed_captures(
+        self, scope_node: ASTNode, types: dict[str, str], module_qn: str
+    ) -> None:
+        if (capture := _capture_site(scope_node)) is None:
+            return
+        enclosing, site, body = capture
+        # A field the class declares hides a captured local of the same name
+        # (JLS 6.4.1), so `codec` in its methods is the field, not the
+        # capture (bot review on PR #2991). The class's field pass types it
+        # where it can; a capture left in place would bind the wrong class.
+        shadowed = _declared_field_names(body)
+        base = (
+            self._java_type_ref(base_name, module_qn)
+            if (base_name := _capture_base_name(site))
+            else None
+        )
+        for name, type_name in self._captures_at(enclosing, site, module_qn).items():
+            # `this.codec` there is the enclosing instance's field; `this` in
+            # the class's methods is the class's own instance, whose fields
+            # its own pass types (Greptile, PR #2991).
+            if name in shadowed or name.startswith(_THIS_PREFIX):
+                continue
+            # A field inherited from the superclass hides it too, and is
+            # what the name reads (bot review on PR #2991).
+            inherited = (
+                self._lookup_java_field_type(base, name, module_qn, inherited_only=True)
+                if base
+                else None
+            )
+            types[name] = inherited or type_name
+
+    def _captures_at(
+        self, enclosing: ASTNode, site: ASTNode, module_qn: str
+    ) -> dict[str, str]:
+        """The names of `enclosing` in scope at `site`, with their types.
+
+        Only declarations visible there: the method's parameters, the fields
+        it sees, and a local declared before `site` in a block (or a for
+        loop) that encloses it. A same-named local of a sibling block is
+        another variable (bot review on PR #2991). An enclosing method that
+        is itself in an anonymous class sees its own captures the same way.
+        """
+        types: dict[str, str] = {}
+        self._seed_captures(enclosing, types, module_qn)
+        self._analyze_java_parameters(enclosing, types, module_qn)
+        for decl in _nodes_of_type(enclosing, cs.TS_LOCAL_VARIABLE_DECLARATION):
+            if (
+                decl.parent is not None
+                and decl.start_byte < site.start_byte
+                and _encloses(decl.parent, site)
+            ):
+                self._process_java_variable_declaration(decl, types, module_qn)
+        self._analyze_java_class_fields(enclosing, types, module_qn)
+        self._bind_clause_names_around(enclosing, site, types, module_qn)
+        return types
+
+    def _bind_clause_names_around(
+        self, enclosing: ASTNode, site: ASTNode, types: dict[str, str], module_qn: str
+    ) -> None:
+        # The names a statement or clause of `enclosing` around `site` binds,
+        # each nearer than the fields and the method's own names.
+        # A for-each variable is in scope in the loop's body only, never in
+        # its iterable (Greptile on PR #2991).
+        for loop in _nodes_of_type(enclosing, cs.TS_ENHANCED_FOR_STATEMENT):
+            body = loop.child_by_field_name(cs.FIELD_BODY)
+            if body is not None and _encloses(body, site):
+                self._process_enhanced_for_statement(loop, types, module_qn)
+        # A catch parameter and a try-with-resources variable are in scope in
+        # their clause and statement, nearer than the fields (bot review on
+        # PR #2991).
+        for param in _nodes_of_type(enclosing, cs.TS_CATCH_FORMAL_PARAMETER):
+            if param.parent is not None and _encloses(param.parent, site):
+                self._process_catch_formal_parameter(param, types, module_qn)
+        for resource in _nodes_of_type(enclosing, cs.TS_JAVA_RESOURCE):
+            if _resource_in_scope_at(resource, site):
+                self._process_java_resource(resource, types, module_qn)
+        # A lambda around `site` binds its parameters nearer than the fields
+        # and the method's own names, outermost first so the innermost wins
+        # (bot review on PR #2991).
+        for lam in _nodes_of_type(enclosing, cs.TS_JAVA_LAMBDA_EXPRESSION):
+            if _encloses(lam, site):
+                self._bind_lambda_parameters(lam, types, module_qn)
+
+    def _bind_lambda_parameters(
+        self, lam: ASTNode, types: dict[str, str], module_qn: str
+    ) -> None:
+        params = lam.child_by_field_name(cs.FIELD_PARAMETERS)
+        if params is None:
+            return
+        # `x -> ...` and `(x, y) -> ...` leave the type to inference, which
+        # this pass cannot do: the name is unknown rather than a field's.
+        untyped = (
+            [params]
+            if params.type == cs.TS_IDENTIFIER
+            else [
+                child
+                for child in params.named_children
+                if child.type == cs.TS_IDENTIFIER
+            ]
+        )
+        for name_node in untyped:
+            if name := safe_decode_text(name_node):
+                types.pop(name, None)
+        self._analyze_java_parameters(lam, types, module_qn)
 
     def resolve_java_method_call(
         self,

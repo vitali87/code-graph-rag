@@ -72,6 +72,14 @@ JS_TS_IMPORT_NODES = (
 JS_TS_LANGUAGES = frozenset(
     {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
 )
+# Languages where a bare call name never names a method: one is reached only
+# through a receiver (`this.`, `self.`, a value), which these spell in the
+# call name. PHP and C/C++ drop the receiver from a member call's name, so
+# the call processor flags their receiverless calls instead (issue #2575).
+BARE_CALL_NO_METHOD_LANGUAGES = JS_TS_LANGUAGES | {
+    SupportedLanguage.GO,
+    SupportedLanguage.RUST,
+}
 # Languages whose functions `callable_parameter_indices` can find invoking
 # a parameter, and so whose callable-argument edges an incremental run must
 # re-derive from the passing files (issue #2911).

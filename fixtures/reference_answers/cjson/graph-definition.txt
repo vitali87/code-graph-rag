@@ -1,0 +1,18 @@
+$ cgr -q graph definition cjson.cJSON.cJSON_Parse --project cjson --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "decorators": [],
+  "docstring": null,
+  "end_line": 1187,
+  "found": true,
+  "label": "Function",
+  "name": "cJSON_Parse",
+  "name_line": 1184,
+  "path": "cJSON.c",
+  "qualified_name": "cjson.cJSON.cJSON_Parse",
+  "source": "CJSON_PUBLIC(cJSON *) cJSON_Parse(const char *value)\n{\n    return cJSON_ParseWithOpts(value, 0, 0);\n}",
+  "start_col": 0,
+  "start_line": 1184
+}
+--- stderr

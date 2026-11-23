@@ -1,0 +1,13 @@
+$ cgr -q graph tests-reaching example-jl.src.Example.Example.domath --project example-jl
+status: 0
+--- stdout
+[
+  {
+    "depth": 1,
+    "label": "Module",
+    "path": "test/runtests.jl",
+    "qualified_name": "example-jl.test.runtests",
+    "through": "example-jl.src.Example.Example.domath"
+  }
+]
+--- stderr

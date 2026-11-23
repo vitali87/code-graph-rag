@@ -1,0 +1,18 @@
+$ cgr -q graph definition lume.lume.lume.round --project lume --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "decorators": [],
+  "docstring": null,
+  "end_line": 75,
+  "found": true,
+  "label": "Function",
+  "name": "round",
+  "name_line": 72,
+  "path": "lume.lua",
+  "qualified_name": "lume.lume.lume.round",
+  "source": "function lume.round(x, increment)\n  if increment then return lume.round(x / increment) * increment end\n  return x >= 0 and math_floor(x + .5) or math_ceil(x - .5)\nend",
+  "start_col": 0,
+  "start_line": 72
+}
+--- stderr

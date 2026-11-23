@@ -1,0 +1,103 @@
+$ cgr -q context scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleArgument --budget 1500 --project scopt --repo-path '<root>'
+status: 0
+--- stdout
+{
+  "target": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleArgument",
+  "resolved": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleArgument",
+  "budget_tokens": 1500,
+  "used_tokens": 919,
+  "pieces": [
+    {
+      "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleArgument",
+      "file": "shared/src/main/scala/scopt/ORunner.scala",
+      "span": [
+        268,
+        283
+      ],
+      "why_included": "target",
+      "source": "def handleArgument(opt: OptionDef[_, C], arg: String): Unit = {\n      // version and help are dependent on runner results, so the actions are provided here\n      val runnerAction = opt.kind match {\n        case OptHelp    => Some(helpAction)\n        case OptVersion => Some(versionAction)\n        case _          => None\n      }\n      opt.applyArgument(arg, _config, runnerAction) match {\n        case Right(c) =>\n          _config = c\n          pushChildren(opt)\n        case Left(xs) =>\n          _error = true\n          xs foreach reportError\n      }\n    }",
+      "tokens": 219
+    },
+    {
+      "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.handleShortOptions",
+      "file": "shared/src/main/scala/scopt/ORunner.scala",
+      "span": [
+        328,
+        328
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "handleArgument(option, \"\")",
+      "tokens": 93
+    },
+    {
+      "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.pushChildren",
+      "file": "shared/src/main/scala/scopt/ORunner.scala",
+      "span": [
+        235,
+        235
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "def pushChildren(opt: OptionDef[_, C]): Unit = {",
+      "tokens": 99
+    },
+    {
+      "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.runParser",
+      "file": "shared/src/main/scala/scopt/ORunner.scala",
+      "span": [
+        369,
+        369
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "case Right(v)          => handleArgument(option, v)",
+      "tokens": 97
+    },
+    {
+      "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.runParser",
+      "file": "shared/src/main/scala/scopt/ORunner.scala",
+      "span": [
+        387,
+        387
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "handleArgument(cmd, \"\")",
+      "tokens": 92
+    },
+    {
+      "qualified_name": "scopt.shared.src.main.scala.scopt.ORunner.ORunner.runParser",
+      "file": "shared/src/main/scala/scopt/ORunner.scala",
+      "span": [
+        392,
+        392
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "handleArgument(first, arg)",
+      "tokens": 91
+    },
+    {
+      "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.applyArgument",
+      "file": "shared/src/main/scala/scopt/OptionDef.scala",
+      "span": [
+        202,
+        202
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "private[scopt] def applyArgument(\n      arg: String,\n      config: C,\n      onOption: Option[C => C]\n  ): Either[CSeq[String], C] =",
+      "tokens": 128
+    },
+    {
+      "qualified_name": "scopt.shared.src.main.scala.scopt.OptionDef.OptionDef.foreach",
+      "file": "shared/src/main/scala/scopt/OptionDef.scala",
+      "span": [
+        115,
+        115
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "def foreach(f: A => Unit): OptionDef[A, C] =",
+      "tokens": 100
+    }
+  ],
+  "omitted": [],
+  "omitted_count": 0,
+  "truncated": false
+}
+--- stderr

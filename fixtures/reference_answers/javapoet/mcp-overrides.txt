@@ -1,0 +1,35 @@
+> tools/call overrides {"qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeName.TypeName.emit(CodeWriter)"}
+isError: false
+--- text
+[
+  {
+    "label": "Method",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ArrayTypeName.ArrayTypeName.emit(CodeWriter)",
+    "path": "src/main/java/com/squareup/javapoet/ArrayTypeName.java",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ClassName.ClassName.emit(CodeWriter)",
+    "path": "src/main/java/com/squareup/javapoet/ClassName.java",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.ParameterizedTypeName.ParameterizedTypeName.emit(CodeWriter)",
+    "path": "src/main/java/com/squareup/javapoet/ParameterizedTypeName.java",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.TypeVariableName.TypeVariableName.emit(CodeWriter)",
+    "path": "src/main/java/com/squareup/javapoet/TypeVariableName.java",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "qualified_name": "javapoet.src.main.java.com.squareup.javapoet.WildcardTypeName.WildcardTypeName.emit(CodeWriter)",
+    "path": "src/main/java/com/squareup/javapoet/WildcardTypeName.java",
+    "relationship": "OVERRIDES"
+  }
+]

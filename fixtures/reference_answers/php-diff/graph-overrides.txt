@@ -1,0 +1,30 @@
+$ cgr -q graph overrides php-diff.src.Output.DiffOutputBuilderInterface.DiffOutputBuilderInterface.getDiff --project php-diff
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "path": "src/Output/DiffOnlyOutputBuilder.php",
+    "qualified_name": "php-diff.src.Output.DiffOnlyOutputBuilder.DiffOnlyOutputBuilder.getDiff",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "src/Output/StrictUnifiedDiffOutputBuilder.php",
+    "qualified_name": "php-diff.src.Output.StrictUnifiedDiffOutputBuilder.StrictUnifiedDiffOutputBuilder.getDiff",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "src/Output/UnifiedDiffOutputBuilder.php",
+    "qualified_name": "php-diff.src.Output.UnifiedDiffOutputBuilder.UnifiedDiffOutputBuilder.getDiff",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "tests/Output/AbstractChunkOutputBuilderTest.php",
+    "qualified_name": "php-diff.tests.Output.AbstractChunkOutputBuilderTest.AbstractChunkOutputBuilderTest.testGetCommonChunks.anonymous_127_22.getDiff",
+    "relationship": "OVERRIDES"
+  }
+]
+--- stderr

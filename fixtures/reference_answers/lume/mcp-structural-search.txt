@@ -1,0 +1,18 @@
+> tools/call structural_search {"language": "lua", "pattern": "getiter($X)"}
+isError: false
+--- text
+lume.lua:160:15  getiter(t)
+lume.lua:177:15  getiter(t)
+lume.lua:234:15  getiter(t)
+lume.lua:246:15  getiter(t)
+lume.lua:255:15  getiter(t)
+lume.lua:265:15  getiter(t)
+lume.lua:276:15  getiter(t)
+lume.lua:301:15  getiter(t)
+lume.lua:318:15  getiter(t)
+lume.lua:337:17  getiter(t)
+lume.lua:351:19  getiter(t)
+lume.lua:362:15  getiter(t)
+lume.lua:372:15  getiter(t)
+lume.lua:382:15  getiter(t)
+lume.lua:440:15  getiter(t)

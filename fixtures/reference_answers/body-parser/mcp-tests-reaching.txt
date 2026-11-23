@@ -1,0 +1,19 @@
+> tools/call tests_reaching {"qualified_name": "body-parser.lib.read.read"}
+isError: false
+--- text
+[
+  {
+    "label": "Module",
+    "qualified_name": "body-parser.test.urlencoded",
+    "path": "test/urlencoded.js",
+    "depth": 2,
+    "through": "body-parser.lib.types.text.text"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "body-parser.test.urlencoded.expectKeyCount",
+    "path": "test/urlencoded.js",
+    "depth": 2,
+    "through": "body-parser.lib.types.text.text"
+  }
+]
