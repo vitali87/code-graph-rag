@@ -34,7 +34,13 @@ from .php.utils import (
     php_trait_composition,
     type_declaration_qn,
 )
-from .py import module_binds_name, python_literal_text_type, resolve_class_name
+from .py import (
+    external_class_members,
+    module_binds_name,
+    python_literal_text_type,
+    resolve_class_name,
+)
+from .py.receiver_rebinding import instance_attribute_names
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
@@ -350,6 +356,10 @@ class CallResolver:
         "cpp_local_scopes",
         "js_local_scopes",
         "python_local_names",
+        "python_rebound_receivers",
+        "python_bound_receivers",
+        "python_hidden_receiver_spans",
+        "_py_instance_attrs_memo",
         "js_parameter_names",
         "function_registry",
         "import_processor",
@@ -441,6 +451,22 @@ class CallResolver:
         # caller qn -> every name that Python function binds itself (#2666);
         # filled alongside python_shadowed_imports.
         self.python_local_names: dict[str, frozenset[str]] = {}
+        # Python caller qn -> the receivers (`self`, `cls`) its body, or an
+        # enclosing def's, binds anew; filled alongside python_local_names. A
+        # call through one may run on whatever was assigned (CodeRabbit, PR
+        # #2908).
+        self.python_rebound_receivers: dict[str, frozenset[str]] = {}
+        # Python caller qn -> the name its method's instance (or class) is
+        # bound to: the method's first parameter, none for a static method,
+        # filled alongside python_rebound_receivers.
+        self.python_bound_receivers: dict[str, str] = {}
+        # Python caller qn -> the byte spans of its nested defs and lambdas
+        # that take a parameter named like its bound receiver, where that
+        # name is the parameter, not the instance.
+        self.python_hidden_receiver_spans: dict[str, tuple[tuple[int, int], ...]] = {}
+        # Python module qn -> {class name: the attributes its methods assign
+        # on their receiver}, read from the module's tree once per pass.
+        self._py_instance_attrs_memo: dict[str, dict[str, frozenset[str]]] = {}
         # JS/TS caller qn -> the names its own parameters bind: a bare call to
         # one calls the argument, never the import or module function of the
         # name (`function run(pad) { pad("x") }`), filled the same way.
@@ -767,6 +793,8 @@ class CallResolver:
         self._php_class_namespaces.clear()
         # Or changed which traits it uses and which methods it takes.
         self._php_composition_memo.clear()
+        # Or a re-parsed Python one assign other instance attributes.
+        self._py_instance_attrs_memo.clear()
         self._php_cased_index = None
         self._php_fqcn_bases_cache = None
         # A re-parsed TS file may declare a different return.
@@ -857,6 +885,153 @@ class CallResolver:
         return guessed is not None and (
             call_name.split(cs.SEPARATOR_DOT, 1)[0] in guessed
         )
+
+    def _python_receiver_hidden_at(self, call: _CallSite) -> bool:
+        # Inside a nested def or lambda that takes a parameter named like the
+        # receiver, the name is that parameter; a call whose site is unknown
+        # cannot be placed, so it is not trusted either.
+        spans = self.python_hidden_receiver_spans.get(call.caller_qn or "")
+        if not spans:
+            return False
+        point = call.call_point
+        return point is None or any(start <= point < end for start, end in spans)
+
+    def _resolve_python_self_method(self, call: _CallSite) -> tuple[str, str] | None:
+        """`self.m()` / `cls.m()` on the method the enclosing class defines or
+        inherits: the static target, `exact` as `this.m()` is in Java or C#.
+
+        Without it the call fell to the bare-name trie and was labelled
+        `heuristic` unless the class had a subclass, so `rename` refused
+        nearly every Python method (issue #2475). Answered from the class,
+        ahead of the module-keyed cache a sibling class would share. An
+        abstract stub never runs, so it is left to the dispatch path, which
+        prefers the concrete implementation; a name the class does not have
+        (a sibling mixin's) keeps the paths below.
+        """
+        if (
+            not call.class_context
+            or call.constructing
+            or not self._is_python_call(call)
+        ):
+            return None
+        receiver, _, method_name = call.call_name.partition(cs.SEPARATOR_DOT)
+        if (
+            receiver not in _PY_SELF_RECEIVERS
+            or not method_name
+            or cs.SEPARATOR_DOT in method_name
+            # An annotated receiver (`self: B` in a method of `A`) names its
+            # own type; the typed-receiver lookup below honours it, where
+            # the enclosing class would bind `A.m` (Greptile, PR #2953).
+            or (call.local_var_types and receiver in call.local_var_types)
+            # A body that assigns the receiver (`self = factory()`) may call
+            # through a value whose type nothing inferred, so the enclosing
+            # class is no certain target (CodeRabbit, PR #2908).
+            or receiver
+            in self.python_rebound_receivers.get(call.caller_qn or "", frozenset())
+            # Only the method's bound receiver is the class's instance: a
+            # static method's `self` is whatever its caller passed, and so
+            # is `cls` in `def run(self, cls)` (CodeRabbit, Greptile, PR
+            # #2908).
+            or self.python_bound_receivers.get(call.caller_qn or "") != receiver
+            or self._python_receiver_hidden_at(call)
+        ):
+            return None
+        if method_name.startswith(cs.PY_NAME_DUNDER) and not method_name.endswith(
+            cs.PY_NAME_DUNDER
+        ):
+            # `self.__m()` in `D` looks up `_D__m`: only D's own `__m` is it,
+            # never a base's, which Python stores as `_B__m` (CodeRabbit, PR
+            # #2908).
+            own_qn = f"{call.class_context}{cs.SEPARATOR_DOT}{method_name}"
+            target = (
+                (self.function_registry[own_qn], own_qn)
+                if own_qn in self.function_registry
+                else None
+            )
+        else:
+            target = self._method_by_mro(call.class_context, method_name)
+        if (
+            target is None
+            or self.function_registry.is_abstract(target[1])
+            or self._unknown_base_may_bind_first(call.class_context, method_name)
+            or self._instance_attribute_shadows(call.class_context, method_name)
+        ):
+            return None
+        self.last_resolution = cs.EdgeResolution.EXACT
+        return target
+
+    def python_class_mro(self, class_qn: str) -> list[str]:
+        """The class and its bases in Python's method resolution order."""
+        return self._c3_mro(class_qn)
+
+    def _instance_attribute_shadows(self, class_qn: str, name: str) -> bool:
+        # An attribute the class or a base assigns on its instances
+        # (`self.m = callback`) is found before any class's `m`, so
+        # `self.m()` may call the value (CodeRabbit, PR #2908).
+        return any(
+            name in self._python_instance_attributes(owner)
+            for owner in self._c3_mro(class_qn)
+        )
+
+    def _python_instance_attributes(self, class_qn: str) -> frozenset[str]:
+        module_qn = module_qn_for_entity(
+            class_qn, self.type_inference.module_qn_to_file_path
+        )
+        if module_qn is None:
+            return frozenset()
+        if (by_class := self._py_instance_attrs_memo.get(module_qn)) is None:
+            by_class = {}
+            root = self._cached_module_root(module_qn)
+            stack = [root] if root is not None else []
+            while stack:
+                node = stack.pop()
+                if node.type == cs.TS_PY_CLASS_DEFINITION and (
+                    name := safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
+                ):
+                    # Same-named classes in one module: either may be it.
+                    by_class[name] = by_class.get(
+                        name, frozenset()
+                    ) | instance_attribute_names(node)
+                stack.extend(node.children)
+            self._py_instance_attrs_memo[module_qn] = by_class
+        return by_class.get(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1], frozenset())
+
+    def _unknown_base_may_bind_first(self, class_qn: str, method_name: str) -> bool:
+        """Whether a base the graph holds no class for may bind `method_name`
+        ahead of the class that does along the C3 order: in
+        `class D(ExternalBase, B)`, `self.m()` runs `ExternalBase.m` if it
+        has one, not `B.m` (CodeRabbit, PR #2908). A builtin or stdlib base
+        is read for the name; any other one may bind anything."""
+        registry = self.function_registry
+        for owner in self._c3_mro(class_qn):
+            if registry.get(owner) is None:
+                members = external_class_members(owner)
+                if members is None or method_name in members:
+                    return True
+                continue
+            if (
+                f"{owner}{cs.SEPARATOR_DOT}{method_name}" in registry
+                or self._member_alias(owner, method_name)
+                or registry.binds_non_method(owner, method_name)
+            ):
+                return False
+        return False
+
+    def _method_by_mro(self, class_qn: str, method_name: str) -> tuple[str, str] | None:
+        """The `method_name` a lookup on `class_qn` runs: its own, else the
+        first base in its C3 method resolution order that binds it. For
+        `D(B, C)` with `B(A)` that is D, B, A, C, where a breadth-first walk
+        of the bases meets C before A (Greptile, PR #2908). A class-body alias
+        or value binds the name along the same order (issue #2620), as in
+        `_try_resolve_method`."""
+        if alias := self._member_alias(class_qn, method_name):
+            return alias
+        own_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+        if own_qn in self.function_registry:
+            return self.function_registry[own_qn], own_qn
+        if self.function_registry.binds_non_method(class_qn, method_name):
+            return None
+        return self._resolve_inherited_along_mro(self._c3_mro(class_qn), method_name)
 
     def _is_python_local_name(self, call: _CallSite) -> bool:
         if not call.caller_qn or cs.SEPARATOR_DOT in call.call_name:
@@ -1527,7 +1702,7 @@ class CallResolver:
         # override does), so it must not be a call target; a concrete sibling/impl
         # wins. Abstract methods only "reached" polymorphically are handled as
         # dead-code roots, not by a spurious CALLS edge.
-        if (base := self._try_resolve_method(class_context, method_name)) and (
+        if (base := self._method_by_mro(class_context, method_name)) and (
             not self.function_registry.is_abstract(base[1])
         ):
             targets.add(base)
@@ -2154,13 +2329,6 @@ class CallResolver:
         handled, result = self._resolve_caller_scoped_stages(call)
         if handled:
             return result
-        # After the scope walk, which answers a nested def or class of the
-        # name: any other local is a value the graph cannot follow, and the
-        # same-module, class, import and trie stages below would bind it to
-        # the definition it shadows (issue #2666). Before the cache, whose
-        # answers are caller-independent.
-        if self._is_python_local_name(call) or self._is_js_parameter_name(call):
-            return None
 
         cache_key = self._resolution_cache_key(call)
         if cache_key is not None and cache_key in self._simple_resolution_cache:
@@ -2362,10 +2530,25 @@ class CallResolver:
             self._resolve_c_family_inherited_member,
             self._resolve_inherited_bare_call,
             self._resolve_js_object_member,
+            self._resolve_local_name_or_self_method,
         ):
             handled, result = stage(call)
             if handled:
                 return True, result
+        return False, None
+
+    def _resolve_local_name_or_self_method(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # After the scope walk, which answers a nested def or class of the
+        # name: any other local is a value the graph cannot follow, and the
+        # same-module, class, import and trie stages below would bind it to
+        # the definition it shadows (issue #2666). Before the cache, whose
+        # answers are caller-independent.
+        if self._is_python_local_name(call) or self._is_js_parameter_name(call):
+            return True, None
+        if (result := self._resolve_python_self_method(call)) is not None:
+            return True, result
         return False, None
 
     def _resolve_receiver_shadow(

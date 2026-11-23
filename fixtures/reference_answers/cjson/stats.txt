@@ -24,7 +24,7 @@ Scoped to: cjson
 ┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
 ┃ Relationship Type   ┃ Count ┃
 ┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
-│ CALLS               │ 1,531 │
+│ CALLS               │ 1,529 │
 │ DEFINES             │   582 │
 │ CONTAINS_SECTION    │   399 │
 │ IMPORTS             │   221 │
@@ -38,7 +38,7 @@ Scoped to: cjson
 │ CONTAINS_PACKAGE    │     3 │
 │ INSTANTIATES        │     2 │
 ├─────────────────────┼───────┤
-│ Total Relationships │ 3,274 │
+│ Total Relationships │ 3,272 │
 └─────────────────────┴───────┘
 --- stderr
 Fetching graph statistics...

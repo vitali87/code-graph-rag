@@ -74,7 +74,14 @@ from .php import utils as php_utils
 from .py import utils as py_utils
 from .py.class_aliases import scan_class_body_aliases
 from .py.flow_bindings import Binding, BindingKind, FlowBindings, call_base
-from .py.receiver_rebinding import ReceiverRebinding, receiver_rebinding
+from .py.receiver_rebinding import (
+    ReceiverRebinding,
+    annotates_receiver,
+    bound_receiver,
+    receiver_annotation,
+    receiver_hidden_spans,
+    receiver_rebinding,
+)
 from .py.type_inference import PythonTypeInferenceEngine
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
@@ -6593,6 +6600,31 @@ class CallProcessor:
             self._resolver.python_local_names[caller_qn] = local
         else:
             self._resolver.python_local_names.pop(caller_qn, None)
+        # A receiver the body assigns anew keeps `self.m()` off the exact
+        # enclosing-class answer (CodeRabbit, PR #2908).
+        rebound = (
+            python_inference.rebound_receivers(caller_node)
+            if caller_node.type in _PY_LOCAL_SCOPE_CALLERS
+            else frozenset()
+        )
+        if rebound:
+            self._resolver.python_rebound_receivers[caller_qn] = rebound
+        else:
+            self._resolver.python_rebound_receivers.pop(caller_qn, None)
+        # The method's bound receiver, if any: a static method binds none,
+        # and `cls` in `def run(self, cls)` is a plain parameter.
+        # Where a nested def or lambda takes a parameter of its name, the
+        # receiver is that parameter instead (`(lambda self: self.name)`).
+        if receiver := bound_receiver(caller_node):
+            self._resolver.python_bound_receivers[caller_qn] = receiver
+            hidden = receiver_hidden_spans(caller_node, receiver)
+        else:
+            self._resolver.python_bound_receivers.pop(caller_qn, None)
+            hidden = ()
+        if hidden:
+            self._resolver.python_hidden_receiver_spans[caller_qn] = hidden
+        else:
+            self._resolver.python_hidden_receiver_spans.pop(caller_qn, None)
         self._record_python_name_typed_params(caller_node, caller_qn, module_qn)
 
     def _record_python_name_typed_params(
@@ -7493,14 +7525,25 @@ class CallProcessor:
             call_var_types = self._overlay_span_binding(
                 call_name, call_node, ctx.local_var_types, ctx.span_bindings
             )
+        receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
         if (
             call_var_types
             and (rebinding := self._receiver_rebinding_at(ctx, call_node, call_name))
             and not rebinding.sometimes
+            # An annotated `self: Other` holds from the def's entry, so no
+            # rebinding is needed for the map's type to apply. Unless the body
+            # rebinds the receiver too: the map's one entry may then be the
+            # later assignment's type (CodeRabbit, PR #2908).
+            and not (
+                annotates_receiver(call_node, receiver)
+                and receiver
+                not in self._resolver.python_rebound_receivers.get(
+                    ctx.caller_qn, frozenset()
+                )
+            )
         ):
             # No `self = Other()` can run before this call, so the method-wide
             # type of `self` does not apply to it (issue #2620).
-            receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
             call_var_types = {
                 name: var_type
                 for name, var_type in call_var_types.items()
@@ -9723,20 +9766,7 @@ class CallProcessor:
             self._emit_protocol_conformer_edges(ctx, dispatch_targets)
             return
 
-        if (
-            ctx.is_python
-            and ctx.class_context
-            and (
-                call_name.startswith(cs.PY_SELF_PREFIX)
-                or call_name.startswith(cs.PY_CLS_PREFIX)
-            )
-            # A call that runs after `self = Other()` on every path calls
-            # through that value's type, which the resolved edge follows.
-            and not (
-                (rebinding := self._receiver_rebinding_at(ctx, call_node, call_name))
-                and rebinding.always
-            )
-        ):
+        if class_qn := self._python_self_dispatch_class(ctx, call_node, call_name):
             # self.M()/cls.M() statically targets the enclosing class's own or
             # inherited M and dynamically dispatches to every concrete subclass
             # override, so emit an edge to each in ADDITION to the resolved edge
@@ -9747,7 +9777,7 @@ class CallProcessor:
             # miss the base and the others. The self/cls receiver excludes
             # super().M() and Base.M() (not virtual dispatch). Skip self.attr.M()
             # (a call on a member, not on self).
-            self._emit_python_self_dispatch(ctx, ctx.class_context, call_name)
+            self._emit_python_self_dispatch(ctx, class_qn, call_name)
 
         if (
             ctx.is_js_ts
@@ -9845,6 +9875,61 @@ class CallProcessor:
         ):
             return None
         return receiver_rebinding(call_node, receiver)
+
+    def _python_self_dispatch_class(
+        self, ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> str | None:
+        # The enclosing class a Python `self.M()` / `cls.M()` dispatches
+        # through, or None when the call's receiver is not its instance.
+        class_qn = ctx.class_context
+        if (
+            not ctx.is_python
+            or not class_qn
+            or not (
+                call_name.startswith(cs.PY_SELF_PREFIX)
+                or call_name.startswith(cs.PY_CLS_PREFIX)
+            )
+        ):
+            return None
+        receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
+        # A typed `self` (a static method's `self: Other`) names its own
+        # type, not the enclosing class (Greptile, PR #2908). Only the
+        # annotation says so: the method-wide map also holds a later
+        # `self = Other()`, which leaves an earlier call on the class. An
+        # annotation naming the class itself or a base (`self: "Base"`,
+        # `self: Self`) still dispatches to the overrides (Greptile).
+        if self._receiver_annotated_elsewhere(
+            class_qn,
+            receiver_annotation(call_node, receiver),
+            (ctx.local_var_types or {}).get(receiver),
+        ):
+            return None
+        # A call that runs after `self = Other()` on every path calls
+        # through that value's type, which the resolved edge follows.
+        rebinding = self._receiver_rebinding_at(ctx, call_node, call_name)
+        if rebinding and rebinding.always:
+            return None
+        return class_qn
+
+    def _receiver_annotated_elsewhere(
+        self, class_qn: str, annotation: str | None, typed: str | None
+    ) -> bool:
+        # Whether a receiver annotation names a type other than the class
+        # or one of its bases. A qualified one (`self: pkg.Host`) may name
+        # another class of the same short name, so it counts as the class
+        # only when its whole dotted name ends a class's qn (`proj.pkg.Host`),
+        # or when the type map resolved it to one (Greptile, PR #2908).
+        if annotation is None or annotation == cs.PY_ANNOTATION_SELF:
+            return False
+        mro = self._resolver.python_class_mro(class_qn)
+        if cs.SEPARATOR_DOT in annotation:
+            return not any(
+                qn == spelled or qn.endswith(f"{cs.SEPARATOR_DOT}{spelled}")
+                for qn in mro
+                for spelled in (annotation, typed)
+                if spelled
+            )
+        return annotation not in {qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] for qn in mro}
 
     def _emit_python_self_dispatch(
         self, ctx: _CallScanContext, class_context: str, call_name: str
