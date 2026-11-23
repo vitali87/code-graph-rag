@@ -3,14 +3,16 @@
 The `--engine-mode` option (docs/reports/PHASE1_SEAMS.md, section 2):
 
 - `python`, the default: today's suite, unchanged.
-- `rust`: each test runs with `CGR_INDEX_ENGINE=rust`, in its own process
-  (the setting) and in any `cgr` it starts (the variable), so every language
-  the build can index on Rust is indexed there and the rest on Python.
-- `both`: as `rust`, and each time a test's `GraphUpdater.run` returns on a
-  repository holding a language its selection puts on Rust, the repository is
-  indexed afresh twice more, once with every language on Python and once with
-  the test's own selection, and the test fails at teardown when the two
-  graphs differ.
+- `rust`: the session runs with `CGR_INDEX_ENGINE=rust`, in its own process
+  (the setting) and in any `cgr` a test starts (the variable), so every
+  language the build can index on Rust is indexed there and the rest on
+  Python. It is set when the session is configured, so the runs of session-
+  and module-scoped fixtures are on it too.
+- `both`: as `rust`, and each time `GraphUpdater.run` returns on a repository
+  holding a language the run's selection puts on Rust, the repository is
+  indexed afresh twice more, once with every language on Python and once
+  with that selection. When the two graphs differ, the test fails at
+  teardown; for a run in a shared fixture, every test that uses it does.
 
 While the build can index no language on Rust (`rust_engine_languages()` is
 empty), `rust` runs exactly what `python` runs and `both` indexes nothing
@@ -24,18 +26,21 @@ rewritten. The test still runs in every mode.
 Loaded as a plugin from pyproject's `addopts` (`-p`), as `suite_shards` is:
 a bare `pytest`, CI's invocation, loads the tests' conftest too late to
 register an option. In the default mode nothing from `codebase_rag` is
-imported or set unless a test carries the marker, so it costs nothing.
+imported, set or wrapped unless a test carries the marker, so it costs
+nothing.
 """
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
 import re
 import tempfile
 import traceback
-from collections.abc import Callable, Generator, Iterator
+from collections import defaultdict
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from enum import StrEnum
 from pathlib import Path
@@ -110,6 +115,13 @@ REPORT_NOT_COMPARED = "  {artefact}: not compared"
 REPORT_SWALLOWED = "  {engine} run swallowed {count} pass failure{plural}:"
 REPORT_RAISED = "  {engine} run raised:"
 REPORT_SEPARATOR = "\n\n"
+REPORT_SHARED = "In the {scope}-scoped fixture {argname!r}, which this test uses:\n"
+REPORT_SECTION = "engine comparison"
+TEARDOWN = "teardown"
+FUNCTION_SCOPE = "function"
+FIXTURE_ID_SEPARATOR = "::"
+OUTSIDE_A_TEST = "outside-a-test"
+ENGINE_SESSION_PLUGIN = "cgr-engine-session"
 ARTEFACT_GRAPH = "graph"
 LANGUAGE_SEPARATOR = ", "
 DIFF_ONLY_PYTHON = "-"
@@ -146,7 +158,147 @@ class RepoState(NamedTuple):
 
 type Run = Callable[[GraphUpdater, bool], None]
 
-_CLASS_RUN = pytest.StashKey[Run]()
+
+class SharedFixture(NamedTuple):
+    """A session-, package-, module- or class-scoped fixture: its name, its
+    scope, and the node it was set up for. Its value is shared by every test
+    under that node that uses it, so a difference its run shows is each of
+    theirs."""
+
+    argname: str
+    scope: str
+    node: pytest.Item | pytest.Collector
+
+    @property
+    def label(self) -> str:
+        return f"{self.node.nodeid}{FIXTURE_ID_SEPARATOR}{self.argname}"
+
+
+class EngineSession:
+    """The `rust` and `both` modes, for the whole session.
+
+    The selection is set when the session is configured and the comparison
+    wraps `GraphUpdater.run` from then on, so a run made in a session- or
+    module-scoped fixture, which is set up before any function-scoped one,
+    is on the mode and is compared like a run in a test. A test that sets
+    the variable or patches the setting itself, and the marker, still win
+    for that test: their patches are applied over this one and undone after.
+    """
+
+    def __init__(self, mode: EngineMode) -> None:
+        from codebase_rag.config import settings
+
+        self._patch = pytest.MonkeyPatch()
+        self._patch.setattr(settings, INDEX_ENGINE_SETTING, EngineMode.RUST.value)
+        self._patch.setenv(INDEX_ENGINE_ENV, EngineMode.RUST.value)
+        # The test running now, and the shared fixtures being set up for it,
+        # innermost last: what a run that returns is reported against.
+        self._item: pytest.Item | None = None
+        self._fixtures: list[SharedFixture] = []
+        self._compared: defaultdict[str, set[RepoState]] = defaultdict(set)
+        self._test_reports: defaultdict[str, list[str]] = defaultdict(list)
+        self._fixture_reports: defaultdict[SharedFixture, list[str]] = defaultdict(list)
+        if mode is EngineMode.BOTH:
+            self._compare_after_every_run()
+
+    def _compare_after_every_run(self) -> None:
+        from codebase_rag.graph_updater import GraphUpdater
+
+        # Installed before any test or fixture wraps `run`, so the scratch
+        # runs call `run` as the class defines it, and the suite's grammar
+        # skip and pass-failure gate, and any wrapper a test adds, see the
+        # test's own runs only.
+        class_run = GraphUpdater.run
+
+        @functools.wraps(class_run)
+        def run_then_compare(updater: GraphUpdater, force: bool = False) -> None:
+            class_run(updater, force)
+            # After the run, so one that skips for a missing grammar or fails
+            # pays nothing extra.
+            self._compare(updater, class_run)
+
+        self._patch.setattr(GraphUpdater, "run", run_then_compare)
+
+    def _compare(self, updater: GraphUpdater, run: Run) -> None:
+        if not updater.rust_languages:
+            return
+        fixture = self._fixtures[-1] if self._fixtures else None
+        if fixture is not None:
+            label = fixture.label
+        elif self._item is not None:
+            label = self._item.nodeid
+        else:
+            label = OUTSIDE_A_TEST
+        report = compare_engines(updater, run, self._compared[label], label)
+        if report is None:
+            return
+        if fixture is not None:
+            self._fixture_reports[fixture].append(report)
+        elif self._item is not None:
+            self._test_reports[label].append(report)
+        else:
+            # No test to fail: collection, or a thread a test left running.
+            pytest.fail(report, pytrace=False)
+
+    def _reports_for(self, item: pytest.Item) -> list[str]:
+        """What the test's own runs found, and what the runs of the shared
+        fixtures it uses found, each once."""
+        self._compared.pop(item.nodeid, None)
+        chain = item.listchain()
+        # Only a test function requests fixtures; any other item uses none.
+        uses = item.fixturenames if isinstance(item, pytest.Function) else ()
+        shared = [
+            REPORT_SHARED.format(scope=fixture.scope, argname=fixture.argname) + report
+            for fixture, reports in self._fixture_reports.items()
+            if fixture.argname in uses and fixture.node in chain
+            for report in reports
+        ]
+        return [*shared, *self._test_reports.pop(item.nodeid, [])]
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_runtest_protocol(
+        self, item: pytest.Item, nextitem: pytest.Item | None
+    ) -> Generator[None, bool | None, bool | None]:
+        self._item = item
+        try:
+            return (yield)
+        finally:
+            self._item = None
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup[T](
+        self, fixturedef: pytest.FixtureDef[T], request: pytest.FixtureRequest
+    ) -> Generator[None, T, T]:
+        if fixturedef.scope == FUNCTION_SCOPE:
+            return (yield)
+        self._fixtures.append(
+            SharedFixture(fixturedef.argname, fixturedef.scope, request.node)
+        )
+        try:
+            return (yield)
+        finally:
+            self._fixtures.pop()
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_runtest_teardown(
+        self, item: pytest.Item, nextitem: pytest.Item | None
+    ) -> Generator[None, None, None]:
+        # After every fixture's teardown, shared ones included, so a run made
+        # there is reported too; at teardown, as the pass-failure gate fails,
+        # so the test's own assertions still report.
+        try:
+            yield
+        except BaseException:
+            if reports := self._reports_for(item):
+                item.add_report_section(
+                    TEARDOWN, REPORT_SECTION, REPORT_SEPARATOR.join(reports)
+                )
+            raise
+        if reports := self._reports_for(item):
+            pytest.fail(REPORT_SEPARATOR.join(reports), pytrace=False)
+
+    def pytest_unconfigure(self, config: pytest.Config) -> None:
+        self._patch.undo()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -159,14 +311,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    if config.getoption(ENGINE_MODE_OPTION) != EngineMode.BOTH:
-        return
-    from codebase_rag.graph_updater import GraphUpdater
-
-    # Kept before any test wraps it. The scratch runs call `run` as the class
-    # defines it, so the suite's grammar skip and pass-failure gate, and any
-    # wrapper a test adds, see the test's own runs only.
-    config.stash[_CLASS_RUN] = GraphUpdater.run
+    mode = EngineMode(config.getoption(ENGINE_MODE_OPTION))
+    if mode is not EngineMode.PYTHON:
+        config.pluginmanager.register(EngineSession(mode), ENGINE_SESSION_PLUGIN)
 
 
 def pytest_report_header(config: pytest.Config) -> str:
@@ -184,70 +331,26 @@ def _marked_selection(node: pytest.Item) -> str | None:
             pytest.fail(MARKER_USAGE.format(args=marker.args), pytrace=False)
 
 
-def _select(monkeypatch: pytest.MonkeyPatch, spec: str) -> None:
-    """Puts the test, and any `cgr` it starts, on the selection `spec`."""
+@pytest.fixture(autouse=True)
+def _engine_mode(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The selection the test's marker asks for, over the mode's, for the
+    runs in the test and in its function-scoped fixtures, and in any `cgr`
+    they start. Shared fixtures keep the mode's: their value is shared with
+    tests the marker is not on."""
+    from_marker = _marked_selection(request.node)
+    if from_marker is None:
+        return
     from codebase_rag.config import settings
     from codebase_rag.index_engine import parse_index_engine
 
     try:
-        parse_index_engine(spec)
+        parse_index_engine(from_marker)
     except ValueError as error:
-        pytest.fail(MARKER_INVALID.format(spec=spec, error=error), pytrace=False)
-    monkeypatch.setattr(settings, INDEX_ENGINE_SETTING, spec.lower())
-    monkeypatch.setenv(INDEX_ENGINE_ENV, spec)
-
-
-@pytest.fixture(autouse=True)
-def _engine_mode(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[None]:
-    """The selection the mode or the test's marker asks for, and in `both`
-    the comparison.
-
-    A plugin's autouse fixture is set up before the conftest's and the
-    test's own, so a test that sets the variable or patches the setting
-    itself wins over the mode. The marker, read here, wins over the mode too.
-    """
-    mode = EngineMode(request.config.getoption(ENGINE_MODE_OPTION))
-    spec = _marked_selection(request.node)
-    if spec is None and mode is not EngineMode.PYTHON:
-        spec = EngineMode.RUST.value
-    if spec is not None:
-        _select(monkeypatch, spec)
-    if mode is not EngineMode.BOTH:
-        yield
-        return
-    reports = _compare_after_each_run(request, monkeypatch)
-    yield
-    # At teardown, as the pass-failure gate fails, so the test's own
-    # assertions still report.
-    if reports:
-        pytest.fail(REPORT_SEPARATOR.join(reports), pytrace=False)
-
-
-def _compare_after_each_run(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> list[str]:
-    """The reports of the comparisons the test's runs will make, filled in as
-    each run returns."""
-    from codebase_rag.graph_updater import GraphUpdater
-
-    class_run = request.config.stash[_CLASS_RUN]
-    test_run = GraphUpdater.run
-    test_id = request.node.nodeid
-    reports: list[str] = []
-    compared: set[RepoState] = set()
-
-    def run_then_compare(self: GraphUpdater, force: bool = False) -> None:
-        test_run(self, force)
-        # After the test's own run, so a test that skips for a missing
-        # grammar or fails in its run pays nothing extra.
-        report = compare_engines(self, class_run, compared, test_id)
-        if report is not None:
-            reports.append(report)
-
-    monkeypatch.setattr(GraphUpdater, "run", run_then_compare)
-    return reports
+        pytest.fail(MARKER_INVALID.format(spec=from_marker, error=error), pytrace=False)
+    monkeypatch.setattr(settings, INDEX_ENGINE_SETTING, from_marker.lower())
+    monkeypatch.setenv(INDEX_ENGINE_ENV, from_marker)
 
 
 def _languages_on_rust(
@@ -283,7 +386,7 @@ def _state(updater: GraphUpdater, files: list[tuple[str, str, str]]) -> RepoStat
 
 
 def compare_engines(
-    updater: GraphUpdater, run: Run, compared: set[RepoState], test_id: str
+    updater: GraphUpdater, run: Run, compared: set[RepoState], label: str
 ) -> str | None:
     """How the Python and Rust engines' fresh indexes of `updater`'s
     repository differ, or None when they do not or need no comparing.
@@ -291,8 +394,10 @@ def compare_engines(
     Compared only when the two selections part on a language the repository
     holds: never for an updater with no language on Rust (known without
     reading the repository), nor for a single-file target, and once per
-    distinct state of the repository within a test, recorded in `compared`.
-    An incremental run is compared as a fresh index of the files it saw.
+    distinct state of the repository within a test or shared fixture,
+    recorded in `compared`. An incremental run is compared as a fresh index
+    of the files it saw. `label` names where the run was made, for
+    `CGR_PARITY_DIFF_DIR`.
     """
     from codebase_rag.utils.path_utils import walk_eligible_files
 
@@ -318,7 +423,7 @@ def compare_engines(
         )
     report = _report(updater, languages, python, rust)
     if report is not None and (root := os.environ.get(PARITY_DIFF_DIR_ENV)):
-        _write_difference(Path(root), test_id, len(compared), python, rust)
+        _write_difference(Path(root), label, len(compared), python, rust)
     return report
 
 
@@ -465,11 +570,11 @@ def _report(
 
 
 def _write_difference(
-    root: Path, test_id: str, number: int, python: Side, rust: Side
+    root: Path, label: str, number: int, python: Side, rust: Side
 ) -> None:
     from codebase_rag.canonical_graph import difference, write_graph
 
-    target = root / UNSAFE_PATH_CHARS.sub(PATH_SAFE, test_id) / str(number)
+    target = root / UNSAFE_PATH_CHARS.sub(PATH_SAFE, label) / str(number)
     target.mkdir(parents=True, exist_ok=True)
     for engine, side in zip(_engines(), (python, rust), strict=True):
         write_graph(target / GRAPH_FILE.format(engine=engine), side.lines)

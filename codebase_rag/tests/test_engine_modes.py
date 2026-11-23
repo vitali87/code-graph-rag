@@ -253,6 +253,127 @@ def test_raising(go_on_rust, rust_raises, tmp_path):
     index(go_repo(tmp_path), tmp_path)
 """
 
+# What a run sees of its selection in a session-scoped fixture, a
+# module-scoped one, and the test itself, with and without the marker.
+SCOPED_PROBE = """
+import os
+from unittest.mock import MagicMock
+
+import pytest
+
+from codebase_rag.config import settings
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+
+
+def selection(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "m.py").write_text("def f():\\n    return 1\\n", encoding="utf-8")
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=MagicMock(), repo_path=repo, parsers=parsers, queries=queries,
+        skip_embeddings=True, state_dir=tmp_path / "state",
+    )
+    updater.run()
+    return (
+        f"setting={settings.INDEX_ENGINE} "
+        f"variable={os.environ.get('CGR_INDEX_ENGINE')} "
+        f"updater={updater.index_engine.default}"
+    )
+
+
+@pytest.fixture(scope="session")
+def session_selection(tmp_path_factory):
+    return selection(tmp_path_factory.mktemp("session"))
+
+
+@pytest.fixture(scope="module")
+def module_selection(tmp_path_factory):
+    return selection(tmp_path_factory.mktemp("module"))
+
+
+def test_fixtures(session_selection, module_selection, tmp_path):
+    print(f"\\nPROBE session {session_selection}")
+    print(f"PROBE module {module_selection}")
+    print(f"PROBE test {selection(tmp_path)}")
+
+
+@pytest.mark.index_engine("python")
+def test_marked(session_selection, module_selection, tmp_path):
+    print(f"\\nPROBE marked-test {selection(tmp_path)}")
+"""
+
+# Go on Rust inside a broader-scoped fixture, with the scratch indexes
+# counted and, for `planted`, one edge dropped and one property changed on the
+# Rust side. Two tests use `planted`; one uses neither fixture.
+SCOPED_COMPARISON = """
+from codebase_rag.tests import engine_modes
+
+
+def plant(original):
+    def planted(updater, engine, scratch, run):
+        export = original(updater, engine, scratch, run)
+        if engine == cs.IndexEngine.RUST:
+            export["relationships"] = [
+                rel for rel in export["relationships"] if rel["type"] != "CALLS"
+            ]
+            for node in export["nodes"]:
+                if "File" in node["labels"]:
+                    node["properties"]["extension"] = ".gox"
+        return export
+
+    return planted
+
+
+def index_go_on_rust(tmp_path, plant_difference):
+    made = []
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            index_engine, "rust_engine_languages",
+            lambda: frozenset({cs.SupportedLanguage.GO}),
+        )
+        original = GraphUpdater.replica
+
+        def counted(self, ingestor, **kwargs):
+            made.append(kwargs.get("index_engine"))
+            return original(self, ingestor, **kwargs)
+
+        mp.setattr(GraphUpdater, "replica", counted)
+        if plant_difference:
+            mp.setattr(engine_modes, "fresh_index", plant(engine_modes.fresh_index))
+        index(go_repo(tmp_path), tmp_path)
+    return made
+
+
+@pytest.fixture(scope="{scope}")
+def equal(tmp_path_factory):
+    return index_go_on_rust(tmp_path_factory.mktemp("equal"), False)
+
+
+@pytest.fixture(scope="{scope}")
+def planted(tmp_path_factory):
+    return index_go_on_rust(tmp_path_factory.mktemp("planted"), True)
+
+
+def test_equal(equal):
+    # Compared, once with every language on Python and once on the test's
+    # own selection, and found the same.
+    assert len(equal) == 2
+
+
+def test_planted_first(planted):
+    assert len(planted) == 2
+
+
+def test_planted_second(planted):
+    assert len(planted) == 2
+
+
+def test_unrelated():
+    pass
+"""
+
 PLANTED_EDGE = (
     '- E\tCALLS\tFunction\t"repo.main.main"\tFunction\t"repo.main.helper"\t{*}'
 )
@@ -528,6 +649,81 @@ def test_a_scratch_run_that_raises_is_reported_not_compared(
         "    Traceback (most recent call last):",
     ]
     assert report[-1] == "    RuntimeError: the Rust side stopped"
+
+
+@pytest.mark.parametrize("mode", ["rust", "both"])
+def test_broader_scoped_fixtures_index_on_the_mode_and_the_marker_wins_in_its_test(
+    pytester: pytest.Pytester, clean_env: None, mode: str
+) -> None:
+    # A session- or module-scoped fixture is set up before any function-scoped
+    # one, so the mode is applied for the whole session, not per test.
+    pytester.makepyfile(SCOPED_PROBE)
+
+    result = _run(pytester, "-s", "--engine-mode", mode)
+
+    result.assert_outcomes(passed=2)
+    on_rust = ["setting=rust variable=rust updater=rust"]
+    assert _printed(result, "session") == on_rust
+    assert _printed(result, "module") == on_rust
+    assert _printed(result, "test") == on_rust
+    assert _printed(result, "marked-test") == [
+        "setting=python variable=python updater=python"
+    ]
+
+
+def test_python_mode_leaves_broader_scoped_fixtures_alone(
+    pytester: pytest.Pytester, clean_env: None
+) -> None:
+    pytester.makepyfile(SCOPED_PROBE)
+
+    result = _run(pytester, "-s")
+
+    result.assert_outcomes(passed=2)
+    default = ["setting=auto variable=None updater=auto"]
+    assert _printed(result, "session") == default
+    assert _printed(result, "module") == default
+    assert _printed(result, "test") == default
+    assert _printed(result, "marked-test") == [
+        "setting=python variable=python updater=python"
+    ]
+
+
+@pytest.mark.parametrize("scope", ["module", "session"])
+def test_both_compares_a_broader_scoped_fixtures_run_and_reports_on_its_tests(
+    pytester: pytest.Pytester, clean_env: None, go_grammar: None, scope: str
+) -> None:
+    pytester.makepyfile(INDEXING + SCOPED_COMPARISON.replace("{scope}", scope))
+
+    result = _run(pytester, "--engine-mode", "both")
+
+    # Each test that uses the fixture fails at teardown with the report; the
+    # tests that do not pass.
+    result.assert_outcomes(passed=4, errors=2)
+    teardowns = [
+        line.strip("_ ") for line in result.outlines if "ERROR at teardown" in line
+    ]
+    assert teardowns == [
+        "ERROR at teardown of test_planted_first",
+        "ERROR at teardown of test_planted_second",
+    ]
+    lines = result.outlines
+    found_in = f"In the {scope}-scoped fixture 'planted', which this test uses:"
+    starts = [i for i, line in enumerate(lines) if line == found_in]
+    assert len(starts) == 2, lines
+    assert all(
+        lines[i + 1].startswith("Python and Rust engines differ on ") for i in starts
+    )
+    report = _report(result)
+    heading, graph, *diff = report
+    assert fnmatch.fnmatch(
+        heading, "Python and Rust engines differ on *repo (go on Rust)"
+    )
+    assert graph == (
+        "  graph: 2 lines only on Python, 1 only on Rust  <- first difference"
+    )
+    assert len(diff) == 3, report
+    assert fnmatch.fnmatch(diff[0], f"    {PLANTED_EDGE}"), diff
+    assert diff[1:] == [f"    {line}" for line in PLANTED_NODE]
 
 
 def test_the_pass_failure_gate_leaves_scratch_runs_to_the_comparison(
