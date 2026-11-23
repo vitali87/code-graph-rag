@@ -112,6 +112,18 @@ def parse_index_engine(spec: str) -> IndexEngineSelection:
     return selection
 
 
+def default_index_engine() -> IndexEngineSelection:
+    """The selection the `CGR_INDEX_ENGINE` setting asks for, read now.
+
+    What `GraphUpdater` reads when it is given none, as `capture` reads
+    `CGR_CAPTURE` through `default_capture()`.
+    """
+    # Imported here: `config` validates the setting with `parse_index_engine`.
+    from .config import settings
+
+    return parse_index_engine(settings.INDEX_ENGINE)
+
+
 def resolve_index_engines(
     selection: IndexEngineSelection,
 ) -> dict[cs.SupportedLanguage, cs.IndexEngine]:

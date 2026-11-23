@@ -27,6 +27,7 @@ from .constants import (
     DUPLICATES_MAX_CANDIDATE_PAIRS,
     DUPLICATES_MAX_SIMILAR_GROUPS,
     AuditCheck,
+    FileTier,
     IndexEngine,
     NodeLabel,
     RelationshipType,
@@ -845,6 +846,16 @@ class IndexEngineSelection(NamedTuple):
 
     default: IndexEngine
     languages: Mapping[SupportedLanguage, IndexEngine] = MappingProxyType({})
+
+
+class FileRoute(NamedTuple):
+    """How `GraphUpdater._route` indexes one file: the tier that takes it, and
+    the language of the loaded grammar that reads it from disk, which is None
+    unless the tier is tree-sitter or libclang's. A notebook's cells are read
+    as Python by the notebook tier, not by a grammar from its bytes."""
+
+    tier: FileTier
+    language: SupportedLanguage | None = None
 
 
 class AgentLoopUI(NamedTuple):
