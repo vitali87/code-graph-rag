@@ -431,8 +431,11 @@ Two checks hold it:
   a child process, and requires byte-identical hand-off files.
 - `scripts/handoff.py check --runs 2` does the same for the pinned
   repositories in `fixtures/reference_graphs/repos.json`, in the
-  reference-graphs job. It calls `GraphUpdater` in process: the hand-off is
-  not reachable through `cgr`, on purpose.
+  reference-graphs job. Each run indexes its copy in a child Python process
+  of its own, started with its own `PYTHONHASHSEED`, as the reference-graph
+  harness does: the seed is fixed when an interpreter starts, so runs in one
+  process could not vary it. The child calls `GraphUpdater` directly; the
+  hand-off is not reachable through `cgr`, on purpose.
 
 The hand-off files are not checked in. Both engines exist side by side
 until a language's Python code is deleted, so they are compared live. After
@@ -576,7 +579,8 @@ removes, skips or marks a test as expected to fail.
 6. **Compare the hand-offs.**
    - Adds: `both` gives each scratch run a hand-off directory and reports
      the three files in order; `scripts/handoff.py record|check --runs N`
-     for the pinned repositories; `--index-engine SPEC` on it and on
+     for the pinned repositories, each run in a child process under its
+     own `PYTHONHASHSEED`; `--index-engine SPEC` on it and on
      `scripts/reference_graphs.py`, which writes the value into the
      environment it controls (today it strips every cgr setting from the
      index's environment, so a selection in the shell never arrives); the
