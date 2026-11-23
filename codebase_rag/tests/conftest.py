@@ -28,6 +28,11 @@ from codebase_rag.language_spec import LANGUAGE_SPECS, get_language_for_extensio
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import native_trees
 from codebase_rag.parsers.py.ast_analyzer import clear_scope_facts
+from codebase_rag.tests.engine_modes import (
+    PASS_FAILURE_LEVEL,
+    PASS_FAILURE_PREFIXES,
+    SCRATCH_RUN_KEY,
+)
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord
 
 if TYPE_CHECKING:
@@ -137,20 +142,6 @@ def create_mock_node(
 
 logger.remove()
 
-# Every per-file pass swallows all exceptions so one bad file cannot abandon a
-# whole index, and only logs. Nothing looked at those logs, so a bug inside a
-# pass dropped the file's edges while the run reported success, and the suite
-# saw it at best as unrelated assertion failures elsewhere (issue #1070). One
-# entry per pass, and the import pass logs at WARNING rather than ERROR.
-_PASS_FAILURE_PREFIXES = (
-    "Failed to process calls in ",
-    # A caller's local types, contained to that caller (issue #3173).
-    "Failed to infer local types in ",
-    "Failed to parse or ingest ",
-    "Failed to parse imports in ",
-    "Error parsing ",
-)
-
 
 @pytest.fixture(autouse=True)
 def _fail_on_swallowed_pass_errors(
@@ -165,7 +156,9 @@ def _fail_on_swallowed_pass_errors(
     unit tests that call a parser directly to exercise its own error path.
 
     A test that means to index a broken file requests this fixture, asserts on
-    the list and clears it.
+    the list and clears it. The `both` engine mode's scratch runs happen inside
+    the test's `run` and report their own failures with the comparison, so
+    what they log is left out (`engine_modes.swallowed_failures`).
     """
     failures: list[str] = []
     original_run = GraphUpdater.run
@@ -173,8 +166,11 @@ def _fail_on_swallowed_pass_errors(
     def run_watching_for_pass_failures(self: GraphUpdater, force: bool = False) -> None:
         sink_id = logger.add(
             lambda message: failures.append(message.record["message"]),
-            level="WARNING",
-            filter=lambda record: record["message"].startswith(_PASS_FAILURE_PREFIXES),
+            level=PASS_FAILURE_LEVEL,
+            filter=lambda record: (
+                record["message"].startswith(PASS_FAILURE_PREFIXES)
+                and SCRATCH_RUN_KEY not in record["extra"]
+            ),
         )
         try:
             original_run(self, force)

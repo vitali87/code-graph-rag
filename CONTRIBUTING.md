@@ -122,6 +122,7 @@ All pull requests are automatically validated by our CI workflow, which runs in 
 3. **Unit Tests** - Fast tests without Docker:
    - Parallel execution with `pytest-xdist`
    - Code coverage reporting to Codecov
+   - On the engine `--engine-mode` picks ([PHASE1_SEAMS.md](docs/reports/PHASE1_SEAMS.md), section 2): `python` in the Python 3.12 cells; `rust` in the Windows and macOS 3.13 cells, where every test and any `cgr` it starts runs with `CGR_INDEX_ENGINE=rust`; and `both` in the Ubuntu 3.13 cells, which also index each test's repository afresh on each engine and fail the test when the graphs differ. While no language runs on Rust, all three run the same suite. A test that must stay on Python sets `@pytest.mark.index_engine("go=python")`
 
 4. **Integration Tests** - Full stack testing:
    - Tests with real Memgraph database
