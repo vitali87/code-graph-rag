@@ -2740,7 +2740,8 @@ class CallResolver:
         return True, hit
 
     def _linearized_method(self, class_qn: str, name: str) -> tuple[str, str] | None:
-        # The first of the class's linearized bases defining `name`.
+        # The first of the class's bases, in Dart's lookup order, defining
+        # `name`.
         for base in self._linearized_bases(class_qn, frozenset({class_qn}), {}):
             qn = f"{base}{cs.SEPARATOR_DOT}{name}"
             if qn in self.function_registry:
@@ -2858,15 +2859,17 @@ class CallResolver:
     def _linearized_bases(
         self, class_qn: str, seen: frozenset[str], memo: dict[str, list[str]]
     ) -> list[str]:
-        # Scala's linearization, which Dart mixin application matches: the
-        # last recorded base first, each followed by its own bases, and a
-        # base two of them share kept only at its last place. A mixin applied
-        # with `with` brings its own members only: its recorded bases are its
-        # `on` types, which the class's superclass must implement, not
-        # implementations of their own (Greptile on PR #3240). In
-        # `class C extends B with M`, `mixin M on A`, `label()` runs B's.
-        # `memo` keeps a diamond-heavy hierarchy from being walked once per
-        # path to each base.
+        # Dart's lookup order: the class's `with` mixins, last applied first,
+        # then its superclass and that one's own, up the chain. A mixin
+        # applied with `with` brings its own members only: its recorded bases
+        # are its `on` types, which the class's superclass must implement,
+        # not implementations of their own. In `class C extends B with M`,
+        # `mixin M on A`, `label()` runs B's. Each `with` applies the mixin
+        # anew on top of the superclass, even one that mixed it in already,
+        # so a base met twice keeps its first, nearest place: in
+        # `class C extends P with M`, `P extends Object with M`, `label()`
+        # runs M's, not P's override (Greptile on PR #3240). `memo` keeps a
+        # class from being walked once per subclass that reaches it.
         if (known := memo.get(class_qn)) is not None:
             return known
         order: list[str] = []
@@ -2876,10 +2879,7 @@ class CallResolver:
             order.append(base)
             if not self._dart_is_mixin(base):
                 order.extend(self._linearized_bases(base, seen | {base}, memo))
-        last = {base: index for index, base in enumerate(order)}
-        memo[class_qn] = [
-            base for index, base in enumerate(order) if last[base] == index
-        ]
+        memo[class_qn] = list(dict.fromkeys(order))
         return memo[class_qn]
 
     def _dart_is_mixin(self, class_qn: str) -> bool:

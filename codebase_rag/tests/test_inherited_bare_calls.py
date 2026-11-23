@@ -1025,3 +1025,39 @@ def test_inside_a_dart_mixin_its_on_type_still_answers(dart_on: _Calls) -> None:
     assert _callees(dart_on, "lib.on.M.inMixin").get("lib.on.A.label") == "exact", (
         dart_on
     )
+
+
+# Greptile on PR #3240: Dart applies a mixin again wherever a class names it
+# in `with`, on top of its superclass, even when the superclass mixed it in
+# already. `class C extends P with M` runs M's `label` over P's override.
+_DART_REAPPLIED_MIXIN = {
+    "pubspec.yaml": 'name: shapes\nenvironment:\n  sdk: ">=3.0.0 <4.0.0"\n',
+    "lib/again.dart": """\
+mixin M { String label() => "m"; }
+class P extends Object with M { String label() => "p"; }
+class C extends P with M {
+  String run() => label();
+}
+class D extends P {
+  String run() => label();
+}
+""",
+}
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("lib.again.C.run", "lib.again.M.label"),
+        ("lib.again.D.run", "lib.again.P.label"),
+    ],
+    ids=["reapplied-mixin", "superclass-override"],
+)
+def test_a_reapplied_dart_mixin_overrides_the_superclass(
+    tmp_path: Path, caller: str, callee: str
+) -> None:
+    calls = _calls(tmp_path / "again", _DART_REAPPLIED_MIXIN, "dart")
+    assert _callees(calls, caller).get(callee) == "exact", calls
+    assert all(
+        res != "exact" for to, res in _callees(calls, caller).items() if to != callee
+    ), calls
