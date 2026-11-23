@@ -23,6 +23,7 @@ from codebase_rag import config, index_engine
 from codebase_rag import constants as cs
 from codebase_rag.index_engine import (
     IndexEngineSelection,
+    default_index_engine,
     parse_index_engine,
     resolve_index_engines,
     rust_engine_languages,
@@ -350,6 +351,34 @@ class TestTheResolution:
 
         assert engines[L.GO] == E.PYTHON
         assert _warnings(records) == []
+
+
+class TestTheDefaultSelection:
+    # What `GraphUpdater` reads when it is given no selection, as `capture`
+    # reads `CGR_CAPTURE` through `default_capture()`.
+    def test_it_is_the_settings_value_parsed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(config.settings, "INDEX_ENGINE", "python,go=rust")
+
+        assert default_index_engine() == _selection(E.PYTHON, go=E.RUST)
+
+    def test_unset_it_is_auto_everywhere(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(config.settings, "INDEX_ENGINE", "auto")
+
+        assert default_index_engine() == _selection(E.AUTO)
+
+    def test_it_reads_the_setting_each_time_it_is_asked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The one read per updater is the updater's to make; this function
+        # keeps no copy that a changed setting would leave stale.
+        monkeypatch.setattr(config.settings, "INDEX_ENGINE", "python")
+        first = default_index_engine()
+        monkeypatch.setattr(config.settings, "INDEX_ENGINE", "rust")
+
+        assert first == _selection(E.PYTHON)
+        assert default_index_engine() == _selection(E.RUST)
 
 
 class TestStartUpValidation:

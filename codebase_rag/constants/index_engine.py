@@ -38,3 +38,18 @@ INDEX_ENGINE_DEFAULTS: dict[frozenset[SupportedLanguage], IndexEngine] = {
     frozenset({SupportedLanguage.SQL}): IndexEngine.PYTHON,
     frozenset({SupportedLanguage.JULIA}): IndexEngine.PYTHON,
 }
+
+
+# The tier `GraphUpdater._route` sends a file to, which is how it is indexed:
+# libclang already emitted it, a loaded tree-sitter grammar parses it, it is a
+# dependency manifest or a notebook, the ast-grep or document tier takes it,
+# or none does and it keeps its File node alone. The hand-off's file plan
+# records it (docs/reports/PHASE1_SEAMS.md, section 3).
+class FileTier(StrEnum):
+    TREE_SITTER = "tree_sitter"
+    CPP_FRONTEND = "cpp_frontend"
+    MANIFEST = "manifest"
+    NOTEBOOK = "notebook"
+    AST_GREP = "ast_grep"
+    DOCUMENT = "document"
+    NONE = "none"

@@ -16,7 +16,8 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import NamedTuple, cast
+from types import MappingProxyType
+from typing import NamedTuple, Self, cast
 
 from loguru import logger
 from rich.progress import Progress, SpinnerColumn, TaskID, TextColumn
@@ -42,6 +43,7 @@ from .function_registry import FunctionRegistryTrie
 from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_mentions, repair_unanchored
 from .graph_query import _longer_project_prefixes
+from .index_engine import default_index_engine, resolve_index_engines
 from .interface_skip import (
     callers_to_reparse,
     stable_interface_modules,
@@ -152,9 +154,11 @@ from .types_defs import (
     EmbeddingPoint,
     EmbeddingQueryResult,
     EmbeddingSymbol,
+    FileRoute,
     FunctionLocation,
     FunctionLocations,
     FunctionSpanKey,
+    IndexEngineSelection,
     JsonValue,
     LanguageQueries,
     NodeType,
@@ -1787,8 +1791,28 @@ class GraphUpdater:
         skip_embeddings: bool | None = None,
         project_named: bool | None = None,
         state_dir: Path | None = None,
+        index_engine: IndexEngineSelection | None = None,
     ):
         self.capture = capture if capture is not None else default_capture()
+        # The engine each language is indexed on (docs/reports/PHASE1_SEAMS.md,
+        # section 1), resolved here and only here: the watcher, the MCP server
+        # and the tests keep one updater across many runs, and a run must
+        # never straddle two selections. None reads CGR_INDEX_ENGINE, as
+        # `capture` reads CGR_CAPTURE.
+        self.index_engine = (
+            index_engine if index_engine is not None else default_index_engine()
+        )
+        self.engines: Mapping[cs.SupportedLanguage, cs.IndexEngine] = MappingProxyType(
+            resolve_index_engines(self.index_engine)
+        )
+        # The languages on Rust: none until the build can run one there. From
+        # phase 2 their files go to the Rust engine, the rest through today's
+        # passes.
+        self.rust_languages = frozenset(
+            language
+            for language, engine in self.engines.items()
+            if engine == cs.IndexEngine.RUST
+        )
         # Where the incremental-sync state (hash cache, dir mtimes, exclusion
         # stamp, parser fingerprint, pending markers) is read and written.
         # None resolves on first use to this checkout's directory under
@@ -1990,6 +2014,43 @@ class GraphUpdater:
         self.finding_analyzer = FindingAnalyzer(
             self._sink, self.repo_path, self.capture
         )
+
+    def replica(
+        self,
+        ingestor: IngestorProtocol,
+        *,
+        state_dir: Path,
+        index_engine: IndexEngineSelection | None = None,
+    ) -> Self:
+        """A new updater over this one's inputs, writing into `ingestor`.
+
+        The `both` engine mode indexes a test's repository again through two
+        of these, one with every language on Python and one with the test's
+        own selection, and compares the graphs (docs/reports/PHASE1_SEAMS.md,
+        section 2). It copies the repository, parsers, queries, exclusions,
+        project name, capture and, unless `index_engine` names another, the
+        engine selection; it keeps its sync state in `state_dir` and makes
+        no embeddings, so its runs neither read nor change this updater's.
+        """
+        replica = type(self)(
+            ingestor=ingestor,
+            repo_path=self.repo_path,
+            parsers=self.parsers,
+            queries=self.queries,
+            unignore_paths=self._configured_unignore_paths,
+            exclude_paths=self.exclude_paths,
+            project_name=self.project_name,
+            capture=self.capture,
+            skip_embeddings=True,
+            project_named=self.project_named,
+            state_dir=state_dir,
+            index_engine=self.index_engine if index_engine is None else index_engine,
+        )
+        # A single-file target keeps the root this updater found for it when
+        # it was made: handed the file, the replica would look for the root on
+        # disk again, and a marker added since would key it under another.
+        replica._single_file = self._single_file
+        return replica
 
     def _run_emitting_frontends(self, phase: FrontendPhase) -> None:
         """Run every registered emitting frontend declaring this phase.
@@ -9212,69 +9273,95 @@ class GraphUpdater:
         file_bytes: bytes | None = None,
         pre_parsed: tuple[Node, dict[str, list] | None] | None = None,
     ) -> None:
-        """Ingest one file through the first tier that claims it.
+        """Ingest one file through the tier `_route` sends it to.
 
-        Tries tree-sitter, then dependency manifests, then the secondary
-        tiers; every file gets a File node regardless, so an unclaimed
-        extension is still represented in the graph.
+        Every file gets a File node regardless, so an unclaimed extension is
+        still represented in the graph.
         """
-        if self._cpp_frontend_covered:
-            rel = cached_relative_path(filepath, self.repo_path).as_posix()
-            if rel in self._cpp_frontend_covered:
+        match self._route(filepath):
+            case FileRoute(tier=cs.FileTier.CPP_FRONTEND):
                 # The libclang frontend already emitted this file's
-                # definitions; keep only the generic File node.
-                self.factory.structure_processor.process_generic_file(
-                    filepath, filepath.name
+                # definitions; it keeps only the generic File node.
+                pass
+            case FileRoute(tier=cs.FileTier.TREE_SITTER, language=language) if (
+                language is not None
+            ):
+                result = self.factory.definition_processor.process_file(
+                    filepath,
+                    language,
+                    self.queries,
+                    self.factory.structure_processor.structural_elements,
+                    source_bytes=file_bytes,
+                    pre_parsed=pre_parsed,
                 )
-                return
-
-        if (language := self._tree_sitter_language(filepath)) is not None:
-            result = self.factory.definition_processor.process_file(
-                filepath,
-                language,
-                self.queries,
-                self.factory.structure_processor.structural_elements,
-                source_bytes=file_bytes,
-                pre_parsed=pre_parsed,
-            )
-            if result:
-                root_node, language = result
-                self.ast_cache[filepath] = (root_node, language)
-                self._parsed_files.append((filepath, language))
-        elif self._is_dependency_file(filepath.name, filepath):
-            self.factory.definition_processor.process_dependencies(filepath)
-        elif is_notebook_path(filepath):
-            self._process_notebook(filepath, file_bytes)
-        else:
-            self.process_with_secondary_tier(filepath)
+                if result:
+                    root_node, language = result
+                    self.ast_cache[filepath] = (root_node, language)
+                    self._parsed_files.append((filepath, language))
+            case FileRoute(tier=cs.FileTier.MANIFEST):
+                self.factory.definition_processor.process_dependencies(filepath)
+            case FileRoute(tier=cs.FileTier.NOTEBOOK):
+                self._process_notebook(filepath, file_bytes)
+            case _:
+                self.process_with_secondary_tier(filepath)
 
         self.factory.structure_processor.process_generic_file(filepath, filepath.name)
 
-    def _tree_sitter_language(self, filepath: Path) -> cs.SupportedLanguage | None:
-        """The loaded grammar that defines `filepath`'s module, if any.
+    def _route(self, filepath: Path) -> FileRoute:
+        """The tier `filepath` is indexed by, and the grammar that reads it.
 
-        None for a `.pyi` stub whose implementation is indexed: it shares that
-        module's qn, and parsing it would claim or twin the Module. It still
-        falls through to the generic File node (issue #2445).
+        The one place that decides how a file is indexed; everything that
+        asks reads it from here. The first tier that claims the file takes
+        it: libclang when its frontend emitted the file, then a loaded
+        tree-sitter grammar, a dependency manifest, a notebook, the ast-grep
+        tier and the document tier. A file none claims keeps its File node
+        alone.
+
+        A `.pyi` stub whose implementation is indexed has no grammar: it
+        shares that module's qn, and parsing it would claim or twin the
+        Module (issue #2445).
         """
-        lang_config = get_language_spec(filepath.suffix)
-        if not (
-            lang_config
-            and isinstance(lang_config.language, cs.SupportedLanguage)
-            and lang_config.language in self.parsers
+        spec = get_language_spec(filepath.suffix)
+        language = (
+            spec.language
+            if spec is not None
+            and isinstance(spec.language, cs.SupportedLanguage)
+            and spec.language in self.parsers
+            and not python_stub_has_implementation(
+                filepath,
+                self.repo_path,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
+            )
+            else None
+        )
+        if (
+            self._cpp_frontend_covered
+            and cached_relative_path(filepath, self.repo_path).as_posix()
+            in self._cpp_frontend_covered
         ):
-            return None
-        if python_stub_has_implementation(
-            filepath,
-            self.repo_path,
-            exclude_paths=self.exclude_paths,
-            unignore_paths=self.unignore_paths,
-        ):
-            return None
-        return lang_config.language
+            return FileRoute(cs.FileTier.CPP_FRONTEND, language)
+        if language is not None:
+            return FileRoute(cs.FileTier.TREE_SITTER, language)
+        if self._is_dependency_file(filepath.name, filepath):
+            return FileRoute(cs.FileTier.MANIFEST)
+        if is_notebook_path(filepath):
+            return FileRoute(cs.FileTier.NOTEBOOK)
+        if self.ast_grep_tier.handles(filepath.suffix):
+            return FileRoute(cs.FileTier.AST_GREP)
+        if self.document_tier.handles(filepath.suffix):
+            return FileRoute(cs.FileTier.DOCUMENT)
+        return FileRoute(cs.FileTier.NONE)
+
+    def _tree_sitter_language(self, filepath: Path) -> cs.SupportedLanguage | None:
+        """The loaded grammar that reads `filepath` from disk, as `_route`
+        decides it: the pre-parse, the interface fingerprint and the flow
+        functions read a file's tree with it. A file libclang emitted keeps
+        its grammar here, as those readers always had it."""
+        return self._route(filepath).language
 
     def process_with_secondary_tier(self, filepath: Path) -> bool:
-        """Parse a file with whichever non-tree-sitter tier claims it.
+        """Parse a file with the non-tree-sitter tier `_route` sends it to.
 
         Shared with the file watcher, which re-parses one changed file and
         would otherwise handle only tree-sitter languages: it deletes a
@@ -9282,16 +9369,16 @@ class GraphUpdater:
         a tier it does not know about loses its symbols entirely rather than
         merely going stale (issue #1427).
 
-        Returns True when a tier took the file, so the batch path can keep
-        its if/elif chain.
+        Returns True when a tier took the file.
         """
         structural_elements = self.factory.structure_processor.structural_elements
-        if self.ast_grep_tier.handles(filepath.suffix):
-            self.ast_grep_tier.process_file(filepath, structural_elements)
-            return True
-        if self.document_tier.handles(filepath.suffix):
-            self.document_tier.process_file(filepath, structural_elements)
-            return True
+        match self._route(filepath).tier:
+            case cs.FileTier.AST_GREP:
+                self.ast_grep_tier.process_file(filepath, structural_elements)
+                return True
+            case cs.FileTier.DOCUMENT:
+                self.document_tier.process_file(filepath, structural_elements)
+                return True
         # A file no tier took still gets its File node; the ast-grep tier
         # counts the ones it only skipped for lack of its extra, and a
         # tree-sitter language's file counts when its grammar is missing.
