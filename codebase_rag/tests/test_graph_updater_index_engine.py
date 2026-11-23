@@ -685,10 +685,12 @@ class TestReplica:
         "project_named": "project_named",
         "state_dir": "state_dir",
         "index_engine": "index_engine",
+        "handoff_dir": "handoff_dir",
     }
-    # What a replica takes from its caller instead: its own graph and sync
-    # state, and no embeddings (docs/reports/PHASE1_SEAMS.md, section 2).
-    REPLACED = frozenset({"ingestor", "state_dir", "skip_embeddings"})
+    # What a replica takes from its caller instead: its own graph, sync state
+    # and hand-off directory, and no embeddings (docs/reports/PHASE1_SEAMS.md,
+    # sections 2 and 3).
+    REPLACED = frozenset({"ingestor", "state_dir", "skip_embeddings", "handoff_dir"})
 
     @pytest.fixture
     def original(
@@ -705,6 +707,7 @@ class TestReplica:
             project_named=False,
             state_dir=tmp_path / "original-state",
             index_engine=parse_index_engine("python,go=rust"),
+            handoff_dir=tmp_path / "original-handoffs",
         )
 
     def test_the_table_names_every_input(self) -> None:
@@ -729,6 +732,21 @@ class TestReplica:
         assert replica.skip_embeddings is True
         assert replica.engines == original.engines
         assert replica.rust_languages == original.rust_languages
+        # Two runs writing hand-offs into one directory would overwrite each
+        # other's, so a replica writes only where it is told.
+        assert replica.handoff_dir is None
+
+    def test_it_writes_its_hand_offs_where_it_is_told(
+        self, original: GraphUpdater, tmp_path: Path
+    ) -> None:
+        replica = original.replica(
+            _MockIngestor(),
+            state_dir=tmp_path / "replica-state",
+            handoff_dir=tmp_path / "replica-handoffs",
+        )
+
+        assert replica.handoff_dir == tmp_path / "replica-handoffs"
+        assert original.handoff_dir == tmp_path / "original-handoffs"
 
     def test_it_runs_on_the_selection_it_is_given(
         self, original: GraphUpdater, tmp_path: Path, go_on_rust: None

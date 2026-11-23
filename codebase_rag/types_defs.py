@@ -858,6 +858,29 @@ class FileRoute(NamedTuple):
     language: SupportedLanguage | None = None
 
 
+class PlannedFile(NamedTuple):
+    """One file of the file plan hand-off (docs/reports/PHASE1_SEAMS.md,
+    section 3): its path from the repository root with `/`, how `_route`
+    indexes it, and the hash the run records for it in the hash cache, None
+    when it records none (a file that vanished mid-run)."""
+
+    path: str
+    route: FileRoute
+    md5: str | None
+
+
+class ProjectIndex(NamedTuple):
+    """What the project index hand-off reads once the deferred definitions are
+    resolved: the module paths, the definition registry and its simple names,
+    the import maps and each class's parents, as the indexer keeps them."""
+
+    modules: Mapping[str, Path]
+    definitions: Iterable[tuple[str, NodeType]]
+    simple_names: Mapping[str, Iterable[str]]
+    imports: Mapping[str, Mapping[str, str]]
+    parents: Mapping[str, Sequence[str]]
+
+
 class AgentLoopUI(NamedTuple):
     status_message: str
     cancelled_log: str
