@@ -13,7 +13,7 @@
 
 # Every base is pinned by digest, which Dependabot moves along with its tag.
 # gotypes/go.mod sets the floor at 1.27.2.
-FROM golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9 AS go
+FROM golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d AS go
 FROM eclipse-temurin:25-jdk@sha256:b8705e936964c228dfce359e63dbf08f6c69cb380ed1d576b1f6b1064f15567d AS jdk
 
 # The full image brings a C toolchain, git and the common -dev headers, for the
