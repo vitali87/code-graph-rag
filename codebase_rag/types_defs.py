@@ -27,6 +27,7 @@ from .constants import (
     DUPLICATES_MAX_CANDIDATE_PAIRS,
     DUPLICATES_MAX_SIMILAR_GROUPS,
     AuditCheck,
+    IndexEngine,
     NodeLabel,
     RelationshipType,
     SupportedLanguage,
@@ -835,6 +836,15 @@ class CancelledResult(NamedTuple):
 class CgrignorePatterns(NamedTuple):
     exclude: frozenset[str]
     unignore: frozenset[str]
+
+
+class IndexEngineSelection(NamedTuple):
+    """What `CGR_INDEX_ENGINE` asks for, before the build has its say: the
+    engine for every language the value does not name, and the engine each
+    named language asked for. Either may be `auto`."""
+
+    default: IndexEngine
+    languages: Mapping[SupportedLanguage, IndexEngine] = MappingProxyType({})
 
 
 class AgentLoopUI(NamedTuple):
