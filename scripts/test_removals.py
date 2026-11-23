@@ -7,7 +7,8 @@ replacement of every removed test, and `check` fails on a test the base has
 and the head lacks with no entry, on an entry whose replacement the head lacks
 (after following the entries of replacements removed in turn), on an entry
 for a test still on the head, and on `obsolete` code still on the head or, for
-a test removed here, never on the base.
+a test removed here, never on the base. With --pull-request, the entry for a
+test removed here must name that pull request.
 
 Both trees are read from Git objects, never imported: the Python tests by an
 `ast` walk of the files pytest collects, under each tree's own pytest
@@ -61,13 +62,19 @@ GLOB_CHARS = frozenset("*?[")
 # pytest will not collect a class with its own constructor.
 CONSTRUCTORS = frozenset({"__init__", "__new__"})
 FIXTURE = "fixture"
+# `__test__ = False` switches a module or class off; `True` opts a class in.
+TEST_FLAG = "__test__"
+# pytest collects every unittest.TestCase subclass, whatever its name, and
+# unittest's loader picks the methods: those whose name starts with "test".
+UNITTEST_BASE = "TestCase"
+UNITTEST_PREFIX = "test"
 
 ENTRY_KEYS = ("test", "replaced_by", "obsolete", "reason", "pull_request")
 TABLE = "removed"
 
 RUST_TEST = re.compile(
-    # `#[test]`, or a runtime's own, such as `#[tokio::test]`
-    r"#\s*\[\s*(?:[A-Za-z_]\w*\s*::\s*)*test\s*\]"
+    # `#[test]`, or a runtime's own, such as `#[tokio::test(flavor = "...")]`
+    r"#\s*\[\s*(?:[A-Za-z_]\w*\s*::\s*)*test(?:\s*\([^()]*\))?\s*\]"
     # then any other attributes, such as `#[should_panic(...)]`
     r"(?:\s*#\s*\[[^\]]*\])*"
     r"\s*(?:(?:pub(?:\s*\([^)]*\))?|const|async|unsafe)\s+)*"
@@ -84,6 +91,7 @@ class Rule(StrEnum):
     STALE_ENTRY = "entry for a test on the head"
     OBSOLETE_PRESENT = "obsolete code still on the head"
     OBSOLETE_NOT_DELETED = "obsolete code not on the base"
+    WRONG_PULL_REQUEST = "entry names another pull request"
     BAD_ENTRY = "malformed map"
 
 
@@ -109,6 +117,10 @@ MESSAGES = {
     Rule.OBSOLETE_NOT_DELETED: (
         "The entry for {test} names {path} as the code deleted with it, but "
         "the base has no {path} either. Name what this pull request deletes."
+    ),
+    Rule.WRONG_PULL_REQUEST: (
+        "The entry for {test} says pull_request = {recorded}, but pull request "
+        "{number} removes the test. Write pull_request = {number}."
     ),
 }
 
@@ -169,6 +181,7 @@ class Entry(NamedTuple):
     test: str
     replaced_by: tuple[str, ...]
     obsolete: str | None
+    pull_request: int | None
 
 
 class Report(NamedTuple):
@@ -380,6 +393,32 @@ def _is_fixture(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return False
 
 
+def _flag(node: ast.stmt | None) -> bool | None:
+    """The value a `__test__ = <constant>` statement gives, as pytest reads it."""
+    match node:
+        case (
+            ast.Assign(targets=[ast.Name(id=name)], value=ast.Constant(value=value))
+            | ast.AnnAssign(target=ast.Name(id=name), value=ast.Constant(value=value))
+        ) if name == TEST_FLAG:
+            return bool(value)
+    return None
+
+
+def _is_unittest(
+    cls: ast.ClassDef, classes: dict[str, ast.ClassDef], seen: frozenset[str]
+) -> bool:
+    for base in cls.bases:
+        match base:
+            case ast.Name(id=name) if name in classes and name not in seen:
+                if _is_unittest(classes[name], classes, seen | {name}):
+                    return True
+            case ast.Name(id=name) | ast.Attribute(attr=name) if name.endswith(
+                UNITTEST_BASE
+            ):
+                return True
+    return False
+
+
 def _members(
     cls: ast.ClassDef, classes: dict[str, ast.ClassDef], seen: frozenset[str]
 ) -> dict[str, ast.stmt]:
@@ -394,6 +433,8 @@ def _members(
     for node in _statements(cls.body):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
             members[node.name] = node
+        elif _flag(node) is not None:
+            members[TEST_FLAG] = node
     return members
 
 
@@ -408,12 +449,25 @@ def _collect(
             node.name, config.python_functions
         ) and not _is_fixture(node):
             return {f"{prefix}{SEPARATOR}{node.name}"}
-        case ast.ClassDef() if _named(node.name, config.python_classes):
+        case ast.ClassDef():
             members = _members(node, classes, frozenset({node.name}))
-            functions = ast.FunctionDef | ast.AsyncFunctionDef
-            if any(isinstance(members.get(name), functions) for name in CONSTRUCTORS):
+            flag = _flag(members.get(TEST_FLAG))
+            unittest = _is_unittest(node, classes, frozenset({node.name}))
+            if flag is False or not (
+                flag or unittest or _named(node.name, config.python_classes)
+            ):
                 return set()
             inner = f"{prefix}{SEPARATOR}{node.name}"
+            functions = ast.FunctionDef | ast.AsyncFunctionDef
+            if unittest:
+                return {
+                    f"{inner}{SEPARATOR}{name}"
+                    for name, member in members.items()
+                    if name.startswith(UNITTEST_PREFIX)
+                    and isinstance(member, functions)
+                }
+            if any(isinstance(members.get(name), functions) for name in CONSTRUCTORS):
+                return set()
             return set().union(
                 *(_collect(inner, m, classes, config) for m in members.values())
             )
@@ -424,6 +478,9 @@ def python_tests(path: str, source: bytes, config: PytestConfig) -> frozenset[st
     """The ids of the tests pytest collects from one file, without parameters."""
     module = ast.parse(source, filename=path)
     statements = list(_statements(module.body))
+    flags = [flag for node in statements if (flag := _flag(node)) is not None]
+    if flags and not flags[-1]:
+        return frozenset()
     classes = {node.name: node for node in statements if isinstance(node, ast.ClassDef)}
     return frozenset().union(*(_collect(path, n, classes, config) for n in statements))
 
@@ -494,7 +551,9 @@ def _entry(raw: TomlValue) -> tuple[Entry | None, list[str]]:
     reason, number = raw.get("reason"), raw.get("pull_request")
     if not isinstance(reason, str) or not reason.strip():
         errors.append(BAD_REASON)
-    if not isinstance(number, int) or isinstance(number, bool) or number < 1:
+    valid = isinstance(number, int) and not isinstance(number, bool) and number > 0
+    recorded = number if valid and isinstance(number, int) else None
+    if recorded is None:
         errors.append(BAD_NUMBER)
     replacements: tuple[str, ...] = ()
     gone: str | None = None
@@ -514,7 +573,7 @@ def _entry(raw: TomlValue) -> tuple[Entry | None, list[str]]:
     test = raw.get("test")
     if not isinstance(test, str) or not _is_test_id(test):
         return None, [BAD_TEST, *errors]
-    return Entry(test, replacements, gone), errors
+    return Entry(test, replacements, gone, recorded), errors
 
 
 def read_map(text: bytes | None) -> tuple[list[Entry], list[Problem]]:
@@ -604,10 +663,16 @@ def _entry_problems(
     base_files: dict[str, str],
     head_files: dict[str, str],
     head_tests: frozenset[str],
+    pull_request: int | None,
 ) -> Iterator[Problem]:
     found: list[tuple[Rule, tuple[str, ...]]] = []
     if entry.test in head_tests:
         found.append((Rule.STALE_ENTRY, ()))
+    # The entry for a test removed here is new here, so it names this pull
+    # request; older entries keep the numbers of theirs.
+    if pull_request is not None and entry.test in removed:
+        if entry.pull_request not in (None, pull_request):
+            found.append((Rule.WRONG_PULL_REQUEST, ()))
     if entry.obsolete is not None:
         if _present(head_files, entry.obsolete):
             found.append((Rule.OBSOLETE_PRESENT, ()))
@@ -626,6 +691,8 @@ def _entry_problems(
             path=entry.obsolete,
             chain=" -> ".join(chain),
             missing=chain[-1] if chain else "",
+            recorded=entry.pull_request,
+            number=pull_request,
         )
         yield Problem(rule, entry.test, message)
 
@@ -652,7 +719,7 @@ def check(
     problems += map_problems
     for entry in entries:
         problems += _entry_problems(
-            entry, by_test, removed, base_files, head_files, head_tests
+            entry, by_test, removed, base_files, head_files, head_tests, pull_request
         )
     return Report(tuple(problems), len(base_tests), len(head_tests), len(entries))
 

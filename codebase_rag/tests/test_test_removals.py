@@ -53,6 +53,7 @@ class _Repo:
         *,
         replaced_by: list[str] | None = None,
         obsolete: str | None = None,
+        pull_request: int = 1,
     ) -> None:
         lines = ["[[removed]]", f'test = "{test}"']
         if replaced_by is not None:
@@ -60,7 +61,10 @@ class _Repo:
             lines.append(f"replaced_by = [{quoted}]")
         if obsolete is not None:
             lines.append(f'obsolete = "{obsolete}"')
-        lines += ['reason = "Checked the same thing another way."', "pull_request = 1"]
+        lines += [
+            'reason = "Checked the same thing another way."',
+            f"pull_request = {pull_request}",
+        ]
         self.entries.append("\n".join(lines) + "\n")
         self.write(tr.MAP_PATH, "\n".join(self.entries))
 
@@ -312,6 +316,54 @@ def test_a_removed_rust_test_needs_an_entry_too(repo: _Repo) -> None:
     assert repo.problems(base) == []
 
 
+def test_a_removed_unittest_method_needs_an_entry(repo: _Repo) -> None:
+    case = "import unittest\n\n\nclass Checks(unittest.TestCase):\n{methods}"
+    method = "    def {name}(self):\n        pass\n\n"
+    repo.write(
+        _A,
+        case.format(
+            methods=method.format(name="test_one") + method.format(name="test_two")
+        ),
+    )
+    base = repo.commit()
+    repo.write(_A, case.format(methods=method.format(name="test_one")))
+    repo.commit()
+
+    assert repo.problems(base) == [(tr.Rule.NO_ENTRY, f"{_A}::Checks::test_two")]
+
+
+def test_a_replacement_in_a_module_pytest_skips_is_refused(repo: _Repo) -> None:
+    repo.write(_A, _functions("test_old"))
+    base = repo.commit()
+    repo.delete(_A)
+    repo.write(_B, "__test__ = False\n\n\n" + _functions("test_new"))
+    repo.entry(f"{_A}::test_old", replaced_by=[f"{_B}::test_new"])
+    repo.commit()
+
+    assert repo.problems(base) == [(tr.Rule.MISSING_REPLACEMENT, f"{_A}::test_old")]
+
+    repo.write(_B, _functions("test_new"))
+    repo.commit()
+
+    assert repo.problems(base) == []
+
+
+def test_an_entry_for_a_removal_here_names_this_pull_request(repo: _Repo) -> None:
+    repo.write(_A, _functions("test_old"))
+    repo.commit()
+    repo.write(_A, _functions("test_middle"))
+    repo.entry(f"{_A}::test_old", replaced_by=[f"{_A}::test_middle"], pull_request=7)
+    base = repo.commit()
+    repo.write(_A, _functions("test_new"))
+    repo.entry(f"{_A}::test_middle", replaced_by=[f"{_A}::test_new"], pull_request=8)
+    repo.commit()
+
+    assert repo.problems(base, pull_request=8) == []
+    assert repo.problems(base, pull_request=9) == [
+        (tr.Rule.WRONG_PULL_REQUEST, f"{_A}::test_middle")
+    ]
+
+
 def test_a_dropped_parametrize_case_is_left_to_review(repo: _Repo) -> None:
     case = (
         "import pytest\n\n\n"
@@ -399,7 +451,7 @@ def test_the_checked_in_map_is_well_formed() -> None:
 def test_the_python_listing_is_what_pytest_collects(repo: _Repo) -> None:
     repo.write(
         _A,
-        "import sys\n\nimport pytest\n\n\n"
+        "import sys\nimport unittest\n\nimport pytest\n\n\n"
         "def helper():\n    pass\n\n\n"
         "def test_plain():\n    pass\n\n\n"
         "async def test_async():\n    pass\n\n\n"
@@ -418,8 +470,20 @@ def test_the_python_listing_is_what_pytest_collects(repo: _Repo) -> None:
         "    def test_never(self):\n        pass\n\n\n"
         "class TestChild(TestOuter):\n    def test_own(self):\n        pass\n\n\n"
         "class NotATest:\n    def test_x(self):\n        pass\n\n\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_by_unittest(self):\n        pass\n\n"
+        "    def testCamel(self):\n        pass\n\n"
+        "    def helper(self):\n        pass\n\n\n"
+        "class TestSwitchedOff:\n    __test__ = False\n\n"
+        "    def test_off(self):\n        pass\n\n\n"
+        "class TestBase:\n    __test__ = False\n\n"
+        "    def test_from_base(self):\n        pass\n\n\n"
+        "class TestConcrete(TestBase):\n    __test__ = True\n\n\n"
+        "class OptedIn:\n    __test__ = True\n\n"
+        "    def test_opted(self):\n        pass\n\n\n"
         "def outer():\n    def test_inner():\n        pass\n",
     )
+    repo.write(_B, "__test__ = False\n\n\n" + _functions("test_module_off"))
     repo.write("codebase_rag/tests/sub/thing_test.py", _functions("test_sub"))
     repo.write("codebase_rag/tests/sub/helpers.py", _functions("test_helper"))
     repo.write("other/test_outside.py", _functions("test_outside"))
@@ -454,6 +518,8 @@ def test_the_python_listing_is_what_pytest_collects(repo: _Repo) -> None:
     assert collected.returncode == 0, collected.stdout + collected.stderr
     assert tr.list_tests(repo.root, "HEAD") == pytest_ids
     assert f"{_A}::TestChild::TestInner::test_nested" in pytest_ids
+    assert f"{_A}::Checks::testCamel" in pytest_ids
+    assert f"{_A}::TestConcrete::test_from_base" in pytest_ids
 
 
 def test_the_python_listing_follows_each_trees_own_pyproject(repo: _Repo) -> None:
@@ -500,6 +566,9 @@ pub fn after_another_attribute() {}
 #[tokio::test]
 async fn asynchronous() {}
 
+#[tokio::test(flavor = "current_thread", worker_threads = 1)]
+async fn configured_runtime() {}
+
 fn helper<'a>(x: &'a str) -> &'a str { x }
 
 #[cfg(test)]
@@ -512,6 +581,7 @@ mod tests {
         "rust/x/src/lib.rs::plain",
         "rust/x/src/lib.rs::after_another_attribute",
         "rust/x/src/lib.rs::asynchronous",
+        "rust/x/src/lib.rs::configured_runtime",
         "rust/x/src/lib.rs::on_one_line",
     }
 
