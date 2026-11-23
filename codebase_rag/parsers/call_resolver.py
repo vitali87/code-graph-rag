@@ -2203,18 +2203,24 @@ class CallResolver:
             self._remember_cacheable(cache_key, None)
             return None
 
+        return self._resolve_via_trie_last(call, cache_key)
+
+    def _resolve_via_trie_last(
+        self, call: _CallSite, cache_key: _ResolutionKey | None
+    ) -> tuple[str, str] | None:
+        # The last stage: the bare-name trie, remembered for the cache.
         result = self._try_resolve_via_trie(
-            call_name,
-            module_qn,
-            language,
-            call_point,
-            constructing,
+            call.call_name,
+            call.module_qn,
+            call.language,
+            call.call_point,
+            call.constructing,
             call.local_var_types,
             # A chain's flag says what its first call is made on; its last
             # call has a receiver, the value that first call returns
             # (`static_cast<const T*>(p)->m()`).
             call.receiver is cs.CallReceiver.NONE
-            and cs.CHAR_PAREN_OPEN not in call_name,
+            and cs.CHAR_PAREN_OPEN not in call.call_name,
         )
         self._remember_cacheable(cache_key, result)
         return result
