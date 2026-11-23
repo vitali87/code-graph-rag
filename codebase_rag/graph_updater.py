@@ -8252,6 +8252,14 @@ class GraphUpdater:
         # over its qn the restore would hang the dead file's edge on the
         # survivor (issue #1569).
         deleted_set = set(deleted_before_parse)
+        # Discovery and change detection are done: nothing below changes what
+        # `scan` holds. The plan is written here, before the inbound edges are
+        # captured and any subtree deleted, so a write that fails leaves the
+        # graph as it was, and a failing parse still leaves the plan.
+        deleted_keys = self._deleted_keys_for_run(old_hashes, preexisting_paths, scan)
+        self._write_file_plan(
+            eligible_files, scan, is_full_build, deleted_keys | deleted_set
+        )
         captured_inbound = self._captured_inbound_edges(reindexed_keys, deleted_set)
         self._captured_trace_edges = self._capture_trace_edges(
             (*reindexed_keys, *deleted_before_parse)
@@ -8300,12 +8308,6 @@ class GraphUpdater:
         first_failure = self._rerun_flux_frontends(
             scan.changed_entries,
             (*reindexed_keys, *deleted_before_parse, *added_keys),
-        )
-        # Before the parse, which leaves `scan` as it is: the file plan names
-        # these files.
-        deleted_keys = self._deleted_keys_for_run(old_hashes, preexisting_paths, scan)
-        self._write_file_plan(
-            eligible_files, scan, is_full_build, deleted_keys | deleted_set
         )
 
         with Progress(

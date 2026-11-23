@@ -82,6 +82,20 @@ _CIRCLE = (
 _DOCUMENT_ROUTE = (
     cs.FileTier.DOCUMENT if _load_markdown() is not None else cs.FileTier.NONE
 )
+# An unchanged caller whose edge into an edited file survives the edit: a
+# change to the body alone keeps `helper`'s interface, so `main.py` is not
+# re-parsed and its CALLS edge is captured and restored around the re-parse.
+CALLER_FIXTURE = {
+    "pkg/__init__.py": "",
+    "pkg/util.py": "def helper(name):\n    return name.upper()\n",
+    "main.py": "from pkg.util import helper\n\n\ndef run():\n    return helper('y')\n",
+}
+_UTIL_EDITED = "def helper(name):\n    return name.lower()\n"
+_CALLS = (
+    "MATCH (a:Function)-[:CALLS]->(b:Function) "
+    "RETURN a.qualified_name AS caller, b.qualified_name AS callee"
+)
+_FUNCTIONS = "MATCH (f:Function) RETURN f.qualified_name AS qn"
 # Names and paths outside ASCII, which the files keep as UTF-8.
 UNICODE_FIXTURE = {
     "grüße.py": "def grüße():\n    return 'é'\n\n\ndef call():\n    return grüße()\n",
@@ -188,6 +202,28 @@ def _lines(path: Path) -> list[str]:
     return data.decode("utf-8").split("\n")[:-1]
 
 
+def _full_go_plan(repo: Path) -> list[str]:
+    # A full build re-parses every file, so it writes no `reparse` lines, and
+    # has nothing to delete.
+    return [
+        "# cgr handoff files.txt 1",
+        _file_line(repo, "README.md", _DOCUMENT_ROUTE, None),
+        _file_line(repo, "go.mod", cs.FileTier.MANIFEST, None),
+        _file_line(repo, "main.go"),
+        _file_line(repo, "zeta.go"),
+        _file_line(repo, "geo/shape.go"),
+        _file_line(repo, "geo/square.go"),
+    ]
+
+
+def _graph_facts(ingestor: MemgraphIngestor) -> tuple[set[str], set[tuple[str, str]]]:
+    functions = {str(row["qn"]) for row in ingestor.fetch_all(_FUNCTIONS)}
+    calls = {
+        (str(row["caller"]), str(row["callee"])) for row in ingestor.fetch_all(_CALLS)
+    }
+    return functions, calls
+
+
 def _stamp_after_cache(repo: Path, *rels: str) -> None:
     # An incremental run re-hashes only a file stamped strictly later than the
     # hash cache, so an edit made in the same tick as the cache must be moved.
@@ -206,17 +242,54 @@ class TestTheFilePlan:
                 repo, ingestor, state_dir=tmp_path / "state", handoff_dir=handoffs
             ).run()
 
-        # A full build re-parses every file, so it writes no `reparse` lines,
-        # and has nothing to delete.
-        assert _lines(handoffs / _FILES) == [
-            "# cgr handoff files.txt 1",
-            _file_line(repo, "README.md", _DOCUMENT_ROUTE, None),
-            _file_line(repo, "go.mod", cs.FileTier.MANIFEST, None),
-            _file_line(repo, "main.go"),
-            _file_line(repo, "zeta.go"),
-            _file_line(repo, "geo/shape.go"),
-            _file_line(repo, "geo/square.go"),
-        ]
+        assert _lines(handoffs / _FILES) == _full_go_plan(repo)
+
+    def test_a_failure_while_parsing_leaves_the_file_plan(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Discovery and change detection were done; the plan shows the engines
+        # agreed that far even when the definitions stage fails.
+        monkeypatch.setattr(
+            GraphUpdater,
+            "_pre_parse_changed_files",
+            MagicMock(side_effect=RuntimeError("a parse failed")),
+        )
+        repo = _write(tmp_path / "repo", GO_FIXTURE)
+        handoffs = tmp_path / "handoffs"
+        with _embedded_graph(tmp_path / "graph.sqlite") as ingestor:
+            updater = _updater(
+                repo, ingestor, state_dir=tmp_path / "state", handoff_dir=handoffs
+            )
+            with pytest.raises(RuntimeError, match="a parse failed"):
+                updater.run()
+
+        assert _lines(handoffs / _FILES) == _full_go_plan(repo)
+        assert not (handoffs / _INDEX).exists()
+
+    def test_a_plan_that_cannot_be_written_leaves_the_graph_as_it_was(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The plan is written before the run deletes anything. Written after
+        # the stale subtrees went, a failed write lost the unchanged caller's
+        # edge for good: captured but never handed to the restore.
+        repo = _write(tmp_path / "repo", CALLER_FIXTURE)
+        handoffs = tmp_path / "handoffs"
+        with _embedded_graph(tmp_path / "graph.sqlite") as ingestor:
+            # The checkout's own state directory, which the stamp reads.
+            updater = _updater(repo, ingestor, state_dir=None, handoff_dir=handoffs)
+            updater.run()
+            before = _graph_facts(ingestor)
+            assert ("demo.main.run", "demo.pkg.util.helper") in before[1]
+            (repo / "pkg" / "util.py").write_text(_UTIL_EDITED, encoding="utf-8")
+            _stamp_after_cache(repo, "pkg/util.py")
+            monkeypatch.setattr(
+                gu, "write_file_plan", MagicMock(side_effect=OSError("read-only"))
+            )
+
+            with pytest.raises(OSError, match="read-only"):
+                updater.run()
+
+            assert _graph_facts(ingestor) == before
 
     def test_an_incremental_run_names_what_it_reparses_and_deletes(
         self, tmp_path: Path
