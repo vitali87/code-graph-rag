@@ -12,7 +12,8 @@ test removed here must name that pull request.
 
 Both trees are read from Git objects, never imported: the Python tests by an
 `ast` walk of the files pytest collects, under each tree's own pytest
-settings, the Rust tests as the `#[test]` functions under rust/. That takes
+settings, the Rust tests as the `#[test]` functions under rust/, each named
+rust/<crate>/<path>.rs::<mod>::<fn> by the `mod` blocks around it. That takes
 seconds, where collecting the suite means installing and importing it twice.
 It sees test functions, not parameters, so a dropped parametrize case is left
 to review. A renamed or moved test counts as removed.
@@ -72,13 +73,18 @@ UNITTEST_PREFIX = "test"
 ENTRY_KEYS = ("test", "replaced_by", "obsolete", "reason", "pull_request")
 TABLE = "removed"
 
-RUST_TEST = re.compile(
+# In one pass over the blanked source: a test function, a `mod name {` block
+# (`mod name;` opens none), or any other brace, counted to know which blocks
+# enclose each test.
+RUST_ITEM = re.compile(
     # `#[test]`, or a runtime's own, such as `#[tokio::test(flavor = "...")]`
     r"#\s*\[\s*(?:[A-Za-z_]\w*\s*::\s*)*test(?:\s*\([^()]*\))?\s*\]"
     # then any other attributes, such as `#[should_panic(...)]`
     r"(?:\s*#\s*\[[^\]]*\])*"
     r"\s*(?:(?:pub(?:\s*\([^)]*\))?|const|async|unsafe)\s+)*"
-    r"fn\s+(?:r#)?([A-Za-z_]\w*)"
+    r"fn\s+(?:r#)?(?P<test>[A-Za-z_]\w*)"
+    r"|\bmod\s+(?:r#)?(?P<module>[A-Za-z_]\w*)\s*\{"
+    r"|(?P<close>\})|\{"
 )
 RUST_RAW_STRING = re.compile(r'(?<![\w])[bc]?r(#*)"')
 RUST_CHAR = re.compile(r"'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]{1,6}\}|.)|[^\\'\n])'")
@@ -527,11 +533,25 @@ def _rust_code(text: str) -> str:
 
 
 def rust_tests(path: str, text: str) -> frozenset[str]:
-    """The ids of the `#[test]` functions in one Rust file."""
-    return frozenset(
-        f"{path}{SEPARATOR}{match.group(1)}"
-        for match in RUST_TEST.finditer(_rust_code(text))
-    )
+    """The ids of the `#[test]` functions in one Rust file.
+
+    An id is the file, then the `mod` blocks around the function, outermost
+    first, then its name, so same-named tests in two modules stay apart.
+    Braces are counted on the blanked source: none in a string or comment
+    can shift the nesting.
+    """
+    tests: set[str] = set()
+    # One entry per open brace: the module's name, or None for any other block.
+    blocks: list[str | None] = []
+    for item in RUST_ITEM.finditer(_rust_code(text)):
+        if test := item["test"]:
+            modules = [name for name in blocks if name is not None]
+            tests.add(SEPARATOR.join([path, *modules, test]))
+        elif not item["close"]:
+            blocks.append(item["module"])
+        elif blocks:
+            blocks.pop()
+    return frozenset(tests)
 
 
 def _is_test_id(value: TomlValue | None) -> bool:

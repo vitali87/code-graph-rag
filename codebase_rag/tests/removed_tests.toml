@@ -12,7 +12,9 @@
 # pull_request = 4321
 #
 # - test: the removed test's id without parameters: the file, the class if
-#   any, the function. A Rust test is rust/<crate>/<path>.rs::<function>.
+#   any, the function. A Rust test is rust/<crate>/<path>.rs::<mod>::<function>,
+#   with the mod blocks around the function outermost first (none at file
+#   level).
 # - replaced_by: one or more tests the pull request's head has. A replacement
 #   removed later gets an entry of its own, and the check follows the chain.
 # - obsolete = "<path>", in place of replaced_by, only when the same pull

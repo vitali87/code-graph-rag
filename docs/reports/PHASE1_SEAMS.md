@@ -481,7 +481,7 @@ pull_request = 4321
 ```
 
 - `test` is the removed test's id without parameters: the file, the class
-  if any, the function. A Rust test is `rust/<crate>/<file>.rs::<fn>`.
+  if any, the function. A Rust test is `rust/<crate>/<file>.rs::<mod>::<fn>`.
 - `replaced_by` lists one or more tests that exist after the change: a
   graph-level Python test or a Rust `#[test]`. If a replacement is itself
   removed later, it gets an entry of its own, and the check follows the

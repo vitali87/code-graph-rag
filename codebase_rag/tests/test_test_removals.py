@@ -306,12 +306,12 @@ def test_a_removed_rust_test_needs_an_entry_too(repo: _Repo) -> None:
     repo.write(_LIB, _rust("parses_match"))
     repo.commit()
 
-    assert repo.problems(base) == [(tr.Rule.NO_ENTRY, f"{_LIB}::parses_return")]
+    assert repo.problems(base) == [(tr.Rule.NO_ENTRY, f"{_LIB}::tests::parses_return")]
 
     repo.write("rust/demo/tests/parser.rs", _rust("parses_return_clause"))
     repo.entry(
-        f"{_LIB}::parses_return",
-        replaced_by=["rust/demo/tests/parser.rs::parses_return_clause"],
+        f"{_LIB}::tests::parses_return",
+        replaced_by=["rust/demo/tests/parser.rs::tests::parses_return_clause"],
     )
     repo.commit()
 
@@ -585,8 +585,58 @@ mod tests {
         "rust/x/src/lib.rs::after_another_attribute",
         "rust/x/src/lib.rs::asynchronous",
         "rust/x/src/lib.rs::configured_runtime",
-        "rust/x/src/lib.rs::on_one_line",
+        "rust/x/src/lib.rs::tests::on_one_line",
     }
+
+
+def test_a_rust_test_id_names_its_enclosing_modules() -> None:
+    source = """
+mod declared_elsewhere;
+
+#[test]
+fn parses() {}
+
+mod a {
+    const OPEN: &str = "{";
+    #[test]
+    fn parses() { let _ = '}'; }
+}
+
+pub mod b {
+    fn helper() { if true { } }
+
+    #[test]
+    fn parses() {}
+
+    mod inner {
+        #[test]
+        fn parses() {}
+    }
+
+    #[test]
+    fn after_inner() {}
+}
+"""
+
+    assert tr.rust_tests("rust/x/src/lib.rs", source) == {
+        "rust/x/src/lib.rs::parses",
+        "rust/x/src/lib.rs::a::parses",
+        "rust/x/src/lib.rs::b::parses",
+        "rust/x/src/lib.rs::b::inner::parses",
+        "rust/x/src/lib.rs::b::after_inner",
+    }
+
+
+def test_removing_one_of_two_same_named_rust_tests_needs_an_entry(
+    repo: _Repo,
+) -> None:
+    both = "mod a {\n    #[test]\n    fn parses() {}\n}\n\n"
+    repo.write(_LIB, both + both.replace("mod a", "mod b"))
+    base = repo.commit()
+    repo.write(_LIB, both.replace("mod a", "mod b"))
+    repo.commit()
+
+    assert repo.problems(base) == [(tr.Rule.NO_ENTRY, f"{_LIB}::a::parses")]
 
 
 def _run(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:

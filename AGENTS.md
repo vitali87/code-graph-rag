@@ -58,8 +58,9 @@ Never delete a test to get a pull request through. A test goes only once a
 test that checks the same thing exists, in the same pull request or an
 earlier one, and `codebase_rag/tests/removed_tests.toml` names it
 (CONTRIBUTING.md, "Removing a test", has the format). A rename, a move to
-another file or class and a deleted file all count as removals, Rust
-`#[test]` functions included. Commit, then run
+another file, class or Rust `mod` and a deleted file all count as removals,
+Rust `#[test]` functions included (named
+`rust/<crate>/<path>.rs::<mod>::<fn>`). Commit, then run
 `python3 scripts/test_removals.py check --base origin/main`: it reads the
 committed trees, not the working tree, and prints the entry each removal
 needs, with the moved test's new id when an added test has the same name.
