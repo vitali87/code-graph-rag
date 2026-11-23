@@ -166,6 +166,16 @@ NODES_NOT_LOADED = "Nodes should be loaded"
 RELATIONSHIPS_NOT_LOADED = "Relationships should be loaded"
 DATA_NOT_LOADED = "Data should be loaded"
 
+# A graph export the reference graphs' line format cannot read
+# (codebase_rag/canonical_graph.py, raised as SystemExit)
+CANONICAL_NO_LISTS = "export without node and relationship lists"
+CANONICAL_NO_NODE_ID = "export node without a node_id: {node}"
+CANONICAL_NO_PROPERTIES = "export record without a properties map: {record}"
+CANONICAL_RELATIONSHIP_NOT_A_RECORD = (
+    "export relationship is not a record: {relationship}"
+)
+CANONICAL_UNKNOWN_ENDPOINT = "relationship to a node the export lacks: {relationship}"
+
 # Parser errors
 NO_LANGUAGES = "No Tree-sitter languages available."
 

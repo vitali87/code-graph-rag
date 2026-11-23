@@ -1120,6 +1120,11 @@ class GraphQueryClient(Protocol):
     ) -> list[ResultRow]: ...
 
 
+# A graph export as `cgr start -o` writes it, read back from its JSON: what
+# the reference graphs' line format reads (codebase_rag/canonical_graph.py).
+type ExportRecord = dict[str, JsonValue]
+
+
 class ReferenceRepo(TypedDict):
     """One pinned repository of the reference graphs (scripts/reference_graphs.py)."""
 

@@ -49,12 +49,16 @@ from pathlib import Path
 from typing import NamedTuple
 
 from codebase_rag import constants as cs
-from codebase_rag.types_defs import JsonValue, ReferenceCase, ReferenceRepo
+from codebase_rag.types_defs import (
+    ExportRecord,
+    JsonValue,
+    ReferenceCase,
+    ReferenceRepo,
+)
 from scripts.reference_graphs import (
     DEFAULT_CACHE,
     PROJECT_ROOT,
     REFERENCE_DIR,
-    ExportRecord,
     Indexed,
     cgr_command,
     checkouts,
