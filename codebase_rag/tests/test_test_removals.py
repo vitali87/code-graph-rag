@@ -151,10 +151,8 @@ def test_a_removal_without_an_entry_fails_and_prints_the_entry_to_add(
     ]
     message = report.problems[1].message
     assert tr.MAP_PATH in message
-    assert (
-        f'[[removed]]\ntest = "{_B}::test_gone"\nreplaced_by = ["<' in message
-        and "\npull_request = 4321" in message
-    )
+    assert f'[[removed]]\ntest = "{_B}::test_gone"\nreplaced_by = ["<' in message
+    assert "\npull_request = 4321" in message
 
 
 def test_a_removal_with_an_entry_passes(repo: _Repo) -> None:
