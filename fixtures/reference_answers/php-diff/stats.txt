@@ -31,14 +31,14 @@ Scoped to: php-diff
 │ CONTAINS_SECTION    │    56 │
 │ CONTAINS_MODULE     │    42 │
 │ DEFINES             │    40 │
-│ INHERITS            │    23 │
+│ INHERITS            │    28 │
 │ CONTAINS_FOLDER     │    15 │
 │ OVERRIDES           │     8 │
 │ IMPLEMENTS          │     8 │
 │ DEPENDS_ON_EXTERNAL │     2 │
 │ REFERENCES          │     1 │
 ├─────────────────────┼───────┤
-│ Total Relationships │   927 │
+│ Total Relationships │   932 │
 └─────────────────────┴───────┘
 --- stderr
 Fetching graph statistics...

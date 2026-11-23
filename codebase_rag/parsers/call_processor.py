@@ -562,6 +562,114 @@ def _is_cpp_dereference(operand: Node) -> bool:
     )
 
 
+def _calls_through_this(language: cs.SupportedLanguage | None, call_node: Node) -> bool:
+    """Whether a call with a receiver makes it on the caller's own object:
+    `this->label()`, `(*this).label()`, `$this->label()`.
+
+    PHP and C++ name a call on any other receiver by its bare method too
+    (`$other->label()`, `a.b.label()`), so only the call's shape tells the
+    resolver which ones may reach an inherited method. A Dart call's name
+    keeps every receiver but `this` / `super`, so each one its name leaves
+    bare is on the caller's own object, unless a parameter or local of the
+    name hides it. Scala is left as on main: nothing reads which names its
+    parameters and locals bind where a call sits, so a hidden bare call
+    cannot be told apart (PR #3240).
+    """
+    match language:
+        case cs.SupportedLanguage.DART:
+            return True
+        case cs.SupportedLanguage.PHP:
+            receiver = call_node.child_by_field_name(cs.FIELD_OBJECT)
+            return (
+                call_node.type in cs.PHP_MEMBER_CALL_TYPES
+                and receiver is not None
+                and receiver.type == cs.TS_PHP_VARIABLE_NAME
+                and safe_decode_text(receiver) == cs.PHP_THIS
+            )
+        case cs.SupportedLanguage.CPP:
+            callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+            return (
+                callee is not None
+                and callee.type == cs.TS_CPP_FIELD_EXPRESSION
+                and _is_this_receiver(callee)
+            )
+    return False
+
+
+def _dart_through_this(call_node: Node) -> bool:
+    # Whether a Dart call selector's chain starts at `this` (`this.label()`):
+    # the call's name drops the receiver, but a local of the name cannot
+    # hide a member reached through it (Greptile on PR #3240).
+    start = _dart_chain_start(call_node)
+    return start is not None and start.type == cs.TS_DART_THIS
+
+
+def _dart_chain_start(call_node: Node) -> Node | None:
+    # What a Dart call selector's chain starts at: the node before its
+    # selectors (`make` in `make().label()`, `this` in `this.label()`).
+    prev = call_node.prev_named_sibling
+    while prev is not None and prev.type == cs.TS_DART_SELECTOR:
+        prev = prev.prev_named_sibling
+    return prev
+
+
+def _chain_root_call(
+    language: cs.SupportedLanguage | None, call_node: Node
+) -> tuple[Node, str] | None:
+    """The first call of the receiver chain `call_node` ends, and the name
+    it calls: `make()` in `make()->label()`. In Dart that is the selector
+    right after the chain's first name; in C++ the innermost call of the
+    call's own type down its left spine."""
+    if language == cs.SupportedLanguage.DART:
+        return _dart_chain_root_call(call_node)
+    return _cpp_chain_root_call(call_node)
+
+
+def _dart_chain_root_call(call_node: Node) -> tuple[Node, str] | None:
+    # The selector right after the chain's first name, and that name.
+    start = _dart_chain_start(call_node)
+    root = start.next_named_sibling if start is not None else None
+    if root is None or root.type != cs.TS_DART_SELECTOR:
+        return None
+    return root, safe_decode_text(start) or ""
+
+
+def _cpp_chain_root_call(call_node: Node) -> tuple[Node, str] | None:
+    # The innermost call of the call's own type down its left spine, and
+    # the name it calls.
+    root = None
+    node = call_node
+    for _ in range(_CHAIN_SPINE_WALK_LIMIT):
+        # `child(0)` raises on a leaf rather than returning None.
+        if node.child_count == 0 or (node := node.child(0)) is None:
+            break
+        if node.type == call_node.type:
+            root = node
+    if root is None:
+        return None
+    callee = root.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    return root, safe_decode_text(_cpp_bare_callee(callee) or callee) or ""
+
+
+def _cpp_bare_callee(callee: Node | None) -> Node | None:
+    # The name a bare C++ call names: `make` in `make()` and in `make<int>()`,
+    # whose template arguments do not change which `make` is found (Greptile
+    # on PR #3240).
+    if callee is not None and callee.type == cs.TS_CPP_TEMPLATE_FUNCTION:
+        callee = callee.child_by_field_name(cs.FIELD_NAME)
+    return callee if callee is not None and callee.type == cs.TS_IDENTIFIER else None
+
+
+def _is_this_receiver(member: Node) -> bool:
+    """Whether a C++ member access is `this->m` or `(*this).m`."""
+    receiver = _cpp_without_parentheses(
+        member.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+    )
+    if receiver is not None and _is_cpp_dereference(receiver):
+        receiver = receiver.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+    return receiver is not None and receiver.type == cs.CppNodeType.THIS
+
+
 def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
     """Whether `call_node` ends a receiver chain of too many calls (#2262).
 
@@ -608,12 +716,15 @@ def _has_no_receiver(call_node: Node, language: cs.SupportedLanguage) -> bool:
     # PHP and C/C++ name a member call by its bare method name too
     # (`$bag->count()` and `count($xs)` both read `count`; `a.b.max()` reads
     # `max`), so only the call's shape tells that it has no receiver and so
-    # names no method of another class (issue #2575).
+    # names no method of another class (issue #2575). A C++ template call
+    # (`make<int>()`) is as bare as `make()` (PR #3240).
     if language == cs.SupportedLanguage.PHP:
         return call_node.type == cs.TS_PHP_FUNCTION_CALL_EXPRESSION
     if language in _C_FAMILY_LANGUAGES:
-        callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-        return callee is not None and callee.type == cs.TS_IDENTIFIER
+        return (
+            _cpp_bare_callee(call_node.child_by_field_name(cs.TS_FIELD_FUNCTION))
+            is not None
+        )
     return False
 
 
@@ -7851,7 +7962,27 @@ class CallProcessor:
             # A Java/C#/Scala `new X(...)` names a type, never a method.
             constructing=ctx.language in _NEW_CONSTRUCTS_LANGUAGES
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
-            receiverless=_has_no_receiver(call_node, ctx.language)
+            # PHP and C/C++ name `$bag->count()`, `count($xs)` and
+            # `$this->count()` all `count`: what the call is made on decides
+            # whether it may reach a method its class inherits, or none.
+            receiver=self._call_receiver(ctx, call_node, call_name),
+        )
+        return self._judge_resolved_callee(ctx, call_node, call_name, callee_info)
+
+    @staticmethod
+    def _call_receiver(
+        ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> cs.CallReceiver:
+        # A chain (`make()->label()`) is typed from its first call's callee,
+        # so it is flagged as that call is: an inherited `make` may start it
+        # only where `make()` alone may reach one, not where a parameter or
+        # local `make` is the callable it starts from (Greptile on PR #3240).
+        if cs.CHAR_PAREN_OPEN in call_name and cs.SEPARATOR_DOT in call_name:
+            root = _chain_root_call(ctx.language, call_node)
+            if root is None:
+                return cs.CallReceiver.OTHER
+            call_node, call_name = root
+        if _has_no_receiver(call_node, ctx.language):
             # A C++ constructor's member initializer (`head_(NewNode(0))`)
             # is read with its module's calls, though it runs in the
             # constructor and names the class's own members there; with no
@@ -7859,13 +7990,38 @@ class CallProcessor:
             # (leveldb's `SkipList::NewNode`, `PosixWritableFile::Dirname`).
             # A default member initializer is read the same way. Any other
             # module-level call is not (CodeRabbit, PR #2948).
-            and not (
+            if (
                 ctx.is_cpp
                 and ctx.caller_spec[0] == cs.NodeLabel.MODULE
                 and _in_member_initializer(call_node)
-            ),
-        )
-        return self._judge_resolved_callee(ctx, call_node, call_name, callee_info)
+            ):
+                return cs.CallReceiver.OTHER
+            return cs.CallReceiver.NONE
+        if not _calls_through_this(
+            ctx.language, call_node
+        ) or CallProcessor._dart_bare_name_hidden(ctx, call_node, call_name):
+            return cs.CallReceiver.OTHER
+        return cs.CallReceiver.SELF
+
+    @staticmethod
+    def _dart_bare_name_hidden(
+        ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> bool:
+        # A Dart call its name leaves bare, with a parameter or local of the
+        # name in scope there: `String run(String Function() label) =>
+        # label();` calls the parameter, not an inherited `label` (Greptile
+        # and CodeRabbit on PR #3240). Through `this` nothing hides it. A
+        # C++ name is hidden by what `cpp_local_scopes` records for its
+        # caller, which the resolver reads (PR #2948).
+        if (
+            ctx.language != cs.SupportedLanguage.DART
+            or cs.SEPARATOR_DOT in call_name
+            or _dart_through_this(call_node)
+        ):
+            return False
+        point = call_node.start_byte
+        spans = dart_utils.dart_binding_spans(ctx.caller_node, frozenset({call_name}))
+        return any(start <= point < end for start, end in spans.get(call_name, ()))
 
     def _judge_resolved_callee(
         self,

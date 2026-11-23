@@ -54,6 +54,13 @@ TS_PHP_PROPERTY_ELEMENT = "property_element"
 TS_PHP_DECLARATION_LIST = "declaration_list"
 TS_PHP_VARIABLE_NAME = "variable_name"
 TS_PHP_USE_DECLARATION = "use_declaration"
+# `use A, B { A::label insteadof B; }`: the braces of a trait use, and the
+# clause in them that picks one trait's method over another's.
+TS_PHP_USE_LIST = "use_list"
+TS_PHP_USE_INSTEAD_OF_CLAUSE = "use_instead_of_clause"
+# `use T { T::original as label; }`: the clause that copies a trait's method
+# under another name (or, with no new name, only changes its visibility).
+TS_PHP_USE_AS_CLAUSE = "use_as_clause"
 TS_PHP_ARRAY_CREATION_EXPRESSION = "array_creation_expression"
 TS_PHP_ARRAY_ELEMENT_INITIALIZER = "array_element_initializer"
 TS_PHP_INTEGER = "integer"
