@@ -990,3 +990,38 @@ def test_an_abstract_php_trait_method_leaves_the_implementation_to_find(
 ) -> None:
     calls = _calls(tmp_path / "needs", _PHP_ABSTRACT_TRAIT, "php")
     assert _callees(calls, caller) == {callee: "exact"}, calls
+
+
+# Greptile on PR #3240: a mixin's `on` type is a requirement on the class it
+# is applied to, not an implementation. `class C extends B with M` with
+# `mixin M on A` runs B's `label`, though A declares one too; only inside the
+# mixin itself is the `on` type all that `label()` can be found on.
+_DART_ON_CONSTRAINT = {
+    "pubspec.yaml": 'name: shapes\nenvironment:\n  sdk: ">=3.0.0 <4.0.0"\n',
+    "lib/on.dart": """\
+class A { String label() => "a"; }
+class B implements A { String label() => "b"; }
+mixin M on A { String inMixin() => label(); }
+class C extends B with M {
+  String call() => label();
+}
+""",
+}
+
+
+@pytest.fixture(scope="module")
+def dart_on(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
+    return _calls(
+        tmp_path_factory.mktemp("dart3240on") / "on", _DART_ON_CONSTRAINT, "dart"
+    )
+
+
+def test_a_dart_mixin_on_type_is_no_implementation(dart_on: _Calls) -> None:
+    assert _callees(dart_on, "lib.on.C.call") == {"lib.on.B.label": "exact"}, dart_on
+
+
+def test_inside_a_dart_mixin_its_on_type_still_answers(dart_on: _Calls) -> None:
+    # Control: the mixin's own `label()` can be found on its `on` type alone.
+    assert _callees(dart_on, "lib.on.M.inMixin").get("lib.on.A.label") == "exact", (
+        dart_on
+    )

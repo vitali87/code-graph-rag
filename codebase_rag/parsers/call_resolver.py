@@ -402,6 +402,7 @@ class CallResolver:
         "go_package_names",
         "_php_class_namespaces",
         "_php_composition_memo",
+        "_dart_mixin_memo",
         "_php_cased_index",
         "_php_fqcn_bases_cache",
         "_js_return_class_cache",
@@ -564,6 +565,9 @@ class CallResolver:
         # methods their `insteadof` clauses exclude, read from its file once
         # per pass.
         self._php_composition_memo: dict[str, PhpTraitComposition] = {}
+        # Dart class qn -> whether its file declares it as a `mixin`, whose
+        # recorded bases are its `on` types, read from its file once per pass.
+        self._dart_mixin_memo: dict[str, bool] = {}
         self._php_cased_index: _PhpCasedIndex | None = None
         # {PHP class qn: the dotted-FQCN bases in `_subclass_map` that name
         # it}, built on first use.
@@ -793,6 +797,8 @@ class CallResolver:
         self._php_class_namespaces.clear()
         # Or changed which traits it uses and which methods it takes.
         self._php_composition_memo.clear()
+        # Or a re-parsed Dart one declare a mixin as a class, or back.
+        self._dart_mixin_memo.clear()
         # Or a re-parsed Python one assign other instance attributes.
         self._py_instance_attrs_memo.clear()
         self._php_cased_index = None
@@ -2854,7 +2860,11 @@ class CallResolver:
     ) -> list[str]:
         # Scala's linearization, which Dart mixin application matches: the
         # last recorded base first, each followed by its own bases, and a
-        # base two of them share kept only at its last place.
+        # base two of them share kept only at its last place. A mixin applied
+        # with `with` brings its own members only: its recorded bases are its
+        # `on` types, which the class's superclass must implement, not
+        # implementations of their own (Greptile on PR #3240). In
+        # `class C extends B with M`, `mixin M on A`, `label()` runs B's.
         # `memo` keeps a diamond-heavy hierarchy from being walked once per
         # path to each base.
         if (known := memo.get(class_qn)) is not None:
@@ -2863,12 +2873,39 @@ class CallResolver:
         for base in reversed(self.class_inheritance.get(class_qn, [])):
             if base in seen:
                 continue
-            order.extend((base, *self._linearized_bases(base, seen | {base}, memo)))
+            order.append(base)
+            if not self._dart_is_mixin(base):
+                order.extend(self._linearized_bases(base, seen | {base}, memo))
         last = {base: index for index, base in enumerate(order)}
         memo[class_qn] = [
             base for index, base in enumerate(order) if last[base] == index
         ]
         return memo[class_qn]
+
+    def _dart_is_mixin(self, class_qn: str) -> bool:
+        # Whether the file declaring `class_qn` declares it as a `mixin`.
+        # Dart has no nested types, so it is one of the file's top-level
+        # declarations. A type outside the project is no known mixin.
+        if (known := self._dart_mixin_memo.get(class_qn)) is not None:
+            return known
+        module_qn = module_qn_for_entity(
+            class_qn, self.type_inference.module_qn_to_file_path
+        )
+        root = self._cached_module_root(module_qn) if module_qn else None
+        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        # A mixin_declaration has no name field: its name is its one
+        # `identifier` child (the `on` types are `type_identifier`s).
+        is_mixin = root is not None and any(
+            node.type == cs.TS_DART_MIXIN_DECLARATION
+            and any(
+                child.type == cs.TS_DART_IDENTIFIER
+                and safe_decode_text(child) == simple
+                for child in node.named_children
+            )
+            for node in root.named_children
+        )
+        self._dart_mixin_memo[class_qn] = is_mixin
+        return is_mixin
 
     def _go_local_in_scope(self, call: _CallSite) -> bool:
         # Only where the local is in scope: a `helper()` before an inner
