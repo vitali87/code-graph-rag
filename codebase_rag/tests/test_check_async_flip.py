@@ -241,6 +241,34 @@ def test_a_boolean_operand_is_judged_where_its_value_goes(
     assert has_findings(delta) is breaks
 
 
+@pytest.mark.parametrize(
+    ("body", "breaks"),
+    [
+        ("async def use():\n    return await fetch().__anext__()", False),
+        ("def use():\n    return fetch().bit_length()", True),
+    ],
+    ids=["member-the-async-generator-has", "member-it-lacks"],
+)
+def test_a_member_read_breaks_only_where_the_new_value_lacks_it(
+    indexed: Indexed, body: str, breaks: bool
+) -> None:
+    # `await stream().__anext__()` steps an async generator, so a caller
+    # migrated with the flip may read a member of the new value; one that
+    # value lacks is an `AttributeError` (Greptile, PR #2951).
+    delta = _edit_both(
+        indexed,
+        ("def fetch():\n    return 1", "async def fetch():\n    yield 1"),
+        ("def use():\n    return fetch() + 1", body),
+    )
+    (change,) = [
+        c for c in delta["signature_changes"] if c["qualified_name"] == _qn("fetch")
+    ]
+    verdicts = {site["caller"]: site["verdict"] for site in change["sites"]}
+    flagged = verdicts[f"{PROJECT}.app.use"] == cs.DELTA_ARITY_ASYNC_CHANGED
+    assert flagged is breaks, verdicts
+    assert has_findings(delta) is breaks
+
+
 def test_a_now_sync_def_returning_a_call_is_a_hint(indexed: Indexed) -> None:
     # `def afetch(): return load(1)` hands back `load`'s coroutine, so
     # `await afetch()` still works; a call's value is unknown here, so the

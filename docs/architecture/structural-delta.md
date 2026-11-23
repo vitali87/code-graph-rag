@@ -179,8 +179,9 @@ Those sites read `async_changed`, which trips `--fail-on-found`, unless
 their arity verdict already does. A caller already migrated (`await
 fetch()` once the function is async, a plain `fetch()` once it no longer
 is) is fine, and any other use of the result (returned, assigned, handed
-to `asyncio.run` or `gather`, or the iterable of an `async for`, which an
-async generator serves) is not judged: the change carries
+to `asyncio.run` or `gather`, the iterable of an `async for`, which an
+async generator serves, or a member a coroutine or async generator also
+has, as in `await fetch().__anext__()`) is not judged: the change carries
 `async_change`, a hint. So is an `await` of a now-sync def that returns
 anything but nothing or a literal (`return inner()` may hand back
 `inner`'s coroutine), and every call to a def under a decorator other

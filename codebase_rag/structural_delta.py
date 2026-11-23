@@ -24,7 +24,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
-from types import MappingProxyType
+from types import AsyncGeneratorType, CoroutineType, MappingProxyType
 from typing import NamedTuple, NotRequired, TypedDict
 
 from tree_sitter import Node, Parser, Tree
@@ -3384,6 +3384,12 @@ _PY_READ_OBJECT_FIELDS = {
     cs.TS_PY_FOR_STATEMENT: cs.TS_FIELD_RIGHT,
     cs.TS_PY_FOR_IN_CLAUSE: cs.TS_FIELD_RIGHT,
 }
+# Members a coroutine or an async generator has: a now-async call read
+# through one (`await stream().__anext__()`) may be a caller migrated with
+# the def, while any other member is an `AttributeError` (Greptile, PR #2951).
+_PY_AWAITABLE_MEMBERS = frozenset(dir(CoroutineType)) | frozenset(
+    dir(AsyncGeneratorType)
+)
 
 
 def _wrapped(definition: Definition) -> bool:
@@ -3558,7 +3564,8 @@ def _read_synchronously(parent: Node | None, child: Node) -> bool:
     """Whether the value is used on the spot: discarded as a statement, an
     operand, the object of an attribute or subscript read, or the iterable
     of a `for`. An `async for` takes an async iterable, which an async
-    generator gives, so it is left to the hint."""
+    generator gives, so it is left to the hint, as is a member the new value
+    also has."""
     if parent is None:
         return False
     if parent.type in _PY_SYNC_VALUE_READERS:
@@ -3569,7 +3576,17 @@ def _read_synchronously(parent: Node | None, child: Node) -> bool:
         target is not None
         and target.id == child.id
         and not any(c.type == cs.TS_PY_ASYNC for c in parent.children)
+        and not _reads_awaitable_member(parent)
     )
+
+
+def _reads_awaitable_member(parent: Node) -> bool:
+    member = (
+        parent.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+        if parent.type == cs.TS_PY_ATTRIBUTE
+        else None
+    )
+    return member is not None and _node_text(member) in _PY_AWAITABLE_MEMBERS
 
 
 # --- calling conventions ------------------------------------------------------
