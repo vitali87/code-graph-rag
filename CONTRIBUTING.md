@@ -102,6 +102,10 @@ The **Breaking Change Notes** check fails until the title, the label and the fil
 
 `docs/reference/public-surface.json` records everything users and agents reach: commands and options, exit codes, MCP tools and their input schemas, settings, graph labels and relationships, the export's records, the protobuf index and the Python SDK. `test_public_surface.py` fails when the code and the file differ. A change you intend: run `uv run python scripts/public_surface.py` and commit the file, so the change shows in the pull request. A removed or renamed entry is a breaking change (above). The Rust rewrite ([RUST_REWRITE_PLAN.md](docs/reports/RUST_REWRITE_PLAN.md)) is held to this file.
 
+### Removing a test
+
+No test disappears silently. A pull request that removes, renames or moves a test, a Python test function or a Rust `#[test]`, adds an entry to [`codebase_rag/tests/removed_tests.toml`](codebase_rag/tests/removed_tests.toml) naming the tests that now check what it checked: `test` is the removed test's id without parameters (`file::Class::function`, or `rust/<crate>/<path>.rs::<function>`), `replaced_by` lists its replacements, `reason` says what it checked and how they check the same, and `pull_request` is the pull request's number. Only when the same pull request deletes the code the test checked does `obsolete = "<the deleted file>"` take the place of `replaced_by`. The lint job runs `python3 scripts/test_removals.py check --base <base commit>`, which lists the tests of both commits without importing anything and fails on a removed test without an entry, a replacement the head does not have, an entry for a test that still exists, or an `obsolete` file still there; each failure prints the entry to add. Run it on your committed branch with `--base origin/main`. A dropped parametrize case is not checked: say so in the pull request. The Rust rewrite ([PHASE1_SEAMS.md](docs/reports/PHASE1_SEAMS.md), section 4) is held to this map.
+
 ### Continuous Integration
 
 All pull requests are automatically validated by our CI workflow, which runs in parallel for faster feedback:
@@ -110,6 +114,7 @@ All pull requests are automatically validated by our CI workflow, which runs in 
    - `ruff check` with GitHub annotations
    - `ruff format --check`
    - Bandit, through the same pre-commit hook you run locally (high-severity findings fail the job)
+   - On a pull request, `scripts/test_removals.py check`: every test the base has and the head lacks has an entry in `codebase_rag/tests/removed_tests.toml` (see [Removing a test](#removing-a-test))
 
 2. **Type Check** - Static type analysis:
    - `ty check` on production code (excludes tests)
