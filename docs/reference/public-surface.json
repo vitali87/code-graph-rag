@@ -5950,6 +5950,16 @@
       "default": "sqlite"
     },
     {
+      "name": "INDEX_ENGINE",
+      "env": [
+        "CGR_INDEX_ENGINE"
+      ],
+      "env_only": false,
+      "type": "str",
+      "constraints": {},
+      "default": "auto"
+    },
+    {
       "name": "JAVA_FRONTEND",
       "env": [
         "JAVA_FRONTEND"

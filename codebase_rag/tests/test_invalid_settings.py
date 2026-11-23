@@ -45,6 +45,7 @@ _VARIABLES = (
     "CPP_FRONTEND",
     "GRAPH_BACKEND",
     "QDRANT_BATCH_SIZE",
+    "CGR_INDEX_ENGINE",
 )
 # Resolves the batch size before it connects, so a bad value is reached
 # without a database.
@@ -224,6 +225,24 @@ class TestTheCliStartsWithAnInvalidSetting:
             "0 is not in the range x>=1."
         )
         assert "Traceback" not in result.stdout + result.stderr
+
+    def test_an_index_engine_value_is_refused_like_any_other(
+        self, tmp_path: Path
+    ) -> None:
+        # The rule every setting follows: `--version` still answers, and a
+        # command is refused before it runs on the default.
+        env = {"CGR_INDEX_ENGINE": "go=fortran"}
+
+        version = _cgr(tmp_path, "--version", env=env)
+        command = _cgr(tmp_path, *_A_COMMAND, env=env)
+
+        assert version.returncode == 0, version.stderr
+        assert "code-graph-rag version" in version.stdout
+        assert command.returncode == 2
+        assert command.stderr.strip() == (
+            "Error: Invalid value for CGR_INDEX_ENGINE in the environment: "
+            "'fortran' is not an engine; use one of auto, python, rust."
+        )
 
     def test_a_list_setting_that_is_not_json_is_reported_not_raised(
         self, tmp_path: Path
@@ -477,6 +496,7 @@ class TestLoadSettings:
             ("QDRANT_BATCH_SIZE", "0", "0 is not in the range x>0."),
             ("MEMGRAPH_BATCH_SIZE", "-3", "-3 is not in the range x>=1."),
             ("GRAPH_BACKEND", "bogus", "GRAPH_BACKEND must be one of "),
+            ("CGR_INDEX_ENGINE", "go=fortran", "'fortran' is not an engine; "),
         ],
     )
     def test_each_kind_of_refusal_reads_like_a_flag_error(

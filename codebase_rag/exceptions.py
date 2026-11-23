@@ -92,6 +92,21 @@ SETTING_JSON_LIST_TOO_DEEP = (
 # A `.env` value `os.environ` refused, such as one past the 32,767 characters
 # Windows holds in a variable. The error names the limit, not the value.
 SETTING_NOT_SETTABLE = "the operating system refused it ({error})."
+# CGR_INDEX_ENGINE, refused at start-up like any invalid setting
+# (docs/reports/PHASE1_SEAMS.md, section 1).
+INDEX_ENGINE_UNKNOWN_ENGINE = "{engine!r} is not an engine; use one of {engines}."
+INDEX_ENGINE_UNKNOWN_LANGUAGE = (
+    "{language!r} is not a language; use one of {languages}."
+)
+INDEX_ENGINE_NO_ENGINE = "{token!r} names no engine after '='; use one of {engines}."
+INDEX_ENGINE_LANGUAGE_TWICE = "{language!r} is named twice; name each language once."
+INDEX_ENGINE_TWO_DEFAULTS = (
+    "{first!r} and {second!r} are both engines on their own; give at most one."
+)
+INDEX_ENGINE_FAMILY_SPLIT = (
+    "{family} take one engine together, as they resolve each other's imports "
+    "and includes; this value gives them {asked}."
+)
 CONFIG = "{role} configuration error: {error}"
 EMPTY_PROJECT_SCOPE = (
     "The assistant has no project to work on: an empty project scope would "

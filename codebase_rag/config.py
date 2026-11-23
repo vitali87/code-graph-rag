@@ -22,6 +22,7 @@ from . import constants as cs
 from . import exceptions as ex
 from . import instructions_trust, logs
 from .graph_dialects import DIALECT_SQLITE, available_dialects
+from .index_engine import parse_index_engine
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
 from .utils.path_utils import ordered_ignore_block
 
@@ -617,6 +618,21 @@ class AppConfig(BaseSettings):
     )
 
     CGR_CAPTURE: str = Field("", validation_alias="CGR_CAPTURE")
+
+    # Which engine indexes each language: `auto`, `python` or `rust` for
+    # every language, `LANGUAGE=ENGINE` for one (docs/reports/PHASE1_SEAMS.md,
+    # section 1). Not CGR_ENGINE: GRAPH_BACKEND is "the graph engine". Only the
+    # string is kept here; the parsed selection lives in `index_engine`, where
+    # it adds no member to the settings' public surface.
+    INDEX_ENGINE: str = Field(
+        cs.IndexEngine.AUTO.value, validation_alias="CGR_INDEX_ENGINE"
+    )
+
+    @field_validator("INDEX_ENGINE")
+    @classmethod
+    def _valid_index_engine(cls, value: str) -> str:
+        parse_index_engine(value)
+        return value.lower()
 
     # MCP read_file refuses a likely credential file (.env, keys,
     # .git/config): the client's model would read it (issue #3457). The CLI

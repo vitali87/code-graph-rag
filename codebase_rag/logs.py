@@ -1594,6 +1594,17 @@ CAPTURE_DEPENDENCY_GAP = (
 )
 CAPTURE_RESOLVED = "Capture enabled: {rels}"
 
+# Index engine selection logs. Rust asked for by name is warned about, once per
+# process; asked through a default it is only noted, since a `.env` that works
+# on one build must not warn on another.
+INDEX_ENGINE_NOT_ON_RUST = (
+    "CGR_INDEX_ENGINE asks for {language} on Rust, which this build cannot "
+    "index it on; {language} indexes on Python"
+)
+INDEX_ENGINE_DEFAULT_NOT_ON_RUST = (
+    "Index engine: this build cannot index {languages} on Rust, so they index on Python"
+)
+
 WEB_SEARCH_QUERY = "Web search ({provider}): query {digest}"
 WEB_SEARCH_HTTP_ERROR = "Web search returned HTTP {status} for query {digest}"
 WEB_SEARCH_ERROR = "Web search failed for query {digest}: {error}"
