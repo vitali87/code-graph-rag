@@ -96,6 +96,20 @@ jobs:
         run: |
           uv run python scripts/validate_coderabbit_config.py
 
+      # No test disappears silently (docs/reports/PHASE1_SEAMS.md, section
+      # 4): every test the base has and the head lacks needs an entry in
+      # codebase_rag/tests/removed_tests.toml. The checkout is the pull
+      # request merged into its base, so the difference is exactly what the
+      # pull request removes, however far main has moved. The script fetches
+      # the base commit itself and needs only the standard library.
+      - name: Check removed tests name their replacement
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          python3 scripts/test_removals.py check --base "$BASE_SHA" --pull-request "$PR"
+
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest

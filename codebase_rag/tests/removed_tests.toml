@@ -1,0 +1,24 @@
+# Where each removed test went. No test disappears silently: a pull request
+# that removes, renames or moves a test adds an entry here, and the lint job
+# (scripts/test_removals.py) refuses one that does not. CONTRIBUTING.md,
+# "Removing a test", says how; docs/reports/PHASE1_SEAMS.md, section 4, why.
+#
+# An entry, with made-up names:
+#
+# [[removed]]
+# test = "codebase_rag/tests/test_go_receivers.py::TestReceivers::test_pointer_receiver_registered"
+# replaced_by = ["codebase_rag/tests/test_go_methods_graph.py::test_pointer_receiver_method_defined"]
+# reason = "Read the Python registry; the graph-level test checks the same DEFINES_METHOD edge on both engines."
+# pull_request = 4321
+#
+# - test: the removed test's id without parameters: the file, the class if
+#   any, the function. A Rust test is rust/<crate>/<path>.rs::<mod>::<function>,
+#   with the mod blocks around the function outermost first (none at file
+#   level).
+# - replaced_by: one or more tests the pull request's head has. A replacement
+#   removed later gets an entry of its own, and the check follows the chain.
+# - obsolete = "<path>", in place of replaced_by, only when the same pull
+#   request deletes the code the test checked: the file or directory it names
+#   must be on the base and gone from the head.
+# - reason: what the test checked, and how its replacement checks the same.
+# - pull_request: the number of the pull request that removed it.

@@ -51,3 +51,19 @@ To move them:
 `test_native_trees.py` fails when the pins disagree with the checked pair.
 Dependabot bumps the `pyproject.toml` pin on its own; such a pull
 request fails those tests until steps 1 to 5 are done.
+
+## Removing, renaming or moving a test
+
+Never delete a test to get a pull request through. A test goes only once a
+test that checks the same thing exists, in the same pull request or an
+earlier one, and `codebase_rag/tests/removed_tests.toml` names it
+(CONTRIBUTING.md, "Removing a test", has the format). A rename, a move to
+another file, class or Rust `mod` and a deleted file all count as removals,
+Rust `#[test]` functions included (named
+`rust/<crate>/<path>.rs::<mod>::<fn>`). Commit, then run
+`python3 scripts/test_removals.py check --base origin/main`: it reads the
+committed trees, not the working tree, and prints the entry each removal
+needs, with the moved test's new id when an added test has the same name.
+Write `reason` and `pull_request` yourself. Never delete an entry to quiet
+the check; the one exception is a test that is back, whose entry the check
+calls stale.
