@@ -18,7 +18,7 @@ FROM eclipse-temurin:25-jdk@sha256:b8705e936964c228dfce359e63dbf08f6c69cb380ed1d
 
 # The full image brings a C toolchain, git and the common -dev headers, for the
 # crate's bundled SQLite and anything else built from source.
-FROM python:3.12-trixie@sha256:cad37dd20c7cac861af9003af8796d03ea7a998ec1e3a664429740fc9d7d2691
+FROM python:3.12-trixie@sha256:5411fa1b302c43f510324381162b5f5d0d93b9ee2af538f09d944f0d290ee3cb
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
