@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from codebase_rag import constants as cs
 from scripts import test_removals as tr
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -80,6 +81,7 @@ class _Repo:
             check=True,
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
         ).stdout
 
     def problems(self, base: str, **kwargs: int) -> list[tuple[tr.Rule, str]]:
@@ -509,6 +511,7 @@ def test_the_python_listing_is_what_pytest_collects(repo: _Repo) -> None:
         env=env,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
     )
 
@@ -592,6 +595,7 @@ def _run(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
         cwd=cwd,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
     )
 
