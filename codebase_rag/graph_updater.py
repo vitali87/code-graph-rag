@@ -10627,28 +10627,34 @@ class GraphUpdater:
         if self._exposes_map_kept:
             # As at the batch commit: the cache owes the skipped cleanup.
             hashes = _unconfirmed(hashes)
-        _save_hash_cache(cache_path, hashes)
         # The cache's mtime is the instant every file NOT in it was last
         # judged (`_is_already_in_sync` and the walk skip files no newer
-        # than it). Writing moves it to now, which would hide an edit made
+        # than it). A write moves it to now, which would hide an edit made
         # before this call to a file this call was not told about: the next
         # update would read it as older than the cache and keep the stale
-        # hash. Put the previous instant back; the files re-ingested here
-        # are newer than it, so the next run re-hashes them and finds them
-        # already current. Fail closed like `run()`: a cache stamped with
-        # the wrong time is worse than no cache.
+        # hash. So the previous instant is kept, and set before the cache
+        # becomes visible, by the publish `run()` uses (#1646, #1700).
+        # Written in place and backdated after, the cache followed a link at
+        # its path, and a stop between the write and the backdate left the
+        # write time on it (issue #3726). The files re-ingested here are
+        # newer than that instant, so the next run re-hashes them and finds
+        # them already current.
+        if _publish_hash_cache(cache_path, hashes, observed_at):
+            return
+        # Fail closed. A failed publish leaves the previous cache, which
+        # records none of this call: not its hashes and, when the EXPOSES
+        # cleanup was skipped, not the cleanup it owes (`_unconfirmed`
+        # above), so the next run could take the in-sync path past it. No
+        # cache costs that run a rebuild instead.
+        logger.warning(ls.REINGEST_CACHE_PUBLISH_FAILED, path=cache_path)
         try:
-            os.utime(cache_path, (observed_at, observed_at))
-        except OSError as e:
-            logger.warning(ls.REINGEST_CACHE_STAMP_FAILED, path=cache_path, error=e)
-            try:
-                cache_path.unlink(missing_ok=True)
-            except OSError as unlink_error:
-                logger.warning(
-                    ls.REINGEST_CACHE_STAMP_CLEANUP_FAILED,
-                    path=cache_path,
-                    error=unlink_error,
-                )
+            cache_path.unlink(missing_ok=True)
+        except OSError as unlink_error:
+            logger.warning(
+                ls.REINGEST_CACHE_PUBLISH_CLEANUP_FAILED,
+                path=cache_path,
+                error=unlink_error,
+            )
 
     def has_indexed(self, path: Path) -> bool:
         """Whether the last run or re-ingest indexed the file at `path`.

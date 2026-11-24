@@ -5,6 +5,7 @@
 # clean index is the oracle for every edit below.
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -480,11 +481,30 @@ def _warnings_during(action: Callable[[], object]) -> list[str]:
     return lines
 
 
+def _replace_utime(
+    monkeypatch: pytest.MonkeyPatch, replacement: Callable[..., None]
+) -> None:
+    """Swap `os.utime` for `replacement`, keeping what the platform allows it.
+
+    The cache publish asks `os.supports_fd` and `os.supports_follow_symlinks`
+    how it may stamp, by identity. A bare replacement is in neither, which
+    sends the publish down the branch that declines before stamping at all,
+    so the replacement would never be called.
+    """
+    real = os.utime
+    for capability in ("supports_fd", "supports_follow_symlinks"):
+        supported = getattr(os, capability)
+        if real in supported:
+            monkeypatch.setattr(os, capability, supported | {replacement})
+    monkeypatch.setattr(os, "utime", replacement)
+
+
 def test_reingest_removes_the_cache_when_it_cannot_backdate_it(
     fixture_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A cache stamped with the wrong instant hides edits from the next run,
-    # so a failed backdate removes it and says so with its own message.
+    # so a publish that cannot backdate it removes it and says so with its
+    # own message, after the publish has named the cause.
     store = _StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
@@ -494,13 +514,15 @@ def test_reingest_removes_the_cache_when_it_cannot_backdate_it(
     def failing_utime(path: object, times: object = None, **kwargs: object) -> None:
         raise OSError(1, "EPERM utime")
 
-    monkeypatch.setattr(os, "utime", failing_utime)
+    _replace_utime(monkeypatch, failing_utime)
     warnings = _warnings_during(lambda: updater.reingest(changed, deleted=deleted))
 
     assert not cache.exists()
     assert any(
-        "Could not backdate" in line and "EPERM utime" in line for line in warnings
+        "Failed to save hash cache" in line and "EPERM utime" in line
+        for line in warnings
     )
+    assert any("Could not publish" in line for line in warnings)
 
 
 def test_reingest_reports_a_cache_it_could_neither_backdate_nor_remove(
@@ -522,12 +544,12 @@ def test_reingest_reports_a_cache_it_could_neither_backdate_nor_remove(
             raise OSError(1, "EPERM unlink")
         real_unlink(self, missing_ok=missing_ok)
 
-    monkeypatch.setattr(os, "utime", failing_utime)
+    _replace_utime(monkeypatch, failing_utime)
     monkeypatch.setattr(Path, "unlink", failing_unlink)
     warnings = _warnings_during(lambda: updater.reingest(changed, deleted=deleted))
 
     assert cache.exists()
-    assert any("Could not backdate" in line for line in warnings)
+    assert any("Could not publish" in line for line in warnings)
     assert any(
         "Could not remove" in line and "EPERM unlink" in line for line in warnings
     )
@@ -1199,6 +1221,109 @@ def test_reingest_does_not_hide_an_edit_it_was_not_told_about(
     later_updater.run(force=False)
     assert parsed == ["pkg/unrelated.py"]
     assert _diff(_snapshot(store), _clean_index(fixture_root)) == ""
+
+
+class _Killed(BaseException):
+    """The process ending between two steps: no handler in the updater
+    catches it, so whatever was on disk at that instant is what the next
+    run gets."""
+
+
+def test_reingest_publishes_the_cache_already_stamped(
+    fixture_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A re-ingest stopped right after writing the cache must not leave it
+    stamped later than an edit it was not told about (issue #3726).
+
+    The cache was written in place and backdated by path afterwards, so a
+    stop between the two left the write time on it, and the next run read
+    the unreported edit as older than the cache and kept its stale hash for
+    good. Published as `run()` publishes it (#1646), the stamp is set on the
+    temporary before the rename, so there is no such moment: the stop below
+    lands where the old restamp was, and the cache keeps its instant.
+    """
+    store = _StatefulIngestor()
+    updater = _updater(store, fixture_root)
+    updater.run(force=True)
+    cache = state_file(fixture_root, cs.HASH_CACHE_FILENAME)
+    # Well in the past, so a write time at any clock resolution is later.
+    observed_at = cache.stat().st_mtime - 60
+    os.utime(cache, (observed_at, observed_at))
+    _write(
+        fixture_root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"] + "\n\ndef fresh():\n    return 4\n",
+    )
+    _write(
+        fixture_root,
+        "pkg/unrelated.py",
+        FIXTURE["pkg/unrelated.py"] + "\n\ndef newly_added():\n    return 5\n",
+    )
+    for rel in ("pkg/util.py", "pkg/unrelated.py"):
+        os.utime(fixture_root / rel, (observed_at + 1, observed_at + 1))
+
+    real_utime = os.utime
+
+    def killed_at_the_restamp(
+        path: int | str | os.PathLike[str],
+        times: tuple[float, float] | None = None,
+        **kwargs: bool,
+    ) -> None:
+        if not isinstance(path, int) and Path(path) == cache:
+            raise _Killed
+        real_utime(path, times, **kwargs)
+
+    with monkeypatch.context() as patch, contextlib.suppress(_Killed):
+        _replace_utime(patch, killed_at_the_restamp)
+        updater.reingest(["pkg/util.py"])
+
+    assert cache.stat().st_mtime == observed_at, (
+        "the cache reached disk carrying its write time, which hides the "
+        "unreported edit from the next run"
+    )
+    # The next update re-parses the unreported file, and only it: the
+    # reported file's hash is already current. The graph then equals a
+    # clean index.
+    later_updater = _updater(store, fixture_root)
+    later_updater.run(force=False)
+    assert later_updater._reparsed_file_keys == {"pkg/unrelated.py"}
+    assert _diff(_snapshot(store), _clean_index(fixture_root)) == ""
+
+
+def test_reingest_replaces_a_link_at_the_cache_path(
+    fixture_root: Path, tmp_path: Path
+) -> None:
+    """A link at the cache path is replaced, never written through.
+
+    `run()` publishes through a temporary and a rename (#1700), which
+    replaces a link at the cache path with the cache itself. The re-ingest
+    opened the path for writing, so it followed the link and rewrote
+    whatever file it named (issue #3726).
+    """
+    store = _StatefulIngestor()
+    updater = _updater(store, fixture_root)
+    updater.run(force=True)
+    cache = state_file(fixture_root, cs.HASH_CACHE_FILENAME)
+    target = tmp_path / "elsewhere.json"
+    original = cache.read_text(encoding="utf-8")
+    target.write_text(original, encoding="utf-8")
+    cache.unlink()
+    try:
+        cache.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("this platform cannot create a symlink here")
+
+    changed, deleted = edit_add_function_and_call(fixture_root)
+    updater.reingest(changed, deleted=deleted)
+
+    assert target.read_text(encoding="utf-8") == original
+    assert not cache.is_symlink()
+    hashes = json.loads(cache.read_text(encoding="utf-8"))
+    for rel in changed:
+        digest = hashlib.md5(
+            (fixture_root / rel).read_bytes(), usedforsecurity=False
+        ).hexdigest()
+        assert hashes[rel] == digest, rel
 
 
 @pytest.mark.parametrize(
