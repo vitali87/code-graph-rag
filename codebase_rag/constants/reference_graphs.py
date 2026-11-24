@@ -54,6 +54,8 @@ REFERENCE_JSON_SEPARATORS = (",", ":")
 # A line only the expected side has, and one only the actual side has.
 REFERENCE_ONLY_EXPECTED = "- {line}"
 REFERENCE_ONLY_ACTUAL = "+ {line}"
+# difflib's tag for a stretch both sides of a comparison in order share.
+DIFF_OPCODE_EQUAL = "equal"
 
 # Languages with no repository of their own yet: TSX is the TypeScript
 # grammar's JSX dialect, and the SQL indexer reads only stored routines,

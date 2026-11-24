@@ -11,8 +11,11 @@ The `--engine-mode` option (docs/reports/PHASE1_SEAMS.md, section 2):
 - `both`: as `rust`, and each time `GraphUpdater.run` returns on a repository
   holding a language the run's selection puts on Rust, the repository is
   indexed afresh twice more, once with every language on Python and once
-  with that selection. When the two graphs differ, the test fails at
-  teardown; for a run in a shared fixture, every test that uses it does.
+  with that selection, each writing its hand-off files. The two runs' file
+  plans, project indexes and graphs are compared in that order, the order of
+  the pipeline, so the first that differs names the stage at which the
+  engines part. When any differs, the test fails at teardown; for a run in a
+  shared fixture, every test that uses it does.
 
 While the build can index no language on Rust (`rust_engine_languages()` is
 empty), `rust` runs exactly what `python` runs and `both` indexes nothing
@@ -71,8 +74,8 @@ MARKER_USAGE = (
 )
 MARKER_INVALID = "@pytest.mark.index_engine({spec!r}): {error}"
 # When set, each difference is also written out in full, under the test's id:
-# both sides' graphs and their difference. Read by this plugin only; it is
-# not a cgr setting.
+# both sides' hand-off files and each one's difference. Read by this plugin
+# only; it is not a cgr setting.
 PARITY_DIFF_DIR_ENV = "CGR_PARITY_DIFF_DIR"
 
 # Every per-file pass swallows all exceptions so one bad file cannot abandon a
@@ -97,9 +100,13 @@ SCRATCH_RUN_KEY = "cgr_engine_scratch_run"
 SCRATCH_PREFIX = "cgr-engines-"
 SCRATCH_GRAPH = "graph.sqlite"
 SCRATCH_STATE = "state"
+SCRATCH_HANDOFF = "handoff"
 SCRATCH_HOST = "unused"
-GRAPH_FILE = "{engine}.graph"
-DIFF_FILE = "graph.diff"
+# Each artefact's file in a hand-off directory: the engine writes `files.txt`
+# and `index.txt`, and this plugin `graph.txt`, from the export, as the
+# reference graphs write theirs.
+HANDOFF_FILE = "{artefact}.txt"
+DIFF_FILE = "{artefact}.diff"
 UNREADABLE = b"\0"
 UNSAFE_PATH_CHARS = re.compile(r"[^\w.-]")
 PATH_SAFE = "_"
@@ -122,7 +129,6 @@ FUNCTION_SCOPE = "function"
 FIXTURE_ID_SEPARATOR = "::"
 OUTSIDE_A_TEST = "outside-a-test"
 ENGINE_SESSION_PLUGIN = "cgr-engine-session"
-ARTEFACT_GRAPH = "graph"
 LANGUAGE_SEPARATOR = ", "
 DIFF_ONLY_PYTHON = "-"
 
@@ -133,12 +139,30 @@ class EngineMode(StrEnum):
     BOTH = "both"
 
 
-class Side(NamedTuple):
-    """One engine's fresh index of a repository: its graph's lines, the pass
-    failures the run swallowed, and the traceback of what it raised, if it
-    did not finish."""
+# What each scratch run hands on, in the order of the pipeline: the file
+# plan, the project index and the graph (docs/reports/PHASE1_SEAMS.md,
+# section 3).
+class Artefact(StrEnum):
+    FILES = "files"
+    INDEX = "index"
+    GRAPH = "graph"
 
-    lines: list[str]
+    @property
+    def file(self) -> str:
+        return HANDOFF_FILE.format(artefact=self)
+
+
+# The artefacts the engine writes, as against the graph, which is exported.
+ENGINE_HANDOFFS = (Artefact.FILES, Artefact.INDEX)
+
+
+class Side(NamedTuple):
+    """One engine's fresh index of a repository: the lines of each artefact
+    it handed on (none for a hand-off it did not write), the pass failures
+    the run swallowed, and the traceback of what it raised, if it did not
+    finish."""
+
+    artefacts: dict[Artefact, list[str]]
     failures: list[str]
     raised: list[str]
 
@@ -419,9 +443,10 @@ def compare_engines(
         python, rust = (
             _side(updater, engine, Path(tmp) / engine, run) for engine in _engines()
         )
-    report = _report(updater, languages, python, rust)
+    differences = _differences(python, rust)
+    report = _report(updater, languages, python, rust, differences)
     if report is not None and (root := os.environ.get(PARITY_DIFF_DIR_ENV)):
-        _write_difference(Path(root), label, len(compared), python, rust)
+        _write_difference(Path(root), label, len(compared), (python, rust), differences)
     return report
 
 
@@ -465,7 +490,8 @@ def fresh_index(
     On `engine`'s side: every language on Python, or the test's own
     selection for Rust. A full index (`force`), with its own state directory
     and no embeddings, by a replica of `updater`, so neither changes the
-    test's graph nor reads its sync state.
+    test's graph nor reads its sync state. The run writes its hand-off files
+    to `scratch / SCRATCH_HANDOFF`.
     """
     from codebase_rag import constants as cs
     from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
@@ -486,13 +512,24 @@ def fresh_index(
     ) as ingestor:
         ingestor.ensure_constraints()
         replica = updater.replica(
-            ingestor, state_dir=scratch / SCRATCH_STATE, index_engine=selection
+            ingestor,
+            state_dir=scratch / SCRATCH_STATE,
+            index_engine=selection,
+            handoff_dir=scratch / SCRATCH_HANDOFF,
         )
         run(replica, True)
         export: ExportRecord = json.loads(
             json.dumps(ingestor.export_graph_to_dict(), ensure_ascii=False)
         )
         return export
+
+
+def _written(path: Path) -> list[str]:
+    """A hand-off file's lines, or none when the run did not write it, which
+    then differs from any file written."""
+    from codebase_rag.canonical_graph import read_handoff
+
+    return read_handoff(path) if path.is_file() else []
 
 
 def _side(
@@ -503,12 +540,40 @@ def _side(
     with swallowed_failures(engine) as failures:
         try:
             export = fresh_index(updater, engine, scratch, run)
+            artefacts = {
+                artefact: _written(scratch / SCRATCH_HANDOFF / artefact.file)
+                for artefact in ENGINE_HANDOFFS
+            }
         except Exception as error:
             # Reported with the comparison rather than raised from the
             # test's own `run`, which returned.
             raised = "".join(traceback.format_exception(error)).splitlines()
-            return Side([], failures, raised)
-    return Side(canonical(export, updater.repo_path), failures, [])
+            return Side({}, failures, raised)
+    artefacts[Artefact.GRAPH] = canonical(export, updater.repo_path)
+    return Side(artefacts, failures, [])
+
+
+def _differences(python: Side, rust: Side) -> dict[Artefact, list[str]]:
+    """Each artefact's difference, in pipeline order: the file plan in order,
+    the project index and the graph as multisets. Nothing when a side did
+    not finish, since its files would describe part of a run."""
+    from codebase_rag import constants as cs
+    from codebase_rag.canonical_graph import difference, handoff_difference
+
+    if python.raised or rust.raised:
+        return {}
+    differences = {
+        artefact: handoff_difference(
+            cs.HandoffFile(artefact.file),
+            python.artefacts[artefact],
+            rust.artefacts[artefact],
+        )
+        for artefact in ENGINE_HANDOFFS
+    }
+    differences[Artefact.GRAPH] = difference(
+        python.artefacts[Artefact.GRAPH], rust.artefacts[Artefact.GRAPH]
+    )
+    return differences
 
 
 def _artefact(name: str, diff: list[str], first: bool) -> list[str]:
@@ -530,27 +595,27 @@ def _report(
     languages: frozenset[cs.SupportedLanguage],
     python: Side,
     rust: Side,
+    differences: dict[Artefact, list[str]],
 ) -> str | None:
     """The comparison's message: the repository and the languages on Rust,
     then each artefact in pipeline order with the first that differs marked,
     then any failure a scratch run swallowed or raised."""
-    from codebase_rag.canonical_graph import difference
-
-    finished = not python.raised and not rust.raised
-    diff = difference(python.lines, rust.lines) if finished else []
-    if finished and not diff and not python.failures and not rust.failures:
+    first = next((artefact for artefact, diff in differences.items() if diff), None)
+    if differences and first is None and not python.failures and not rust.failures:
         return None
     lines = [
         REPORT_HEADING.format(
             repo=updater.repo_path,
             languages=LANGUAGE_SEPARATOR.join(sorted(languages)),
-        ),
-        *(
-            _artefact(ARTEFACT_GRAPH, diff, first=bool(diff))
-            if finished
-            else [REPORT_NOT_COMPARED.format(artefact=ARTEFACT_GRAPH)]
-        ),
+        )
     ]
+    if differences:
+        for artefact, diff in differences.items():
+            lines.extend(_artefact(artefact, diff, first=artefact == first))
+    else:
+        lines.extend(
+            REPORT_NOT_COMPARED.format(artefact=artefact) for artefact in Artefact
+        )
     for engine, side in zip(_engines(), (python, rust), strict=True):
         name = engine.capitalize()
         if count := len(side.failures):
@@ -568,12 +633,28 @@ def _report(
 
 
 def _write_difference(
-    root: Path, label: str, number: int, python: Side, rust: Side
+    root: Path,
+    label: str,
+    number: int,
+    sides: tuple[Side, Side],
+    differences: dict[Artefact, list[str]],
 ) -> None:
-    from codebase_rag.canonical_graph import difference, write_graph
+    """Each side's hand-off files under its engine's name, as its run left
+    them (the graph as the reference graphs write theirs), and each
+    artefact's whole difference beside them."""
+    from codebase_rag import constants as cs
+    from codebase_rag.canonical_graph import write_graph
 
     target = root / UNSAFE_PATH_CHARS.sub(PATH_SAFE, label) / str(number)
-    target.mkdir(parents=True, exist_ok=True)
-    for engine, side in zip(_engines(), (python, rust), strict=True):
-        write_graph(target / GRAPH_FILE.format(engine=engine), side.lines)
-    write_graph(target / DIFF_FILE, difference(python.lines, rust.lines))
+    for engine, side in zip(_engines(), sides, strict=True):
+        handoffs = target / engine
+        handoffs.mkdir(parents=True, exist_ok=True)
+        for artefact, lines in side.artefacts.items():
+            if artefact == Artefact.GRAPH:
+                write_graph(handoffs / artefact.file, lines)
+            else:
+                # Joined as `read_handoff` split them: the bytes as written.
+                text = cs.LINE_FEED.join(lines)
+                (handoffs / artefact.file).write_bytes(text.encode(cs.ENCODING_UTF8))
+    for artefact, diff in differences.items():
+        write_graph(target / DIFF_FILE.format(artefact=artefact), diff)

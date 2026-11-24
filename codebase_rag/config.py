@@ -625,7 +625,7 @@ class AppConfig(BaseSettings):
     # string is kept here; the parsed selection lives in `index_engine`, where
     # it adds no member to the settings' public surface.
     INDEX_ENGINE: str = Field(
-        cs.IndexEngine.AUTO.value, validation_alias="CGR_INDEX_ENGINE"
+        cs.IndexEngine.AUTO.value, validation_alias=cs.INDEX_ENGINE_ENV
     )
 
     @field_validator("INDEX_ENGINE")

@@ -23,6 +23,13 @@ job installs them (`uv sync --extra treesitter-full --extra ast-grep`):
 With `--runs N`, runs after the first index a copy of the checkout at another
 path under another `PYTHONHASHSEED`; every run must give the same graph.
 
+No cgr setting of the caller's reaches the index, so a `CGR_INDEX_ENGINE` in
+the shell does not either. `--index-engine SPEC` is how an index runs on
+another engine selection: it takes a `CGR_INDEX_ENGINE` value and every run
+indexes with it, which the graphs must not show:
+
+    uv run python scripts/reference_graphs.py check --index-engine go=rust
+
 A full `record` also writes `environment.txt`: what the install could parse
 (the languages each tier loads, the frontend each setting resolves to), read
 in a process of its own by this Python, the one `cgr` comes from under
@@ -197,11 +204,14 @@ def _setting_env_names() -> frozenset[str]:
     return frozenset(names)
 
 
-def _index_env(home: Path, seed: int | None) -> dict[str, str]:
+def _index_env(
+    home: Path, seed: int | None, index_engine: str | None = None
+) -> dict[str, str]:
     # None of the caller's cgr settings reach the index: a `CGR_CAPTURE` or a
     # frontend choice left in a shell would change the graph `record` writes.
     # Settings are read whatever the case of their name, so `go_frontend`
-    # counts as `GO_FRONTEND`.
+    # counts as `GO_FRONTEND`. An engine selection arrives only as asked for,
+    # through `index_engine`.
     controlled = _setting_env_names() | {
         name.upper() for name in (*cs.REFERENCE_ENV, cs.REFERENCE_HOME_ENV)
     }
@@ -214,12 +224,18 @@ def _index_env(home: Path, seed: int | None) -> dict[str, str]:
     env[cs.REFERENCE_HOME_ENV] = str(home)
     if seed is not None:
         env[cs.REFERENCE_SEED_ENV] = str(seed)
+    if index_engine is not None:
+        env[cs.INDEX_ENGINE_ENV] = index_engine
     return env
 
 
 @contextmanager
 def indexed(
-    cgr: Sequence[str], repo: ReferenceRepo, source: Path, seed: int | None
+    cgr: Sequence[str],
+    repo: ReferenceRepo,
+    source: Path,
+    seed: int | None,
+    index_engine: str | None = None,
 ) -> Generator[Indexed]:
     """Index `source` into a graph of its own, which lives until the block
     ends, and hand back `cgr`'s JSON export of it."""
@@ -228,7 +244,7 @@ def indexed(
         home = work / "home"
         home.mkdir()
         output = work / "graph.json"
-        env = _index_env(home, seed)
+        env = _index_env(home, seed, index_engine)
         command = [
             *cgr,
             "-q",
@@ -265,10 +281,14 @@ def indexed(
 
 
 def index(
-    cgr: Sequence[str], repo: ReferenceRepo, source: Path, seed: int | None
+    cgr: Sequence[str],
+    repo: ReferenceRepo,
+    source: Path,
+    seed: int | None,
+    index_engine: str | None = None,
 ) -> ExportRecord:
     """Index `source` into a graph of its own and return `cgr`'s JSON export."""
-    with indexed(cgr, repo, source, seed) as done:
+    with indexed(cgr, repo, source, seed, index_engine) as done:
         return done.export
 
 
@@ -438,14 +458,18 @@ def checkouts(
 
 
 def _graphs(
-    cgr: Sequence[str], repo: ReferenceRepo, checkout: Path, runs: int
+    cgr: Sequence[str],
+    repo: ReferenceRepo,
+    checkout: Path,
+    runs: int,
+    index_engine: str | None,
 ) -> tuple[list[str], list[tuple[int, list[str]]]]:
     """The first run's graph and, for each later run, its own: each later run
     indexes a copy at another path under another hash seed."""
     first: list[str] = []
     later: list[tuple[int, list[str]]] = []
     for seed, source in checkouts(repo, checkout, runs):
-        graph = canonical(index(cgr, repo, source, seed), source)
+        graph = canonical(index(cgr, repo, source, seed, index_engine), source)
         if seed is None:
             first = graph
         else:
@@ -530,6 +554,7 @@ def run(
     directory: Path = REFERENCE_DIR,
     *,
     partial: bool = False,
+    index_engine: str | None = None,
 ) -> int:
     environment, proceed = environment_gate(command, cgr, directory, partial)
     if not proceed:
@@ -541,7 +566,7 @@ def run(
     staged: list[tuple[Path, list[str]]] = []
     for repo in repos:
         checkout = fetch(repo, cache)
-        first, later = _graphs(cgr, repo, checkout, runs)
+        first, later = _graphs(cgr, repo, checkout, runs, index_engine)
         say(f"{repo['name']} ({repo['language']}): {_summary(first)}")
         for seed, graph in later:
             diff = difference(first, graph)
@@ -594,6 +619,17 @@ def cgr_command(text: str) -> list[str]:
     return [program, *rest]
 
 
+def index_engine_option(text: str) -> str:
+    """`--index-engine`, refused the way cgr refuses the setting at start-up,
+    before any repository is fetched."""
+    # Imported here: `_CALLER_ENV` is taken when this module loads.
+    from codebase_rag.index_engine import index_engine_error
+
+    if (error := index_engine_error(text)) is not None:
+        raise argparse.ArgumentTypeError(error)
+    return text
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -605,6 +641,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--runs", type=int, default=1)
+    parser.add_argument(
+        "--index-engine",
+        type=index_engine_option,
+        metavar="SPEC",
+        help="index on this CGR_INDEX_ENGINE selection (none of the shell's arrives)",
+    )
     # How `probe` runs `environment` in its own process.
     parser.add_argument(
         cs.REFERENCE_IN_PROCESS_FLAG, action="store_true", help=argparse.SUPPRESS
@@ -626,6 +668,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.cache,
         max(args.runs, 1),
         partial=bool(args.names),
+        index_engine=args.index_engine,
     )
 
 

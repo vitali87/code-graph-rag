@@ -691,7 +691,8 @@ jobs:
   # request; the second and third runs index a copy at another path under
   # another hash seed and must give the same graph. The same job then asks
   # the installed cgr what its commands and MCP tools answer on those
-  # repositories (fixtures/reference_answers), with the same install.
+  # repositories (fixtures/reference_answers), with the same install, and
+  # checks the files the indexer hands from one stage to the next on them.
   reference-graphs:
     name: Reference Graphs
     runs-on: ubuntu-latest
@@ -750,6 +751,15 @@ jobs:
       - name: Check the reference answers
         if: ${{ !cancelled() }}
         run: uv run --no-sync python -m scripts.reference_answers check --runs 2
+
+      # The file plan and the project index each repository's index hands on
+      # (docs/reports/PHASE1_SEAMS.md, section 3), which the Rust engine is
+      # compared on: each of two runs indexes in a Python process of its own,
+      # the second at another path under another hash seed, and both must
+      # write the same files byte for byte. They are not checked in.
+      - name: Check the hand-off files
+        if: ${{ !cancelled() }}
+        run: uv run --no-sync python -m scripts.handoff check --runs 2
 
   rust-graph-core:
     name: Rust Graph Core
