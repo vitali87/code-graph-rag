@@ -3043,25 +3043,22 @@ class GraphUpdater:
         )
 
     def _restore_module_imports(self, module_qn: str, path: Path) -> bool:
-        """Parse one unchanged module's imports; False when Pass 2 would not."""
-        spec = get_language_spec(path.suffix)
-        if spec is None or not isinstance(spec.language, cs.SupportedLanguage):
-            return False
-        language = spec.language
-        language_queries = self.queries.get(language)
-        if (
-            language not in self.parsers
-            or language_queries is None
-            or not language_queries.get(cs.QUERY_IMPORTS)
-        ):
-            return False
+        """Parse one unchanged module's imports; False when Pass 2 would not.
+
+        Pass 2 parses a file's imports only where `_route` sends it to
+        tree-sitter, so this asks `_route` too: a file libclang emitted, or
+        one whose language runs on another engine, is not read back here.
+        """
         try:
-            rel = path.relative_to(self.repo_path).as_posix()
+            path.relative_to(self.repo_path)
         except ValueError:
             return False
-        if rel in self._cpp_frontend_covered:
-            # The libclang frontend emitted this file, so Pass 2 parses none
-            # of its imports either.
+        route = self._route(path)
+        language = route.language
+        if route.tier is not cs.FileTier.TREE_SITTER or language is None:
+            return False
+        language_queries = self.queries.get(language)
+        if language_queries is None or not language_queries.get(cs.QUERY_IMPORTS):
             return False
         entry = self.ast_cache.load(path)
         if entry is None:
