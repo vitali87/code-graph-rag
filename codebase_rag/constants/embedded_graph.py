@@ -487,6 +487,9 @@ EG_RUST_NOT_BORROWED = "NotBorrowed"
 # The indexing engine's frame (engine_frame.py, docs/reports/PHASE2_FRAME.md),
 # which a build from before phase 2 lacks.
 EG_RUST_ENGINE = "Engine"
+# The frame's ignore rules (engine_frame.py), which a build from before
+# phase 2's step 4 lacks.
+EG_RUST_IGNORE_RULES = "IgnoreRules"
 # Bridge methods a build from before the scope walks, or from before the
 # interface fingerprint, lacks.
 EG_RUST_SCOPE_FACTS = "scope_facts"

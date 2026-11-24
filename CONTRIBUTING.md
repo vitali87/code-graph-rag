@@ -328,6 +328,7 @@ drives and checks:
 | `graph_algorithms` | the graph procedures and `run` on a graph and arguments the input chooses |
 | `sqlite_graph` | the bulk writer, the variable-length walk and `Graph::load`, against a model of the graph |
 | `xml_elements` | the XML project-file reader (`formats::xml`) on any bytes |
+| `ignore_patterns` | the walk's ignore rules (`engine::ignore`) on any patterns and paths |
 
 To run one locally, with a nightly toolchain and `cargo install cargo-fuzz`:
 

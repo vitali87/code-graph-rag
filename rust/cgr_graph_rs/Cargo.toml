@@ -1,6 +1,6 @@
 [package]
 name = "cgr_graph_rs"
-version = "0.1.10"
+version = "0.1.11"
 edition = "2021"
 description = "Native acceleration for code-graph-rag: its embedded graph, and its indexer's tree walks"
 license = "MIT"
@@ -23,6 +23,10 @@ md-5 = "0.11"
 pyo3 = { version = "0.30", features = ["abi3-py312"], optional = true }
 # The engine's thread pool (src/engine).
 rayon = "1.12"
+# The ignore rules' patterns (src/engine/ignore), a port of pathspec's
+# gitignore regexes. Already in the build through tree-sitter, with the
+# same features, so this adds no crate.
+regex = "1.12"
 rusqlite = { version = "0.41", features = ["bundled"] }
 sha2 = "0.11"
 # The tree walks (src/trees) read the trees py-tree-sitter built, so this
