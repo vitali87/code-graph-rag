@@ -9,6 +9,7 @@ import ast
 import inspect
 import textwrap
 from collections.abc import Iterator
+from importlib import metadata
 from pathlib import Path
 from typing import IO
 from unittest.mock import MagicMock, patch
@@ -16,16 +17,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 from loguru import logger
 
+from codebase_rag import config, graph_updater, index_engine
 from codebase_rag import constants as cs
-from codebase_rag import graph_updater
 from codebase_rag import logs as ls
+from codebase_rag import parser_fingerprint as pf
 from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.checkout_state import state_file
 from codebase_rag.cli import _delete_hash_cache
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.index_engine import parse_index_engine, resolve_index_engines
 from codebase_rag.parser_fingerprint import compute_parser_fingerprint
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.types_defs import PropertyDict
+from codebase_rag.types_defs import IndexEngineSelection, PropertyDict
 from codebase_rag.utils.path_utils import base_module_qn
 
 STALE_FINGERPRINT = "0" * 32
@@ -51,6 +54,7 @@ def _make_updater(
     repo: Path,
     mock_ingestor: MagicMock,
     capture: "CaptureSelection | None" = None,
+    engine: IndexEngineSelection | None = None,
 ) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
@@ -59,6 +63,18 @@ def _make_updater(
         parsers=parsers,
         queries=queries,
         capture=capture,
+        index_engine=engine,
+    )
+
+
+@pytest.fixture
+def go_on_rust(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A build that can index Go on Rust, as phase 2's will: the only way to
+    # make two selections resolve to different engines today.
+    monkeypatch.setattr(
+        index_engine,
+        "rust_engine_languages",
+        lambda: frozenset({cs.SupportedLanguage.GO}),
     )
 
 
@@ -681,6 +697,55 @@ class TestStalenessWarning:
 
         assert not any(ls.PARSER_FINGERPRINT_MISMATCH in m for m in warnings_sink)
 
+    def test_a_language_moving_engine_reparses_every_file_once(
+        self,
+        py_project: Path,
+        mock_ingestor: MagicMock,
+        warnings_sink: list[str],
+        go_on_rust: None,
+    ) -> None:
+        # The engine that indexed a file decides what its unchanged source
+        # produced, so a run on other engines must not trust the cache: it
+        # re-parses every file once, and the run after parses nothing
+        # (issue #3725). Dropping `engines=self.engines` at either call site
+        # brings back the silent reuse.
+        (py_project / "module_b.py").write_text("def func_b():\n    pass\n")
+        _make_updater(
+            py_project, mock_ingestor, engine=parse_index_engine("python")
+        ).run()
+
+        moved = _make_updater(
+            py_project, mock_ingestor, engine=parse_index_engine("go=rust")
+        )
+        moved.run()
+
+        assert moved._reparsed_file_keys == {"module_a.py", "module_b.py"}
+        assert any(ls.PARSER_FINGERPRINT_MISMATCH in m for m in warnings_sink)
+        settled = _make_updater(
+            py_project, mock_ingestor, engine=parse_index_engine("go=rust")
+        )
+        settled.run()
+        assert settled._reparsed_file_keys == set()
+
+    def test_selections_that_resolve_alike_reparse_nothing(
+        self, py_project: Path, mock_ingestor: MagicMock, warnings_sink: list[str]
+    ) -> None:
+        # The control: in this build every selection resolves to Python
+        # everywhere, so switching between them is no change and must not
+        # cost a re-parse.
+        _make_updater(
+            py_project, mock_ingestor, engine=parse_index_engine("auto")
+        ).run()
+
+        for spec in ("python", "rust", "go=rust"):
+            updater = _make_updater(
+                py_project, mock_ingestor, engine=parse_index_engine(spec)
+            )
+            updater.run()
+            assert updater._reparsed_file_keys == set(), spec
+
+        assert not any(ls.PARSER_FINGERPRINT_MISMATCH in m for m in warnings_sink)
+
     def test_missing_stamp_with_existing_cache_warns(
         self, py_project: Path, mock_ingestor: MagicMock, warnings_sink: list[str]
     ) -> None:
@@ -866,3 +931,92 @@ class TestCaptureSelectionIsParserIdentity:
         before = compute_parser_fingerprint()
         monkeypatch.setattr(cfg, "CAPTURE_FUNCTION_LOCAL_DEFINITIONS", False)
         assert compute_parser_fingerprint() != before
+
+
+def _engines(spec: str) -> dict[cs.SupportedLanguage, cs.IndexEngine]:
+    return resolve_index_engines(parse_index_engine(spec))
+
+
+class TestIndexEngineIsParserIdentity:
+    # The engine each language is indexed on decides what its unchanged
+    # sources produce, the same criterion the frontend mode and the capture
+    # selection are hashed under. Unhashed, a language moving to Rust kept
+    # the Python engine's graph on the in-sync fast path (issue #3725).
+
+    def test_selections_that_resolve_alike_share_a_fingerprint(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The RESOLVED engines are hashed, not the setting: this build runs
+        # every language on Python whatever is asked, so no selection may
+        # force a re-parse.
+        fingerprints = set()
+        for spec in ("auto", "python", "rust", "go=rust"):
+            monkeypatch.setattr(config.settings, "INDEX_ENGINE", spec)
+            fingerprints.add(compute_parser_fingerprint())
+            fingerprints.add(compute_parser_fingerprint(engines=_engines(spec)))
+        assert len(fingerprints) == 1, fingerprints
+
+    def test_changes_when_a_language_resolves_to_another_engine(
+        self, go_on_rust: None
+    ) -> None:
+        on_rust = compute_parser_fingerprint(engines=_engines("go=rust"))
+        assert on_rust != compute_parser_fingerprint(engines=_engines("python"))
+
+    def test_the_setting_is_read_when_no_engines_are_given(
+        self, monkeypatch: pytest.MonkeyPatch, go_on_rust: None
+    ) -> None:
+        # As `capture` falls back to CGR_CAPTURE, so a caller without an
+        # updater fingerprints the engines this process would index on.
+        monkeypatch.setattr(config.settings, "INDEX_ENGINE", "python")
+        on_python = compute_parser_fingerprint()
+        monkeypatch.setattr(config.settings, "INDEX_ENGINE", "go=rust")
+        assert compute_parser_fingerprint() != on_python
+        assert compute_parser_fingerprint() == compute_parser_fingerprint(
+            engines=_engines("go=rust")
+        )
+
+    def test_the_order_of_the_mapping_does_not_matter(self, go_on_rust: None) -> None:
+        engines = _engines("go=rust")
+        backwards = dict(reversed(list(engines.items())))
+        assert compute_parser_fingerprint(engines=engines) == (
+            compute_parser_fingerprint(engines=backwards)
+        )
+
+
+class _Distribution:
+    def __init__(self, name: str, version: str) -> None:
+        self.name = name
+        self.version = version
+
+
+class TestRustExtensionVersionIsParserIdentity:
+    # cgr-graph-rs walks the trees the parsers read and will index whole
+    # languages, so its release changes what unchanged sources produce as a
+    # grammar release does. Its name does not start with the grammar prefix,
+    # and the filter left it out (issue #3725).
+
+    def test_the_installed_extension_is_an_input(self) -> None:
+        installed = metadata.version(cs.RUST_EXTENSION_DIST)
+        assert (
+            cs.GRAMMAR_VERSION_FMT.format(
+                name=cs.RUST_EXTENSION_DIST, version=installed
+            )
+            in pf._grammar_versions()
+        )
+
+    def test_changes_when_the_extension_version_changes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def installed(version: str) -> None:
+            dists = [
+                _Distribution(f"{cs.GRAMMAR_DIST_PREFIX}-python", "0.23.0"),
+                _Distribution(cs.RUST_EXTENSION_DIST, version),
+            ]
+            monkeypatch.setattr(pf.metadata, "distributions", lambda: iter(dists))
+
+        installed("0.1.8")
+        before = compute_parser_fingerprint()
+        installed("0.1.9")
+        assert compute_parser_fingerprint() != before
+        installed("0.1.8")
+        assert compute_parser_fingerprint() == before

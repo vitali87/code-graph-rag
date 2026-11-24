@@ -2,15 +2,16 @@
 # incremental hash cache keys only the source files, so a parser or config
 # change with unchanged sources leaves stale old-parser edges. This
 # fingerprint keys the other inputs: parse-relevant source files, the pinned
-# grammar wheel versions, and the frontend settings, so a sync can detect the
-# graph was built by a different parser or frontend config.
+# grammar wheel and Rust extension versions, the frontend settings and the
+# engine each language is indexed on, so a sync can detect the graph was
+# built by a different parser, engine or frontend config.
 import errno
 import hashlib
 import json
 import os
 import shutil
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -378,12 +379,17 @@ def compute_parser_fingerprint(
     repo_path: Path | None = None,
     capture: "CaptureSelection | None" = None,
     state_dir: Path | None = None,
+    engines: Mapping[cs.SupportedLanguage, cs.IndexEngine] | None = None,
 ) -> str:
     """The parser identity a graph is stamped with, as one hex digest.
 
     `state_dir` is the checkout's state directory: given one, toolchain
     answers are reused across processes when a version probe times out (see
     `_probe_version` and `_tool_versions`). Without it they last the process.
+
+    `engines` is the engine each language is indexed on, as the updater
+    resolved it; None resolves `CGR_INDEX_ENGINE`, as `capture` reads
+    `CGR_CAPTURE`.
     """
     root = package_root if package_root is not None else Path(__file__).resolve().parent
     hasher = hashlib.md5(usedforsecurity=False)
@@ -412,7 +418,38 @@ def compute_parser_fingerprint(
     # disabling one must not leave its edges behind (issue #1630).
     for entry in _capture_entries(capture):
         hasher.update(entry.encode())
+    # The engine a language is indexed on decides what its unchanged sources
+    # produce, as the frontend mode does: a language moving to Rust must not
+    # keep the Python engine's graph on the in-sync fast path (issue #3725).
+    for entry in _engine_entries(engines):
+        hasher.update(entry.encode())
     return hasher.hexdigest()
+
+
+def _engine_entries(
+    engines: Mapping[cs.SupportedLanguage, cs.IndexEngine] | None,
+) -> list[str]:
+    """Stable identity of the engine each language is indexed on.
+
+    The RESOLVED engines are hashed rather than the `CGR_INDEX_ENGINE` spec,
+    so selections that run every language on the same engine (`auto`,
+    `python` and `rust` in a build that runs nothing on Rust) are one
+    identity and do not force a needless re-parse. Sorted by language,
+    because the digest must not depend on the order the mapping was built in.
+    """
+    from .index_engine import default_index_engine, resolve_index_engines
+
+    resolved = (
+        engines
+        if engines is not None
+        else resolve_index_engines(default_index_engine())
+    )
+    return [
+        cs.INDEX_ENGINE_FINGERPRINT_FMT.format(
+            language=language.value, engine=engine.value
+        )
+        for language, engine in sorted(resolved.items(), key=lambda item: item[0].value)
+    ]
 
 
 def _capture_entries(capture: "CaptureSelection | None") -> list[str]:
@@ -526,11 +563,18 @@ def _grammar_entry(dist: metadata.Distribution) -> str | None:
     # only be one this fingerprint would have listed, and a MISSING grammar
     # entry changes the fingerprint, which already surfaces as the
     # stale-graph warning rather than a silent wrong answer (issue #1339).
+    # The Rust extension is listed by name beside the grammars: it reads the
+    # same trees and its release changes the graph as theirs do (#3725).
     try:
         name = dist.name
-        if not name or not name.lower().startswith(cs.GRAMMAR_DIST_PREFIX):
+        if not name:
             return None
-        return cs.GRAMMAR_VERSION_FMT.format(name=name.lower(), version=dist.version)
+        name = name.lower()
+        if not (
+            name.startswith(cs.GRAMMAR_DIST_PREFIX) or name == cs.RUST_EXTENSION_DIST
+        ):
+            return None
+        return cs.GRAMMAR_VERSION_FMT.format(name=name, version=dist.version)
     except Exception:
         logger.debug(ls.FINGERPRINT_DIST_UNREADABLE)
         return None
