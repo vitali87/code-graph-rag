@@ -430,3 +430,29 @@ def test_a_reused_updater_still_names_a_file_defining_into_a_module(
     updater.run(force=True)
 
     assert updater._foreign_definer_keys(["box.h"]) == {"box.cpp"}
+
+
+# A module qn can spell a type path under the departing module: the file
+# pkg/types/box.go is proj.pkg.types.box, and so is the type box that
+# pkg/types.go declares. methods.go's Grow, proj.pkg.types.box.Grow, is a
+# member of types.go's box all the same, so types.go's departure names
+# methods.go; box.go's own F stays box.go's.
+_SHADOWED_TYPE = {
+    "go.mod": "module example.com/shadow\n\ngo 1.21\n",
+    "pkg/types.go": "package pkg\n\ntype box struct{ n int }\n",
+    "pkg/methods.go": "package pkg\n\nfunc (b box) Grow() int { return b.n + 1 }\n",
+    "pkg/types/box.go": "package box\n\nfunc F() int { return 1 }\n",
+}
+
+
+def test_a_module_named_like_a_type_leaves_the_types_definer_named(
+    temp_repo: Path,
+) -> None:
+    if cs.SupportedLanguage.GO not in load_parsers()[0]:
+        pytest.skip("go parser not available")
+    root = temp_repo / "proj"
+    _write(root, _SHADOWED_TYPE)
+    updater = _updater(_StatefulIngestor(), root)
+    updater.run(force=True)
+
+    assert updater._foreign_definer_keys(["pkg/types.go"]) == {"pkg/methods.go"}

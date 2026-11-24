@@ -6503,12 +6503,16 @@ class GraphUpdater:
 
         The span records already name the registering module, so the files
         to re-parse are exactly those that recorded a qn under a departing
-        module without being that module themselves. Under means the qn's
-        nearest module is the departing one: `proj.pkg.types.sub.s` belongs
-        to pkg/types/sub.py's own module, not to pkg/types.py's, and matched
-        by the prefix alone a reused updater re-parsed sub.py where a fresh
-        process did not (issue #3727). Read before `remove_file_from_state`
-        runs, while the run's records still stand.
+        module without being that module themselves. A module nested under
+        the departing one keeps what it records in its own namespace:
+        `proj.pkg.types.sub.s` is pkg/types/sub.py's, and matched by the
+        prefix alone a reused updater re-parsed sub.py where a fresh process
+        did not (issue #3727). Only the registering module is weighed against
+        the departing one, not every module: a module qn can spell a type
+        path (pkg/types/box.go is `proj.pkg.types.box`, as is the type `box`
+        in pkg/types.go), and methods.go's `proj.pkg.types.box.Grow` still
+        hangs off types.go. Read before `remove_file_from_state` runs, while
+        the run's records still stand.
         """
         gone = set(gone_keys)
         if not gone:
@@ -6525,8 +6529,14 @@ class GraphUpdater:
         for (span_module, _line, _col), location in dp.function_locations.items():
             if span_module in gone_modules:
                 continue
-            owner = _owning_module_qn(location.qualified_name, key_for_module)
-            if owner in gone_modules:
+            qn = location.qualified_name
+            owner = _owning_module_qn(qn, gone_modules)
+            # The nearer of the two: box.cpp is `proj.box`, above box.h's
+            # `proj.box.h`, so its `proj.box.h.Box.grow` is still box.h's.
+            if (
+                owner is not None
+                and _owning_module_qn(qn, (owner, span_module)) == owner
+            ):
                 definers.add(span_module)
         return {
             key
