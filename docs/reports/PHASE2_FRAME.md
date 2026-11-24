@@ -272,8 +272,13 @@ on disk and prepare their answers; only the one the run used is published.
   it is marked `unreadable`). Any other file is hashed as raw bytes, with no
   line-ending or byte-order-mark normalisation.
 - **The watermark** is taken before hashing starts. It is not compared with
-  file times in this run: it only stamps the cache this run publishes, so
-  an edit made while the run hashes is seen by the next one.
+  file times in this run: it only stamps the cache a project run publishes,
+  so an edit made while the run hashes is seen by the next one.
+- **A single-file run** only merges its file into an existing cache, keeps
+  that cache's previous mtime, and leaves the folder times alone. Its cache
+  still holds the old hashes of every other file, so stamping it with this
+  run's watermark would make an earlier edit to another file look already
+  checked to the next project run. The frame copies that exception.
 - **The in-sync check.** Each recorded folder's mtime matches exactly, or
   its listing shows no indexable file added or removed. Each cached file is
   not `unreadable` and not a link, and either `max(mtime, ctime)` is at or
@@ -367,12 +372,15 @@ said:
   extensions (#2586); a `.d.ts` beside its implementation takes the bare
   name (#1720); otherwise the first file in walk order claims the bare name
   and later ones get `.ext` (#1569). Files parsed by tree-sitter claim
-  this way. Files the ast-grep tier parses (Ruby, shell, Kotlin, Swift and
-  the rest, when the `ast-grep` extra is installed) also enter the module
-  map, under their own flat name that keeps the extension
-  (`parsers/ast_grep_tier.py`). The plan includes both, so it can equal the
-  `module` lines of Python's `index.txt` on repositories such as cJSON,
-  which hold Ruby files.
+  this way, into the definition processor's module map, which is what the
+  `module` lines of Python's `index.txt` hold. Files the ast-grep tier
+  parses (Ruby, shell, Kotlin, Swift and the rest, when the `ast-grep`
+  extra is installed) are named by a rule of their own, a flat name that
+  keeps the extension, and go into that tier's own map
+  (`parsers/ast_grep_tier.py`), not into `index.txt`. So the phase 2 plan
+  compares the tree-sitter claims with `index.txt`, and the ast-grep map is
+  ported, with a section of its own in `index.txt`, when that tier moves
+  (phase 5).
 - **The function registry.** The first registration takes the plain name,
   later ones `@line`, then `@line_col`; across files an `_10000·k` slot is
   added. The label is last-wins, except TypeScript's type-and-value twins.
