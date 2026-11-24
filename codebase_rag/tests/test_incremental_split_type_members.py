@@ -20,6 +20,10 @@ from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.test_incremental_deleted_state import Snapshot
+from codebase_rag.tests.test_incremental_deleted_state import (
+    _snapshot as _rooted_snapshot,
+)
 from codebase_rag.tests.test_incremental_inbound_deferred_targets import _snapshot
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from evals.cgr_graph import _StatefulIngestor
@@ -91,10 +95,13 @@ class _MemberLookupOutage(_StatefulIngestor):
 def _write(root: Path, files: dict[str, str]) -> None:
     root.mkdir()
     for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
 
 
-def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
+def _updater(
+    store: _StatefulIngestor, root: Path, handoff_dir: Path | None = None
+) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
@@ -102,6 +109,7 @@ def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
         parsers=parsers,
         queries=queries,
         project_name="proj",
+        handoff_dir=handoff_dir,
     )
 
 
@@ -341,3 +349,84 @@ def test_a_full_build_goes_on_when_the_member_lookup_fails(cpp_root: Path) -> No
 
     node = store.nodes[(cs.NodeLabel.METHOD.value, _CPP_GROW)]
     assert node.get(cs.KEY_PATH) == "box.cpp", node
+
+
+# A module whose qn prefixes another file's module: pkg/types.py is
+# proj.pkg.types and pkg/types/sub.py is proj.pkg.types.sub. Nothing in
+# sub.py hangs off types.py's subtree, so editing types.py re-parses it alone
+# (#3727). A reused updater matched sub.py's definitions to types.py by the qn
+# prefix and re-parsed sub.py too, where a fresh process did not.
+_NESTED_MODULES = {
+    "python": (
+        cs.SupportedLanguage.PYTHON,
+        {
+            "pkg/types.py": "def t():\n    return 1\n",
+            "pkg/types/sub.py": "def s():\n    return 2\n",
+            "main.py": "def m():\n    return 3\n",
+        },
+        "pkg/types.py",
+        "#",
+    ),
+    "javascript": (
+        cs.SupportedLanguage.JS,
+        {
+            "src/api.js": "export function t() { return 1; }\n",
+            "src/api/index.js": "export function s() { return 2; }\n",
+            "src/main.js": "export function m() { return 3; }\n",
+        },
+        "src/api.js",
+        "//",
+    ),
+}
+
+
+def _reparse_lines(handoff_dir: Path) -> list[str]:
+    plan = (handoff_dir / cs.HandoffFile.FILES).read_text(encoding="utf-8")
+    return [
+        line
+        for line in plan.splitlines()
+        if line.startswith(f"{cs.HandoffKind.REPARSE}\t")
+    ]
+
+
+@pytest.mark.parametrize("layout", sorted(_NESTED_MODULES))
+def test_a_reused_updater_reparses_what_a_fresh_one_does(
+    temp_repo: Path, layout: str
+) -> None:
+    language, files, edited, marker = _NESTED_MODULES[layout]
+    if language not in load_parsers()[0]:
+        pytest.skip(f"{language} parser not available")
+    plans: dict[bool, list[str]] = {}
+    graphs: dict[bool, Snapshot] = {}
+    for reused in (True, False):
+        root = temp_repo / f"reused-{reused}" / "proj"
+        root.parent.mkdir()
+        _write(root, files)
+        handoffs = root.parent / "handoffs"
+        store = _StatefulIngestor()
+        updater = _updater(store, root, handoffs)
+        updater.run(force=True)
+        _edit_after_cache(root / edited, root, marker)
+
+        (updater if reused else _updater(store, root, handoffs)).run(force=False)
+
+        plans[reused] = _reparse_lines(handoffs)
+        # Read relative to its root: each layout sits in a checkout of its own.
+        graphs[reused] = _rooted_snapshot(store, root)
+
+    assert plans[False] == [f'reparse\t{edited}\t{{"reason":"changed"}}']
+    assert plans[True] == plans[False]
+    assert graphs[True] == graphs[False]
+
+
+def test_a_reused_updater_still_names_a_file_defining_into_a_module(
+    cpp_root: Path,
+) -> None:
+    # The other bound: box.cpp's grow is a member of box.h's Box, so box.h's
+    # departure still names box.cpp. The graph lookup queues box.cpp as well,
+    # so no plan or graph would show this lookup going quiet.
+    _write(cpp_root, _CPP)
+    updater = _updater(_StatefulIngestor(), cpp_root)
+    updater.run(force=True)
+
+    assert updater._foreign_definer_keys(["box.h"]) == {"box.cpp"}

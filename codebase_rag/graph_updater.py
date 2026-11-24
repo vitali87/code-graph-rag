@@ -242,14 +242,16 @@ def _stored_language(path: object) -> cs.SupportedLanguage | None:
     )
 
 
-def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
-    owner: str | None = None
-    for candidate in module_qns:
-        if qn.startswith(candidate + cs.SEPARATOR_DOT) and (
-            owner is None or len(candidate) > len(owner)
-        ):
-            owner = candidate
-    return owner
+def _owning_module_qn(qn: str, module_qns: Collection[str]) -> str | None:
+    # The longest module qn `qn` sits under. Read off `qn`'s own prefixes, so
+    # a lookup costs its depth whatever the number of modules: the
+    # foreign-definer lookup asks once for every definition of the run.
+    head, separator, _tail = qn.rpartition(cs.SEPARATOR_DOT)
+    while separator:
+        if head in module_qns:
+            return head
+        head, separator, _tail = head.rpartition(cs.SEPARATOR_DOT)
+    return None
 
 
 def _route_label(node_type: NodeType) -> cs.NodeLabel:
@@ -6501,8 +6503,12 @@ class GraphUpdater:
 
         The span records already name the registering module, so the files
         to re-parse are exactly those that recorded a qn under a departing
-        module without being that module themselves. Read before
-        `remove_file_from_state` runs, while the run's records still stand.
+        module without being that module themselves. Under means the qn's
+        nearest module is the departing one: `proj.pkg.types.sub.s` belongs
+        to pkg/types/sub.py's own module, not to pkg/types.py's, and matched
+        by the prefix alone a reused updater re-parsed sub.py where a fresh
+        process did not (issue #3727). Read before `remove_file_from_state`
+        runs, while the run's records still stand.
         """
         gone = set(gone_keys)
         if not gone:
@@ -6519,10 +6525,8 @@ class GraphUpdater:
         for (span_module, _line, _col), location in dp.function_locations.items():
             if span_module in gone_modules:
                 continue
-            qn = location.qualified_name
-            if any(
-                qn.startswith(f"{module}{cs.SEPARATOR_DOT}") for module in gone_modules
-            ):
+            owner = _owning_module_qn(location.qualified_name, key_for_module)
+            if owner in gone_modules:
                 definers.add(span_module)
         return {
             key
