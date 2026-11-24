@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -18,6 +19,7 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
+from codebase_rag import graph_updater as gu
 from codebase_rag.capture import resolve_capture
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import (
@@ -499,22 +501,95 @@ def _replace_utime(
     monkeypatch.setattr(os, "utime", replacement)
 
 
-def test_reingest_removes_the_cache_when_it_cannot_backdate_it(
+def _failing_utime(path: object, times: object = None, **kwargs: object) -> None:
+    raise OSError(1, "EPERM utime")
+
+
+def _no_space(cache_path: Path) -> tuple[int, str]:
+    raise OSError(errno.ENOSPC, "No space left on device")
+
+
+def _owe_the_cleanup_through_the_cache(
+    monkeypatch: pytest.MonkeyPatch, updater: GraphUpdater
+) -> None:
+    """Leave the re-ingest owing a skipped EXPOSES cleanup only the cache records.
+
+    What `_owe_exposes_cleanup_without_marker` leaves when neither the marker
+    can be written nor the directory map dropped.
+    """
+
+    def kept_map(cleared_by_this_run: bool) -> None:
+        updater._exposes_map_kept = True
+
+    monkeypatch.setattr(updater, "_record_exposes_cleanup", kept_map)
+
+
+@pytest.mark.parametrize(
+    ("break_publish", "cause"),
+    [
+        (lambda patch: _replace_utime(patch, _failing_utime), "EPERM utime"),
+        (
+            lambda patch: patch.setattr(gu, "_open_exclusive_temp", _no_space),
+            "No space left",
+        ),
+    ],
+    ids=["cannot_stamp", "no_space"],
+)
+def test_reingest_keeps_the_previous_cache_when_it_cannot_publish(
+    fixture_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    break_publish: Callable[[pytest.MonkeyPatch], None],
+    cause: str,
+) -> None:
+    """A failed publish leaves the previous cache, as it does for `run()`.
+
+    The publish touches the cache only at its rename, so the previous one is
+    still whole and still stamped with its own instant. It is one call
+    behind, and the files this call re-parsed are newer than that instant,
+    so the next run re-hashes them. Removing it dropped the record the
+    watcher reads to retract the files under a deleted directory, and no
+    later scoped call recreates it (Greptile and CodeRabbit, PR #3733).
+    """
+    store = _StatefulIngestor()
+    updater = _updater(store, fixture_root)
+    updater.run(force=True)
+    cache = state_file(fixture_root, cs.HASH_CACHE_FILENAME)
+    before = cache.read_bytes()
+    stamp = cache.stat().st_mtime
+    changed, deleted = edit_rename_callee(fixture_root)
+
+    with monkeypatch.context() as patch:
+        break_publish(patch)
+        warnings = _warnings_during(lambda: updater.reingest(changed, deleted=deleted))
+
+    assert any(
+        "Failed to save hash cache" in line and cause in line for line in warnings
+    )
+    assert not any("Could not publish" in line for line in warnings)
+    assert cache.read_bytes() == before
+    assert cache.stat().st_mtime == stamp
+    assert updater.indexed_files_under(fixture_root / "pkg") == [
+        fixture_root / rel for rel in sorted(FIXTURE) if rel.startswith("pkg/")
+    ]
+    _updater(store, fixture_root).run(force=False)
+    assert _diff(_snapshot(store), _clean_index(fixture_root)) == ""
+
+
+def test_reingest_removes_a_cache_that_owes_a_cleanup_it_cannot_publish(
     fixture_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A cache stamped with the wrong instant hides edits from the next run,
-    # so a publish that cannot backdate it removes it and says so with its
-    # own message, after the publish has named the cause.
+    # The previous cache marks every file confirmed, so it could send the
+    # next run down the in-sync path past the cleanup this call owes: it is
+    # removed, and says so with its own message after the publish named the
+    # cause.
     store = _StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
     cache = state_file(fixture_root, cs.HASH_CACHE_FILENAME)
     changed, deleted = edit_rename_callee(fixture_root)
 
-    def failing_utime(path: object, times: object = None, **kwargs: object) -> None:
-        raise OSError(1, "EPERM utime")
-
-    _replace_utime(monkeypatch, failing_utime)
+    _owe_the_cleanup_through_the_cache(monkeypatch, updater)
+    _replace_utime(monkeypatch, _failing_utime)
     warnings = _warnings_during(lambda: updater.reingest(changed, deleted=deleted))
 
     assert not cache.exists()
@@ -534,9 +609,6 @@ def test_reingest_reports_a_cache_it_could_neither_backdate_nor_remove(
     cache = state_file(fixture_root, cs.HASH_CACHE_FILENAME)
     changed, deleted = edit_rename_callee(fixture_root)
 
-    def failing_utime(path: object, times: object = None, **kwargs: object) -> None:
-        raise OSError(1, "EPERM utime")
-
     real_unlink = Path.unlink
 
     def failing_unlink(self: Path, missing_ok: bool = False) -> None:
@@ -544,7 +616,8 @@ def test_reingest_reports_a_cache_it_could_neither_backdate_nor_remove(
             raise OSError(1, "EPERM unlink")
         real_unlink(self, missing_ok=missing_ok)
 
-    _replace_utime(monkeypatch, failing_utime)
+    _owe_the_cleanup_through_the_cache(monkeypatch, updater)
+    _replace_utime(monkeypatch, _failing_utime)
     monkeypatch.setattr(Path, "unlink", failing_unlink)
     warnings = _warnings_during(lambda: updater.reingest(changed, deleted=deleted))
 

@@ -10641,11 +10641,19 @@ class GraphUpdater:
         # them already current.
         if _publish_hash_cache(cache_path, hashes, observed_at):
             return
-        # Fail closed. A failed publish leaves the previous cache, which
-        # records none of this call: not its hashes and, when the EXPOSES
-        # cleanup was skipped, not the cleanup it owes (`_unconfirmed`
-        # above), so the next run could take the in-sync path past it. No
-        # cache costs that run a rebuild instead.
+        # A failed publish leaves the previous cache whole and at its own
+        # instant, as it does for `run()`. Being one call behind costs the
+        # next run a re-hash of the files re-parsed here, which are newer
+        # than that instant. It stays: it is the record the watcher reads to
+        # retract the files under a deleted directory or a file that became
+        # a link, and no later scoped call recreates a missing one
+        # (Greptile and CodeRabbit, PR #3733).
+        if not self._exposes_map_kept:
+            return
+        # Unless this call owes a skipped EXPOSES cleanup that only the cache
+        # could record (`_unconfirmed` above): the previous one marks every
+        # file confirmed, so the next run could take the in-sync path past
+        # it. Fail closed: no cache costs that run a rebuild instead.
         logger.warning(ls.REINGEST_CACHE_PUBLISH_FAILED, path=cache_path)
         try:
             cache_path.unlink(missing_ok=True)

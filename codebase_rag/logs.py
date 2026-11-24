@@ -1334,18 +1334,20 @@ HASH_CACHE_SAVE_FAILED = (
     "(errno={errno} strerror={strerror} failing_path={failing_path})"
 )
 # A scoped re-ingest publishes the hash cache stamped with the instant it
-# observed (`_reingest_update_hashes`) and removes it when that fails; these
-# name that removal, distinct from the atomic publish's own temporary-file
-# cleanup below. The publish logs its own cause first.
+# observed (`_reingest_update_hashes`). When that fails it keeps the previous
+# cache, unless the cache alone owed a skipped EXPOSES cleanup; these name
+# that removal, distinct from the atomic publish's own temporary-file cleanup
+# below. The publish logs its own cause first.
 REINGEST_CACHE_PUBLISH_FAILED = (
     "Could not publish {path} stamped with the observed instant; removing it so "
-    "the next run rebuilds rather than trusting a cache that does not record this "
-    "re-ingest"
+    "the next run rebuilds rather than trusting a cache that does not record the "
+    "EXPOSES cleanup this re-ingest owes"
 )
 REINGEST_CACHE_PUBLISH_CLEANUP_FAILED = (
-    "Could not remove {path} after its publish failed ({error}); it still holds the "
-    "hashes from before this re-ingest, so the next run may skip work this "
-    "re-ingest owes. Delete it by hand, or re-run once the path is writable"
+    "Could not remove {path} after its publish failed ({error}); it still marks "
+    "every file confirmed, so the next run may treat the project as in sync and "
+    "skip the EXPOSES cleanup this re-ingest owes. Delete it by hand, or re-run "
+    "once the path is writable"
 )
 CACHE_STAMP_CLEANUP_FAILED = (
     "Could not remove the temporary cache file {path} ({error}); it is inert, since "
