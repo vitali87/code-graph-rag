@@ -421,6 +421,10 @@ CGRIGNORE_LOADED = (
     "Loaded {exclude_count} exclude and {unignore_count} unignore patterns from {path}"
 )
 CGRIGNORE_READ_FAILED = "Failed to read {path}: {error}"
+CGRIGNORE_LINE_SKIPPED = (
+    "Skipping line {line_number} of {path}, which is not a valid ignore "
+    "pattern: {error}"
+)
 
 CGR_INSTRUCTIONS_LOADED = "Loaded project instructions from {path} ({chars} chars)"
 CGR_INSTRUCTIONS_READ_FAILED = "Failed to read project instructions {path}: {error}"

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import codecs
 from collections.abc import Generator, Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from loguru import logger
 from typer.testing import CliRunner
 
 from codebase_rag.cli import app
@@ -14,6 +16,7 @@ from codebase_rag.config import (
     load_cgrignore_patterns,
 )
 from codebase_rag.main import prompt_for_unignored_directories
+from codebase_rag.tests.test_gitignore_patterns import _indexed_files
 from codebase_rag.types_defs import CgrignorePatterns
 
 
@@ -62,6 +65,72 @@ def test_strips_whitespace(temp_repo: Path) -> None:
 
     assert "vendor" in result.exclude
     assert "temp" in result.exclude
+
+
+def test_skips_a_byte_order_mark(temp_repo: Path) -> None:
+    # Issue #3724: an editor that saves a UTF-8 byte-order mark put it in
+    # front of the first pattern, which then matched nothing.
+    cgrignore = temp_repo / CGRIGNORE_FILENAME
+    cgrignore.write_bytes(codecs.BOM_UTF8 + b"vendor\n!keep\n")
+
+    result = load_cgrignore_patterns(temp_repo)
+
+    assert result.exclude == frozenset({"vendor"})
+    assert result.unignore == frozenset({"keep"})
+
+
+def test_a_first_negation_after_a_byte_order_mark_stays_a_negation(
+    temp_repo: Path,
+) -> None:
+    cgrignore = temp_repo / CGRIGNORE_FILENAME
+    cgrignore.write_bytes(codecs.BOM_UTF8 + b"!vendor\n")
+
+    result = load_cgrignore_patterns(temp_repo)
+
+    assert result.unignore == frozenset({"vendor"})
+    assert result.exclude == frozenset()
+
+
+def test_a_byte_order_mark_does_not_let_the_first_file_in(temp_repo: Path) -> None:
+    (temp_repo / CGRIGNORE_FILENAME).write_bytes(codecs.BOM_UTF8 + b"secret.py\n")
+    (temp_repo / "secret.py").write_text("def s():\n    return 1\n", encoding="utf-8")
+    (temp_repo / "a.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+
+    files = _indexed_files(temp_repo)
+
+    assert "a.py" in files, sorted(files)
+    assert "secret.py" not in files, sorted(files)
+
+
+def test_keeps_an_escaped_trailing_space(temp_repo: Path) -> None:
+    # Issue #3723: as in .gitignore, a backslash keeps the space after it, so
+    # `t.py\ ` names the file `t.py `. Stripping it left a dangling `\`.
+    cgrignore = temp_repo / CGRIGNORE_FILENAME
+    cgrignore.write_text(encoding="utf-8", data="t.py\\ \n!keep\\ \n")
+
+    result = load_cgrignore_patterns(temp_repo)
+
+    assert result.exclude == frozenset({"t.py\\ "})
+    assert result.unignore == frozenset({"keep\\ "})
+
+
+def test_skips_a_line_pathspec_refuses_with_one_warning(temp_repo: Path) -> None:
+    # A lone trailing backslash escapes nothing, and pathspec refuses it. The
+    # line is left out with a warning naming it, and the rest still apply.
+    cgrignore = temp_repo / CGRIGNORE_FILENAME
+    cgrignore.write_text(encoding="utf-8", data="vendor\n# note\nbad\\\n!keep\n")
+    warnings: list[str] = []
+    sink = logger.add(warnings.append, level="WARNING", format="{message}")
+    try:
+        result = load_cgrignore_patterns(temp_repo)
+    finally:
+        logger.remove(sink)
+
+    assert result.exclude == frozenset({"vendor"})
+    assert result.unignore == frozenset({"keep"})
+    assert len(warnings) == 1, warnings
+    assert str(cgrignore) in warnings[0], warnings
+    assert "line 3" in warnings[0], warnings
 
 
 def test_returns_empty_on_read_error(

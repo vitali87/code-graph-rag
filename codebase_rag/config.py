@@ -24,7 +24,7 @@ from . import instructions_trust, logs
 from .graph_dialects import DIALECT_SQLITE, available_dialects
 from .index_engine import parse_index_engine
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
-from .utils.path_utils import ordered_ignore_block
+from .utils.path_utils import ignore_line_error, ordered_ignore_block
 
 # Taken before `.env` is merged into the environment, so a refused value can be
 # traced to the shell that exported it or to the file (#2474).
@@ -841,23 +841,61 @@ GITIGNORE_FILENAME = ".gitignore"
 EMPTY_CGRIGNORE = CgrignorePatterns(exclude=frozenset(), unignore=frozenset())
 
 
+def trim_ignore_line(line: str) -> str:
+    """The pattern on an ignore-file line, the whitespace around it dropped.
+
+    Trailing whitespace goes unless a backslash escapes it, as git trims
+    trailing spaces, so `t.py\\ ` names the file `t.py ` (#3723); `str.strip`
+    took the escaped space too and left a dangling backslash, which pathspec
+    refuses. Leading whitespace is dropped as before.
+    """
+    line = line.removesuffix(cs.LINE_FEED)
+    end = 0
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped or not char.isspace():
+            end = index + 1
+        escaped = not escaped and char == cs.SEPARATOR_BACKSLASH
+    return line[:end].lstrip()
+
+
 def _read_ignore_lines(ignore_file: Path) -> tuple[str, ...]:
-    """The file's pattern lines in order, comments and blank lines dropped."""
+    """The file's pattern lines in order, comments and blank lines dropped.
+
+    A UTF-8 byte-order mark, which some editors save and git skips, is not
+    part of the first line (#3724); kept, it made that pattern match nothing.
+    A line pathspec refuses is left out with a warning naming it, rather than
+    compiled with the rest, where it failed the run (#3723).
+    """
     if not ignore_file.is_file():
         return ()
     try:
-        with ignore_file.open(encoding="utf-8") as f:
-            stripped = (line.strip() for line in f)
-            return tuple(line for line in stripped if line and not line.startswith("#"))
+        with ignore_file.open(encoding=cs.ENCODING_UTF8_SIG) as f:
+            trimmed = [trim_ignore_line(line) for line in f]
     except (OSError, ValueError) as e:
         logger.warning(logs.CGRIGNORE_READ_FAILED.format(path=ignore_file, error=e))
         return ()
+    lines: list[str] = []
+    for line_number, line in enumerate(trimmed, start=1):
+        if not line or line.startswith("#"):
+            continue
+        if (error := ignore_line_error(line)) is not None:
+            logger.warning(
+                logs.CGRIGNORE_LINE_SKIPPED.format(
+                    line_number=line_number, path=ignore_file, error=error
+                )
+            )
+            continue
+        lines.append(line)
+    return tuple(lines)
 
 
 def _ignore_patterns(lines: tuple[str, ...]) -> CgrignorePatterns:
+    # Only the whitespace after `!` is stripped: the line's end is already
+    # trimmed, and any whitespace left there is escaped (#3723).
     return CgrignorePatterns(
         exclude=frozenset(line for line in lines if not line.startswith("!")),
-        unignore=frozenset(line[1:].strip() for line in lines if line.startswith("!")),
+        unignore=frozenset(line[1:].lstrip() for line in lines if line.startswith("!")),
     )
 
 
