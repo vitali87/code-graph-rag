@@ -24,6 +24,7 @@ from .embedded_graph import *  # noqa: F403
 from .fqn_specs import *  # noqa: F403
 from .graph import *  # noqa: F403
 from .graph import _NODE_LABEL_UNIQUE_KEYS as _NODE_LABEL_UNIQUE_KEYS
+from .handoff import *  # noqa: F403
 from .health import *  # noqa: F403
 from .identifiers import *  # noqa: F403
 from .index_engine import *  # noqa: F403
