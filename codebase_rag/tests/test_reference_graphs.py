@@ -240,6 +240,73 @@ def test_no_cgr_setting_of_the_caller_reaches_the_index(
     assert env["PATH_FOR_THE_INDEX"] == "kept"
 
 
+# Stands in for `cgr start ... -o OUT`: writes an empty export that says
+# which engine selection the environment it ran with held.
+_SELECTION_CGR = (
+    "import json, os, sys\n"
+    "out = sys.argv[sys.argv.index('-o') + 1]\n"
+    "export = {'nodes': [], 'relationships': [],\n"
+    "          'selection': os.environ.get('CGR_INDEX_ENGINE')}\n"
+    "with open(out, 'w', encoding='utf-8') as file:\n"
+    "    json.dump(export, file)\n"
+)
+
+
+def test_the_selection_asked_for_reaches_the_index_in_place_of_the_callers(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # Every cgr setting of the caller's is kept from the index, so a
+    # selection in the shell never arrives; `--index-engine` is how one does.
+    monkeypatch.setitem(reference_graphs._CALLER_ENV, "CGR_INDEX_ENGINE", "python")
+    repo = load_manifest()[0]
+    cgr = [sys.executable, "-c", _SELECTION_CGR]
+
+    asked = reference_graphs.index(cgr, repo, tmp_path, None, "go=rust")
+    unasked = reference_graphs.index(cgr, repo, tmp_path, None)
+
+    assert asked["selection"] == "go=rust"
+    assert unasked["selection"] is None
+    assert _index_env(tmp_path, None, "go=rust")["CGR_INDEX_ENGINE"] == "go=rust"
+    assert "CGR_INDEX_ENGINE" not in _index_env(tmp_path, None)
+
+
+def test_every_run_indexes_with_the_selection_main_is_given(
+    monkeypatch, tmp_path: Path
+) -> None:
+    asked: list[str | None] = []
+
+    def graphs(
+        cgr: list[str],
+        repo: ReferenceRepo,
+        checkout: Path,
+        runs: int,
+        index_engine: str | None,
+    ) -> tuple[list[str], list[tuple[int, list[str]]]]:
+        asked.append(index_engine)
+        return read_graph(graph_path(repo)), []
+
+    monkeypatch.setattr(reference_graphs, "_runs_this_python", lambda cgr: True)
+    monkeypatch.setattr(
+        reference_graphs, "probe", lambda: read_graph(environment_path())
+    )
+    monkeypatch.setattr(reference_graphs, "fetch", lambda repo, cache: tmp_path)
+    monkeypatch.setattr(reference_graphs, "_graphs", graphs)
+
+    assert reference_graphs.main(["check", "uuid", "--index-engine", "go=rust"]) == 0
+    assert reference_graphs.main(["check", "uuid"]) == 0
+    assert asked == ["go=rust", None]
+
+
+def test_an_invalid_selection_is_refused_before_any_index(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(reference_graphs, "fetch", _not_indexed)
+
+    with pytest.raises(SystemExit) as exited:
+        reference_graphs.main(["check", "--index-engine", "go=fortran"])
+
+    assert exited.value.code == 2
+    assert "'fortran' is not an engine" in capsys.readouterr().err
+
+
 def test_a_forward_slash_spelling_of_the_root_is_replaced_too() -> None:
     root = Path("/work/checkout/demo")
     export = _export([1, 2, 3, 4])
@@ -274,7 +341,7 @@ def test_a_recording_whose_runs_disagree_writes_nothing(
     monkeypatch.setattr(
         reference_graphs,
         "_graphs",
-        lambda cgr, repo, checkout, runs: (["a"], [(1, ["b"])]),
+        lambda cgr, repo, checkout, runs, index_engine: (["a"], [(1, ["b"])]),
     )
 
     status = reference_graphs.run("record", [repo], ["cgr"], tmp_path, 2, tmp_path)
@@ -291,7 +358,9 @@ def _machine(monkeypatch, environment: list[str], graph: list[str]) -> None:
     monkeypatch.setattr(reference_graphs, "probe", lambda: environment)
     monkeypatch.setattr(reference_graphs, "fetch", lambda repo, cache: Path())
     monkeypatch.setattr(
-        reference_graphs, "_graphs", lambda cgr, repo, checkout, runs: (graph, [])
+        reference_graphs,
+        "_graphs",
+        lambda cgr, repo, checkout, runs, index_engine: (graph, []),
     )
 
 
@@ -446,7 +515,9 @@ def test_a_check_with_another_cgr_compares_only_the_graphs(
     _another_cgr(monkeypatch)
     monkeypatch.setattr(reference_graphs, "fetch", lambda repo, cache: Path())
     monkeypatch.setattr(
-        reference_graphs, "_graphs", lambda cgr, repo, checkout, runs: (["a"], [])
+        reference_graphs,
+        "_graphs",
+        lambda cgr, repo, checkout, runs, index_engine: (["a"], []),
     )
 
     status = reference_graphs.run("check", [repo], ["rust-cgr"], tmp_path, 1, tmp_path)
@@ -455,7 +526,9 @@ def test_a_check_with_another_cgr_compares_only_the_graphs(
     assert "rust-cgr" in capsys.readouterr().out
 
     monkeypatch.setattr(
-        reference_graphs, "_graphs", lambda cgr, repo, checkout, runs: (["b"], [])
+        reference_graphs,
+        "_graphs",
+        lambda cgr, repo, checkout, runs, index_engine: (["b"], []),
     )
     status = reference_graphs.run("check", [repo], ["rust-cgr"], tmp_path, 1, tmp_path)
 

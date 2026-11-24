@@ -258,6 +258,74 @@ def test_raising(go_on_rust, rust_raises, tmp_path):
     index(go_repo(tmp_path), tmp_path)
 """
 
+# Differences planted in the Rust side's hand-off files, as its run left
+# them in its scratch hand-off directory: a definition missing from the
+# project index (and the CALLS edge it would get), two files of the plan in
+# another order, and a plan in another format version.
+PLANTED_HANDOFFS = """
+from codebase_rag.tests import engine_modes
+
+
+def plant(edit):
+    @pytest.fixture
+    def planted(monkeypatch):
+        original = engine_modes.fresh_index
+
+        def edited(updater, engine, scratch, run):
+            export = original(updater, engine, scratch, run)
+            if engine == cs.IndexEngine.RUST:
+                edit(scratch / engine_modes.SCRATCH_HANDOFF, export)
+            return export
+
+        monkeypatch.setattr(engine_modes, "fresh_index", edited)
+
+    return planted
+
+
+def drop_helper(handoffs, export):
+    index = handoffs / "index.txt"
+    lines = index.read_bytes().split(b"\\n")
+    kept = [line for line in lines if not line.startswith(b"definition\\trepo.main.helper\\t")]
+    index.write_bytes(b"\\n".join(kept))
+    export["relationships"] = [
+        rel for rel in export["relationships"] if rel["type"] != "CALLS"
+    ]
+
+
+def swap_files(handoffs, export):
+    plan = handoffs / "files.txt"
+    header, first, second, *rest = plan.read_bytes().split(b"\\n")
+    plan.write_bytes(b"\\n".join([header, second, first, *rest]))
+
+
+def newer_version(handoffs, export):
+    plan = handoffs / "files.txt"
+    plan.write_bytes(plan.read_bytes().replace(b" files.txt 1\\n", b" files.txt 2\\n", 1))
+
+
+index_planted = plant(drop_helper)
+order_planted = plant(swap_files)
+version_planted = plant(newer_version)
+
+
+def two_go_files(tmp_path):
+    repo = go_repo(tmp_path)
+    (repo / "zeta.go").write_text("package main\\n\\nfunc zeta() {}\\n", encoding="utf-8")
+    return repo
+
+
+def test_index(go_on_rust, index_planted, tmp_path):
+    index(go_repo(tmp_path), tmp_path)
+
+
+def test_order(go_on_rust, order_planted, tmp_path):
+    index(two_go_files(tmp_path), tmp_path)
+
+
+def test_version(go_on_rust, version_planted, tmp_path):
+    index(go_repo(tmp_path), tmp_path)
+"""
+
 # What a run sees of its selection in a session-scoped fixture, a
 # module-scoped one, and the test itself, with and without the marker.
 SCOPED_PROBE = """
@@ -424,18 +492,30 @@ def _printed(result: pytest.RunResult, test: str) -> list[str]:
     ]
 
 
-def _report(result: pytest.RunResult) -> list[str]:
-    """The lines of the first engine report in the session's output."""
+def _report(result: pytest.RunResult, after: int = 0) -> list[str]:
+    """The lines of the first engine report in the session's output, or the
+    first after its line `after`."""
     lines = result.outlines
     start = next(
         i
         for i, line in enumerate(lines)
-        if line.startswith("Python and Rust engines differ on ")
+        if i >= after and line.startswith("Python and Rust engines differ on ")
     )
     end = start + 1
     while end < len(lines) and lines[end].startswith("  "):
         end += 1
     return lines[start:end]
+
+
+def _reports(result: pytest.RunResult) -> dict[str, list[str]]:
+    """Each engine report in the session's output, by the test that failed
+    at teardown with it."""
+    marker = "ERROR at teardown of "
+    return {
+        line.strip("_ ").removeprefix(marker): _report(result, i)
+        for i, line in enumerate(result.outlines)
+        if marker in line
+    }
 
 
 @pytest.mark.parametrize("mode", ["python", "rust", "both"])
@@ -585,10 +665,12 @@ def test_a_planted_difference_is_reported_as_exactly_its_lines(
     # The test's own run passed; the comparison fails it at teardown.
     result.assert_outcomes(passed=1, errors=1)
     report = _report(result)
-    heading, graph, *diff = report
+    heading, files, index, graph, *diff = report
     assert fnmatch.fnmatch(
         heading, "Python and Rust engines differ on *repo (go on Rust)"
     )
+    # The hand-offs, in pipeline order before the graph, agree.
+    assert [files, index] == ["  files: same", "  index: same"]
     assert graph == (
         "  graph: 2 lines only on Python, 1 only on Rust  <- first difference"
     )
@@ -596,20 +678,74 @@ def test_a_planted_difference_is_reported_as_exactly_its_lines(
     assert fnmatch.fnmatch(diff[0], f"    {PLANTED_EDGE}"), diff
     assert diff[1:] == [f"    {line}" for line in PLANTED_NODE]
 
-    # Both sides' graphs and the whole difference, under the test's id.
+    # Both sides' hand-off files, the graph among them, and each whole
+    # difference, under the test's id.
+    test_dir = (
+        diff_dir
+        / "test_a_planted_difference_is_reported_as_exactly_its_lines.py__test_planted"
+        / "1"
+    )
     written = sorted(
-        p.relative_to(diff_dir).as_posix() for p in diff_dir.rglob("*") if p.is_file()
+        p.relative_to(test_dir).as_posix() for p in diff_dir.rglob("*") if p.is_file()
     )
     assert written == [
-        "test_a_planted_difference_is_reported_as_exactly_its_lines.py__test_planted/1/graph.diff",
-        "test_a_planted_difference_is_reported_as_exactly_its_lines.py__test_planted/1/python.graph",
-        "test_a_planted_difference_is_reported_as_exactly_its_lines.py__test_planted/1/rust.graph",
+        "files.diff",
+        "graph.diff",
+        "index.diff",
+        "python/files.txt",
+        "python/graph.txt",
+        "python/index.txt",
+        "rust/files.txt",
+        "rust/graph.txt",
+        "rust/index.txt",
     ]
-    test_dir = next(diff_dir.iterdir()) / "1"
     differences = (test_dir / "graph.diff").read_text(encoding="utf-8").splitlines()
     assert len(differences) == 3
     assert fnmatch.fnmatch(differences[0], PLANTED_EDGE)
     assert differences[1:] == list(PLANTED_NODE)
+    for artefact in ("files", "index"):
+        assert (test_dir / f"{artefact}.diff").read_bytes() == b""
+        python = (test_dir / "python" / f"{artefact}.txt").read_bytes()
+        assert python.startswith(f"# cgr handoff {artefact}.txt 1\n".encode())
+        assert (test_dir / "rust" / f"{artefact}.txt").read_bytes() == python
+
+
+def test_both_reports_the_hand_offs_before_the_graph_marking_the_first_difference(
+    pytester: pytest.Pytester, clean_env: None, go_grammar: None
+) -> None:
+    pytester.makepyfile(INDEXING + PLANTED_HANDOFFS)
+
+    result = _run(pytester, "--engine-mode", "both")
+
+    result.assert_outcomes(passed=3, errors=3)
+    reports = _reports(result)
+    assert sorted(reports) == ["test_index", "test_order", "test_version"]
+    # A definition the Rust side's index lacks: the first stage at which the
+    # engines part is the index, and the graph differs after it.
+    assert reports["test_index"][1:] == [
+        "  files: same",
+        "  index: 1 lines only on Python, 0 only on Rust  <- first difference",
+        '    - definition\trepo.main.helper\t{"label":"Function"}',
+        "  graph: 1 lines only on Python, 0 only on Rust",
+        reports["test_index"][-1],
+    ]
+    assert fnmatch.fnmatch(reports["test_index"][-1], f"    {PLANTED_EDGE}")
+    # The same files in another order: the plan is compared in order.
+    order = reports["test_order"][1:]
+    assert order[0] == (
+        "  files: 1 lines only on Python, 1 only on Rust  <- first difference"
+    )
+    assert fnmatch.fnmatch(order[1], '    + file\tzeta.go\t{"language":"go",*}')
+    assert fnmatch.fnmatch(order[2], '    - file\tzeta.go\t{"language":"go",*}')
+    assert order[3:] == ["  index: same", "  graph: same"]
+    # Another format version: its lines are not compared, its header names it.
+    assert reports["test_version"][1:] == [
+        "  files: 1 lines only on Python, 1 only on Rust  <- first difference",
+        "    - # cgr handoff files.txt 1",
+        "    + # cgr handoff files.txt 2",
+        "  index: same",
+        "  graph: same",
+    ]
 
 
 def test_a_failure_a_scratch_run_swallows_is_reported(
@@ -628,6 +764,8 @@ def test_a_failure_a_scratch_run_swallows_is_reported(
         "    Failed to process calls in *main.go: pass exploded",
     ]
     expected = [
+        "  files: same",
+        "  index: same",
         "  graph: same",
         "  Python run swallowed 3 pass failures:",
         *swallowed,
@@ -648,7 +786,9 @@ def test_a_scratch_run_that_raises_is_reported_not_compared(
     # The test's own run returned; the scratch run's error is the report's.
     result.assert_outcomes(passed=1, errors=1)
     report = _report(result)
-    assert report[1:4] == [
+    assert report[1:6] == [
+        "  files: not compared",
+        "  index: not compared",
         "  graph: not compared",
         "  Rust run raised:",
         "    Traceback (most recent call last):",
@@ -719,10 +859,11 @@ def test_both_compares_a_broader_scoped_fixtures_run_and_reports_on_its_tests(
         lines[i + 1].startswith("Python and Rust engines differ on ") for i in starts
     )
     report = _report(result)
-    heading, graph, *diff = report
+    heading, files, index, graph, *diff = report
     assert fnmatch.fnmatch(
         heading, "Python and Rust engines differ on *repo (go on Rust)"
     )
+    assert [files, index] == ["  files: same", "  index: same"]
     assert graph == (
         "  graph: 2 lines only on Python, 1 only on Rust  <- first difference"
     )

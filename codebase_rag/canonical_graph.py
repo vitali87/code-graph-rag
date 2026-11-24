@@ -9,7 +9,8 @@ ran, so a difference between two sets of lines is a difference in the graph.
 `scripts/reference_graphs.py` keeps the pinned repositories' graphs in this
 form. The Rust rewrite's parity checks write and compare the two engines'
 graphs and hand-offs in it too (docs/reports/PHASE1_SEAMS.md), and code under
-`codebase_rag` cannot import from `scripts/`, so it lives here.
+`codebase_rag` cannot import from `scripts/`, so it lives here, with the rules
+those checks compare the hand-off files by.
 
 An export that is not one (no node or relationship list, a node without its
 row number, an edge to a node it lacks) raises `SystemExit` naming what is
@@ -18,6 +19,7 @@ wrong: the scripts that read one cannot go on without it.
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 from collections import Counter
@@ -217,3 +219,56 @@ def difference(expected: Sequence[str], actual: Sequence[str]) -> list[str]:
         cs.REFERENCE_ONLY_ACTUAL.format(line=line) for line in sorted(extra.elements())
     ]
     return removed + added
+
+
+def difference_in_order(expected: Sequence[str], actual: Sequence[str]) -> list[str]:
+    """The lines only one side has where it has them, `-` for `expected`'s
+    and `+` for `actual`'s, in the order the two sides run.
+
+    Compared as sequences: a line in another place is a difference.
+    """
+    matcher = difflib.SequenceMatcher(a=expected, b=actual, autojunk=False)
+    diff: list[str] = []
+    for tag, start, end, actual_start, actual_end in matcher.get_opcodes():
+        if tag == cs.DIFF_OPCODE_EQUAL:
+            continue
+        diff.extend(
+            cs.REFERENCE_ONLY_EXPECTED.format(line=line) for line in expected[start:end]
+        )
+        diff.extend(
+            cs.REFERENCE_ONLY_ACTUAL.format(line=line)
+            for line in actual[actual_start:actual_end]
+        )
+    return diff
+
+
+def read_handoff(path: Path) -> list[str]:
+    """The lines of a hand-off file, its header first, split on `\\n` alone.
+
+    Joined with `\\n` they are the file's bytes again, so two files that
+    differ in any byte (a `\\r` before a line end, a missing last one) read
+    as different lines.
+    """
+    return path.read_bytes().decode(cs.ENCODING_UTF8).split(cs.LINE_FEED)
+
+
+def handoff_difference(
+    file: cs.HandoffFile, expected: Sequence[str], actual: Sequence[str]
+) -> list[str]:
+    """How `actual`'s lines of the hand-off `file` differ from `expected`'s,
+    `-` for `expected`'s and `+` for `actual`'s; a file not written has none.
+
+    The file plan is compared in order, because its order is data: pass 2
+    registers files in walk order, which decides which of two same-stem files
+    claims a module's name. The project index is compared as a multiset.
+    Files of two format versions are not compared line by line: the
+    difference is their headers, which name both versions.
+    """
+    if expected[:1] != actual[:1]:
+        return [
+            *(cs.REFERENCE_ONLY_EXPECTED.format(line=line) for line in expected[:1]),
+            *(cs.REFERENCE_ONLY_ACTUAL.format(line=line) for line in actual[:1]),
+        ]
+    if file == cs.HandoffFile.FILES:
+        return difference_in_order(expected, actual)
+    return difference(expected, actual)

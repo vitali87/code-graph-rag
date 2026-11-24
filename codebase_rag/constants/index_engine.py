@@ -15,6 +15,9 @@ class IndexEngine(StrEnum):
     RUST = "rust"
 
 
+# The environment variable the setting is read from.
+INDEX_ENGINE_ENV = "CGR_INDEX_ENGINE"
+
 # `LANGUAGE=ENGINE` in the setting's value.
 INDEX_ENGINE_ASSIGN = "="
 
