@@ -608,6 +608,33 @@ def test_route_agrees_with_the_tier_on_a_reingest(
     _check_routes(spy, EXPECTED_ROUTES)
 
 
+@pytest.mark.parametrize(
+    "route",
+    [FileRoute(T.NONE), FileRoute(T.CPP_FRONTEND, L.PYTHON)],
+    ids=["no tier", "another tier"],
+)
+def test_an_unchanged_module_is_read_back_only_where_route_parses_it(
+    route: FileRoute,
+    tmp_path: Path,
+    make_updater: Callable[..., GraphUpdater],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An incremental sync re-reads the imports of the unchanged modules its
+    # changed files lead to, where Pass 2 would have parsed them. It asks
+    # `_route`, so a file the router sends elsewhere, such as a language
+    # moved to Rust, is not parsed with its Python grammar behind its back.
+    repo = _write(tmp_path / "repo", LANGUAGE_FIXTURES[L.PYTHON])
+    updater = make_updater(repo)
+    updater.run()
+    util = repo / "pkg" / "util.py"
+    module_qn = "repo.pkg.util"
+    assert updater._restore_module_imports(module_qn, util)
+
+    monkeypatch.setattr(updater, "_route", lambda path: route)
+
+    assert not updater._restore_module_imports(module_qn, util)
+
+
 _WIDGET_H = (
     "#define WIDGET_API\nnamespace ui {\n"
     "struct WIDGET_API Widget {\n  void show();\n};\n}\n"
