@@ -145,6 +145,18 @@ def test_two_runs_index_in_processes_of_their_own_and_agree(
         assert paths[0] == str(handoff.PROJECT_ROOT)
 
 
+def test_a_hash_seed_in_the_callers_environment_is_not_the_first_runs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Inherited, it would be the second run's seed too: PYTHONHASHSEED=1 in
+    # the shell gave both runs seed 1 (Greptile review of PR #3717).
+    monkeypatch.setitem(reference_graphs._CALLER_ENV, SEED, "1")
+
+    assert SEED not in handoff._child_env(tmp_path, None, None)
+    assert handoff._child_env(tmp_path, 1, None)[SEED] == "1"
+    assert handoff._child_env(tmp_path, 2, None)[SEED] == "2"
+
+
 def test_a_run_that_writes_other_files_fails_the_check(
     pinned: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
 ) -> None:

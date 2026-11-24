@@ -7,10 +7,11 @@ scripts/reference_graphs.py fetches it (the same cache), and indexed afresh
 `--runs` times, every run in a Python process of its own: the hash seed is
 fixed when an interpreter starts, so runs in one process could not vary it.
 As the reference graphs' runs do, the first indexes the checkout under the
-interpreter's own seed and each later one a copy at another path under
-`PYTHONHASHSEED` 1, 2, and so on, with the same environment: none of the
-caller's cgr settings, the frontends that need no compiler, and the
-`--index-engine` value, when one is given. Each run calls `GraphUpdater`
+interpreter's own seed (never one left in the shell) and each later one a
+copy at another path under `PYTHONHASHSEED` 1, 2, and so on, with the same
+environment: none of the caller's cgr settings, the frontends that need no
+compiler, and the `--index-engine` value, when one is given. Each run calls
+`GraphUpdater`
 directly with a hand-off directory; the hand-offs are not reachable through
 `cgr`, on purpose. Every run must write the first run's `files.txt` and
 `index.txt` byte for byte.
@@ -76,6 +77,10 @@ def _child_env(
     the import path: the run starts `scripts.handoff` from a scratch
     directory, so that no `.env` of the caller's applies."""
     env = _index_env(home, seed, index_engine)
+    if seed is None:
+        # The interpreter's own seed, not one left in the shell: that could
+        # be a later run's, and the two runs would hash alike.
+        env.pop(cs.REFERENCE_SEED_ENV, None)
     paths = [str(PROJECT_ROOT), *filter(None, [env.get(PYTHONPATH_ENV)])]
     env[PYTHONPATH_ENV] = os.pathsep.join(paths)
     return env
