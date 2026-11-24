@@ -475,3 +475,8 @@ class TestThePublicSurface:
         text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
 
         assert re.search(r"^# CGR_INDEX_ENGINE=auto$", text, re.MULTILINE)
+
+
+def test_index_engine_error_names_the_refusal_or_none() -> None:
+    assert index_engine.index_engine_error("python,go=rust") is None
+    assert index_engine.index_engine_error("go=fortran") is not None

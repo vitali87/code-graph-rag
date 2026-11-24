@@ -343,11 +343,9 @@ def _engine_mode(
     if from_marker is None:
         return
     from codebase_rag.config import settings
-    from codebase_rag.index_engine import parse_index_engine
+    from codebase_rag.index_engine import index_engine_error
 
-    try:
-        parse_index_engine(from_marker)
-    except ValueError as error:
+    if (error := index_engine_error(from_marker)) is not None:
         pytest.fail(MARKER_INVALID.format(spec=from_marker, error=error), pytrace=False)
     monkeypatch.setattr(settings, INDEX_ENGINE_SETTING, from_marker.lower())
     monkeypatch.setenv(INDEX_ENGINE_ENV, from_marker)
