@@ -326,8 +326,10 @@ asyncio_mode = "auto"
 # an ini-level option; every dependency set that carries pytest also
 # carries pytest-xdist, so the flag always parses. The shard plugin
 # registers `--shard`, which CI uses to split the suite across jobs
-# (codebase_rag/tests/suite_shards.py says why it is not a conftest hook).
-addopts = "--dist=loadgroup -p codebase_rag.tests.suite_shards"
+# (codebase_rag/tests/suite_shards.py says why it is not a conftest hook),
+# and the engine-modes plugin `--engine-mode`, which picks the engine the
+# suite indexes on (docs/reports/PHASE1_SEAMS.md, section 2).
+addopts = "--dist=loadgroup -p codebase_rag.tests.suite_shards -p codebase_rag.tests.engine_modes"
 testpaths = ["codebase_rag/tests"]
 norecursedirs = ["grammars", ".git", "__pycache__", "*.egg-info", ".venv", "venv"]
 python_files = ["test_*.py", "*_test.py"]
@@ -337,6 +339,7 @@ markers = [
     "slow: marks tests as slow (may download models or require external services)",
     "integration: marks tests as integration tests requiring Docker",
     "e2e: marks tests as end-to-end tests",
+    "index_engine(spec): runs the test, and any cgr it starts, with CGR_INDEX_ENGINE=spec, whatever --engine-mode sets",
 ]
 
 [dependency-groups]

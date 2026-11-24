@@ -112,6 +112,16 @@ def parse_index_engine(spec: str) -> IndexEngineSelection:
     return selection
 
 
+def index_engine_error(spec: str) -> str | None:
+    """Why `parse_index_engine` refuses `spec`, or None when it reads: for
+    a caller that reports the refusal itself, such as a test marker."""
+    try:
+        parse_index_engine(spec)
+    except ValueError as error:
+        return str(error)
+    return None
+
+
 def default_index_engine() -> IndexEngineSelection:
     """The selection the `CGR_INDEX_ENGINE` setting asks for, read now.
 

@@ -173,6 +173,21 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.12", "3.13"]
         shard: ["1/2", "2/2"]
+        # The engine each cell indexes on (`--engine-mode`,
+        # docs/reports/PHASE1_SEAMS.md, section 2). Each entry only adds the
+        # key to the cells it matches, so the matrix keeps its 12 cells: the
+        # 3.12 cells test the Python engine on every system, Windows and
+        # macOS 3.13 the Rust engine, and Ubuntu 3.13, where the extra indexes
+        # cost least, compares the two. While no language runs on Rust, `rust`
+        # and `both` run what `python` runs.
+        include:
+          - python-version: "3.12"
+            engine-mode: python
+          - python-version: "3.13"
+            engine-mode: rust
+          - os: ubuntu-latest
+            python-version: "3.13"
+            engine-mode: both
 
     steps:
       - name: Checkout code
@@ -251,12 +266,12 @@ jobs:
       - name: Run unit tests (parallel, with coverage)
         if: matrix.os == 'macos-latest' && matrix.python-version == '3.12'
         run: |
-          uv run --no-sync pytest -n auto -m "not integration" --tb=short --shard ${{ matrix.shard }} --cov=codebase_rag --cov-report=xml --cov-report=term
+          uv run --no-sync pytest -n auto -m "not integration" --tb=short --shard ${{ matrix.shard }} --engine-mode ${{ matrix.engine-mode }} --cov=codebase_rag --cov-report=xml --cov-report=term
 
       - name: Run unit tests (parallel, no coverage)
         if: matrix.os != 'macos-latest' || matrix.python-version != '3.12'
         run: |
-          uv run --no-sync pytest -n auto -m "not integration" --tb=short --shard ${{ matrix.shard }}
+          uv run --no-sync pytest -n auto -m "not integration" --tb=short --shard ${{ matrix.shard }} --engine-mode ${{ matrix.engine-mode }}
 
       - name: Upload coverage to Codecov
         if: always() && matrix.os == 'macos-latest' && matrix.python-version == '3.12'
