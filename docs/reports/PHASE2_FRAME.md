@@ -426,14 +426,16 @@ removes, skips or marks a test as expected to fail.
    `cgr-graph-rs`, the merge in walk order.
 3. **The engine's skeleton.**
    - Adds: `src/engine/` with the pool and the order rules,
-     `cgr_graph_rs.Engine`, `codebase_rag/engine_frame.py` with the flag
-     off, the fuzz target scaffold.
-   - Tests: the same output on 1, 2 and every thread; the flag off changes
-     nothing.
+     `cgr_graph_rs.Engine` with its first job, the md5 of each file's
+     raw bytes, and `codebase_rag/engine_frame.py` with the flag off.
+   - Tests: the hashes equal the ones the sync records, on cgr's own
+     sources and on awkward files; the same output on 1, 2 and every
+     thread.
 4. **The ignore rules.**
    - Adds: reading both files and the matcher.
    - Tests: the differential corpus against `pathspec`; every existing
-     ignore test run against the Rust matcher too; the fuzz target.
+     ignore test run against the Rust matcher too; the first fuzz
+     target of the engine, for the matcher.
 5. **Discovery and the file plan.**
    - Adds: the walk, its order, the hashes on every core; the `both`
      cells' frame check for the file plan; the flag on with the strict
