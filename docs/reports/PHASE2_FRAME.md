@@ -61,7 +61,7 @@ It was written against `main` at 0.7.111 (November 2026), after phase 1
 | The ignore rules | A port of today's rules and their `pathspec` semantics, checked against `pathspec` itself (section 5) | The `ignore` crate's own gitignore rules |
 | The writer | Rust builds the rows; today's ingestor writes them (section 9) | Rust writing to the store |
 | Merge order | Walk order (section 10) | Sorted path order, as the plan said |
-| Grammars | Compiled in when their language moves, Go first, one version on both engines, checked (section 11) | All sixteen at once |
+| Grammars | Compiled in when their language moves, Go first, one version on both engines, checked; the patched C and C++ grammars now, for both engines on every install (section 11) | All sixteen at once; C and C++ patched only in checkouts |
 | Today's bugs | The seven above are fixed in Python first (section 13, step 0) | Copied, then fixed twice |
 
 ## 1. One crate
@@ -203,9 +203,11 @@ copies it rule for rule.
    matching exclude skips; files inside version-control directories not
    kept are skipped; `.min.js` and `.min.css` are skipped unless an unignore
    names the file; a matching unignore keeps; a built-in directory on the
-   path skips; anything else is kept. Links are dropped. After #3721 only
-   regular files are kept, and after #3722 a name that is not UTF-8 is
-   skipped with a warning.
+   path skips; anything else is kept. Links are dropped, and so are cgr's
+   own state files (`CGR_STATE_FILENAMES`, such as a `.cgr-sync-lock` an
+   older cgr left in the checkout) at any depth. After #3721 only regular
+   files are kept, and after #3722 a name that is not UTF-8 is skipped with
+   a warning.
 7. **Matching** follows `pathspec`'s "gitignore" patterns on the path
    relative to the root, with a trailing `/` for directories, and a pattern
    that matches a directory matches everything in it. In an ordered block the
@@ -241,7 +243,14 @@ line walks every built-in directory.
 ## 6. Change detection: the file half
 
 The Rust side reads and writes the same files Python does, so an upgrade
-keeps users' state:
+keeps users' state. When they are written matters as much as what they hold:
+a cache saved before the graph has the changes it records hides those
+changes from every later sync. So the frame prepares the new hash cache and
+folder times without writing them, and stage 11 publishes them after the
+graph writes are flushed, exactly as Python's `_commit_run_state` does
+today: the hash cache first, then the folder times only if the cache was
+published. During the shadow period both engines start from the same state
+on disk and prepare their answers; only the one the run used is published.
 
 - **The state folder** is `$CGR_HOME/state/<cleaned folder name>__<first 8
   hex digits of sha256(resolved path)>`. On first use, `.cgr-*` files an
@@ -258,16 +267,24 @@ keeps users' state:
 - **Old names.** A cache written before #3722 can hold a name with `\udcXX`
   escapes. The reader accepts and drops such entries rather than refusing
   the whole cache.
-- **The watermark** is taken before hashing starts. A cached file at or
-  under it keeps its hash unread; any other file is hashed as raw bytes,
-  with no line-ending or byte-order-mark normalisation.
+- **Reusing a hash.** A cached file whose `max(mtime, ctime)` is at or
+  under the previous cache's own mtime keeps its cached hash unread (unless
+  it is marked `unreadable`). Any other file is hashed as raw bytes, with no
+  line-ending or byte-order-mark normalisation.
+- **The watermark** is taken before hashing starts. It is not compared with
+  file times in this run: it only stamps the cache this run publishes, so
+  an edit made while the run hashes is seen by the next one.
 - **The in-sync check.** Each recorded folder's mtime matches exactly, or
   its listing shows no indexable file added or removed. Each cached file is
   not `unreadable` and not a link, and either `max(mtime, ctime)` is at or
   under the cache's own mtime or its md5 matches. On Windows it always
   hashes. A cache mtime in the future counts as 0.
-- **Deleted files** are the cached, forced and graph-only paths minus those
-  walked and those unreadable. Python passes the graph-only paths in.
+- **Deleted files**, on a project run, are the cached, Delombok-stale,
+  forced and graph-only paths minus those walked and those unreadable.
+  Python passes the graph-only paths in. A single-file run deletes nothing
+  this way: every term is project-wide and only its one file is walked, so
+  each sibling would fall through and be deleted (#1619, #1671). The frame
+  copies that rule.
 - **The sync lock** (`.cgr-sync-lock`) stays Python's: it is held around the
   whole run.
 
@@ -349,7 +366,13 @@ said:
   same-stem file of another language family on disk makes both keep their
   extensions (#2586); a `.d.ts` beside its implementation takes the bare
   name (#1720); otherwise the first file in walk order claims the bare name
-  and later ones get `.ext` (#1569). Only files parsed by tree-sitter claim.
+  and later ones get `.ext` (#1569). Files parsed by tree-sitter claim
+  this way. Files the ast-grep tier parses (Ruby, shell, Kotlin, Swift and
+  the rest, when the `ast-grep` extra is installed) also enter the module
+  map, under their own flat name that keeps the extension
+  (`parsers/ast_grep_tier.py`). The plan includes both, so it can equal the
+  `module` lines of Python's `index.txt` on repositories such as cJSON,
+  which hold Ruby files.
 - **The function registry.** The first registration takes the plain name,
   later ones `@line`, then `@line_col`; across files an `_10000·k` slot is
   added. The label is last-wins, except TypeScript's type-and-value twins.
@@ -371,7 +394,8 @@ languages move.
   git commit. They move together in one pull request, and Dependabot groups
   each grammar's two sides, as it does the runtime.
 - **Compiled in when their language moves.** Phase 2 compiles Go's, which
-  phase 3 uses and which gives the scheduler a real grammar to test with.
+  phase 3 uses and which gives the scheduler a real grammar to test with,
+  and the patched C and C++ grammars, for the reason below.
   All sixteen together compile in about 31 s on 4 cores and add about 31 MB
   installed (about 3.2 MB compressed); one at a time keeps the growth tied to
   use.
@@ -386,10 +410,21 @@ languages move.
 - **Names that mislead.** SQL's crate is `tree-sitter-sequel`; Markdown's is
   `tree-sitter-md`. The crates named `tree-sitter-sql` and
   `tree-sitter-markdown` are unrelated grammars.
-- **C and C++** come from the patched forks at their pinned commits, as git
-  dependencies: both carry a `Cargo.toml` and a `build.rs`, and the crate is
-  not published to crates.io, so its git dependencies are allowed. Their
-  `parser.c` files (3.7 MB and 17 MB) are not vendored.
+- **C and C++: one patched grammar for every install and both engines.**
+  Today only a checkout gets the patched forks (#555, #2424): PyPI refuses
+  dependencies fetched from git, so a PyPI install parses C and C++ with the
+  unpatched upstream grammars. Compiling the forks into the crate for the
+  Rust engine alone would make the two engines parse C differently on every
+  PyPI install, a difference the checkout's tests could never see. So the
+  crate compiles the forks at their pinned commits (as git dependencies:
+  both carry a `Cargo.toml` and a `build.rs`; their `parser.c` files, 3.7 MB
+  and 17 MB, are not vendored) and hands the compiled grammars to
+  py-tree-sitter as well, as the plan showed works (a grammar compiled from
+  its crate and given to py-tree-sitter parses to identical trees). Both
+  engines then use the same patched grammar on every install, and PyPI
+  users get the #555 fix. That changes PyPI users' C and C++ graphs, so it
+  is its own step (step 9), announced in the release notes, with a test on
+  the built wheel that the Python engine loaded the crate's grammars.
 - **Dart** keeps today's grammar. crates.io's `tree-sitter-dart` 0.3.0 is a
   rewrite with another root node and 25 of the node names cgr's Dart code
   uses missing. When Dart moves (phase 4), the crate compiles today's
@@ -458,11 +493,17 @@ removes, skips or marks a test as expected to fail.
    - Adds: the summary type, the walk-order fold, the module-name plan.
    - Tests: the plan equals Python's `module` lines on the fixtures and the
      pinned repositories.
-9. **Go's grammar.**
-   - Adds: `src/grammars/` with Go, its exact pin, `test_grammar_pins.py`,
-     the Dependabot grouping.
-   - Tests: the pin and fingerprint checks; Go parses to the same trees on
-     both runtimes over the Go fixtures.
+9. **The grammars: Go, C and C++.**
+   - Adds: `src/grammars/` with Go and the patched C and C++ forks, Go's
+     exact pin, `test_grammar_pins.py`, the Dependabot grouping; the
+     parser loader takes C and C++ from the crate, so the Python engine
+     uses the same patched grammars on every install.
+   - Tests: the pin and fingerprint checks; Go, C and C++ parse to the same
+     trees on both runtimes over their fixtures; a test on the built wheel
+     that C and C++ come from the crate.
+   - Worked when: the reference graphs are unchanged in the checkout, where
+     the forks were already used, and the release notes say what PyPI
+     users' C and C++ graphs gain.
 10. **The switch.**
     - Adds: the flag on, the production shadow check.
     - Worked when: the reference graphs are unchanged, every cell passes,
@@ -483,7 +524,9 @@ Phase 2 is done when all of these hold:
   `rust` cells pass with the strict shadow, and the pinned repositories'
   file plans are identical.
 - The output is the same on 1, 2 and every thread.
-- Go's grammar is compiled in, its pins agree and its fingerprint matches.
+- Go's grammar and the patched C and C++ grammars are compiled in, their
+  pins agree, their fingerprints match, and both engines load C and C++
+  from the crate on every install.
 - No test was removed, skipped or marked as expected to fail, and no job is
   slower beyond its usual spread.
 
