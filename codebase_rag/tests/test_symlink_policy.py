@@ -424,6 +424,15 @@ def _pipe_repo(root: Path) -> Path:
     return repo
 
 
+def _manifest_repo(root: Path) -> Path:
+    """A repository with a Python, a JavaScript and a Go module and no manifest."""
+    repo = root / "repo"
+    _write(repo / "a.py", "def a():\n    return 1\n")
+    _write(repo / "b.js", "export function b() {\n  return 1;\n}\n")
+    _write(repo / "c.go", "package main\n\nfunc c() int {\n\treturn 1\n}\n")
+    return repo
+
+
 def _emitted_paths(mock_ingestor: MagicMock) -> set[str]:
     return {
         str(node_call.args[1][cs.KEY_PATH])
@@ -479,10 +488,7 @@ class TestSpecialFiles:
     ) -> None:
         # The import resolvers look these up by name, listing directories on
         # their own rather than through the walk, and read what they find.
-        repo = tmp_path / "repo"
-        _write(repo / "a.py", "def a():\n    return 1\n")
-        _write(repo / "b.js", "export function b() {\n  return 1;\n}\n")
-        _write(repo / "c.go", "package main\n\nfunc c() int {\n\treturn 1\n}\n")
+        repo = _manifest_repo(tmp_path)
         os.mkfifo(repo / manifest)
         parsers, queries = load_parsers()
         updater = GraphUpdater(
@@ -490,6 +496,27 @@ class TestSpecialFiles:
         )
 
         _run_within_deadline(updater, repo / manifest)
+
+        paths = _emitted_paths(mock_ingestor)
+        assert "a.py" in paths
+        assert manifest not in paths
+
+    @pytest.mark.parametrize("manifest", ["go.mod", "package.json", "pyproject.toml"])
+    def test_a_manifest_linked_to_a_pipe_is_never_read(
+        self, tmp_path: Path, mock_ingestor: MagicMock, manifest: str
+    ) -> None:
+        # Those resolvers follow a linked manifest to what it names, so a
+        # link to a pipe blocked their read as the pipe itself did.
+        repo = _manifest_repo(tmp_path)
+        pipe = tmp_path / "pipe"
+        os.mkfifo(pipe)
+        (repo / manifest).symlink_to(pipe)
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor, repo_path=repo, parsers=parsers, queries=queries
+        )
+
+        _run_within_deadline(updater, pipe)
 
         paths = _emitted_paths(mock_ingestor)
         assert "a.py" in paths

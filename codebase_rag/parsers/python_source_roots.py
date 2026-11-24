@@ -8,7 +8,6 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
-from ..utils.path_utils import is_special_file_entry
 
 
 def _dotted(rel_dir: Path) -> str:
@@ -17,9 +16,10 @@ def _dotted(rel_dir: Path) -> str:
 
 def _setuptools_package_dir(pyproject: Path) -> dict[str, object]:
     """The `[tool.setuptools.package-dir]` table, or empty when absent or malformed."""
-    # Found by a walk of its own, not the indexer's, so a pipe of this name
-    # reaches here, and the read below would block on it for good (#3721).
-    if is_special_file_entry(pyproject):
+    # Found by a walk of its own, not the indexer's, so a pipe of this name, or
+    # a link to one, reaches here, and the read below would block on it for
+    # good (#3721). `isfile` follows a link and holds for a regular file only.
+    if not os.path.isfile(pyproject):
         return {}
     try:
         section: object = tomllib.loads(

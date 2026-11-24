@@ -11,7 +11,6 @@ from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import JsonValue
 from ...utils.json_io import loads_json
-from ...utils.path_utils import is_special_file_entry
 
 
 class _ManifestTargets(NamedTuple):
@@ -39,9 +38,10 @@ def discover_js_workspace_packages(repo_path: Path) -> list[tuple[str, Path]]:
             continue
         package_dir = Path(directory)
         manifest = package_dir / cs.DEP_FILE_PACKAGE_JSON
-        # This walk is not the indexer's, so it must leave out a pipe of
-        # this name itself: the read below would block on it for good (#3721).
-        if is_special_file_entry(manifest):
+        # This walk is not the indexer's, so it must leave out a pipe of this
+        # name, or a link to one, itself: the read below would block on it for
+        # good (#3721). `isfile` follows a link and holds for a regular file only.
+        if not os.path.isfile(manifest):
             continue
         try:
             manifest_data = loads_json(
