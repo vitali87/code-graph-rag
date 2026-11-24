@@ -5,7 +5,7 @@
 //!
 //! ```c
 //! typedef struct { PyObject_HEAD TSNode node; PyObject *children; PyObject *tree; } Node;
-//! typedef struct { PyObject_HEAD TSTree *tree; PyObject *source; PyObject *language; } Tree;
+//! typedef struct { PyObject_HEAD TSTree *tree; PyObject *source; PyObject *language; uint32_t busy; } Tree;
 //! ```
 //!
 //! So a `Node`'s `TSNode` is copied out of the object and walked with this
@@ -41,12 +41,12 @@ use super::{anchor_hash, ast_fingerprint, kind, NodeMap, NodeTypes, Rules, Sourc
 
 /// The py-tree-sitter release whose object layout and C runtime this was
 /// checked against; any other turns the bridge off.
-const PY_TREE_SITTER: &str = "0.26.0";
+const PY_TREE_SITTER: &str = "0.27.0";
 /// The `tree-sitter` crate release whose tree-walking C sources were found
 /// identical to that py-tree-sitter's. Cargo.toml pins exactly this one, and
 /// test_native_trees.py holds both pins to this pair (AGENTS.md says how to
 /// move it).
-const TREE_SITTER_CRATE: &str = "0.26.8";
+const TREE_SITTER_CRATE: &str = "0.27.2";
 const POINTER: usize = size_of::<usize>();
 
 pyo3::create_exception!(
@@ -189,7 +189,9 @@ impl TreeBridge {
         let basicsize = |t: &Bound<'_, PyAny>| -> PyResult<usize> { t.getattr("__basicsize__")?.extract() };
         let header = basicsize(py.get_type::<pyo3::types::PyAny>().as_any())?;
         let node_size = header + size_of::<ffi::TSNode>() + 2 * POINTER;
-        let tree_size = header + 3 * POINTER;
+        // `busy`, a uint32_t after the three pointers (0.27.0), pads the
+        // struct to the pointer size.
+        let tree_size = (header + 3 * POINTER + size_of::<u32>()).next_multiple_of(POINTER);
         if basicsize(node_type.as_any())? != node_size || basicsize(tree_type.as_any())? != tree_size {
             return Err(PyRuntimeError::new_err("py-tree-sitter objects are not laid out as expected"));
         }
@@ -298,7 +300,7 @@ impl TreeBridge {
                     n.end_byte(),
                     (start.row, start.column),
                     (end.row, end.column),
-                    n.child_count(),
+                    n.child_count() as usize,
                     cursor.field_name().map(str::to_owned),
                 ));
                 if cursor.goto_first_child() {

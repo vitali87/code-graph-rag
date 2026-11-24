@@ -59,7 +59,7 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "tiktoken>=0.12.0",
     "tree-sitter-python>=0.25.0",
-    "tree-sitter==0.26.0",
+    "tree-sitter==0.27.0",
     "watchdog>=6.0.0",
     "typer>=0.21.1",
     "rich>=14.2.0",
@@ -90,7 +90,7 @@ dependencies = [
     # Windows x64, and has no sdist, so other platforms cannot install cgr.
     # The floor is the crate version this code was written against, raised
     # with each crate release.
-    "cgr-graph-rs>=0.1.8,<0.2",
+    "cgr-graph-rs>=0.1.9,<0.2",
 ]
 
 [project.scripts]
