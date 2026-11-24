@@ -23,8 +23,8 @@ rusqlite = { version = "0.41", features = ["bundled"] }
 sha2 = "0.11"
 # The tree walks (src/trees) read the trees py-tree-sitter built, so this
 # runtime must lay out and walk a tree exactly as the one compiled into the
-# `tree-sitter` wheel cgr pins does: 0.26.8's node, tree, cursor, subtree
-# and language sources are byte-identical to py-tree-sitter 0.26.0's. Bump
+# `tree-sitter` wheel cgr pins does: 0.27.2's node, tree, cursor, subtree
+# and language sources are byte-identical to py-tree-sitter 0.27.0's. Bump
 # the two together, as AGENTS.md describes; `TreeBridge` refuses any other
 # py-tree-sitter version, and test_native_trees.py any other pair of pins.
 tree-sitter = "=0.27.2"
