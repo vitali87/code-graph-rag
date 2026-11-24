@@ -761,6 +761,18 @@ jobs:
         if: ${{ !cancelled() }}
         run: uv run --no-sync python -m scripts.handoff check --runs 2
 
+      # Every CGR_INDEX_ENGINE value must index the pinned repositories to
+      # the same graphs (docs/reports/PHASE1_SEAMS.md, exit criteria). The
+      # default, auto, is checked above; these are the other engines. A
+      # language that moves to Rust is compared here on every pull request.
+      - name: Check the reference graphs on the Python engine
+        if: ${{ !cancelled() }}
+        run: uv run --no-sync python scripts/reference_graphs.py check --index-engine python
+
+      - name: Check the reference graphs on the Rust engine
+        if: ${{ !cancelled() }}
+        run: uv run --no-sync python scripts/reference_graphs.py check --index-engine rust
+
   rust-graph-core:
     name: Rust Graph Core
     runs-on: ubuntu-latest

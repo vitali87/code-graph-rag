@@ -594,6 +594,32 @@ def test_the_ci_job_installs_what_the_graphs_are_recorded_with() -> None:
     assert set(cs.TIER_EXTRAS.values()) <= set(cs.REFERENCE_EXTRAS)
 
 
+def test_the_ci_job_checks_the_graphs_on_every_engine_selection() -> None:
+    # Every value of CGR_INDEX_ENGINE must index the pinned repositories to
+    # the recorded graphs (docs/reports/PHASE1_SEAMS.md, exit criteria): the
+    # default without the option, each other engine through it.
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding=cs.ENCODING_UTF8))
+    runs = [
+        shlex.split(line)
+        for step in workflow["jobs"]["reference-graphs"]["steps"]
+        for line in step.get("run", "").splitlines()
+        if _SCRIPT in line
+    ]
+    checks = [argv[argv.index(_SCRIPT) + 1 :] for argv in runs]
+
+    assert all(args[0] == "check" for args in checks), checks
+    engines = [
+        args[args.index("--index-engine") + 1]
+        if "--index-engine" in args
+        else cs.IndexEngine.AUTO
+        for args in checks
+    ]
+    assert sorted(engines) == sorted(cs.IndexEngine)
+
+
+_SCRIPT = "scripts/reference_graphs.py"
+
+
 def test_the_git_calls_ignore_a_repository_location_in_the_environment(
     monkeypatch,
 ) -> None:
