@@ -39,6 +39,7 @@ from codebase_rag.tests.test_graph_updater_index_engine import (
     _calls,
     _write,
 )
+from codebase_rag.tests.test_symlink_policy import _make_undecodable
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PROJECT = "demo"
@@ -96,6 +97,9 @@ _CALLS = (
     "RETURN a.qualified_name AS caller, b.qualified_name AS callee"
 )
 _FUNCTIONS = "MATCH (f:Function) RETURN f.qualified_name AS qn"
+_FILE_PATHS = "MATCH (f:File) RETURN f.path AS path"
+_FOLDER_PATHS = "MATCH (f:Folder) RETURN f.path AS path"
+_PACKAGE_PATHS = "MATCH (p:Package) RETURN p.path AS path"
 # Names and paths outside ASCII, which the files keep as UTF-8.
 UNICODE_FIXTURE = {
     "grüße.py": "def grüße():\n    return 'é'\n\n\ndef call():\n    return grüße()\n",
@@ -347,6 +351,40 @@ class TestTheFilePlan:
 
         assert updater.skipped_because_in_sync
         assert list(handoffs.iterdir()) == []
+
+
+class TestANameThatIsNotUtf8:
+    """Issue #3722: one such name ended the run where it was written out.
+
+    Into the embedded graph without a hand-off directory, into `files.txt`
+    with one. The walk now leaves the entry out, file or directory.
+    """
+
+    @pytest.mark.parametrize("with_hand_offs", [False, True])
+    def test_the_run_completes_without_it(
+        self, tmp_path: Path, with_hand_offs: bool
+    ) -> None:
+        repo = _write(tmp_path / "repo", CALLER_FIXTURE)
+        _make_undecodable(repo, b"notes\xff.txt", "notes\n")
+        _make_undecodable(repo / "pkg", b"bad\xff.py", "def g():\n    return 2\n")
+        folder = _make_undecodable(repo, b"dir\xff")
+        (folder / "c.py").write_text("def c():\n    return 3\n", encoding="utf-8")
+        handoffs = tmp_path / "handoffs" if with_hand_offs else None
+        with _embedded_graph(tmp_path / "graph.sqlite") as ingestor:
+            _updater(
+                repo, ingestor, state_dir=tmp_path / "state", handoff_dir=handoffs
+            ).run()
+            files = {row["path"] for row in ingestor.fetch_all(_FILE_PATHS)}
+            folders = {row["path"] for row in ingestor.fetch_all(_FOLDER_PATHS)}
+            packages = {row["path"] for row in ingestor.fetch_all(_PACKAGE_PATHS)}
+
+        indexed = ["main.py", "pkg/__init__.py", "pkg/util.py"]
+        assert sorted(files) == indexed
+        assert folders == set()
+        assert packages == {"pkg"}
+        if handoffs is not None:
+            planned = [line.split("\t")[1] for line in _lines(handoffs / _FILES)[1:]]
+            assert sorted(planned) == indexed
 
 
 class TestTheProjectIndex:

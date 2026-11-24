@@ -7,12 +7,17 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
+from ...utils.path_utils import is_special_file_entry
 
 
 def _module_directive(gomod: Path) -> str | None:
     # The module path is the sole `module <path>` directive; no parenthesised
     # form exists for it, so a line scan suffices. ValueError covers
     # UnicodeDecodeError on a non-UTF-8 go.mod; skip it rather than crash indexing.
+    # Found by `rglob`, not the indexer's walk, so a pipe of this name reaches
+    # here, and the read below would block on it for good (#3721).
+    if is_special_file_entry(gomod):
+        return None
     try:
         text = gomod.read_text(encoding=cs.ENCODING_UTF8)
     except (OSError, ValueError):

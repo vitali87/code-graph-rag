@@ -7,6 +7,7 @@ import pytest
 from watchdog.events import DirMovedEvent, FileModifiedEvent
 
 from codebase_rag import constants as cs
+from codebase_rag.tests.test_symlink_policy import _make_undecodable
 from codebase_rag.utils.path_utils import walk_eligible_files
 from codebase_rag.watch import CodeChangeEventHandler
 
@@ -108,3 +109,21 @@ def test_a_directory_moved_into_an_unignored_path_is_indexed(
         DirMovedEvent(str(temp_repo / "lib"), str(temp_repo / "vendor" / "lib"))
     )
     mock_updater.reingest.assert_called_once_with((moved,))
+
+
+def test_the_watcher_drops_a_name_the_walk_cannot_store(
+    handler: CodeChangeEventHandler, temp_repo: Path
+) -> None:
+    # Issue #3722: the walk leaves out a file or directory whose name is not
+    # valid UTF-8, so the watcher must not hand such a file on either.
+    good = _write(temp_repo, "app.py")
+    bad_file = _make_undecodable(temp_repo, b"bad\xff.py", "x = 1\n")
+    folder = _make_undecodable(temp_repo, b"dir\xff")
+    under_bad_dir = _write(folder, "c.py")
+    walked = {rel for _dir, _name, rel in walk_eligible_files(temp_repo)}
+    relevant = {
+        path.relative_to(temp_repo).as_posix()
+        for path in (good, bad_file, under_bad_dir)
+        if handler._is_relevant(str(path))
+    }
+    assert walked == relevant == {"app.py"}

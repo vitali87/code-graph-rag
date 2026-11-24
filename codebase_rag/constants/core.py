@@ -20,6 +20,9 @@ ENCODING_UTF16_BE = "utf-16-be"
 ENCODING_UTF32_LE = "utf-32-le"
 ENCODING_UTF32_BE = "utf-32-be"
 ENCODING_ASCII = "ascii"
+# The decode error handler a name that is not valid UTF-8 is logged with: each
+# byte that does not decode reads as `\xff` (issue #3722).
+DECODE_ERRORS_BACKSLASHREPLACE = "backslashreplace"
 # Codec names (as `codecs.lookup` normalises them) whose bytes the grammar
 # already reads as they are, so a source declaring one needs no transcoding.
 UTF8_CODEC_NAMES: frozenset[str] = frozenset({ENCODING_UTF8, ENCODING_UTF8_SIG})

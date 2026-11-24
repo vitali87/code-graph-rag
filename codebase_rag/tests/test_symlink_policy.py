@@ -12,11 +12,20 @@ The policy now: a link is never followed, file or directory, wherever it
 points. A target outside the repository is never read; a target inside it is
 indexed once, under its own path, when the walk reaches it. Each skipped link
 is logged at DEBUG and the run logs one INFO count.
+
+The walk leaves out two more kinds of entry, each named in one WARNING per
+run: a named pipe, socket or device, whose open blocked the run for good
+(issue #3721), and a file or directory whose name is not valid UTF-8, which
+the graph cannot store and whose write ended the run (issue #3722).
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import sys
+import threading
 from collections.abc import Callable, Generator
 from pathlib import Path
 from unittest.mock import MagicMock, call
@@ -366,6 +375,250 @@ class TestIncrementalSync:
         # The link's Package shared its target's absolute path, so removing
         # it by that path took the real Package with it.
         assert packages == {"repo.pkg"}
+
+
+# A deadline for a run that must not block, not a performance assertion.
+_RUN_DEADLINE_SECONDS = 60
+_PIPE_RELEASES = 20
+
+needs_fifo = pytest.mark.skipif(sys.platform == "win32", reason="named pipes are POSIX")
+
+
+def _run_within_deadline(updater: GraphUpdater, pipe: Path, **kwargs: bool) -> None:
+    """Run `updater` on a thread, failing the test if it is still blocked on `pipe`.
+
+    Opening a named pipe for reading waits for a writer, so a run that reads
+    one never returns. Past the deadline the pipe is opened for writing, which
+    releases each blocked open in turn, so the failing run ends with its test.
+    """
+    raised: list[BaseException] = []
+
+    def _run() -> None:
+        try:
+            updater.run(**kwargs)
+        except BaseException as exc:
+            raised.append(exc)
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    worker.join(_RUN_DEADLINE_SECONDS)
+    if worker.is_alive():
+        for _ in range(_PIPE_RELEASES):
+            with contextlib.suppress(OSError):
+                os.close(os.open(pipe, os.O_WRONLY | os.O_NONBLOCK))
+            worker.join(1)
+            if not worker.is_alive():
+                break
+        pytest.fail(f"the run was still blocked on the named pipe {pipe.name}")
+    if raised:
+        raise raised[0]
+
+
+def _pipe_repo(root: Path) -> Path:
+    """A repository holding one module and two named pipes, one with a suffix."""
+    repo = root / "repo"
+    _write(repo / "a.py", "def a():\n    return 1\n")
+    os.mkfifo(repo / "pipe.py")
+    (repo / "sub").mkdir()
+    os.mkfifo(repo / "sub" / "mypipe")
+    return repo
+
+
+def _emitted_paths(mock_ingestor: MagicMock) -> set[str]:
+    return {
+        str(node_call.args[1][cs.KEY_PATH])
+        for node_call in mock_ingestor.ensure_node_batch.call_args_list
+        if cs.KEY_PATH in node_call.args[1]
+    }
+
+
+@needs_fifo
+class TestSpecialFiles:
+    def test_a_named_pipe_is_not_walked_and_is_reported(self, tmp_path: Path) -> None:
+        repo = _pipe_repo(tmp_path)
+        special: list[str] = []
+        walked = [
+            rel
+            for _dir, _name, rel in walk_eligible_files(repo, on_special=special.append)
+        ]
+        assert walked == ["a.py"]
+        assert sorted(special) == ["pipe.py", "sub/mypipe"]
+
+    def test_a_run_over_named_pipes_completes_without_them(
+        self,
+        tmp_path: Path,
+        mock_ingestor: MagicMock,
+        records: list[tuple[str, str]],
+    ) -> None:
+        repo = _pipe_repo(tmp_path)
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor, repo_path=repo, parsers=parsers, queries=queries
+        )
+
+        _run_within_deadline(updater, repo / "pipe.py")
+
+        paths = _emitted_paths(mock_ingestor)
+        assert "a.py" in paths
+        assert not {"pipe.py", "sub/mypipe"} & paths
+        cache = json.loads(
+            state_file(repo, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+        )
+        assert sorted(cache) == ["a.py"]
+        warnings = [
+            text
+            for level, text in records
+            if level == "WARNING" and "pipe" in text.lower()
+        ]
+        assert len(warnings) == 1
+        assert "pipe.py" in warnings[0] and "sub/mypipe" in warnings[0]
+
+    @pytest.mark.parametrize("manifest", ["go.mod", "package.json", "pyproject.toml"])
+    def test_a_pipe_named_as_a_manifest_is_never_read(
+        self, tmp_path: Path, mock_ingestor: MagicMock, manifest: str
+    ) -> None:
+        # The import resolvers look these up by name, listing directories on
+        # their own rather than through the walk, and read what they find.
+        repo = tmp_path / "repo"
+        _write(repo / "a.py", "def a():\n    return 1\n")
+        _write(repo / "b.js", "export function b() {\n  return 1;\n}\n")
+        _write(repo / "c.go", "package main\n\nfunc c() int {\n\treturn 1\n}\n")
+        os.mkfifo(repo / manifest)
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor, repo_path=repo, parsers=parsers, queries=queries
+        )
+
+        _run_within_deadline(updater, repo / manifest)
+
+        paths = _emitted_paths(mock_ingestor)
+        assert "a.py" in paths
+        assert manifest not in paths
+
+    def test_a_cached_file_replaced_by_a_pipe_is_dropped_by_the_next_sync(
+        self, tmp_path: Path
+    ) -> None:
+        # The in-sync check hashes a cached file whose change time moved past
+        # the cache, and a pipe made where the file was has just been made.
+        repo = tmp_path / "repo"
+        _write(repo / "a.py", "def a():\n    return 1\n")
+        _write(repo / "b.py", "def b():\n    return 2\n")
+        store = _StatefulIngestor()
+        _stateful_updater(repo, store).run(force=True)
+        assert _file_paths(store) == {"a.py", "b.py"}
+        (repo / "b.py").unlink()
+        os.mkfifo(repo / "b.py")
+
+        _run_within_deadline(_stateful_updater(repo, store), repo / "b.py")
+
+        assert _file_paths(store) == {"a.py"}
+        assert _function_qns(store) == {"repo.a.a"}
+
+    def test_a_repository_with_a_pipe_stays_in_sync(self, tmp_path: Path) -> None:
+        # The in-sync listing leaves out the pipes the walk leaves out, or a
+        # directory whose mtime moved would hold a "new file" on every sync.
+        repo = _pipe_repo(tmp_path)
+        store = _StatefulIngestor()
+        _run_within_deadline(
+            _stateful_updater(repo, store), repo / "pipe.py", force=True
+        )
+        stamp = repo.stat().st_mtime + 1
+        os.utime(repo, (stamp, stamp))
+        assert _stateful_updater(repo, store)._is_already_in_sync() is True
+
+
+def _make_undecodable(parent: Path, raw_name: bytes, text: str | None = None) -> Path:
+    """Create `parent/raw_name`, a directory when `text` is None, or skip.
+
+    APFS and Windows refuse a name that is not valid UTF-8, so the case exists
+    only where the filesystem stores a name's bytes as they are.
+    """
+    raw = os.path.join(os.fsencode(parent), raw_name)
+    try:
+        if text is None:
+            os.mkdir(raw)
+        else:
+            with open(raw, "wb") as handle:
+                handle.write(text.encode(cs.ENCODING_UTF8))
+    except (OSError, UnicodeError):
+        pytest.skip("this filesystem refuses a name that is not valid UTF-8")
+    return Path(os.fsdecode(raw))
+
+
+def _undecodable_repo(root: Path) -> Path:
+    """One good module, and undecodable names at the root, in a package and
+    on a directory and a package."""
+    repo = root / "repo"
+    _write(repo / "a.py", "def a():\n    return 1\n")
+    _write(repo / "pkg" / "__init__.py", "")
+    _make_undecodable(repo, b"notes\xff.txt", "notes\n")
+    _make_undecodable(repo / "pkg", b"bad\xff.py", "def g():\n    return 2\n")
+    folder = _make_undecodable(repo, b"dir\xff")
+    _write(folder / "c.py", "def c():\n    return 3\n")
+    package = _make_undecodable(repo, b"pkg\xff")
+    _write(package / "__init__.py", "")
+    _write(package / "d.py", "def d():\n    return 4\n")
+    return repo
+
+
+# As the warning spells them: each byte that is not UTF-8 as `\xff`.
+_UNDECODABLE = ["dir\\xff", "notes\\xff.txt", "pkg/bad\\xff.py", "pkg\\xff"]
+
+
+def _unstorable(mock_ingestor: MagicMock) -> list[str]:
+    """Every node or relationship the run emitted that holds a lone surrogate."""
+    emitted = [
+        *mock_ingestor.ensure_node_batch.call_args_list,
+        *mock_ingestor.ensure_relationship_batch.call_args_list,
+    ]
+    unstorable: list[str] = []
+    for emitted_call in emitted:
+        text = json.dumps(emitted_call.args, default=str, ensure_ascii=False)
+        try:
+            text.encode(cs.ENCODING_UTF8)
+        except UnicodeEncodeError:
+            unstorable.append(text)
+    return unstorable
+
+
+class TestUndecodableNames:
+    def test_a_name_that_is_not_utf8_is_not_walked_and_is_reported(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _undecodable_repo(tmp_path)
+        undecodable: list[str] = []
+        walked = [
+            rel
+            for _dir, _name, rel in walk_eligible_files(
+                repo, on_undecodable=undecodable.append
+            )
+        ]
+        assert walked == ["a.py", "pkg/__init__.py"]
+        readable = sorted(path_utils.readable_name(rel) for rel in undecodable)
+        assert readable == _UNDECODABLE
+
+    def test_a_run_completes_and_no_node_holds_the_name(
+        self,
+        tmp_path: Path,
+        mock_ingestor: MagicMock,
+        records: list[tuple[str, str]],
+    ) -> None:
+        repo = _undecodable_repo(tmp_path)
+        create_and_run_updater(repo, mock_ingestor)
+
+        assert _unstorable(mock_ingestor) == []
+        assert _emitted_paths(mock_ingestor) >= {"a.py", "pkg/__init__.py", "pkg"}
+        assert get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION) == {"repo.a.a"}
+        cache = json.loads(
+            state_file(repo, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+        )
+        assert sorted(cache) == ["a.py", "pkg/__init__.py"]
+        warnings = [
+            text for level, text in records if level == "WARNING" and "UTF-8" in text
+        ]
+        assert len(warnings) == 1
+        for name in _UNDECODABLE:
+            assert name in warnings[0]
 
 
 @pytest.fixture
