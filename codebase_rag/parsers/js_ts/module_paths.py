@@ -11,6 +11,7 @@ from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import JsonValue
 from ...utils.json_io import loads_json
+from ...utils.path_utils import is_utf8_name
 
 
 class _ManifestTargets(NamedTuple):
@@ -32,8 +33,12 @@ def discover_js_workspace_packages(repo_path: Path) -> list[tuple[str, Path]]:
     for directory, subdirs, filenames in os.walk(repo_path):
         # Prune rather than filter afterwards: node_modules holds more
         # package.json files than the repo does, and every project pays this
-        # walk, including ones with no JavaScript at all.
-        subdirs[:] = [d for d in subdirs if d not in cs.IGNORE_PATTERNS]
+        # walk, including ones with no JavaScript at all. A folder the walk
+        # leaves out for its name goes too: the import map cannot store its
+        # path (#3722).
+        subdirs[:] = [
+            d for d in subdirs if d not in cs.IGNORE_PATTERNS and is_utf8_name(d)
+        ]
         if cs.DEP_FILE_PACKAGE_JSON not in filenames:
             continue
         package_dir = Path(directory)

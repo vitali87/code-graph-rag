@@ -8,6 +8,7 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
+from ..utils.path_utils import is_utf8_name
 
 
 def _dotted(rel_dir: Path) -> str:
@@ -133,10 +134,14 @@ def _pyproject_roots(
 
 
 def _walkable(dirnames: list[str]) -> list[str]:
+    # A folder the walk leaves out for its name is no source root either: its
+    # dotted path would reach the graph, which cannot store it (#3722).
     return sorted(
         d
         for d in dirnames
-        if d not in cs.IGNORE_PATTERNS and not d.startswith(cs.SEPARATOR_DOT)
+        if d not in cs.IGNORE_PATTERNS
+        and not d.startswith(cs.SEPARATOR_DOT)
+        and is_utf8_name(d)
     )
 
 

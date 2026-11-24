@@ -35,6 +35,7 @@ from loguru import logger
 from watchdog.events import FileCreatedEvent, FileDeletedEvent
 
 from codebase_rag import constants as cs
+from codebase_rag.capture import resolve_capture
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import has_other_language_sibling
@@ -521,6 +522,54 @@ class TestSpecialFiles:
         paths = _emitted_paths(mock_ingestor)
         assert "a.py" in paths
         assert manifest not in paths
+
+    @pytest.mark.parametrize("contract", ["api.json", "svc.proto"])
+    def test_a_pipe_named_as_a_contract_is_never_read(
+        self, tmp_path: Path, mock_ingestor: MagicMock, contract: str
+    ) -> None:
+        # With the io group on, contract discovery lists the repository on
+        # its own and reads every spec and proto file it finds there.
+        repo = tmp_path / "repo"
+        _write(repo / "a.py", "def a():\n    return 1\n")
+        os.mkfifo(repo / contract)
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+            capture=resolve_capture([cs.CaptureGroup.IO.value]),
+        )
+
+        _run_within_deadline(updater, repo / contract)
+
+        paths = _emitted_paths(mock_ingestor)
+        assert "a.py" in paths
+        assert contract not in paths
+
+    def test_a_pipe_in_a_go_module_root_is_never_read(
+        self, tmp_path: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # An import of exactly a module path has the resolver read each `.go`
+        # file it lists in that module's root, to tell a library from a
+        # `package main` stub.
+        repo = tmp_path / "repo"
+        _write(repo / "go.mod", "module example.com/m\n\ngo 1.21\n")
+        _write(
+            repo / "cmd" / "main.go",
+            'package main\n\nimport "example.com/m"\n\nfunc main() {\n\tm.F()\n}\n',
+        )
+        os.mkfifo(repo / "zz.go")
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor, repo_path=repo, parsers=parsers, queries=queries
+        )
+
+        _run_within_deadline(updater, repo / "zz.go")
+
+        paths = _emitted_paths(mock_ingestor)
+        assert "cmd/main.go" in paths
+        assert "zz.go" not in paths
 
     def test_a_cached_file_replaced_by_a_pipe_is_dropped_by_the_next_sync(
         self, tmp_path: Path

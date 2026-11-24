@@ -100,6 +100,38 @@ _FUNCTIONS = "MATCH (f:Function) RETURN f.qualified_name AS qn"
 _FILE_PATHS = "MATCH (f:File) RETURN f.path AS path"
 _FOLDER_PATHS = "MATCH (f:Folder) RETURN f.path AS path"
 _PACKAGE_PATHS = "MATCH (p:Package) RETURN p.path AS path"
+_NODE_NAMES = "MATCH (n) RETURN n.qualified_name AS qn, n.name AS name, n.path AS path"
+# How `os.walk` spells the byte 0xff of a name that is not valid UTF-8.
+_UNDECODED_BYTE = "\udcff"
+# Per language: the indexed files at the root, one importing a package that a
+# folder named `bad\xff` holds, and that package's files (issue #3722).
+_IMPORTED_FROM_A_BAD_NAME: dict[str, tuple[dict[str, str], dict[str, str]]] = {
+    "go": (
+        {
+            "go.mod": "module example.com/m\n",
+            "main.go": 'package main\n\nimport "example.com/bad"\n\n'
+            "func main() {\n\tbad.F()\n}\n",
+        },
+        {
+            "go.mod": "module example.com/bad\n",
+            "lib.go": "package bad\n\nfunc F() {}\n",
+        },
+    ),
+    "js": (
+        {
+            "app.js": "import { f } from '@acme/bad';\n\n"
+            "export function g() {\n  return f();\n}\n",
+        },
+        {
+            "package.json": '{"name": "@acme/bad", "main": "index.js"}\n',
+            "index.js": "export function f() {\n  return 1;\n}\n",
+        },
+    ),
+    "python": (
+        {"app.py": "from pkg.mod import f\n\n\ndef g():\n    return f()\n"},
+        {"pkg/__init__.py": "", "pkg/mod.py": "def f():\n    return 1\n"},
+    ),
+}
 # Names and paths outside ASCII, which the files keep as UTF-8.
 UNICODE_FIXTURE = {
     "grüße.py": "def grüße():\n    return 'é'\n\n\ndef call():\n    return grüße()\n",
@@ -385,6 +417,35 @@ class TestANameThatIsNotUtf8:
         if handoffs is not None:
             planned = [line.split("\t")[1] for line in _lines(handoffs / _FILES)[1:]]
             assert sorted(planned) == indexed
+
+    @pytest.mark.parametrize("with_hand_offs", [False, True])
+    @pytest.mark.parametrize("language", sorted(_IMPORTED_FROM_A_BAD_NAME))
+    def test_a_package_under_it_is_never_resolved_into(
+        self, tmp_path: Path, language: str, with_hand_offs: bool
+    ) -> None:
+        # The Go, JavaScript and Python resolvers find packages by walks of
+        # their own, so an import of one under such a folder still carried
+        # its name into the graph or the project index.
+        importer, package = _IMPORTED_FROM_A_BAD_NAME[language]
+        repo = _write(tmp_path / "repo", importer)
+        _write(_make_undecodable(repo, b"bad\xff"), package)
+        handoffs = tmp_path / "handoffs" if with_hand_offs else None
+        with _embedded_graph(tmp_path / "graph.sqlite") as ingestor:
+            _updater(
+                repo, ingestor, state_dir=tmp_path / "state", handoff_dir=handoffs
+            ).run()
+            files = {row["path"] for row in ingestor.fetch_all(_FILE_PATHS)}
+            names = ingestor.fetch_all(_NODE_NAMES)
+
+        assert files == set(importer)
+        assert not [
+            row
+            for row in names
+            if any(_UNDECODED_BYTE in str(value) for value in row.values())
+        ]
+        if handoffs is not None:
+            for written in sorted(handoffs.iterdir()):
+                written.read_bytes().decode("utf-8")
 
 
 class TestTheProjectIndex:

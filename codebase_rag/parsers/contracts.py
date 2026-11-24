@@ -92,6 +92,10 @@ def _sort_key(operation: ContractOperation) -> tuple[str, str, str, str, str]:
 
 
 def _read_text(path: Path) -> str | None:
+    # This walk is not the indexer's, so it must leave out a pipe, socket or
+    # device itself: the read below would block on a pipe for good (#3721).
+    if not os.path.isfile(path):
+        return None
     try:
         if path.stat().st_size > cs.CONTRACT_MAX_FILE_BYTES:
             return None
