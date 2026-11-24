@@ -44,7 +44,12 @@ def report(tmp_path):
     child = subprocess.run(
         [sys.executable, "-c", CLI, "index", "--repo-path", str(repo),
          "-o", str(tmp_path / "index")],
-        env={**os.environ, "LOGURU_LEVEL": "DEBUG", "PYTHONUTF8": "1"},
+        # Uncoloured: loguru colours its default sink on CI runners
+        # (GITHUB_ACTIONS), and the lines are compared as text.
+        env={
+            **os.environ, "LOGURU_LEVEL": "DEBUG", "LOGURU_COLORIZE": "0",
+            "PYTHONUTF8": "1",
+        },
         cwd=tmp_path, capture_output=True, text=True, encoding="utf-8",
         errors="replace", timeout=300,
     )
@@ -734,18 +739,21 @@ def test_the_pass_failure_gate_leaves_scratch_runs_to_the_comparison(
 ) -> None:
     # A scratch run happens inside the test's own `run`, while the gate
     # listens; what it logs is the comparison's to report, not the gate's.
+    # Logged from a stage only `run` calls, once: the suite's grammar probe
+    # calls others, such as `_register_generated_sources`, before the run
+    # whenever a grammar is missing, as on a base install.
     (temp_repo / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
-    original = GraphUpdater._register_generated_sources
+    original = GraphUpdater._process_files
     scratch: list[str] = []
 
-    def log_both(self: GraphUpdater) -> None:
+    def log_both(self: GraphUpdater, force: bool = False) -> None:
         logger.error("Failed to process calls in the test's own run")
         with engine_modes.swallowed_failures(cs.IndexEngine.RUST) as failures:
             logger.error("Failed to process calls in a scratch run")
         scratch.extend(failures)
-        original(self)
+        original(self, force)
 
-    monkeypatch.setattr(GraphUpdater, "_register_generated_sources", log_both)
+    monkeypatch.setattr(GraphUpdater, "_process_files", log_both)
 
     create_and_run_updater(temp_repo, mock_ingestor)
 
