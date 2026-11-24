@@ -133,6 +133,40 @@ def test_skips_a_line_pathspec_refuses_with_one_warning(temp_repo: Path) -> None
     assert "line 3" in warnings[0], warnings
 
 
+@pytest.mark.parametrize("line", ["!!", "! !"])
+def test_skips_a_negation_whose_unignore_pathspec_refuses(
+    temp_repo: Path, line: str
+) -> None:
+    # pathspec takes `!!` as a line, but the `!` that the unignore set keeps
+    # once the first `!` is dropped is a negation of nothing, which it refuses
+    # when indexing compiles the set, so the line is skipped as it is read.
+    cgrignore = temp_repo / CGRIGNORE_FILENAME
+    cgrignore.write_text(encoding="utf-8", data=f"vendor\n{line}\n!keep\n")
+    warnings: list[str] = []
+    sink = logger.add(warnings.append, level="WARNING", format="{message}")
+    try:
+        result = load_cgrignore_patterns(temp_repo)
+    finally:
+        logger.remove(sink)
+
+    assert result.exclude == frozenset({"vendor"})
+    assert result.unignore == frozenset({"keep"})
+    assert len(warnings) == 1, warnings
+    assert str(cgrignore) in warnings[0], warnings
+    assert "line 2" in warnings[0], warnings
+
+
+def test_a_double_negation_does_not_stop_the_run(temp_repo: Path) -> None:
+    (temp_repo / CGRIGNORE_FILENAME).write_text("secret.py\n!!\n", encoding="utf-8")
+    (temp_repo / "secret.py").write_text("def s():\n    return 1\n", encoding="utf-8")
+    (temp_repo / "a.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+
+    files = _indexed_files(temp_repo)
+
+    assert "a.py" in files, sorted(files)
+    assert "secret.py" not in files, sorted(files)
+
+
 def test_returns_empty_on_read_error(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

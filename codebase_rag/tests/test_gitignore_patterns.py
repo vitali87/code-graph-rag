@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
@@ -178,6 +179,29 @@ def test_a_line_pathspec_refuses_is_skipped_with_a_warning(tmp_path: Path) -> No
     assert len(warnings) == 1, warnings
     assert str(gitignore) in warnings[0], warnings
     assert "line 2" in warnings[0], warnings
+    files = _indexed_files(root)
+    assert "a.py" in files, sorted(files)
+    assert "secret.py" not in files, sorted(files)
+
+
+@pytest.mark.parametrize("line", ["!!", "! !", "!", "!   "])
+def test_a_negation_indexing_cannot_compile_is_skipped(
+    tmp_path: Path, line: str
+) -> None:
+    # `!!` and `! !` pass pathspec as lines, but each leaves a bare `!` in the
+    # unignore set once its first `!` is dropped, which pathspec refuses when
+    # indexing compiles that set. A `!` with nothing after it is refused as a
+    # line. Each is skipped with one warning, and the run goes on.
+    root = _repo(tmp_path, f"secret.py\n{line}\n", ["a.py", "secret.py"])
+    gitignore = root / GITIGNORE_FILENAME
+
+    excludes, warnings = _load_logging_warnings(root)
+
+    assert excludes == frozenset({"secret.py"})
+    assert len(warnings) == 1, warnings
+    assert str(gitignore) in warnings[0], warnings
+    assert "line 2" in warnings[0], warnings
+    assert load_ignore_patterns(root).unignore == frozenset()
     files = _indexed_files(root)
     assert "a.py" in files, sorted(files)
     assert "secret.py" not in files, sorted(files)

@@ -865,7 +865,9 @@ def _read_ignore_lines(ignore_file: Path) -> tuple[str, ...]:
     A UTF-8 byte-order mark, which some editors save and git skips, is not
     part of the first line (#3724); kept, it made that pattern match nothing.
     A line pathspec refuses is left out with a warning naming it, rather than
-    compiled with the rest, where it failed the run (#3723).
+    compiled with the rest, where it failed the run (#3723). So is a `!` line
+    whose unignore it refuses: `!!` is a valid line, but the bare `!` left
+    once its first `!` is dropped negates nothing.
     """
     if not ignore_file.is_file():
         return ()
@@ -879,7 +881,10 @@ def _read_ignore_lines(ignore_file: Path) -> tuple[str, ...]:
     for line_number, line in enumerate(trimmed, start=1):
         if not line or line.startswith("#"):
             continue
-        if (error := ignore_line_error(line)) is not None:
+        error = ignore_line_error(line)
+        if error is None and line.startswith(cs.GITIGNORE_NEGATION):
+            error = ignore_line_error(_unignore_pattern(line))
+        if error is not None:
             logger.warning(
                 logs.CGRIGNORE_LINE_SKIPPED.format(
                     line_number=line_number, path=ignore_file, error=error
@@ -890,12 +895,18 @@ def _read_ignore_lines(ignore_file: Path) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def _ignore_patterns(lines: tuple[str, ...]) -> CgrignorePatterns:
+def _unignore_pattern(line: str) -> str:
     # Only the whitespace after `!` is stripped: the line's end is already
     # trimmed, and any whitespace left there is escaped (#3723).
+    return line.removeprefix(cs.GITIGNORE_NEGATION).lstrip()
+
+
+def _ignore_patterns(lines: tuple[str, ...]) -> CgrignorePatterns:
     return CgrignorePatterns(
         exclude=frozenset(line for line in lines if not line.startswith("!")),
-        unignore=frozenset(line[1:].lstrip() for line in lines if line.startswith("!")),
+        unignore=frozenset(
+            _unignore_pattern(line) for line in lines if line.startswith("!")
+        ),
     )
 
 
