@@ -43,6 +43,7 @@ from .function_registry import FunctionRegistryTrie
 from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_mentions, repair_unanchored
 from .graph_query import _longer_project_prefixes
+from .handoff import clear_handoffs, write_file_plan, write_project_index
 from .index_engine import default_index_engine, resolve_index_engines
 from .interface_skip import (
     callers_to_reparse,
@@ -165,6 +166,8 @@ from .types_defs import (
     PendingExpansionCall,
     PendingMacroCall,
     PendingTypeFact,
+    PlannedFile,
+    ProjectIndex,
     PropertyDict,
     PropertyParams,
     ReingestReport,
@@ -1520,7 +1523,25 @@ class _FileScan:
     unreadable_keys: set[str] = field(default_factory=set)
     current_file_keys: set[str] = field(default_factory=set)
     changed_entries: list[tuple[Path, str, bool, bytes]] = field(default_factory=list)
+    # The entries of `changed_entries` the dependents expansion queued, not
+    # the hash pass: the file plan hand-off gives them their own reason.
+    dependent_keys: set[str] = field(default_factory=set)
     single_gone_key: str | None = None
+
+    def reparse_reasons(self) -> dict[str, cs.ReparseReason]:
+        """Why each queued file re-parses: new, changed, or queued as a
+        dependent of a change."""
+        return {
+            file_key: self._reparse_reason(file_key, is_new)
+            for _fp, file_key, is_new, _b in self.changed_entries
+        }
+
+    def _reparse_reason(self, file_key: str, is_new: bool) -> cs.ReparseReason:
+        if is_new:
+            return cs.ReparseReason.NEW
+        if file_key in self.dependent_keys:
+            return cs.ReparseReason.DEPENDENT
+        return cs.ReparseReason.CHANGED
 
 
 @dataclass
@@ -1792,6 +1813,7 @@ class GraphUpdater:
         project_named: bool | None = None,
         state_dir: Path | None = None,
         index_engine: IndexEngineSelection | None = None,
+        handoff_dir: Path | None = None,
     ):
         self.capture = capture if capture is not None else default_capture()
         # The engine each language is indexed on (docs/reports/PHASE1_SEAMS.md,
@@ -1813,6 +1835,13 @@ class GraphUpdater:
             for language, engine in self.engines.items()
             if engine == cs.IndexEngine.RUST
         )
+        # Where `run` writes the data two of its stages hand on, the file plan
+        # and the project index, for the engine parity checks to compare
+        # (docs/reports/PHASE1_SEAMS.md, section 3). None, the default, writes
+        # nothing and builds nothing. A parameter, not a setting: the test
+        # plugin and the scripts pass it; `cgr` never does. Kept outside the
+        # repository, or the next run's walk would index the files.
+        self.handoff_dir = handoff_dir
         # Where the incremental-sync state (hash cache, dir mtimes, exclusion
         # stamp, parser fingerprint, pending markers) is read and written.
         # None resolves on first use to this checkout's directory under
@@ -2021,6 +2050,7 @@ class GraphUpdater:
         *,
         state_dir: Path,
         index_engine: IndexEngineSelection | None = None,
+        handoff_dir: Path | None = None,
     ) -> Self:
         """A new updater over this one's inputs, writing into `ingestor`.
 
@@ -2031,6 +2061,8 @@ class GraphUpdater:
         project name, capture and, unless `index_engine` names another, the
         engine selection; it keeps its sync state in `state_dir` and makes
         no embeddings, so its runs neither read nor change this updater's.
+        It writes its hand-offs to `handoff_dir` only, never to this
+        updater's, where the two runs would overwrite each other's.
         """
         replica = type(self)(
             ingestor=ingestor,
@@ -2045,6 +2077,7 @@ class GraphUpdater:
             project_named=self.project_named,
             state_dir=state_dir,
             index_engine=self.index_engine if index_engine is None else index_engine,
+            handoff_dir=handoff_dir,
         )
         # A single-file target keeps the root this updater found for it when
         # it was made: handed the file, the replica would look for the root on
@@ -3119,6 +3152,8 @@ class GraphUpdater:
         # First, so an interrupt anywhere below reads this run's answer, not
         # a reused updater's previous one.
         self.committed = False
+        if self.handoff_dir is not None:
+            clear_handoffs(self.handoff_dir)
         self._clear_python_inference_caches()
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.
@@ -3303,6 +3338,7 @@ class GraphUpdater:
             self._prune_stale_seeded_module_qns()
 
             known_module_paths = self._resolve_deferred_definitions(rehydrate=not force)
+            self._write_project_index()
         finally:
             # After the deferred stages, as `_reingest_resolve` does, so an
             # edge into a re-parsed Go receiver method finds it registered
@@ -8216,6 +8252,14 @@ class GraphUpdater:
         # over its qn the restore would hang the dead file's edge on the
         # survivor (issue #1569).
         deleted_set = set(deleted_before_parse)
+        # Discovery and change detection are done: nothing below changes what
+        # `scan` holds. The plan is written here, before the inbound edges are
+        # captured and any subtree deleted, so a write that fails leaves the
+        # graph as it was, and a failing parse still leaves the plan.
+        deleted_keys = self._deleted_keys_for_run(old_hashes, preexisting_paths, scan)
+        self._write_file_plan(
+            eligible_files, scan, is_full_build, deleted_keys | deleted_set
+        )
         captured_inbound = self._captured_inbound_edges(reindexed_keys, deleted_set)
         self._captured_trace_edges = self._capture_trace_edges(
             (*reindexed_keys, *deleted_before_parse)
@@ -8307,7 +8351,6 @@ class GraphUpdater:
                     description=ls.PROGRESS_FILES_PROCESSED.format(count=changed_count),
                 )
 
-        deleted_keys = self._deleted_keys_for_run(old_hashes, preexisting_paths, scan)
         self._delete_reconciled_files(deleted_keys, deleted_set)
 
         # Restored by `run()` after the deferred stages, not here: a Go
@@ -8794,6 +8837,7 @@ class GraphUpdater:
                 continue
             caller_bytes = self._delombok_overlay.get(caller_key, caller_bytes)
             scan.changed_entries.append((caller_path, caller_key, False, caller_bytes))
+            scan.dependent_keys.add(caller_key)
             present.add(caller_key)
             affected += 1
         if affected:
@@ -9095,6 +9139,48 @@ class GraphUpdater:
                         cs.CYPHER_DELETE_FILE,
                         {cs.KEY_PATH: cached_file_identity_posix(deleted_path)},
                     )
+
+    def _write_file_plan(
+        self,
+        eligible_files: list[tuple[Path, str]],
+        scan: _FileScan,
+        is_full_build: bool,
+        deleted_keys: set[str],
+    ) -> None:
+        """Write hand-off A, the file plan, when a hand-off directory is set:
+        what discovery and change detection decided, before any file parses."""
+        if self.handoff_dir is None:
+            return
+        files = [
+            PlannedFile(file_key, self._route(filepath), scan.new_hashes.get(file_key))
+            for filepath, file_key in eligible_files
+        ]
+        # A full build re-parses every file, so only an incremental run says
+        # which it re-parses and which it deletes.
+        if is_full_build:
+            write_file_plan(self.handoff_dir, files)
+        else:
+            write_file_plan(
+                self.handoff_dir, files, scan.reparse_reasons(), deleted_keys
+            )
+
+    def _write_project_index(self) -> None:
+        """Write hand-off B, the project index, when a hand-off directory is
+        set: the registries pass 3 resolves calls against."""
+        if self.handoff_dir is None:
+            return
+        dp = self.factory.definition_processor
+        write_project_index(
+            self.handoff_dir,
+            self.repo_path,
+            ProjectIndex(
+                modules=dp.module_qn_to_file_path,
+                definitions=self.function_registry.items(),
+                simple_names=self.simple_name_lookup,
+                imports=self.factory.import_processor.import_mapping,
+                parents=dp.class_inheritance,
+            ),
+        )
 
     def _log_process_counts(self, scan: _FileScan, changed_count: int) -> None:
         """Log how many files were skipped, changed and unreadable."""
