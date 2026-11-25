@@ -1,6 +1,7 @@
-//! The Python face of `engine`: the `Engine`, `IgnoreRules` and
-//! `ChangeBaseline` classes that `codebase_rag/engine_frame.py` wraps. They
-//! are internal to cgr, not part of its public surface.
+//! The Python face of `engine`: the `Engine`, `IgnoreRules`,
+//! `ChangeBaseline` and `ModuleNaming` classes that
+//! `codebase_rag/engine_frame.py` wraps. They are internal to cgr, not part
+//! of its public surface.
 //!
 //! A row the frame builds for the ingestor crosses as the tuple
 //! `(label, [(key, value), ...], start, rel_type, end)`: the node's label
@@ -18,6 +19,7 @@ use pyo3::types::{PyBytes, PyList, PyString, PyTuple};
 
 use super::discover;
 use super::ignore::{self, PatternError};
+use super::merge::{self, FileSummary, NamingInputs};
 use super::rows::{self, ContainedRow, NodeId};
 use super::state::{self, json, Entries};
 
@@ -507,6 +509,48 @@ impl PyEngine {
         PyList::new(py, rows)
     }
 
+    /// The module-name plan for the files a run parsed into the module map,
+    /// each claim `(walk_index, path from the root, language)`: the modules
+    /// as `(qualified name, path, language)`, by name, as the frame's merge
+    /// folds them in walk order under `naming`. `dot_suffix` is whether the
+    /// running Python gives a name ending in a dot a suffix. Raises
+    /// `ValueError` where Python raises on a pattern pathspec refuses. The
+    /// interpreter lock is released for the folders' listings and the fold.
+    #[pyo3(signature = (root, project_name, naming, claims, dot_suffix, exclude = None, unignore = None))]
+    #[allow(clippy::too_many_arguments)]
+    fn module_plan<'py>(
+        &self,
+        py: Python<'py>,
+        root: PathBuf,
+        project_name: String,
+        naming: &PyModuleNaming,
+        claims: Vec<(usize, String, String)>,
+        dot_suffix: bool,
+        exclude: Option<&Bound<'py, PyAny>>,
+        unignore: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Vec<(String, String, String)>> {
+        let rules = ignore::IgnoreRules::new(strings(exclude)?, strings(unignore)?);
+        let summaries = claims
+            .into_iter()
+            .map(|(walk_index, path, language)| FileSummary::new(walk_index, path, language))
+            .collect();
+        let inputs = NamingInputs {
+            root: &root,
+            project_name: &project_name,
+            rules: &rules,
+            naming: &naming.naming,
+            dot_suffix,
+        };
+        let index = py
+            .detach(|| self.engine.merge(summaries, &inputs))
+            .map_err(value_error)?;
+        Ok(index
+            .modules
+            .into_iter()
+            .map(|(qn, module)| (qn, module.path, module.language))
+            .collect())
+    }
+
     /// `load_ignore_patterns(root)` as the frame reads the two ignore files
     /// and runs the tracked-source rescue: `(exclude, unignore,
     /// refused_lines, unreadable, tracked_dirs)`, the sets sorted,
@@ -575,6 +619,43 @@ impl PyChangeBaseline {
 
 fn sorted<'py>(py: Python<'py>, keys: &BTreeSet<String>) -> PyResult<Bound<'py, PyAny>> {
     Ok(PyList::new(py, keys)?.into_any())
+}
+
+/// The language tables module names are derived by
+/// (`engine::merge::NamingRules`), passed in from the language specs and
+/// `codebase_rag/constants`.
+#[pyclass(frozen, name = "ModuleNaming", module = "cgr_graph_rs")]
+pub struct PyModuleNaming {
+    naming: merge::NamingRules,
+}
+
+#[pymethods]
+impl PyModuleNaming {
+    /// The tables: each `(extension, language)` as
+    /// `get_language_for_extension` answers, the language families, the
+    /// module extensions a stem drops whole, the prefix marking a
+    /// declaration among them, the files named after their folder, and a
+    /// notebook's suffix.
+    #[new]
+    fn new(
+        languages: Vec<(String, String)>,
+        families: Vec<Vec<String>>,
+        module_extensions: Vec<String>,
+        declaration_prefix: String,
+        package_files: Vec<String>,
+        notebook_suffix: String,
+    ) -> Self {
+        PyModuleNaming {
+            naming: merge::NamingRules::new(
+                languages,
+                &families,
+                module_extensions,
+                &declaration_prefix,
+                package_files,
+                notebook_suffix,
+            ),
+        }
+    }
 }
 
 /// The ignore rules over one exclude set and one unignore set
@@ -755,5 +836,6 @@ fn value_error(error: PatternError) -> PyErr {
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyEngine>()?;
     m.add_class::<PyIgnoreRules>()?;
-    m.add_class::<PyChangeBaseline>()
+    m.add_class::<PyChangeBaseline>()?;
+    m.add_class::<PyModuleNaming>()
 }
