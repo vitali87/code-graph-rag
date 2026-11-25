@@ -1,8 +1,49 @@
 //! What Python does with the strings the ignore rules handle, where Rust
-//! would do something else: which characters `str.strip()` removes, and how
-//! `re` reads a bracket expression.
+//! would do something else: the code points a str may hold, which
+//! characters `str.strip()` removes, and how `re` reads a bracket
+//! expression.
 
 use std::fmt::Write;
+use std::ops::RangeInclusive;
+
+/// The lone surrogates a Python str may hold and a Rust string cannot.
+const SURROGATES: RangeInclusive<u32> = 0xD800..=0xDFFF;
+/// The private-use character the first surrogate stands as; the rest
+/// follow in order, up to U+10FFFF.
+const SURROGATE_STAND_IN: u32 = 0x10_F800;
+
+/// A Python str's code points as the rules hold them: one char each, a
+/// lone surrogate U+D800..U+DFFF as the private-use char U+10F800 + (its
+/// code point - U+D800), every other code point as itself. `None` for a
+/// number no str holds.
+///
+/// On POSIX a file name with a byte that is not UTF-8 reaches Python as a
+/// str with that byte as a surrogate (`os.fsdecode`'s surrogateescape:
+/// `b"\xff"` is `"\udcff"`). Python's walk asks the ignore rules about such
+/// names before it reports them as undecodable, and a pattern may hold one
+/// too, so every string crossing from Python goes through here. One char
+/// per code point, `?`, `*` and `[...]` read a surrogate as one character,
+/// as `re` and `fnmatch` do; a stand-in, like a surrogate, is no space and
+/// has no case. Two rare readings differ from Python's: a bracket range
+/// from a surrogate to a character that is not one, or back (the
+/// surrogates sort before U+E000, their stand-ins after every other
+/// character), and a real U+10F800..U+10FFFF, the end of plane 16's private
+/// use area, which reads as the surrogate it stands for.
+pub fn string_from_code_points<I>(code_points: I) -> Option<String>
+where
+    I: IntoIterator<Item = u32>,
+{
+    code_points
+        .into_iter()
+        .map(|code_point| {
+            if SURROGATES.contains(&code_point) {
+                char::from_u32(SURROGATE_STAND_IN + (code_point - SURROGATES.start()))
+            } else {
+                char::from_u32(code_point)
+            }
+        })
+        .collect()
+}
 
 /// Python's `str.isspace()` for one character.
 ///

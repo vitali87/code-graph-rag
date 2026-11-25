@@ -583,3 +583,268 @@ def test_every_ignore_test_agrees_with_the_rust_rules() -> None:
 def test_pathspec_oddities_are_kept(pattern: str, path: str, expected: bool) -> None:
     assert path_utils.matches_ignore_patterns(path, frozenset({pattern})) is expected
     assert _rules([pattern]).matches_exclude(path) is expected
+
+
+def _python_answer(
+    method: str,
+    args: tuple[object, ...],
+    exclude: frozenset[str],
+    unignore: frozenset[str],
+    root: Path,
+) -> Answer:
+    ex, un = exclude or None, unignore or None
+    calls: dict[str, Callable[..., bool]] = {
+        "matches_exclude": lambda rel: path_utils.matches_ignore_patterns(rel, exclude),
+        "should_keep_dir": lambda name, prefix: path_utils.should_keep_dir(
+            name, prefix, ex, un
+        ),
+        "should_skip_rel_file": lambda rel, parts: path_utils.should_skip_rel_file(
+            rel, parts, ex, un
+        ),
+        "should_skip_rel_path": lambda rel, is_file: path_utils.should_skip_path(
+            root / rel, root, ex, un, is_file=is_file
+        ),
+        "unignore_names_this_file": lambda rel: path_utils.unignore_names_this_file(
+            rel, unignore
+        ),
+        "unignore_could_match_within": lambda rel_dir: any(
+            path_utils.unignore_could_match_within(u, rel_dir) for u in unignore
+        ),
+        "unignore_names_vcs_dir": lambda rel_dir: path_utils.unignore_names_vcs_dir(
+            rel_dir, un
+        ),
+    }
+    return _python(lambda: calls[method](*args))
+
+
+# A name whose bytes are not UTF-8 reaches Python with each stray byte as a
+# lone surrogate (`os.fsdecode`'s surrogateescape: b"\xff" is "\udcff"). The
+# walk asks the ignore rules about such a name before it reports the name as
+# undecodable, and a pattern may hold one too, so the rules answer for them
+# as Python does: a surrogate is one character to `?`, `*` and `[...]`.
+@pytest.mark.parametrize(
+    ("exclude", "unignore", "method", "args", "expected"),
+    [
+        pytest.param(
+            ("*.o",),
+            (),
+            "should_skip_rel_file",
+            ("bad\udcff.o", ()),
+            True,
+            id="an-object-file",
+        ),
+        pytest.param(
+            ("*.c",),
+            (),
+            "should_skip_rel_file",
+            ("src/bad\udcff.c", ("src",)),
+            True,
+            id="a-file-an-exclude-matches",
+        ),
+        pytest.param(
+            ("*.o",),
+            (),
+            "should_skip_rel_file",
+            ("bad\udcff.c", ()),
+            False,
+            id="a-file-no-rule-matches",
+        ),
+        pytest.param(
+            (),
+            (),
+            "should_skip_rel_file",
+            ("vendor/bad\udcff.c", ("vendor",)),
+            True,
+            id="a-file-in-a-built-in-dir",
+        ),
+        pytest.param(
+            ("x?/",),
+            (),
+            "should_skip_rel_file",
+            ("x\udcff/a.c", ("x\udcff",)),
+            True,
+            id="a-file-in-an-excluded-dir",
+        ),
+        pytest.param(
+            ("gen?/",),
+            (),
+            "should_keep_dir",
+            ("gen\udcff", ""),
+            False,
+            id="a-dir-an-exclude-matches",
+        ),
+        pytest.param(
+            ("gen?/",),
+            (),
+            "should_keep_dir",
+            ("gen\udcff\udcfe", "src/"),
+            True,
+            id="a-dir-no-rule-matches",
+        ),
+        pytest.param(
+            (),
+            ("x\udcff/node_modules/keep.js",),
+            "should_keep_dir",
+            ("node_modules", "x\udcff/"),
+            True,
+            id="a-built-in-dir-an-unignore-reaches",
+        ),
+        pytest.param(
+            (),
+            ("x\udcff/node_modules/keep.js",),
+            "should_keep_dir",
+            ("node_modules", "x\udcfe/"),
+            False,
+            id="a-built-in-dir-an-unignore-misses",
+        ),
+        pytest.param(
+            ("a?b",),
+            (),
+            "matches_exclude",
+            ("a\udcffb",),
+            True,
+            id="question-mark-takes-one-surrogate",
+        ),
+        pytest.param(
+            ("a?b",),
+            (),
+            "matches_exclude",
+            ("a\udcff\udcfeb",),
+            False,
+            id="question-mark-takes-no-more",
+        ),
+        pytest.param(
+            ("bad\udcff*",),
+            (),
+            "matches_exclude",
+            ("bad\udcff.c",),
+            True,
+            id="a-pattern-holding-the-surrogate",
+        ),
+        pytest.param(
+            ("bad\udcff*",),
+            (),
+            "matches_exclude",
+            ("bad\udcfe.c",),
+            False,
+            id="a-pattern-holding-another-surrogate",
+        ),
+        pytest.param(
+            ("a[\udc80-\udcff]b",),
+            (),
+            "matches_exclude",
+            ("a\udcffb",),
+            True,
+            id="a-set-of-surrogates-holding-it",
+        ),
+        pytest.param(
+            ("a[\udc80-\udcff]b",),
+            (),
+            "matches_exclude",
+            ("a\udc7fb",),
+            False,
+            id="a-set-of-surrogates-without-it",
+        ),
+        pytest.param(
+            (ordered_ignore_block(["*.c", "!x\udcff.c"]),),
+            (),
+            "matches_exclude",
+            ("x\udcff.c",),
+            False,
+            id="an-ordered-block-re-including-it",
+        ),
+        pytest.param(
+            (ordered_ignore_block(["*.c", "!x\udcff.c"]),),
+            (),
+            "matches_exclude",
+            ("x\udcfe.c",),
+            True,
+            id="an-ordered-block-re-including-another",
+        ),
+        pytest.param(
+            (),
+            (),
+            "should_skip_rel_path",
+            ("bad\udcff.o", True),
+            True,
+            id="a-path-to-an-object-file",
+        ),
+        pytest.param(
+            ("gen?/",),
+            (),
+            "should_skip_rel_path",
+            ("gen\udcff", False),
+            True,
+            id="a-path-to-an-excluded-dir",
+        ),
+        pytest.param(
+            ("*.o",),
+            (),
+            "should_skip_rel_path",
+            ("ok\udcff.c", True),
+            False,
+            id="a-path-no-rule-matches",
+        ),
+        pytest.param(
+            (),
+            ("jq\udcff.min.js",),
+            "unignore_names_this_file",
+            ("a/jq\udcff.min.js",),
+            True,
+            id="an-unignore-naming-the-file",
+        ),
+        pytest.param(
+            (),
+            ("x\udcff/node_modules/*.js",),
+            "unignore_could_match_within",
+            ("x\udcff",),
+            True,
+            id="an-unignore-below-the-dir",
+        ),
+        pytest.param(
+            (),
+            ("x\udcff/node_modules/*.js",),
+            "unignore_could_match_within",
+            ("x\udcfe",),
+            False,
+            id="an-unignore-below-another-dir",
+        ),
+        pytest.param(
+            (),
+            ("?\udcff/.git/config",),
+            "unignore_names_vcs_dir",
+            ("x\udcff/.git",),
+            True,
+            id="fnmatch-question-mark-takes-one-surrogate",
+        ),
+        pytest.param(
+            (),
+            ("?\udcff/.git/config",),
+            "unignore_names_vcs_dir",
+            ("x\udcff\udcfe/.git",),
+            False,
+            id="fnmatch-question-mark-takes-no-more",
+        ),
+        pytest.param(
+            (),
+            ("x[\udc80-\udcff]/.git/config",),
+            "unignore_names_vcs_dir",
+            ("x\udcff/.git",),
+            True,
+            id="an-fnmatch-set-of-surrogates",
+        ),
+    ],
+)
+def test_names_with_undecodable_bytes_are_judged_as_python_judges_them(
+    tmp_path: Path,
+    exclude: tuple[str, ...],
+    unignore: tuple[str, ...],
+    method: str,
+    args: tuple[object, ...],
+    expected: bool,
+) -> None:
+    python = _python_answer(
+        method, args, frozenset(exclude), frozenset(unignore), tmp_path
+    )
+    rust = _rust(lambda: getattr(_rules(exclude, unignore), method)(*args))
+    assert (python, rust) == (expected, expected)

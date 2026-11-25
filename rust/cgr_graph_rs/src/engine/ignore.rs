@@ -30,6 +30,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 pub use pathspec::{Flavor, Pattern, REGEX_DFA_SIZE_LIMIT, REGEX_SIZE_LIMIT};
+pub use python_str::string_from_code_points;
 
 use pathspec::{git_ignore_spec_include, normalize_file, path_spec_include};
 

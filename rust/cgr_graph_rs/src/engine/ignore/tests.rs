@@ -269,6 +269,68 @@ fn the_unignore_helpers_follow_path_utils() {
     assert!(!unignore_names_this_file("a/jquery.min.js", &["*.min.js"]));
 }
 
+/// `text` with each `~` the lone surrogate `surrogate`, as
+/// `string_from_code_points` hands such a Python str over.
+fn with_surrogate(text: &str, surrogate: u32) -> String {
+    let code_points = text
+        .chars()
+        .map(|c| if c == '~' { surrogate } else { u32::from(c) });
+    string_from_code_points(code_points).unwrap()
+}
+
+#[test]
+fn a_python_str_is_one_char_per_code_point() {
+    // Each lone surrogate stands as a private-use char of its own, every
+    // other code point as itself.
+    let stand_ins: BTreeSet<char> = (0xD800..=0xDFFF)
+        .map(|surrogate| {
+            let text = string_from_code_points([surrogate]).unwrap();
+            let mut chars = text.chars();
+            let stand_in = chars.next().unwrap();
+            assert_eq!(chars.next(), None);
+            stand_in
+        })
+        .collect();
+    assert_eq!(stand_ins.len(), 0x800);
+    assert_eq!(stand_ins.first(), Some(&'\u{10F800}'));
+    assert_eq!(stand_ins.last(), Some(&'\u{10FFFF}'));
+    let plain = [0, 0x61, 0xD7FF, 0xE000, 0xFFFF, 0x1_F389];
+    let text = string_from_code_points(plain).unwrap();
+    assert!(text.chars().map(u32::from).eq(plain));
+    assert_eq!(string_from_code_points([0x61, 0x11_0000]), None);
+    // A stand-in, like a surrogate, is no space.
+    assert!(!stand_ins.iter().any(|&c| is_space(c)));
+}
+
+#[test]
+fn names_with_surrogates_match_as_python_matches_them() {
+    let ff = |text: &str| with_surrogate(text, 0xDCFF);
+    let fe = |text: &str| with_surrogate(text, 0xDCFE);
+    // `bad\udcff.o` is the name `b"bad\xff.o"` reaches Python as.
+    let rules = IgnoreRules::new(["*.c"], [""; 0]);
+    assert_eq!(
+        rules.should_skip_rel_file(&ff("bad~.o"), &[""; 0]),
+        Ok(true)
+    );
+    assert_eq!(
+        rules.should_skip_rel_file(&ff("bad~.c"), &[""; 0]),
+        Ok(true)
+    );
+    assert_eq!(
+        rules.should_skip_rel_file(&ff("bad~.h"), &[""; 0]),
+        Ok(false)
+    );
+    assert_eq!(rules.should_keep_dir(&ff("x~"), ""), Ok(true));
+    // `?` takes one surrogate, not two.
+    assert_eq!(matched("a?b", &ff("a~b")), Ok(true));
+    assert_eq!(matched("a?b", &ff("a~~b")), Ok(false));
+    assert_eq!(fnmatchcase(&ff("a~b"), "a?b"), Ok(true));
+    assert_eq!(fnmatchcase(&ff("a~~b"), "a?b"), Ok(false));
+    // A pattern holding a surrogate matches that surrogate only.
+    assert_eq!(matched(&ff("bad~*"), &ff("bad~.c")), Ok(true));
+    assert_eq!(matched(&ff("bad~*"), &fe("bad~.c")), Ok(false));
+}
+
 #[test]
 fn python_whitespace_is_unicode_whitespace_and_the_separators() {
     for c in [
