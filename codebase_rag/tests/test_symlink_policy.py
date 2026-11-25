@@ -37,6 +37,7 @@ from watchdog.events import FileCreatedEvent, FileDeletedEvent
 from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.checkout_state import state_file
+from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import has_other_language_sibling
 from codebase_rag.main import detect_excludable_directories
@@ -574,11 +575,14 @@ class TestSpecialFiles:
         assert read == [{}]
 
     def test_a_pipe_in_a_go_module_root_is_never_read(
-        self, tmp_path: Path, mock_ingestor: MagicMock
+        self, tmp_path: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # An import of exactly a module path has the resolver read each `.go`
         # file it lists in that module's root, to tell a library from a
-        # `package main` stub.
+        # `package main` stub. That is cgr's own reader, so the go toolchain's
+        # type checker is kept out: where Go is installed it loads the package
+        # itself and opens every `.go` entry in the folder (issue #3736).
+        monkeypatch.setattr(settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
         repo = tmp_path / "repo"
         _write(repo / "go.mod", "module example.com/m\n\ngo 1.21\n")
         _write(
@@ -635,6 +639,9 @@ def _make_undecodable(parent: Path, raw_name: bytes, text: str | None = None) ->
     APFS and Windows refuse a name that is not valid UTF-8, so the case exists
     only where the filesystem stores a name's bytes as they are.
     """
+    if sys.platform == "win32":
+        # Windows paths are text, so such a name cannot even be spelled.
+        pytest.skip("this filesystem refuses a name that is not valid UTF-8")
     raw = os.path.join(os.fsencode(parent), raw_name)
     try:
         if text is None:
