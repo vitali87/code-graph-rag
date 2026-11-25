@@ -174,7 +174,12 @@ fn the_readers_fold_and_filter_as_python_s_do() {
     assert_eq!(read.error, None);
     assert_eq!(
         read.entries.iter().collect::<Vec<_>>(),
-        [("a", &"x".to_owned()), ("b", &"y".to_owned())]
+        [
+            ("a", &"x".to_owned()),
+            ("b", &"y".to_owned()),
+            ("d", &UNREADABLE.to_owned()),
+            ("e", &UNREADABLE.to_owned()),
+        ]
     );
     fs::write(&cache, b"\xff{}").unwrap();
     assert!(read_hash_cache(&cache).error.is_some());
@@ -330,12 +335,21 @@ fn write(root: &Path, rel: &str, text: &str) {
     fs::write(path, text).unwrap();
 }
 
-/// A repository synced once by the frame: its cache and folder times
-/// published, the cache stamped now.
+/// A repository of `a.py` and `pkg/b.py` synced once by the frame.
 fn synced(scratch: &Scratch) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    synced_files(scratch, &[("a.py", "a"), ("pkg/b.py", "b")])
+}
+
+/// A repository of `files` synced once by the frame: its cache and folder
+/// times published, the cache stamped now.
+fn synced_files(
+    scratch: &Scratch,
+    files: &[(&str, &str)],
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
     let repo = scratch.0.join("repo");
-    write(&repo, "a.py", "a");
-    write(&repo, "pkg/b.py", "b");
+    for (rel, text) in files {
+        write(&repo, rel, text);
+    }
     let state = scratch.0.join("state");
     let cache = state.join(HASH_CACHE_FILENAME);
     let mtimes = state.join(DIR_MTIMES_FILENAME);
@@ -442,5 +456,90 @@ fn a_cached_hash_at_or_under_the_cache_mtime_is_kept_unread() {
 
     assert_eq!(changes.hashes.get("a.py"), Some(&"0".repeat(32)));
     assert!(changes.changed.is_empty());
+    assert!(changes.deleted.is_empty());
+}
+
+/// A cache naming `a.py` by `md5`, two well-named files whose hashes are
+/// unusable, and a name from before #3722.
+fn unusable_cache(md5: &str) -> String {
+    format!(
+        r#"{{"a.py": "{md5}", "b.py": "bad\udcff", "c.py": null, "pkg/bad\udcff.py": "{md5}"}}"#
+    )
+}
+
+/// `path`'s mtime set back to `held`, as `os.utime` sets it.
+fn hold_mtime(path: &Path, held: std::time::SystemTime) {
+    fs::File::open(path)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(held))
+        .unwrap();
+}
+
+fn modified(path: &Path) -> std::time::SystemTime {
+    fs::metadata(path).unwrap().modified().unwrap()
+}
+
+#[test]
+fn a_bad_name_is_dropped_and_a_bad_hash_kept_as_unreadable() {
+    let scratch = Scratch::new("state-unusable");
+    let (repo, cache, mtimes) =
+        synced_files(&scratch, &[("a.py", "a"), ("b.py", "b"), ("c.py", "c")]);
+    let md5 = md5_file(&repo.join("a.py")).unwrap();
+    let stamp = modified(&cache);
+    fs::write(&cache, unusable_cache(&md5)).unwrap();
+    hold_mtime(&cache, stamp);
+
+    let read = read_hash_cache(&cache);
+    assert_eq!(read.error, None);
+    assert_eq!(
+        read.entries.iter().collect::<Vec<_>>(),
+        [
+            ("a.py", &md5),
+            ("b.py", &UNREADABLE.to_owned()),
+            ("c.py", &UNREADABLE.to_owned()),
+        ]
+    );
+
+    // `b.py` edited in place, its folder's time held: only its cache entry
+    // can tell the in-sync check of the edit. Dropped, it left `a.py` alone,
+    // unchanged.
+    let folder = modified(&repo);
+    write(&repo, "b.py", "b, edited");
+    #[cfg(unix)]
+    hold_mtime(&repo, folder);
+    assert_eq!(modified(&repo), folder);
+    assert!(!in_sync(&repo, &cache, &mtimes));
+
+    // Hashed whatever their times, and known, so neither is new; nothing
+    // is deleted.
+    let base = baseline(BaselineInputs {
+        cache_path: &cache,
+        force: false,
+        single: false,
+        cache_dead: false,
+        project_mismatch: false,
+        parser_changed: false,
+        stale: BTreeSet::new(),
+    });
+    let changes = Engine::new(2)
+        .unwrap()
+        .changes(
+            &base,
+            ChangeInputs {
+                repo: repo.as_os_str(),
+                single: None,
+                graph_paths: Some(HashSet::new()),
+            },
+            &no_rules(),
+        )
+        .unwrap();
+    assert_eq!(
+        changes.changed,
+        [("b.py".to_owned(), false), ("c.py".to_owned(), false)]
+    );
+    assert_eq!(
+        changes.hashes.get("b.py"),
+        md5_file(&repo.join("b.py")).as_ref()
+    );
     assert!(changes.deleted.is_empty());
 }

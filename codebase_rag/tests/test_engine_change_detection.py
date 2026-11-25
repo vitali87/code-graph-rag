@@ -15,6 +15,7 @@ files compared (`change_shadow.py`).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -25,7 +26,7 @@ import struct
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -301,6 +302,32 @@ def test_the_frame_reads_a_hash_cache_as_python_does(
     assert entries == list(_load_hash_cache(cache).items())
 
 
+def _unusable_hashes(md5: str) -> dict[str, str | None]:
+    """A cache naming `a.py` by `md5`, two well-named files whose hashes are
+    unusable, and a name from before #3722."""
+    return {"a.py": md5, "b.py": "bad\udcff", "c.py": None, "pkg/bad\udcff.py": md5}
+
+
+def test_a_bad_name_is_dropped_and_a_bad_hash_read_as_unreadable_by_both(
+    tmp_path: Path,
+) -> None:
+    # A well-named file whose hash is unusable keeps its name, marked as a
+    # file the last run could not read: dropped, an edit to it went unseen
+    # by the in-sync check and it was parsed as new, its old definitions
+    # kept. A name that is not UTF-8 is dropped.
+    md5 = "0123456789abcdef" * 2
+    cache = tmp_path / cs.HASH_CACHE_FILENAME
+    cache.write_text(json.dumps(_unusable_hashes(md5)), encoding=cs.ENCODING_UTF8)
+    expected = {
+        "a.py": md5,
+        "b.py": cs.HASH_CACHE_UNREADABLE,
+        "c.py": cs.HASH_CACHE_UNREADABLE,
+    }
+
+    assert _load_hash_cache(cache) == expected
+    assert _engine().read_hash_cache(cache) == (list(expected.items()), None)
+
+
 def test_a_missing_cache_reads_as_none_and_says_nothing(tmp_path: Path) -> None:
     assert _engine().read_hash_cache(tmp_path / "missing") == ([], None)
     assert _engine().read_dir_mtimes(tmp_path / "missing") == []
@@ -508,14 +535,39 @@ def _cache(repo: Path) -> Path:
     return state_file(repo, cs.HASH_CACHE_FILENAME)
 
 
-def _rewrite_cache(repo: Path, change: Callable[[dict[str, str]], None]) -> None:
-    """Change the published cache, keeping its mtime."""
+def _replace_cache(repo: Path, hashes: Mapping[str, str | None]) -> None:
+    """Write `hashes` over the published cache, keeping its mtime."""
     cache = _cache(repo)
     stamp = cache.stat()
-    hashes = json.loads(cache.read_text(encoding=cs.ENCODING_UTF8))
-    change(hashes)
     cache.write_text(json.dumps(hashes, indent=2), encoding=cs.ENCODING_UTF8)
     os.utime(cache, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+
+
+def _rewrite_cache(repo: Path, change: Callable[[dict[str, str]], None]) -> None:
+    """Change the published cache, keeping its mtime."""
+    hashes = json.loads(_cache(repo).read_text(encoding=cs.ENCODING_UTF8))
+    change(hashes)
+    _replace_cache(repo, hashes)
+
+
+def _flat_repo(tmp_path: Path) -> Path:
+    """A repository of `a.py`, `b.py` and `c.py`, all in its root."""
+    repo = tmp_path / "repo"
+    for name in ("a", "b", "c"):
+        _write(repo, f"{name}.py", f"def {name}():\n    return 1\n")
+    return repo
+
+
+def _unusable_cache_and_an_edit(repo: Path) -> Path:
+    """The synced `repo`'s cache replaced by `_unusable_hashes` under its
+    own mtime, then `b.py` edited in place with its folder's time held, so
+    only `b.py`'s cache entry can tell the in-sync check of the edit."""
+    md5 = json.loads(_cache(repo).read_text(encoding=cs.ENCODING_UTF8))["a.py"]
+    _replace_cache(repo, _unusable_hashes(md5))
+    folder = repo.stat()
+    edited = _write(repo, "b.py", "def b():\n    return 2\n")
+    os.utime(repo, ns=(folder.st_atime_ns, folder.st_mtime_ns))
+    return edited
 
 
 def _push_back(path: Path, before: Path) -> None:
@@ -580,6 +632,16 @@ class TestInSync:
         os.utime(repo / "pkg")
 
         self._case(repo, True)
+
+    def test_an_edit_in_place_to_a_file_whose_cached_hash_is_unusable_is_seen(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _flat_repo(tmp_path)
+        _sync(repo)
+        _unusable_cache_and_an_edit(repo)
+
+        # Dropped, the entry left only `a.py`, which is unchanged.
+        self._case(repo, False)
 
     def test_an_unreadable_entry_is_not(self, tmp_path: Path) -> None:
         repo = _repo(tmp_path)
@@ -682,6 +744,28 @@ class TestRuns:
         assert dict(python.hashes)["a.py"] == "f" * 32
         assert dict(frame.hashes)["pkg/b.py"] == dict(python.hashes)["pkg/b.py"]
         assert engine_frame.changes_difference(python, frame) == []
+
+    def test_files_whose_cached_hashes_are_unusable_are_re_parsed_as_known(
+        self,
+        tmp_path: Path,
+        checked: _Recorded,
+        answers: list[engine_frame.FileChanges],
+    ) -> None:
+        repo = _flat_repo(tmp_path)
+        _sync(repo)
+        edited = _unusable_cache_and_an_edit(repo)
+
+        _sync(repo)
+
+        assert checked.changes == []
+        python, frame = answers[-2:]
+        assert engine_frame.changes_difference(python, frame) == []
+        # Hashed whatever their times, and known, so their old definitions
+        # go first; nothing is deleted.
+        assert frame.changed == (("b.py", False), ("c.py", False))
+        rehashed = hashlib.md5(edited.read_bytes()).hexdigest()
+        assert dict(frame.hashes)["b.py"] == dict(python.hashes)["b.py"] == rehashed
+        assert frame.deleted == ()
 
     @needs_permissions
     def test_an_unreadable_file_at_or_under_the_cache_mtime_keeps_its_hash(

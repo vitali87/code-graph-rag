@@ -437,10 +437,13 @@ def _load_hash_cache(cache_path: Path) -> FileHashCache:
 
     A file that is not UTF-8, or not JSON Python reads (an integer past
     its digit limit included), reads as no cache rather than ending the
-    run. An entry whose name or hash holds a byte that is not UTF-8, which
-    a cache written before #3722 spells as a `\\udcXX` escape, is dropped:
-    the walk no longer yields such a name, and handing it to the graph's
-    writes ended the sync (docs/reports/PHASE2_FRAME.md, section 6).
+    run. An entry whose name holds a byte that is not UTF-8, which a cache
+    written before #3722 spells as a `\\udcXX` escape, is dropped: the walk
+    no longer yields such a name, and handing it to the graph's writes ended
+    the sync (docs/reports/PHASE2_FRAME.md, section 6). A well-named entry
+    whose hash is unusable keeps its name, marked unreadable, so the next
+    pass re-reads it as a known file: dropped, an edit to it went unseen by
+    the in-sync check, and it was parsed as new, its old definitions kept.
     """
     if not cache_path.is_file():
         return {}
@@ -450,8 +453,10 @@ def _load_hash_cache(cache_path: Path) -> FileHashCache:
         if isinstance(data, dict):
             hashes = {
                 k: v
+                if isinstance(v, str) and is_utf8_name(v)
+                else cs.HASH_CACHE_UNREADABLE
                 for k, v in data.items()
-                if isinstance(v, str) and is_utf8_name(k) and is_utf8_name(v)
+                if is_utf8_name(k)
             }
             logger.info(ls.HASH_CACHE_LOADED, count=len(hashes), path=cache_path)
             return hashes
