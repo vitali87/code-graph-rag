@@ -18,6 +18,11 @@ class IndexEngine(StrEnum):
 # The environment variable the setting is read from.
 INDEX_ENGINE_ENV = "CGR_INDEX_ENGINE"
 
+# One language's resolved engine as the parser fingerprint hashes it: the
+# engine that indexed a file decides what its unchanged source produces, so a
+# language moving engine must re-parse its files (issue #3725).
+INDEX_ENGINE_FINGERPRINT_FMT = "index-engine:{language}={engine}"
+
 # `LANGUAGE=ENGINE` in the setting's value.
 INDEX_ENGINE_ASSIGN = "="
 
