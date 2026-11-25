@@ -484,6 +484,9 @@ EG_RUST_DECODE_ROWS = "decode_rows"
 # they raise for a node they cannot read exactly.
 EG_RUST_TREE_BRIDGE = "TreeBridge"
 EG_RUST_NOT_BORROWED = "NotBorrowed"
+# The indexing engine's frame (engine_frame.py, docs/reports/PHASE2_FRAME.md),
+# which a build from before phase 2 lacks.
+EG_RUST_ENGINE = "Engine"
 # Bridge methods a build from before the scope walks, or from before the
 # interface fingerprint, lacks.
 EG_RUST_SCOPE_FACTS = "scope_facts"
