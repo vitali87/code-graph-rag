@@ -653,15 +653,17 @@ class TestSpecialFiles:
         assert {"src/a.rs", "src/b.rs"} <= paths
         assert "src/zz.rs" not in paths
 
-    def test_a_pipe_named_like_a_module_leaves_its_mod_rs_in_charge(
-        self, tmp_path: Path
+    @pytest.mark.parametrize("squatter", ["pipe", "directory"])
+    def test_a_non_file_named_like_a_module_leaves_its_mod_rs_in_charge(
+        self, tmp_path: Path, squatter: str
     ) -> None:
         # `src/engine.rs` and `src/engine/mod.rs` can both back module
-        # `engine`, and the resolver tries the sibling `.rs` first. A pipe of
-        # that name is not indexed, so `mod.rs` and its `#[path]` redirect
-        # must place the module exactly as they do with no pipe there.
-        def imports(with_pipe: bool) -> set[tuple[object, object]]:
-            repo = tmp_path / ("piped" if with_pipe else "plain") / "repo"
+        # `engine`, and the resolver tries the sibling `.rs` first. A pipe or
+        # a folder of that name is not an indexed file, so `mod.rs` and its
+        # `#[path]` redirect must place the module exactly as they do with
+        # nothing there.
+        def imports(with_squatter: bool) -> set[tuple[object, object]]:
+            repo = tmp_path / (squatter if with_squatter else "plain") / "repo"
             _write(repo / cs.PKG_CARGO_TOML, '[package]\nname = "c"\n')
             _write(
                 repo / "src" / "lib.rs",
@@ -677,20 +679,23 @@ class TestSpecialFiles:
             updater = GraphUpdater(
                 ingestor=ingestor, repo_path=repo, parsers=parsers, queries=queries
             )
-            if with_pipe:
+            if not with_squatter:
+                updater.run()
+            elif squatter == "pipe":
                 os.mkfifo(repo / "src" / "engine.rs")
                 _run_within_deadline(updater, repo / "src" / "engine.rs")
             else:
+                (repo / "src" / "engine.rs").mkdir()
                 updater.run()
             return {
                 (rel.args[0][2], rel.args[2][2])
                 for rel in get_relationships(ingestor, cs.RelationshipType.IMPORTS)
             }
 
-        plain = imports(with_pipe=False)
+        plain = imports(with_squatter=False)
 
         assert plain, "the fixture must resolve the import through mod.rs"
-        assert imports(with_pipe=True) == plain
+        assert imports(with_squatter=True) == plain
 
     def test_a_workspace_members_manifest_that_is_a_pipe_is_never_read(
         self, tmp_path: Path, mock_ingestor: MagicMock

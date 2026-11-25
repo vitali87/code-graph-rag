@@ -4754,17 +4754,19 @@ class ImportProcessor:
         but the per-file declaration reads behind it did not, so a declaration
         in a file the user excluded still decided where an indexed module sits
         (issue #1100). The walk also leaves out anything but a regular file
-        with a UTF-8 name (#3721, #3722): a pipe at `src/engine.rs` must not
-        claim `engine` from the `src/engine/mod.rs` the graph holds. Only an
-        entry `lstat` shows to be a pipe, socket or device is ruled out here:
-        a file missing for a moment mid-save still counts, so its read fails
-        uncached and the next import retries it, as before.
+        with a UTF-8 name (#3721, #3722): a pipe or a folder at
+        `src/engine.rs` must not claim `engine` from the `src/engine/mod.rs`
+        the graph holds. Only an entry shown to be a folder, pipe, socket or
+        device is ruled out here: a file missing for a moment mid-save still
+        counts, so its read fails uncached and the next import retries it, as
+        before.
         """
         if not rel_parts:
             return False
         if not all(is_utf8_name(part) for part in rel_parts):
             return False
-        if is_special_file_entry(self.repo_path.joinpath(*rel_parts)):
+        path = self.repo_path.joinpath(*rel_parts)
+        if is_special_file_entry(path) or os.path.isdir(path):
             return False
         return not should_skip_rel_file(
             cs.SEPARATOR_SLASH.join(rel_parts),
