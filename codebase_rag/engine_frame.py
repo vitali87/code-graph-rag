@@ -479,6 +479,26 @@ def plan_difference(python: FilePlan, frame: FilePlan) -> list[str]:
     return difference_in_order(plan_lines(python), plan_lines(frame))
 
 
+def _frame_and_difference(
+    repo_path: Path,
+    exclude: frozenset[str] | None,
+    unignore: frozenset[str] | None,
+    python: FilePlan,
+) -> tuple[FilePlan | None, list[str]] | None:
+    """The frame's plan and its difference from Python's, or None when the
+    frame has no plan to offer.
+
+    A pattern the frame refuses is a difference of its own, with no plan.
+    """
+    try:
+        frame = frame_file_plan(repo_path, exclude, unignore)
+    except ValueError as error:
+        return None, _raised(error)
+    if frame is None:
+        return None
+    return frame, plan_difference(hashed(python), frame)
+
+
 def plan_for_run(
     repo_path: Path,
     exclude: frozenset[str] | None,
@@ -497,15 +517,10 @@ def plan_for_run(
     check = CHECK
     if (not ENABLED and check is None) or (check is not None and not check.compares()):
         return python
-    try:
-        frame = frame_file_plan(repo_path, exclude, unignore)
-    except ValueError as error:
-        frame = None
-        difference = _raised(error)
-    else:
-        if frame is None:
-            return python
-        difference = plan_difference(hashed(python), frame)
+    compared = _frame_and_difference(repo_path, exclude, unignore, python)
+    if compared is None:
+        return python
+    frame, difference = compared
     return _settled(
         repo_path,
         python,

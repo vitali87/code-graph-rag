@@ -326,11 +326,13 @@ class TestRules:
     ) -> None:
         repo = _tree(tmp_path / "repo", ["a.py"])
 
+        patterns = frozenset({pattern})
+
         # pathspec refuses some patterns itself and leaves others to `re`.
         with pytest.raises((ValueError, re.error)):
-            engine_frame.python_file_plan(repo, frozenset({pattern}))
+            engine_frame.python_file_plan(repo, patterns)
         with pytest.raises(ValueError):
-            _frame(repo, frozenset({pattern}))
+            _frame(repo, patterns)
 
 
 class TestLinks:
@@ -849,5 +851,7 @@ def test_every_existing_walk_and_ignore_test_agrees_with_the_frame() -> None:
     assert summary is not None, output[-4000:]
     walks, readings, differed = (int(group) for group in summary.groups())
     assert differed == 0, output[-8000:]
-    assert walks > 200, output[-4000:]
+    # Well over a hundred walks even on a base install, which skips the
+    # tests of every grammar it lacks (182 there, over 300 with them all).
+    assert walks > 100, output[-4000:]
     assert readings > 20, output[-4000:]
