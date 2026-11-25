@@ -575,7 +575,16 @@ pub struct HashCacheRead {
 /// cache; only str values count, and an entry whose name or hash holds a
 /// lone surrogate is dropped.
 pub fn read_hash_cache(path: &Path) -> HashCacheRead {
-    let members = match read_members(path) {
+    hash_cache_from(read_members(path))
+}
+
+/// `read_hash_cache` of a file holding `bytes`.
+pub fn hash_cache_from_bytes(bytes: &[u8]) -> HashCacheRead {
+    hash_cache_from(members_from_bytes(bytes))
+}
+
+fn hash_cache_from(found: Result<Option<Vec<(Text, Value)>>, String>) -> HashCacheRead {
+    let members = match found {
         Ok(Some(members)) => members,
         Ok(None) => return HashCacheRead::default(),
         Err(error) => {
@@ -605,7 +614,16 @@ pub fn read_hash_cache(path: &Path) -> HashCacheRead {
 /// are ints to Python) count, and a folder named with a lone surrogate is
 /// dropped.
 pub fn read_dir_mtimes(path: &Path) -> Entries<f64> {
-    let Ok(Some(members)) = read_members(path) else {
+    dir_mtimes_from(read_members(path))
+}
+
+/// `read_dir_mtimes` of a file holding `bytes`.
+pub fn dir_mtimes_from_bytes(bytes: &[u8]) -> Entries<f64> {
+    dir_mtimes_from(members_from_bytes(bytes))
+}
+
+fn dir_mtimes_from(found: Result<Option<Vec<(Text, Value)>>, String>) -> Entries<f64> {
+    let Ok(Some(members)) = found else {
         return Entries::new();
     };
     let mut mtimes = Entries::new();
@@ -630,8 +648,12 @@ fn read_members(path: &Path) -> Result<Option<Vec<(Text, Value)>>, String> {
     if !fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) {
         return Ok(None);
     }
-    let bytes = fs::read(path).map_err(|error| error.to_string())?;
-    let text = std::str::from_utf8(&bytes).map_err(|error| error.to_string())?;
+    members_from_bytes(&fs::read(path).map_err(|error| error.to_string())?)
+}
+
+/// The top-level object's members of a JSON file holding `bytes`.
+fn members_from_bytes(bytes: &[u8]) -> Result<Option<Vec<(Text, Value)>>, String> {
+    let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
     json::object_members(text).map_err(|error| error.to_string())
 }
 

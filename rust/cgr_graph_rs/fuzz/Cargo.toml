@@ -72,3 +72,10 @@ path = "fuzz_targets/ignore_patterns.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "state_files"
+path = "fuzz_targets/state_files.rs"
+test = false
+doc = false
+bench = false

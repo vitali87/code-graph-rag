@@ -64,6 +64,7 @@ name = "cgr_graph_rs"
 version = "0.1.12"
 dependencies = [
  "blake2",
+ "libc",
  "md-5",
  "rayon",
  "regex",
