@@ -1009,7 +1009,9 @@ def language_family(language: cs.SupportedLanguage) -> LanguageFamily:
     return frozenset({language})
 
 
-_PACKAGE_NAMED_FILES = frozenset({cs.INIT_PY, cs.MOD_RS})
+# Named after their folder, not their stem (`base_module_qn`): a package's
+# `__init__.py`, its stub `__init__.pyi`, and a Rust `mod.rs`.
+_PACKAGE_NAMED_FILES = frozenset({*cs.PY_PACKAGE_INIT_FILES, cs.MOD_RS})
 
 
 def _other_family_extensions(
@@ -1050,8 +1052,9 @@ def has_other_language_sibling(
     with, so an excluded or ignored file counts for nothing.
     """
     language = get_language_for_extension(path.suffix)
-    # `__init__.py` and `mod.rs` are named after their directory, not their
-    # stem, so they share no name with a file of the same stem.
+    # `__init__.py`, `__init__.pyi` and `mod.rs` are named after their
+    # directory, not their stem, so they share no name with a file of the
+    # same stem.
     if language is None or path.name in _PACKAGE_NAMED_FILES:
         return False
     parent = os.fspath(path.parent)
