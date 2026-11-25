@@ -12,25 +12,31 @@
 //! `codebase_rag/tests/test_engine_ignore_rules.py` holds every answer here
 //! to pathspec's and path_utils' own.
 //!
-//! Not here yet: reading `.gitignore` and `.cgrignore` (`config.py`'s
-//! `load_ignore_patterns`), which waits for #3723 and #3724 to change how
-//! Python trims their lines and reads a byte-order mark, so the reader is
-//! ported once, after the fix; and what only the walk (step 5) needs: the
-//! tracked-source rescue (`git ls-files`), the generated-source roots, and
-//! `should_skip_path`'s check that a path resolves inside the root.
+//! `files` reads the two ignore files as `config.py`'s
+//! `load_ignore_patterns` does, and `tracked` runs its tracked-source
+//! rescue (`git ls-files`). Not here: the generated-source roots, which
+//! Java's build layout decides and Python passes in among the unignores,
+//! and `should_skip_path`'s check that a path resolves inside the root.
 
+mod files;
 mod fnmatch;
 mod pathspec;
 mod python_str;
 #[cfg(test)]
 mod tests;
+mod tracked;
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt;
 
+pub use files::{load_ignore_patterns, IgnorePatterns, CGRIGNORE_FILENAME, GITIGNORE_FILENAME};
 pub use pathspec::{Flavor, Pattern, REGEX_DFA_SIZE_LIMIT, REGEX_SIZE_LIMIT};
-pub use python_str::string_from_code_points;
+pub use python_str::{string_from_code_points, string_from_os_str};
+pub use tracked::{
+    tracked_source_rescue, TrackedRescue, GIT_LS_FILES_TIMEOUT, TRACKED_PATH_PATTERN_CHARS,
+    TRACKED_SOURCE_DIR_NAMES,
+};
 
 use pathspec::{git_ignore_spec_include, normalize_file, path_spec_include};
 

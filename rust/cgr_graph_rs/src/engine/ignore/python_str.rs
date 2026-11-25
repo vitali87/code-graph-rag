@@ -1,8 +1,10 @@
 //! What Python does with the strings the ignore rules handle, where Rust
-//! would do something else: the code points a str may hold, which
-//! characters `str.strip()` removes, and how `re` reads a bracket
-//! expression.
+//! would do something else: the code points a str may hold, the str it
+//! builds for a file name, which characters `str.strip()` removes, and how
+//! `re` reads a bracket expression.
 
+use std::borrow::Cow;
+use std::ffi::OsStr;
 use std::fmt::Write;
 use std::ops::RangeInclusive;
 
@@ -37,12 +39,65 @@ where
         .into_iter()
         .map(|code_point| {
             if SURROGATES.contains(&code_point) {
-                char::from_u32(SURROGATE_STAND_IN + (code_point - SURROGATES.start()))
+                Some(stand_in(code_point))
             } else {
                 char::from_u32(code_point)
             }
         })
         .collect()
+}
+
+/// The private-use char a lone surrogate stands as.
+fn stand_in(surrogate: u32) -> char {
+    char::from_u32(SURROGATE_STAND_IN + (surrogate - SURROGATES.start()))
+        .unwrap_or(char::REPLACEMENT_CHARACTER)
+}
+
+/// A file name as the rules hold it: `string_from_code_points` of the str
+/// Python's walk builds for the same name, so the walk asks the rules about
+/// a name that is not UTF-8 (or, on Windows, not UTF-16) exactly as Python
+/// asks them. A valid name is itself.
+///
+/// On POSIX Python decodes a name's bytes with surrogateescape: each byte
+/// `b` that is not part of valid UTF-8 becomes the surrogate U+DC00 + b,
+/// whatever splits the invalid run into sequences, since each byte is
+/// escaped alone. Its stand-in is U+10FC00 + b. On Windows a name is UTF-16,
+/// and an unpaired surrogate unit is kept as that surrogate.
+pub fn string_from_os_str(name: &OsStr) -> Cow<'_, str> {
+    match name.to_str() {
+        Some(text) => Cow::Borrowed(text),
+        None => Cow::Owned(undecodable_name(name)),
+    }
+}
+
+#[cfg(unix)]
+fn undecodable_name(name: &OsStr) -> String {
+    use std::os::unix::ffi::OsStrExt;
+
+    /// surrogateescape's first surrogate: byte `b` becomes U+DC00 + b.
+    const ESCAPED_BYTE: u32 = 0xDC00;
+    let mut text = String::with_capacity(name.len() * 4);
+    for chunk in name.as_bytes().utf8_chunks() {
+        text.push_str(chunk.valid());
+        for &byte in chunk.invalid() {
+            text.push(stand_in(ESCAPED_BYTE + u32::from(byte)));
+        }
+    }
+    text
+}
+
+#[cfg(windows)]
+fn undecodable_name(name: &OsStr) -> String {
+    use std::os::windows::ffi::OsStrExt;
+
+    char::decode_utf16(name.encode_wide())
+        .map(|unit| unit.unwrap_or_else(|lone| stand_in(u32::from(lone.unpaired_surrogate()))))
+        .collect()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn undecodable_name(name: &OsStr) -> String {
+    name.to_string_lossy().into_owned()
 }
 
 /// Python's `str.isspace()` for one character.

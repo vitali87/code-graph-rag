@@ -3,11 +3,12 @@ use std::path::PathBuf;
 
 use super::{md5_file, Engine};
 
-/// A scratch directory under the target folder, removed when dropped.
-struct Scratch(PathBuf);
+/// A scratch directory under the system's temporary folder, removed when
+/// dropped.
+pub(super) struct Scratch(pub(super) PathBuf);
 
 impl Scratch {
-    fn new(name: &str) -> Scratch {
+    pub(super) fn new(name: &str) -> Scratch {
         let dir = std::env::temp_dir().join(format!("cgr-engine-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
