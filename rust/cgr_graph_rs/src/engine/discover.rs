@@ -21,6 +21,11 @@
 //! - **A folder that cannot be listed** is skipped whole, with nothing of
 //!   it reported, as `os.walk` skips it: a listing that fails part way
 //!   gives nothing either.
+//! - **Folder times.** Each listed folder's mtime, as Python's float, is
+//!   taken just before the folder is listed, so a file added after the
+//!   listing moves the folder past its recorded time and the next sync
+//!   looks again. Python's walk takes it just after; the two agree on any
+//!   folder nothing changes meanwhile.
 //!
 //! The rules see a name that is not UTF-8 as Python sees it
 //! (`ignore::string_from_os_str`), so such a name the rules leave out is
@@ -41,6 +46,7 @@ use std::path::{Path, PathBuf, MAIN_SEPARATOR_STR};
 use rayon::prelude::*;
 
 use super::ignore::{string_from_os_str, IgnoreRules, PatternError};
+use super::state::python_mtime;
 use super::Engine;
 
 #[cfg(test)]
@@ -81,16 +87,19 @@ pub struct WalkedFile {
 
 /// A folder the walk listed: `on_dir`'s `(dir_key, dirpath)`. The path is
 /// the root as given, then each name, joined as `os.path.join` joins them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Its mtime is `os.stat(dirpath).st_mtime`, or `None` when it cannot be
+/// read, as the sync's folder times leave such a folder out.
+#[derive(Debug, Clone, PartialEq)]
 pub struct VisitedDir {
     pub key: String,
     pub dirpath: OsString,
+    pub mtime: Option<f64>,
 }
 
 /// What the walk finds: the files in walk order, the folders it listed, in
 /// the order it listed them, the entries it reported, each by its path
 /// from the root, and each file's md5 (`None` for a file it cannot read).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct FilePlan {
     pub files: Vec<WalkedFile>,
     pub dirs: Vec<VisitedDir>,
@@ -209,6 +218,8 @@ enum Visit {
 }
 
 struct Listed {
+    /// The folder's mtime, taken before it was listed.
+    mtime: Option<f64>,
     /// Each kept file's name and path from the root, in order.
     files: Vec<(String, String)>,
     reports: Vec<(Report, OsString)>,
@@ -247,11 +258,17 @@ impl Entry {
 }
 
 fn visit(rules: &IgnoreRules, node: &Node) -> Visit {
+    let mtime = fs::metadata(&node.dirpath)
+        .ok()
+        .map(|metadata| python_mtime(&metadata));
     let Some(entries) = list(&node.dirpath) else {
         return Visit::Unlisted;
     };
     match judge(rules, node, entries) {
-        Ok(listed) => Visit::Listed(listed),
+        Ok(mut listed) => {
+            listed.mtime = mtime;
+            Visit::Listed(listed)
+        }
         Err(error) => Visit::Failed(error),
     }
 }
@@ -333,6 +350,7 @@ fn judge(rules: &IgnoreRules, node: &Node, entries: Vec<Entry>) -> Result<Listed
         .map(|name| node.child(&prefix, name))
         .collect();
     Ok(Listed {
+        mtime: None,
         files: walked,
         reports,
         subdirs,
@@ -384,6 +402,7 @@ fn flatten(mut nodes: Vec<Node>) -> Result<FilePlan, PatternError> {
         plan.dirs.push(VisitedDir {
             key: mem::take(&mut node.key),
             dirpath: mem::take(&mut node.dirpath),
+            mtime: listed.mtime,
         });
         for (report, path) in listed.reports {
             match report {
