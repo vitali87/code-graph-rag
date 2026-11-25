@@ -102,7 +102,18 @@ def _updater(repo: Path) -> GraphUpdater:
 
 @pytest.mark.parametrize(
     "name",
-    ["plain", "a.b c", "мой-repo", "__x--", "...", "é-é", "UPPER_case-1", "😀", "a\tb"],
+    [
+        "plain",
+        "a.b c",
+        "a..b  é c",
+        "мой-repo",
+        "__x--",
+        "...",
+        "é-é",
+        "UPPER_case-1",
+        "😀",
+        "a\tb",
+    ],
 )
 def test_the_state_folder_is_named_as_python_names_it(
     tmp_path: Path, name: str

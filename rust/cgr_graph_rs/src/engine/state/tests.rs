@@ -211,6 +211,8 @@ fn the_state_folder_is_named_as_python_names_it() {
     for (name, base) in [
         ("plain", "plain"),
         ("a.b c", "a_b_c"),
+        // A run of such characters is one `_`.
+        ("a..b  é c", "a_b_c"),
         ("мой-repo", "repo"),
         ("__x--", "x"),
         ("...", "repo"),
