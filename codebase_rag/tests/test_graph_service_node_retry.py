@@ -9,6 +9,7 @@ import pytest
 from codebase_rag import cypher_queries as cq
 from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, get_dialect
 from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.tests.time_bounds import HANDOFF_TIMEOUT_S
 from codebase_rag.types_defs import BatchWrapper, PropertyDict, PropertyValue
 
 
@@ -162,7 +163,7 @@ def test_nodes_appended_during_flush_remain_buffered(
     def execute(query: str, params: BatchWrapper) -> None:
         if "Module" in query:
             started.set()
-            assert release.wait(timeout=5)
+            assert release.wait(timeout=HANDOFF_TIMEOUT_S)
             if fail:
                 raise ConnectionError("transient node write failure")
 
@@ -170,15 +171,15 @@ def test_nodes_appended_during_flush_remain_buffered(
     with ThreadPoolExecutor(max_workers=1) as caller:
         future = caller.submit(ingestor.flush_nodes)
         try:
-            assert started.wait(timeout=5)
+            assert started.wait(timeout=HANDOFF_TIMEOUT_S)
             ingestor.ensure_node_batch(*appended_node)
         finally:
             release.set()
         if fail:
             with pytest.raises(ConnectionError, match="transient node write failure"):
-                future.result(timeout=5)
+                future.result(timeout=HANDOFF_TIMEOUT_S)
         else:
-            future.result(timeout=5)
+            future.result(timeout=HANDOFF_TIMEOUT_S)
 
     expected = [failed_node, appended_node] if fail else [appended_node]
     assert ingestor.node_buffer == expected
@@ -189,7 +190,7 @@ def _observe_lock_contention(ingestor: MemgraphIngestor, waiting: Event) -> None
         def enter() -> None:
             if not lock.acquire(blocking=False):
                 waiting.set()
-                assert lock.acquire(timeout=5)
+                assert lock.acquire(timeout=HANDOFF_TIMEOUT_S)
 
         observed = MagicMock()
         observed.__enter__.side_effect = enter
@@ -224,7 +225,7 @@ def test_overlapping_flushes_do_not_replay_nodes_or_lose_new_failures(
         ids = [row["id"] for row in params["batch"]]
         if ids == ["project.a"] and not started.is_set():
             started.set()
-            assert release.wait(timeout=5)
+            assert release.wait(timeout=HANDOFF_TIMEOUT_S)
         if ids == ["project.pending"] and fail:
             raise ConnectionError("transient pending node failure")
         written.extend(ids)
@@ -241,17 +242,17 @@ def test_overlapping_flushes_do_not_replay_nodes_or_lose_new_failures(
     with ThreadPoolExecutor(max_workers=2) as callers:
         first = callers.submit(ingestor.flush_nodes)
         try:
-            assert started.wait(timeout=5)
+            assert started.wait(timeout=HANDOFF_TIMEOUT_S)
             second = callers.submit(second_flush)
-            assert second_ready.wait(timeout=5)
+            assert second_ready.wait(timeout=HANDOFF_TIMEOUT_S)
         finally:
             release.set()
-        first.result(timeout=5)
+        first.result(timeout=HANDOFF_TIMEOUT_S)
         if fail:
             with pytest.raises(ConnectionError, match="transient pending node failure"):
-                second.result(timeout=5)
+                second.result(timeout=HANDOFF_TIMEOUT_S)
         else:
-            second.result(timeout=5)
+            second.result(timeout=HANDOFF_TIMEOUT_S)
 
     if fail:
         assert ingestor.node_buffer == [pending]

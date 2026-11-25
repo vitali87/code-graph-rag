@@ -23,6 +23,7 @@ from codebase_rag.parsers.go.builds import (
     name_constraint,
     negate,
 )
+from codebase_rag.tests.time_bounds import cpu_ceiling
 
 
 @pytest.mark.parametrize(
@@ -393,7 +394,7 @@ def test_a_chain_far_past_the_recursion_limit_is_walked(tail: str) -> None:
         embeds[f"I{links - 1}"] = None
     started = _cpu_seconds()
     full = go_ifaces.full_method_sets(own, embeds, {})
-    assert _cpu_seconds() - started < 10
+    assert _cpu_seconds() - started < cpu_ceiling(10)
     top = full.sets["I0"]
     if tail == "unresolved":
         assert top is None
@@ -411,7 +412,7 @@ def test_merged_builds_along_a_chain_stay_small() -> None:
     started = _cpu_seconds()
     for _ in range(5000):
         builds = any_of((all_of((builds, linux)), all_of((builds, negate(linux)))))
-    assert _cpu_seconds() - started < 5
+    assert _cpu_seconds() - started < cpu_ceiling(5)
     assert builds == header_constraint("//go:build cgo\n")
 
 
@@ -425,7 +426,7 @@ def test_a_constraint_past_the_size_or_depth_cap_is_unknown() -> None:
         nested = any_of(
             (all_of((nested, tag)), header_constraint(f"//go:build u{k}\n"))
         )
-    assert _cpu_seconds() - started < 5
+    assert _cpu_seconds() - started < cpu_ceiling(5)
     assert nested == UNKNOWN
     assert decide((nested,)) is None
 
@@ -475,7 +476,7 @@ def test_a_chain_of_redeclarations_links_each_link_once(declaring: str) -> None:
     bases = {f"I{k}": [f"I{k + 1}"] for k in range(links - 1)}
     started = _cpu_seconds()
     found = _links(own, bases)
-    assert _cpu_seconds() - started < 5
+    assert _cpu_seconds() - started < cpu_ceiling(5)
     if declaring == "every":
         assert found == {(f"I{k}.M", f"I{k + 1}.M") for k in range(links - 1)}
     else:
@@ -577,4 +578,4 @@ def test_a_cascade_of_gathered_declarations_is_joined_in_linear_work(
     own, bases = _cascade(4000)
     started = _cpu_seconds()
     _links(own, bases, files)
-    assert _cpu_seconds() - started < 5
+    assert _cpu_seconds() - started < cpu_ceiling(5)
