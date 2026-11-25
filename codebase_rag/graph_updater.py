@@ -432,16 +432,29 @@ def _unconfirmed(hashes: FileHashCache) -> FileHashCache:
 
 
 def _load_hash_cache(cache_path: Path) -> FileHashCache:
+    """The hash cache at `cache_path`, or none when it cannot be used.
+
+    A file that is not UTF-8, or not JSON Python reads (an integer past
+    its digit limit included), reads as no cache rather than ending the
+    run. An entry whose name or hash holds a byte that is not UTF-8, which
+    a cache written before #3722 spells as a `\\udcXX` escape, is dropped:
+    the walk no longer yields such a name, and handing it to the graph's
+    writes ended the sync (docs/reports/PHASE2_FRAME.md, section 6).
+    """
     if not cache_path.is_file():
         return {}
     try:
         with cache_path.open(encoding="utf-8") as f:
             data = load_json(f)
         if isinstance(data, dict):
-            hashes = {k: v for k, v in data.items() if isinstance(v, str)}
+            hashes = {
+                k: v
+                for k, v in data.items()
+                if isinstance(v, str) and is_utf8_name(k) and is_utf8_name(v)
+            }
             logger.info(ls.HASH_CACHE_LOADED, count=len(hashes), path=cache_path)
             return hashes
-    except (json.JSONDecodeError, OSError) as e:
+    except (ValueError, OSError) as e:
         logger.warning(ls.HASH_CACHE_LOAD_FAILED, path=cache_path, error=e)
     return {}
 
@@ -1111,14 +1124,24 @@ def _specifier_targets(caller: str, specifiers: Iterable[object]) -> set[str]:
 
 
 def _load_dir_mtimes(cache_path: Path) -> DirMtimesCache:
+    """The folder times at `cache_path`, or none when they cannot be used.
+
+    A time too large for a float reads as no folder times, as malformed
+    JSON does, and a folder named with a byte that is not UTF-8 (a map
+    written before #3722) is dropped, as the hash cache drops such names.
+    """
     if not cache_path.is_file():
         return {}
     try:
         with cache_path.open(encoding="utf-8") as f:
             data = load_json(f)
         if isinstance(data, dict):
-            return {k: float(v) for k, v in data.items() if isinstance(v, int | float)}
-    except (OSError, ValueError):
+            return {
+                k: float(v)
+                for k, v in data.items()
+                if isinstance(v, int | float) and is_utf8_name(k)
+            }
+    except (OSError, ValueError, OverflowError):
         pass
     return {}
 
