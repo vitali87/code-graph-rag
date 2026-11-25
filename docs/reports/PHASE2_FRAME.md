@@ -274,8 +274,11 @@ on disk and prepare their answers; only the one the run used is published.
 - **The watermark** is taken before hashing starts. It is not compared with
   file times in this run: it only stamps the cache a project run publishes,
   so an edit made while the run hashes is seen by the next one.
-- **A single-file run** only merges its file into an existing cache, keeps
-  that cache's previous mtime, and leaves the folder times alone. Its cache
+- **A single-file run** only merges its file into an existing, usable cache
+  for the same project; a cache that is missing, empty, corrupt or
+  unreadable is left as it is, since a cache of the one file would make the
+  next project run treat every sibling as new. It keeps that cache's
+  previous mtime, and leaves the folder times alone. Its cache
   still holds the old hashes of every other file, so stamping it with this
   run's watermark would make an earlier edit to another file look already
   checked to the next project run. The frame copies that exception.
@@ -380,7 +383,10 @@ said:
   (`parsers/ast_grep_tier.py`), not into `index.txt`. So the phase 2 plan
   compares the tree-sitter claims with `index.txt`, and the ast-grep map is
   ported, with a section of its own in `index.txt`, when that tier moves
-  (phase 5).
+  (phase 5). The comparison runs on fresh builds only: an incremental run
+  also reloads surviving `Module` rows from the graph into the definition
+  processor's map, ast-grep ones included, and incremental parity waits for
+  phase 3 (PHASE1_SEAMS.md, section 6).
 - **The function registry.** The first registration takes the plain name,
   later ones `@line`, then `@line_col`; across files an `_10000·k` slot is
   added. The label is last-wins, except TypeScript's type-and-value twins.
