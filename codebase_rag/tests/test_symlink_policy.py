@@ -807,6 +807,32 @@ class TestSpecialFiles:
         os.utime(repo, (stamp, stamp))
         assert _stateful_updater(repo, store)._is_already_in_sync() is True
 
+    @pytest.mark.parametrize("operation", ["search", "replace"])
+    def test_structural_search_never_opens_a_pipe(
+        self, tmp_path: Path, operation: str
+    ) -> None:
+        # It lists the repository on its own and read each source file it
+        # found there (issue #3737).
+        repo = tmp_path / "repo"
+        _write(repo / "core.py", "API_TOKEN = 1\n")
+        os.mkfifo(repo / "zz.py")
+        service = AstGrepService(project_root=str(repo))
+        files: list[list[str]] = []
+
+        def _run() -> None:
+            if operation == "search":
+                found = service.search(pattern="API_TOKEN", language="python")
+                files.append([match["file"] for match in found])
+            else:
+                changed = service.replace(
+                    pattern="API_TOKEN", rewrite="API_KEY", language="python"
+                )
+                files.append([change["file"] for change in changed])
+
+        _call_within_deadline(_run, repo / "zz.py")
+
+        assert files == [["core.py"]]
+
 
 def _make_undecodable(parent: Path, raw_name: bytes, text: str | None = None) -> Path:
     """Create `parent/raw_name`, a directory when `text` is None, or skip.
