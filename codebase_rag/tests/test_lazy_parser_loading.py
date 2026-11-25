@@ -204,13 +204,14 @@ def test_threads_parse_large_sources_at_once() -> None:
     # never a hung run.
     start = threading.Barrier(THREADS, timeout=THREAD_DEADLINE_S)
     failures: list[BaseException] = []
+    top_level_counts: list[int] = []
 
     def parse() -> None:
         try:
             parser = load_parsers()[0][cs.SupportedLanguage.PYTHON]
             start.wait()
             for _ in range(3):
-                assert parser.parse(source).root_node.child_count > 0
+                top_level_counts.append(parser.parse(source).root_node.child_count)
         except BaseException as error:  # reported below, not swallowed
             start.abort()
             failures.append(error)
@@ -223,3 +224,5 @@ def test_threads_parse_large_sources_at_once() -> None:
 
     assert not any(thread.is_alive() for thread in threads), "a parse never ended"
     assert failures == []
+    assert len(top_level_counts) == THREADS * 3
+    assert min(top_level_counts) > 0
