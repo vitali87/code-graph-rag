@@ -16,10 +16,14 @@
 //! - an object's members are kept in order, duplicates included: the
 //!   caller folds them as a `dict` does, the first place and the last value.
 //!
+//! - an array or object nested more than 10,000 deep is refused: CPython
+//!   3.12 and 3.13 refuse one past their C recursion limit, 10,000 levels
+//!   less the C calls already on the stack when `json.loads` runs (a few),
+//!   so the two part only on a document nested within those few levels of
+//!   the limit. Neither file cgr writes nests at all.
+//!
 //! The scanner keeps a stack of its own rather than recursing, so no
-//! document can exhaust the thread's stack. Python refuses nesting past its
-//! recursion limit, a depth that depends on its version and on the stack
-//! of the call; the scanner accepts any depth. Neither file cgr writes nests.
+//! document can exhaust the thread's stack.
 //!
 //! **Writing** produces `json.dump`'s text: `ensure_ascii` strings
 //! (`crate::json_text`), `float.__repr__` numbers, and the hash cache's
@@ -30,6 +34,9 @@ use crate::json_text::push_string;
 /// `sys.get_int_max_str_digits()`'s default: `int()` refuses a longer
 /// string of digits, so `json.loads` refuses the document.
 pub const INT_MAX_STR_DIGITS: usize = 4300;
+/// `Py_C_RECURSION_LIMIT` in CPython 3.12 and 3.13: how deep `json.loads`
+/// nests arrays and objects, the outermost counted, before it refuses.
+pub const MAX_NESTING: usize = 10_000;
 
 /// A decoded string; `None` when it holds a lone surrogate.
 pub type Text = Option<String>;
@@ -72,6 +79,7 @@ const CONTROL_CHARACTER: &str = "Invalid control character";
 const INVALID_ESCAPE: &str = "Invalid \\escape";
 const INVALID_UNICODE_ESCAPE: &str = "Invalid \\uXXXX escape";
 const TOO_MANY_DIGITS: &str = "Exceeds the limit for integer string conversion";
+const TOO_DEEP: &str = "Nested too deep";
 
 /// The object `text` holds: its members in document order, or `Ok(None)`
 /// for a document that is JSON but no object.
@@ -84,7 +92,7 @@ pub fn object_members(text: &str) -> Result<Option<Vec<(Text, Value)>>, Error> {
     let members = if scanner.peek() == Some(b'{') {
         Some(scanner.top_object()?)
     } else {
-        scanner.value(false)?;
+        scanner.value(false, 0)?;
         None
     };
     scanner.whitespace();
@@ -123,6 +131,7 @@ impl Scanner<'_> {
     }
 
     fn top_object(&mut self) -> Result<Vec<(Text, Value)>, Error> {
+        // The object itself is the first level, as it is to CPython.
         self.i += 1;
         self.whitespace();
         let mut members = Vec::new();
@@ -132,7 +141,7 @@ impl Scanner<'_> {
         }
         loop {
             let name = self.member_name(true)?;
-            let value = self.value(true)?;
+            let value = self.value(true, 1)?;
             members.push((name, value));
             self.whitespace();
             match self.peek() {
@@ -164,25 +173,30 @@ impl Scanner<'_> {
         Ok(name)
     }
 
-    /// One value; a string is decoded only when `keep` asks for it.
-    fn value(&mut self, keep: bool) -> Result<Value, Error> {
+    /// One value, `depth` containers in; a string is decoded only when
+    /// `keep` asks for it.
+    fn value(&mut self, keep: bool, depth: usize) -> Result<Value, Error> {
         match self.peek() {
             Some(b'{' | b'[') => {
-                self.container()?;
+                self.container(depth)?;
                 Ok(Value::Other)
             }
             _ => self.scalar(keep),
         }
     }
 
-    /// An array or an object, checked and passed over, on a stack of its own.
-    fn container(&mut self) -> Result<(), Error> {
+    /// An array or an object, `depth` containers in, checked and passed
+    /// over on a stack of its own.
+    fn container(&mut self, depth: usize) -> Result<(), Error> {
         let mut open: Vec<u8> = Vec::new();
         let mut step = Step::Value;
         loop {
             match step {
                 Step::Value => match self.peek() {
                     Some(kind @ (b'{' | b'[')) => {
+                        if depth + open.len() >= MAX_NESTING {
+                            return Err(self.error(TOO_DEEP));
+                        }
                         self.i += 1;
                         self.whitespace();
                         if self.peek() == Some(closer(kind)) {

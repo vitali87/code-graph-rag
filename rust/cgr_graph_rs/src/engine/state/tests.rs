@@ -91,11 +91,15 @@ fn json_keeps_a_lone_surrogate_out_of_rust_strings() {
 }
 
 #[test]
-fn json_nesting_never_exhausts_the_stack() {
-    let depth = 200_000;
-    let text = format!("{{\"a\": {}{}}}", "[".repeat(depth), "]".repeat(depth));
-    assert_eq!(members(&text)[0].1, Value::Other);
-    assert!(refused(&format!("{{\"a\": {}}}", "[".repeat(depth))));
+fn json_nesting_stops_where_python_s_does_and_never_exhausts_the_stack() {
+    let nested = |depth: usize| format!("{{\"a\": {}{}}}", "[".repeat(depth), "]".repeat(depth));
+    // The object is the first of the levels.
+    assert_eq!(members(&nested(json::MAX_NESTING - 1))[0].1, Value::Other);
+    assert!(refused(&nested(json::MAX_NESTING)));
+    assert!(refused(&nested(1_000_000)));
+    let top = |depth: usize| format!("{}{}", "[".repeat(depth), "]".repeat(depth));
+    assert_eq!(object_members(&top(json::MAX_NESTING)).unwrap(), None);
+    assert!(refused(&top(json::MAX_NESTING + 1)));
 }
 
 #[test]
