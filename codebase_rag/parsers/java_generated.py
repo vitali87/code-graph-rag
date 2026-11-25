@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from ..utils.path_utils import is_utf8_name, should_keep_dir
+from ..utils.path_utils import is_enterable_dir, is_utf8_name, should_keep_dir
 
 _BUILD_FILES = ("pom.xml", "build.gradle", "build.gradle.kts")
 _MAVEN_GENERATED = ("target", "generated-sources")
@@ -54,13 +54,24 @@ def _package_roots(generated_dir: Path, depth: int) -> list[Path]:
     # not UTF-8 is no root, for the reason `_build_dirs` gives.
     roots = [generated_dir]
     for _ in range(depth):
-        roots = [
-            child
-            for parent in roots
-            for child in sorted(parent.iterdir())
-            if child.is_dir() and is_utf8_name(child.name)
-        ]
+        roots = [child for parent in roots for child in _child_dirs(parent)]
     return roots
+
+
+def _child_dirs(parent: Path) -> list[Path]:
+    # A child folder cgr may not enter holds no root: the walk indexes
+    # nothing in it (#3748). The listing keeps its own catch: `parent` passed
+    # that check, but a build can remove or lock it before it is listed, and
+    # the error would end the whole scan.
+    try:
+        children = sorted(parent.iterdir())
+    except OSError:
+        return []
+    return [
+        child
+        for child in children
+        if is_enterable_dir(child) and is_utf8_name(child.name)
+    ]
 
 
 def discover_generated_source_roots(repo_path: Path) -> list[tuple[str, ...]]:
@@ -69,14 +80,18 @@ def discover_generated_source_roots(repo_path: Path) -> list[tuple[str, ...]]:
     repo_path = repo_path.resolve()
     roots: list[tuple[str, ...]] = []
     for build_dir in _build_dirs(repo_path):
+        # A `target/` or `build/` cgr may not enter (one a container build
+        # left root-owned) holds no root: the walk indexes nothing in it, and
+        # `Path.is_dir` raised PermissionError there on Python 3.12 and 3.13,
+        # which ended the run (#3748).
         maven = build_dir.joinpath(*_MAVEN_GENERATED)
-        if maven.is_dir():
+        if is_enterable_dir(maven):
             roots.extend(
                 tuple(root.relative_to(repo_path).parts)
                 for root in _package_roots(maven, 1)
             )
         gradle = build_dir.joinpath(*_GRADLE_GENERATED)
-        if gradle.is_dir():
+        if is_enterable_dir(gradle):
             roots.extend(
                 tuple(root.relative_to(repo_path).parts)
                 for root in _package_roots(gradle, 2)

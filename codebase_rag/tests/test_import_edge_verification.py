@@ -11,8 +11,15 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import (
+    entry_denied,
+    get_relationships,
+    needs_binding_permissions,
+    run_updater,
+)
 
 
 def _import_targets(mock_ingestor: MagicMock, from_qn: str) -> set[str]:
@@ -451,3 +458,104 @@ def test_python_import_suffix_match_ignores_other_language_modules(
     project = temp_repo.name
     targets = _import_targets(mock_ingestor, f"{project}.src.TBinaryProtocol")
     assert f"{project}.src.protocol" in targets, targets
+
+
+_PY = "def f():\n    return 1\n"
+
+# files, the folder cgr may not enter, the importing module, and the readable
+# module it also imports (both relative to the project).
+_LOCKED_IMPORT_CASES: dict[str, tuple[dict[str, str], str, str, str]] = {
+    # The locked folder sits under `src/`, where source-root discovery
+    # finds it; it is no root, so `locked.sub` resolves as if it were absent.
+    "python-src-layout": (
+        {
+            "src/locked/sub.py": _PY,
+            "src/okpkg/__init__.py": "",
+            "src/okpkg/mod.py": _PY,
+            "app.py": "import locked.sub\nimport okpkg.mod\n",
+        },
+        "src/locked",
+        "app",
+        "src.okpkg.mod",
+    ),
+    # Inside a real source root, so the on-disk check is asked about it.
+    "python-inside-a-source-root": (
+        {
+            "src/okpkg/mod.py": _PY,
+            "src/okpkg/locked/sub.py": _PY,
+            "app.py": "import okpkg.locked.sub\nimport okpkg.mod\n",
+        },
+        "src/okpkg/locked",
+        "app",
+        "src.okpkg.mod",
+    ),
+    # The project-module check behind the entity lookup ended the run.
+    "python-root-level": (
+        {
+            "locked/sub.py": _PY,
+            "okpkg/__init__.py": "",
+            "okpkg/mod.py": _PY,
+            "app.py": "from locked import sub\nimport okpkg.mod\n",
+        },
+        "locked",
+        "app",
+        "okpkg.mod",
+    ),
+    "javascript": (
+        {
+            "web/index.js": "import { a } from '../locked/x';\nimport { b } from './ok';\n",
+            "web/ok.js": "export const b = 1;\n",
+            "locked/x.js": "export const a = 1;\n",
+        },
+        "locked",
+        "web.index",
+        "web.ok",
+    ),
+    "java": (
+        {
+            "A.java": "import locked.inner.B;\nimport ok.C;\nclass A { B b; C c; }\n",
+            "ok/C.java": "package ok;\npublic class C {}\n",
+            "locked/inner/B.java": "package locked.inner;\npublic class B {}\n",
+        },
+        "locked",
+        "A",
+        "ok.C",
+    ),
+    "go": (
+        {
+            "go.mod": "module example.com/m\n",
+            "main.go": (
+                'package main\n\nimport (\n\t"example.com/m/locked/sub"\n'
+                '\t"example.com/m/ok"\n)\n\nfunc main() { sub.F(); ok.G() }\n'
+            ),
+            "ok/ok.go": "package ok\n\nfunc G() {}\n",
+            "locked/sub/s.go": "package sub\n\nfunc F() {}\n",
+        },
+        "locked",
+        "main",
+        "ok.ok",
+    ),
+}
+
+
+@needs_binding_permissions
+@pytest.mark.parametrize("case", sorted(_LOCKED_IMPORT_CASES))
+def test_an_import_into_a_folder_cgr_may_not_enter_keeps_the_other_imports(
+    temp_repo: Path, mock_ingestor: MagicMock, case: str
+) -> None:
+    # Issue #3750: resolving an import that names a module inside a folder
+    # cgr may not enter asked a path check that raised PermissionError on
+    # Python 3.12 and 3.13. The import parse caught it and dropped every
+    # import of the file, so the readable one after it lost its edge; the
+    # Python entity lookup ended the run outright.
+    files, locked, importer, readable = _LOCKED_IMPORT_CASES[case]
+    for rel, text in files.items():
+        (temp_repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (temp_repo / rel).write_text(text, encoding="utf-8")
+
+    with entry_denied(temp_repo / locked):
+        run_updater(temp_repo, mock_ingestor)
+
+    project = temp_repo.name
+    targets = _import_targets(mock_ingestor, f"{project}.{importer}")
+    assert f"{project}.{readable}" in targets, targets

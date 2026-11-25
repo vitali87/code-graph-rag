@@ -8,7 +8,7 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
-from ..utils.path_utils import is_regular_file, is_utf8_name
+from ..utils.path_utils import is_enterable_dir, is_regular_file, is_utf8_name
 
 
 def _dotted(rel_dir: Path) -> str:
@@ -48,7 +48,9 @@ def _remap_target(base: Path, rel: object, repo_path: Path) -> tuple[Path, str] 
     if not isinstance(rel, str):
         return None
     target = (base / rel).resolve()
-    if not target.is_dir():
+    # A folder cgr may not enter is no source root: the walk indexes nothing
+    # in it (#3748, #3750).
+    if not is_enterable_dir(target):
         return None
     try:
         return target, _dotted(target.relative_to(repo_path))
@@ -59,9 +61,19 @@ def _remap_target(base: Path, rel: object, repo_path: Path) -> tuple[Path, str] 
 def _default_remap_children(target: Path, dotted_dir: str) -> list[tuple[str, str]]:
     """The importable children of a default (`"" = "lib"`) remap directory."""
     remaps: list[tuple[str, str]] = []
-    for child in sorted(target.iterdir()):
-        if child.is_dir():
-            remaps.append((child.name, f"{dotted_dir}{cs.SEPARATOR_DOT}{child.name}"))
+    # `target` passed `is_enterable_dir`, but it can still vanish or be
+    # locked before it is listed, and the error would end the run (#3748).
+    try:
+        children = sorted(target.iterdir())
+    except OSError:
+        return []
+    for child in children:
+        if os.path.isdir(child):
+            # Nor is a child folder cgr may not enter (#3748, #3750).
+            if is_enterable_dir(child):
+                remaps.append(
+                    (child.name, f"{dotted_dir}{cs.SEPARATOR_DOT}{child.name}")
+                )
         elif child.suffix == cs.EXT_PY and child.name != cs.INIT_PY:
             remaps.append((child.stem, f"{dotted_dir}{cs.SEPARATOR_DOT}{child.stem}"))
     return remaps
@@ -115,7 +127,11 @@ def _src_dir_roots(
     roots = [
         (child, _dotted(rel / child))
         for child in dirnames
-        if not (current / child / cs.INIT_PY).is_file()
+        # A child cgr may not enter is no root: the walk indexes nothing in
+        # it, and asking for its `__init__.py` raised PermissionError on
+        # Python 3.12 and 3.13, which ended the run (#3748, #3750).
+        if is_enterable_dir(current / child)
+        and not is_regular_file(current / child / cs.INIT_PY)
     ]
     for filename in filenames:
         if filename.endswith(cs.EXT_PY) and filename != cs.INIT_PY:
@@ -209,7 +225,10 @@ def _exists_on_disk(repo_path: Path, dotted_dir: str, rest: str) -> bool:
     target = repo_path / dotted_dir.replace(cs.SEPARATOR_DOT, os.sep)
     if rest:
         target = target / rest.replace(cs.SEPARATOR_DOT, os.sep)
-    return target.is_dir() or target.with_suffix(cs.EXT_PY).is_file()
+    # Never raises: `Path.is_dir` did on Python 3.12 and 3.13 for a target
+    # inside a folder cgr may not enter, and the import parse that asked lost
+    # every import of its file (#3750).
+    return os.path.isdir(target) or is_regular_file(target.with_suffix(cs.EXT_PY))
 
 
 def resolve_via_source_roots(
