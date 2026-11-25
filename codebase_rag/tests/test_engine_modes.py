@@ -1030,6 +1030,70 @@ def test_every_index_checks_the_frame_s_structure_failing_on_a_difference(
     assert fnmatch.fnmatch(added, "    + node\tFolder\tpath=pkg\tname=renamed\t*")
 
 
+MODULES = """
+from codebase_rag import engine_frame
+
+
+@pytest.fixture
+def planted_modules(monkeypatch):
+    original = engine_frame.frame_module_plan
+
+    def plant(*args):
+        return tuple(
+            (f"{qn}.renamed", path, language) for qn, path, language in original(*args)
+        )
+
+    monkeypatch.setattr(engine_frame, "frame_module_plan", plant)
+
+
+def module_repo(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("X = 1\\n", encoding="utf-8")
+    return repo
+
+
+def test_modules_clean(tmp_path):
+    index(module_repo(tmp_path), tmp_path)
+
+
+def test_modules_planted(planted_modules, tmp_path):
+    updater = index(module_repo(tmp_path), tmp_path)
+    modules = sorted(updater.factory.definition_processor.module_qn_to_file_path)
+    print(f"\\nPROBE test_modules_planted {modules}")
+"""
+
+
+@pytest.mark.parametrize("mode", ["both", "rust"])
+def test_every_fresh_index_checks_the_frame_s_module_names_failing_on_a_difference(
+    pytester: pytest.Pytester, clean_env: None, mode: str
+) -> None:
+    pytester.makepyfile(INDEXING + MODULES)
+
+    result = _run(pytester, "-s", "--engine-mode", mode)
+
+    # The planted run's own test passed, and fails at teardown; the run kept
+    # Python's module names in either mode.
+    result.assert_outcomes(passed=2, errors=1)
+    assert any(
+        "ERROR at teardown of test_modules_planted" in line for line in result.outlines
+    )
+    assert _printed(result, "test_modules_planted") == ["['repo.a']"]
+    start = next(
+        i
+        for i, line in enumerate(result.outlines)
+        if line.startswith("The frame's module names differ from Python's on ")
+    )
+    heading, removed, added = result.outlines[start : start + 3]
+    assert heading.endswith(": 1 lines only in Python's, 1 only in the frame's")
+    assert fnmatch.fnmatch(
+        removed, '    - module\t*.a\t{"language":"python","path":"a.py"}'
+    )
+    assert fnmatch.fnmatch(
+        added, '    + module\t*.a.renamed\t{"language":"python","path":"a.py"}'
+    )
+
+
 def test_python_mode_leaves_the_frame_alone(
     pytester: pytest.Pytester, clean_env: None
 ) -> None:
