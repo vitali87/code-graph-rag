@@ -512,6 +512,41 @@ class FramePlanReport(StrEnum):
     UNDECODABLE = "undecodable"
 
 
+# The frame's change detection (engine_frame.py), which an `Engine` from
+# before phase 2's step 6 lacks.
+EG_RUST_STATE_DIR = "state_dir"
+EG_RUST_IN_SYNC = "in_sync"
+EG_RUST_CHANGE_BASELINE = "change_baseline"
+EG_RUST_CHANGES = "changes"
+# A run's change detection as lines, to compare two (engine_frame.py): the
+# state folder, the baseline, the cache the run would publish as the text it
+# would write, then the files unreadable, changed, gone and deleted, and the
+# folder times. A single-file run's cache keeps its previous mtime, so that
+# is compared too; a project run's watermark is each engine's own.
+FRAME_STATE_DIR_LINE = "state\t{path}"
+FRAME_CACHE_MTIME_LINE = "cache mtime\t{mtime}"
+FRAME_FULL_BUILD_LINE = "full build\t{full_build}"
+FRAME_FORCED_LINE = "forced\t{key}"
+FRAME_CACHE_LINE = "cache\t{line}"
+FRAME_NO_CACHE_LINE = "no cache"
+FRAME_UNREADABLE_LINE = "unreadable\t{key}"
+FRAME_CHANGED_LINE = "changed\t{key}\t{kind}"
+FRAME_GONE_LINE = "gone\t{key}"
+FRAME_DELETED_FIRST_LINE = "deleted before the parse\t{key}"
+FRAME_DELETED_LINE = "deleted\t{key}"
+FRAME_MTIME_LINE = "mtime\t{key}\t{mtime}"
+FRAME_MTIMES_LINE = "mtimes\t{text}"
+FRAME_KEPT_MTIME_LINE = "kept mtime\t{mtime}"
+FRAME_IN_SYNC_LINE = "in sync\t{in_sync}"
+# `json.dump`'s indent for the hash cache (graph_updater.py).
+HASH_CACHE_JSON_INDENT = 2
+
+
+class FrameChange(StrEnum):
+    NEW = "new"
+    CHANGED = "changed"
+
+
 # Bridge methods a build from before the scope walks, or from before the
 # interface fingerprint, lacks.
 EG_RUST_SCOPE_FACTS = "scope_facts"
