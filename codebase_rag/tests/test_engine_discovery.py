@@ -402,10 +402,15 @@ class TestUndecodableNames:
         _write(folder / "c.py", "x = 3\n")
         pruned = _make_undecodable(repo, b"gen\xfe")
         _write(pruned / "d.py", "x = 4\n")
+        named = _make_undecodable(repo, b"drop\xfd")
+        _write(named / "e.py", "x = 5\n")
 
         # `?` takes the byte as one character, and a pattern may hold the
         # byte's surrogate itself, as Python reads it.
-        plan = _same_plan(repo, exclude=frozenset({"*.log", "gen?/", "named\udcfe.py"}))
+        plan = _same_plan(
+            repo,
+            exclude=frozenset({"*.log", "gen?/", "named\udcfe.py", "drop\udcfd/"}),
+        )
 
         assert _rel_paths(plan) == ["a.py"]
         assert sorted(readable_name(rel) for rel in plan.undecodable) == [

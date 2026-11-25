@@ -312,9 +312,15 @@ mod unix {
         undecodable(root, b"bad\xff.py", false).unwrap();
         undecodable(root, b"gen\xfe", true).unwrap();
         undecodable(root, b"gen\xfe.py", false).unwrap();
+        undecodable(root, b"drop\xfd", true).unwrap();
 
-        // `?` takes the one byte, as it takes Python's one surrogate.
-        let found = plan(root, &IgnoreRules::new(["gen?", "gen?.py"], [""; 0]));
+        // `?` takes the one byte, as it takes Python's one surrogate, and a
+        // pattern may hold the byte's surrogate, here as the binding hands
+        // Python's `drop\udcfd/` over.
+        let found = plan(
+            root,
+            &IgnoreRules::new(["gen?", "gen?.py", "drop\u{10FCFD}/"], [""; 0]),
+        );
 
         assert_eq!(rel_paths(&found), ["a.py"]);
         assert_eq!(
