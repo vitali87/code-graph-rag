@@ -22,3 +22,12 @@
 #   must be on the base and gone from the head.
 # - reason: what the test checked, and how its replacement checks the same.
 # - pull_request: the number of the pull request that removed it.
+
+[[removed]]
+test = "codebase_rag/tests/test_reingest.py::test_reingest_removes_the_cache_when_it_cannot_backdate_it"
+replaced_by = [
+    "codebase_rag/tests/test_reingest.py::test_reingest_removes_a_cache_that_owes_a_cleanup_it_cannot_publish",
+    "codebase_rag/tests/test_reingest.py::test_reingest_keeps_the_previous_cache_when_it_cannot_publish",
+]
+reason = "Checked that a re-ingest whose cache backdate failed removed the cache and logged why. The cache is now published atomically, so a failed publish leaves the previous cache whole and correctly stamped: the first replacement checks the same removal and messages where that cache owes a skipped EXPOSES cleanup, the second that it is kept otherwise."
+pull_request = 3733

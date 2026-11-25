@@ -468,6 +468,11 @@ PARSER_FINGERPRINT_TOOL_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 GRAMMAR_DIST_PREFIX = "tree-sitter"
 GRAMMAR_VERSION_FMT = "{name}=={version}"
+# The Rust extension's distribution, hashed beside the grammars though its
+# name does not start with their prefix: it walks the trees the parsers read
+# (parsers/native_trees.py) and will index whole languages, so a release of it
+# changes what unchanged sources produce as a grammar release does (#3725).
+RUST_EXTENSION_DIST = "cgr-graph-rs"
 GIT_DIR_NAME = ".git"
 ROOT_DIR_KEY = "."
 JSON_EMPTY_OBJECT = "{}"

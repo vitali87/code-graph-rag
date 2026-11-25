@@ -66,6 +66,7 @@ from .config import (
     provider_env_api_key,
     repo_instructions,
     settings,
+    trim_ignore_line,
 )
 from .context_pruning import describe_prune, prune_old_tool_results
 from .editing.transaction import repo_write_lock
@@ -2145,15 +2146,18 @@ def _merge_keeps_into_ignore_file(
     reusing what the prompt saw: two setups saving at once each read the old
     file before either replaced it, so the later save dropped the other's
     keep (Greptile review of PR 2510).
+
+    Each line is read as a sync reads it, past a byte-order mark and with an
+    escaped trailing space kept, so a lifted exclusion is found (#3723, #3724).
     """
     existing = (
-        ignore_file.read_text(encoding=cs.ENCODING_UTF8)
+        ignore_file.read_text(encoding=cs.ENCODING_UTF8_SIG)
         if ignore_file.is_file()
         else ""
     )
     original = existing.splitlines()
-    lines = [line for line in original if line.strip() not in lifted]
-    present = {line.strip() for line in lines}
+    lines = [line for line in original if trim_ignore_line(line) not in lifted]
+    present = {trim_ignore_line(line) for line in lines}
     added = [line for line in keep_lines if line not in present]
     if added:
         lines += [cs.CGRIGNORE_KEEPS_HEADER, *added]

@@ -222,7 +222,10 @@ downloads, November 2026):
    drop the tree. Parsing is cheap enough to parse again where a later stage
    needs a tree.
 2. Merge the summaries into the project-wide indexes (function registry,
-   inheritance, imports, type locations) in sorted path order.
+   inheritance, imports, type locations) in walk order: a directory's
+   files by name, then its subdirectories. The order decides which of two
+   same-stem files claims a module's name, so it is not sorted path order
+   ([PHASE2_FRAME.md](PHASE2_FRAME.md), section 10).
 3. External analysers run beside step 1, as separate processes, bounded by
    the core count; their facts join at step 2.
 4. Resolve calls file by file on every core, against read-only indexes, each
@@ -298,11 +301,14 @@ pull request.
 1. **Seams.** The per-language engine switch, the `rust` and `both` CI
    modes (identical to `python` while nothing has moved), the data each stage
    hands to the next written out by the Python engine too.
-2. **The Rust engine's frame**, a crate beside `cgr-graph-rs`: discovery
-   with the ignore rules, change detection, the all-cores scheduler,
-   tree-sitter 0.27 and the grammars, the merge, the writer behind the same
-   ingestor interface. It never touches py-tree-sitter's trees, so it takes
-   the current engine without waiting for the Python binding.
+2. **The Rust engine's frame**, inside `cgr-graph-rs`: discovery with the
+   ignore rules, change detection, the all-cores scheduler, tree-sitter
+   0.27 and the grammars, the merge, the writer behind the same ingestor
+   interface. py-tree-sitter 0.27.0 shares the crate's runtime, so the
+   bridge and the engine move to it together and need no second crate.
+   The frame takes over finding, hashing and checking files, the
+   structure pass and the File nodes for every language, with Python's
+   answer kept beside it as a fallback ([PHASE2_FRAME.md](PHASE2_FRAME.md)).
 3. **Go end to end**, with its type checker: the pilot. Its default moves to
    Rust when every gate holds; its internals tests are rewritten; its Python
    code is deleted. The porting rate measured here sizes the rest.

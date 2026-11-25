@@ -10,6 +10,7 @@ says plainly when they apply to this run only.
 
 from __future__ import annotations
 
+import codecs
 import errno
 import os
 import stat
@@ -153,6 +154,35 @@ def test_keeping_a_cgrignore_exclusion_lifts_it_for_later_syncs(
     assert "vendor" not in lines
     assert "build" not in lines
     assert lines[0] == "# third-party"
+
+
+def test_keeping_an_exclusion_lifts_it_after_a_byte_order_mark(
+    vendored: Path, console: MagicMock
+) -> None:
+    # Issue #3724: a sync reads past the mark an editor may save at the start
+    # of the file, so the save has to as well, or the first line, an
+    # exclusion the sync applies, is not the one it lifts.
+    ignore_file = vendored / CGRIGNORE_FILENAME
+    ignore_file.write_bytes(codecs.BOM_UTF8 + b"vendor\nbuild\n")
+    assert _skipped_by_a_later_sync(vendored, "vendor/lib.py")
+
+    _keep(vendored, "3", confirm=True)
+
+    assert not _skipped_by_a_later_sync(vendored, "vendor/lib.py")
+    assert _skipped_by_a_later_sync(vendored, "build/out.py")
+
+
+def test_keeping_an_exclusion_with_an_escaped_trailing_space_lifts_it(
+    repo: Path, console: MagicMock
+) -> None:
+    # Issue #3723: a sync reads `t.py\ ` as the file `t.py ` with its space,
+    # so the save has to read the line the same way to find what it lifts.
+    (repo / CGRIGNORE_FILENAME).write_text("t.py\\ \n")
+    assert "t.py\\ " in load_ignore_patterns(repo).exclude
+
+    _keep(repo, "all", confirm=True)
+
+    assert "t.py\\ " not in load_ignore_patterns(repo).exclude
 
 
 def test_an_exclusion_that_is_not_kept_stays(
