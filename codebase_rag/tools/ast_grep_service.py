@@ -19,7 +19,7 @@ from .. import constants as cs
 from ..config import load_ignore_patterns
 from ..language_spec import get_language_for_extension
 from ..types_defs import StructuralReplaceChange, StructuralSearchMatch
-from ..utils.path_utils import is_symlink_entry, should_skip_path
+from ..utils.path_utils import is_regular_file, is_symlink_entry, should_skip_path
 
 if TYPE_CHECKING:
     from ast_grep_py import SgNode
@@ -115,13 +115,19 @@ class AstGrepService:
         if wanted is not None and ast_grep_lang != wanted:
             return None
         # The same symlink rule as graph ingestion (issue #2451): a linked
-        # file was searched twice and rewritten through the link twice.
-        if is_symlink_entry(abs_path) or should_skip_path(
-            abs_path,
-            self.project_root,
-            exclude_paths=self.exclude_paths,
-            unignore_paths=self.unignore_paths,
-            is_file=True,
+        # file was searched twice and rewritten through the link twice. And
+        # the same rule for a named pipe, whose read blocks until something
+        # writes to it (issue #3737).
+        if (
+            is_symlink_entry(abs_path)
+            or not is_regular_file(abs_path)
+            or should_skip_path(
+                abs_path,
+                self.project_root,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
+                is_file=True,
+            )
         ):
             return None
         return abs_path.relative_to(self.project_root).as_posix(), ast_grep_lang

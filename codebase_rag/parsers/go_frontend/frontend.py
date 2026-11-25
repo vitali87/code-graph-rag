@@ -15,8 +15,10 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
 
@@ -25,6 +27,7 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
+from ...utils.path_utils import is_special_file_entry, is_symlink_entry
 from ..build_lock import artifact_fresh, build_cached_artifact, newest_source_mtime
 from ..frontend_mode import resolve_frontend_mode
 from ..go.module_paths import discover_go_module_paths
@@ -146,6 +149,12 @@ _RUN_TIMEOUT = 900
 _GO_ENV = {"GOTOOLCHAIN": "local", "CGO_ENABLED": "0"}
 # Where a binary runs, which the helper's own build must leave to the host.
 _TARGET_ENV = frozenset({"GOOS", "GOARCH"})
+# The `go build -overlay` file the helper hands its loads, named in this
+# variable, and the overlay's one field: each path it maps to "" is a file
+# the build sees as absent.
+_OVERLAY_ENV = "CGR_GO_OVERLAY"
+_OVERLAY_FILE = "overlay.json"
+_OVERLAY_REPLACE = "Replace"
 
 
 def go_frontend_available() -> bool:
@@ -576,11 +585,61 @@ def _prefix_facts(facts: GoSemanticFacts, prefix: str) -> GoSemanticFacts:
     )
 
 
+def _special_files(repo_path: Path) -> list[str]:
+    """Every pipe, socket or device in the repository, or link to one.
+
+    The helper's loads open each source file of every package they reach,
+    and opening a named pipe blocks until something writes to it: one
+    `zz.go` pipe hung the run (issue #3736). Every folder is listed, those
+    cgr ignores too, because Go loads them all the same: `./...` reaches
+    `build/`, and a `replace` reaches a sibling module's folders. Only an
+    entry the directory listing does not already show to be a regular file
+    or a folder costs a `stat`. The paths are absolute, as Go reads an
+    overlay's relative ones from the folder each load runs in.
+    """
+    found: list[str] = []
+    pending = [os.path.abspath(repo_path)]
+    while pending:
+        try:
+            with os.scandir(pending.pop()) as entries:
+                for entry in entries:
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+                    elif not entry.is_file(follow_symlinks=False) and (
+                        is_special_file_entry(entry.path)
+                        or (
+                            is_symlink_entry(entry.path)
+                            and is_special_file_entry(os.path.realpath(entry.path))
+                        )
+                    ):
+                        found.append(entry.path)
+        except OSError:
+            continue
+    return sorted(found)
+
+
+@contextmanager
+def _overlay_without(paths: list[str]) -> Generator[Path | None]:
+    """An overlay file that leaves `paths` out of the helper's build, or None
+    when there are none, which leaves the build as it was."""
+    if not paths:
+        yield None
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        overlay = Path(tmp) / _OVERLAY_FILE
+        overlay.write_text(
+            json.dumps({_OVERLAY_REPLACE: dict.fromkeys(paths, "")}),
+            encoding=cs.ENCODING_UTF8,
+        )
+        yield overlay
+
+
 def _run_tool_once(
     binary: Path,
     module_root: Path,
     ignored_dirs: frozenset[str],
     in_repo_modules: Mapping[str, frozenset[Path]] | None = None,
+    overlay: Path | None = None,
 ) -> GoSemanticFacts | None:
     """Facts for one module anchor, or None when the tool run FAILED.
 
@@ -589,6 +648,13 @@ def _run_tool_once(
     in yields empty facts and is fine, while a timed-out or crashed run means
     that module was never analysed at all (issue #1462).
     """
+    env = {
+        **os.environ,
+        **_GO_ENV,
+        "CGR_IGNORE_DIRS": ",".join(sorted(ignored_dirs)),
+    }
+    if overlay is not None:
+        env[_OVERLAY_ENV] = str(overlay)
     try:
         proc = subprocess.run(
             [str(binary), str(module_root)],
@@ -597,11 +663,7 @@ def _run_tool_once(
             encoding=cs.ENCODING_UTF8,
             check=False,
             timeout=_RUN_TIMEOUT,
-            env={
-                **os.environ,
-                **_GO_ENV,
-                "CGR_IGNORE_DIRS": ",".join(sorted(ignored_dirs)),
-            },
+            env=env,
         )
     except (subprocess.SubprocessError, OSError) as error:
         logger.warning(ls.GO_FRONTEND_RUN_FAILED.format(error=error))
@@ -637,24 +699,27 @@ def run_go_frontend(
     checked: set[str] = set()
     compared: set[tuple[str, int, int]] = set()
     in_repo_modules = _in_repo_modules(repo_path)
-    for anchor in anchors:
-        prefix = "" if anchor == repo_path else anchor.relative_to(repo_path).as_posix()
-        raw = _run_tool_once(binary, anchor, ignored_dirs, in_repo_modules)
-        if raw is None:
-            # This module drops to the heuristics, and the others keep their
-            # compiler facts -- one wedged build must not blind a ten-module
-            # repo. Recording it is what stops that degradation being
-            # invisible (issue #1462).
-            degraded.append(prefix or ".")
-            logger.warning(ls.GO_FRONTEND_ANCHOR_DEGRADED.format(anchor=anchor))
-            continue
-        analysed.append(prefix or ".")
-        facts = _prefix_facts(raw, prefix)
-        merged.call_sites.update(facts.call_sites)
-        merged.external_sites.update(facts.external_sites)
-        merged.implements.extend(facts.implements)
-        checked.update(facts.checked_files)
-        compared.update(facts.compared_types)
+    with _overlay_without(_special_files(repo_path)) as overlay:
+        for anchor in anchors:
+            prefix = (
+                "" if anchor == repo_path else anchor.relative_to(repo_path).as_posix()
+            )
+            raw = _run_tool_once(binary, anchor, ignored_dirs, in_repo_modules, overlay)
+            if raw is None:
+                # This module drops to the heuristics, and the others keep
+                # their compiler facts -- one wedged build must not blind a
+                # ten-module repo. Recording it is what stops that
+                # degradation being invisible (issue #1462).
+                degraded.append(prefix or ".")
+                logger.warning(ls.GO_FRONTEND_ANCHOR_DEGRADED.format(anchor=anchor))
+                continue
+            analysed.append(prefix or ".")
+            facts = _prefix_facts(raw, prefix)
+            merged.call_sites.update(facts.call_sites)
+            merged.external_sites.update(facts.external_sites)
+            merged.implements.extend(facts.implements)
+            checked.update(facts.checked_files)
+            compared.update(facts.compared_types)
     return merged._replace(
         degraded_modules=tuple(degraded),
         analysed_modules=tuple(analysed),
