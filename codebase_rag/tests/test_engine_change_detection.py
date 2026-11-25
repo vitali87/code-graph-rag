@@ -51,6 +51,7 @@ from codebase_rag.tests.conftest import (
     force_mtime_after_cache,
 )
 from codebase_rag.tests.engine_modes import CHANGE_SHADOW_DIR_ENV
+from codebase_rag.tests.shadows import child_env
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TESTS = Path(__file__).resolve().parent
@@ -67,6 +68,9 @@ needs_permissions = pytest.mark.skipif(
     reason="POSIX permissions, which root reads past",
 )
 needs_links = pytest.mark.skipif(sys.platform == "win32", reason="POSIX links")
+posix_name = pytest.mark.skipif(
+    sys.platform == "win32", reason="a name Win32 refuses or strips"
+)
 
 
 def _engine() -> engine_frame.Engine:
@@ -109,11 +113,13 @@ def _updater(repo: Path) -> GraphUpdater:
         "a..b  é c",
         "мой-repo",
         "__x--",
-        "...",
+        # Win32 strips a name's trailing dots, so `...` is its parent there.
+        pytest.param("...", marks=posix_name),
+        "-._",
         "é-é",
         "UPPER_case-1",
         "😀",
-        "a\tb",
+        pytest.param("a\tb", marks=posix_name),
     ],
 )
 def test_the_state_folder_is_named_as_python_names_it(
@@ -161,6 +167,10 @@ def _old_state(repo: Path) -> None:
         os.utime(
             path, ns=(1_700_000_000_123_456_789 + number, 1_600_000_000_987_654_321)
         )
+    # One read-only, which moves in with its times and mode. Not on Windows,
+    # where Python cannot remove a read-only file once it is copied.
+    if sys.platform != "win32":
+        (repo / cs.PARSER_FINGERPRINT_FILENAME).chmod(0o444)
 
 
 def _listing(directory: Path) -> dict[str, tuple[bytes, int, int]]:
@@ -733,10 +743,21 @@ class TestRuns:
         _sync(repo)
 
         python, frame = answers[-2:]
-        assert dict(frame.hashes)["a.py"] == "f" * 32
-        assert dict(python.hashes)["a.py"] == "f" * 32
-        assert dict(frame.hashes)["pkg/b.py"] == dict(python.hashes)["pkg/b.py"]
         assert engine_frame.changes_difference(python, frame) == []
+        assert dict(frame.hashes)["pkg/b.py"] == dict(python.hashes)["pkg/b.py"]
+        changed = dict(frame.changed)
+        if sys.platform == "win32":
+            # No time there says a file's bytes are unchanged, so a cached
+            # file is always hashed (PHASE2_FRAME.md, section 6): the real
+            # digest replaces the forged one, and the file is re-parsed as a
+            # known one.
+            real = hashlib.md5((repo / "a.py").read_bytes()).hexdigest()
+            assert dict(frame.hashes)["a.py"] == dict(python.hashes)["a.py"] == real
+            assert changed["a.py"] is False
+        else:
+            assert dict(frame.hashes)["a.py"] == "f" * 32
+            assert dict(python.hashes)["a.py"] == "f" * 32
+            assert "a.py" not in changed
 
     def test_files_whose_cached_hashes_are_unusable_are_re_parsed_as_known(
         self,
@@ -770,6 +791,12 @@ class TestRuns:
         locked = repo / "a.py"
         above = repo / "pkg" / "b.py"
         locked.chmod(0)
+        # The chmod moved the file's inode change time past the cache's
+        # stamp, and a file changed after the stamp is read: `_last_changed`
+        # takes the later of mtime and ctime. Stamped at that change, the
+        # cache vouches for `a.py` again, so only its kept hash answers for it.
+        changed_at = locked.stat().st_ctime_ns
+        os.utime(_cache(repo), ns=(changed_at, changed_at))
         force_mtime_after_cache(repo, above)
         above.chmod(0)
         _write(repo, "touch.py", "")
@@ -801,17 +828,53 @@ class TestRuns:
             assert engine_frame.changes_difference(python, frame) == []
             assert frame.full_build is True
 
+    @pytest.mark.parametrize("offset", [-5.0, 5.0])
     def test_the_watermark_stamps_the_cache_a_project_run_publishes(
-        self, tmp_path: Path, checked: _Recorded, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        checked: _Recorded,
+        monkeypatch: pytest.MonkeyPatch,
+        offset: float,
     ) -> None:
         monkeypatch.setattr(engine_frame, "ENABLED", True)
+        # The frame's watermark set `offset` seconds from Python's.
+        watermarks: list[float] = []
+        original = engine_frame.changes_for_run
+        frame_changes = engine_frame.frame_changes
+
+        def recording(
+            baseline: engine_frame.ChangeBaseline | None,
+            inputs: engine_frame.StateInputs,
+            single: tuple[Path, str | None] | None,
+            graph_paths: frozenset[str] | None,
+            python: engine_frame.FileChanges,
+        ) -> engine_frame.FileChanges:
+            watermarks.append(python.stamp)
+            return original(baseline, inputs, single, graph_paths, python)
+
+        def shifted(
+            baseline: engine_frame.ChangeBaseline,
+            inputs: engine_frame.StateInputs,
+            single: tuple[Path, str | None] | None,
+            graph_paths: frozenset[str] | None,
+        ) -> engine_frame.FileChanges:
+            frame = frame_changes(baseline, inputs, single, graph_paths)
+            assert frame is not None
+            return frame._replace(stamp=watermarks[-1] + offset)
+
+        monkeypatch.setattr(engine_frame, "changes_for_run", recording)
+        monkeypatch.setattr(engine_frame, "frame_changes", shifted)
         repo = _repo(tmp_path)
         before = time.time()
         updater = _sync(repo)
 
-        stamp = _cache(repo).stat().st_mtime
-        # The earlier of the two watermarks, each taken before its hashing.
-        assert before <= stamp <= time.time()
+        (watermark,) = watermarks
+        assert before <= watermark <= time.time()
+        # The earlier of the two watermarks, each taken before its hashing,
+        # on the cache the run published.
+        assert _cache(repo).stat().st_mtime == pytest.approx(
+            watermark + min(offset, 0.0), abs=1e-6
+        )
         assert updater.committed
         assert checked.changes == []
 
@@ -1090,11 +1153,7 @@ def test_every_existing_incremental_sync_test_agrees_with_the_frame(
     # writing of the state files compared with the frame's; any difference
     # fails the test that made it. On two workers of their own: each writes
     # what it compared, added up here.
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("PYTEST_XDIST", "PYTEST_CURRENT_TEST"))
-    }
+    env = child_env()
     env[CHANGE_SHADOW_DIR_ENV] = str(tmp_path)
     files = _shadowed_test_files()
     assert len(files) > 50, files

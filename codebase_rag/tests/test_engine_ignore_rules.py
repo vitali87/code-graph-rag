@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import ast
 import itertools
-import os
 import random
 import re
 import subprocess
@@ -41,6 +40,7 @@ from codebase_rag.tests.ignore_rules_corpus import (
     PATTERN_SUFFIXES,
     UNIGNORE_POOL,
 )
+from codebase_rag.tests.shadows import child_env
 from codebase_rag.utils import path_utils
 from codebase_rag.utils.path_utils import ordered_ignore_block
 
@@ -533,11 +533,7 @@ def test_a_huge_pattern_is_refused_or_matched() -> None:
 def test_every_ignore_test_agrees_with_the_rust_rules() -> None:
     # The existing ignore tests, with each decision they make asked of the
     # Rust rules as well; any difference fails the test that made it.
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("PYTEST_XDIST", "PYTEST_CURRENT_TEST"))
-    }
+    env = child_env()
     result = subprocess.run(
         [
             sys.executable,
