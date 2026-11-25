@@ -90,6 +90,9 @@ MARKER_INVALID = "@pytest.mark.index_engine({spec!r}): {error}"
 # both sides' hand-off files and each one's difference. Read by this plugin
 # only; it is not a cgr setting.
 PARITY_DIFF_DIR_ENV = "CGR_PARITY_DIFF_DIR"
+# Where `change_shadow.py`'s processes each write what they compared, for the
+# test that runs it under xdist to add up. Read by that plugin only.
+CHANGE_SHADOW_DIR_ENV = "CGR_CHANGE_SHADOW_DIR"
 
 # Every per-file pass swallows all exceptions so one bad file cannot abandon a
 # whole index, and only logs. Nothing looked at those logs, so a bug inside a
