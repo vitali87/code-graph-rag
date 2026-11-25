@@ -53,10 +53,12 @@ from codebase_rag.parsers.js_ts.module_paths import (
     _read_manifest as _read_package_manifest,
 )
 from codebase_rag.tests.conftest import (
+    _MockIngestor,
     create_and_run_updater,
     force_mtime_after_cache,
     get_node_names,
     get_nodes,
+    get_relationships,
 )
 from codebase_rag.tools.ast_grep_service import AstGrepService
 from codebase_rag.utils import path_utils
@@ -649,6 +651,45 @@ class TestSpecialFiles:
         paths = _emitted_paths(mock_ingestor)
         assert {"src/a.rs", "src/b.rs"} <= paths
         assert "src/zz.rs" not in paths
+
+    def test_a_pipe_named_like_a_module_leaves_its_mod_rs_in_charge(
+        self, tmp_path: Path
+    ) -> None:
+        # `src/engine.rs` and `src/engine/mod.rs` can both back module
+        # `engine`, and the resolver tries the sibling `.rs` first. A pipe of
+        # that name is not indexed, so `mod.rs` and its `#[path]` redirect
+        # must place the module exactly as they do with no pipe there.
+        def imports(with_pipe: bool) -> set[tuple[object, object]]:
+            repo = tmp_path / ("piped" if with_pipe else "plain") / "repo"
+            _write(repo / cs.PKG_CARGO_TOML, '[package]\nname = "c"\n')
+            _write(
+                repo / "src" / "lib.rs",
+                "mod engine;\nuse crate::engine::inner::run;\n\npub fn go() {\n    run();\n}\n",
+            )
+            _write(
+                repo / "src" / "engine" / "mod.rs",
+                '#[path = "impl_inner.rs"]\npub mod inner;\n',
+            )
+            _write(repo / "src" / "engine" / "impl_inner.rs", "pub fn run() {}\n")
+            ingestor = _MockIngestor()
+            parsers, queries = load_parsers()
+            updater = GraphUpdater(
+                ingestor=ingestor, repo_path=repo, parsers=parsers, queries=queries
+            )
+            if with_pipe:
+                os.mkfifo(repo / "src" / "engine.rs")
+                _run_within_deadline(updater, repo / "src" / "engine.rs")
+            else:
+                updater.run()
+            return {
+                (rel.args[0][2], rel.args[2][2])
+                for rel in get_relationships(ingestor, cs.RelationshipType.IMPORTS)
+            }
+
+        plain = imports(with_pipe=False)
+
+        assert plain, "the fixture must resolve the import through mod.rs"
+        assert imports(with_pipe=True) == plain
 
     def test_a_workspace_members_manifest_that_is_a_pipe_is_never_read(
         self, tmp_path: Path, mock_ingestor: MagicMock

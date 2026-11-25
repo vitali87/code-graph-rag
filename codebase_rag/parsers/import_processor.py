@@ -4746,14 +4746,21 @@ class ImportProcessor:
         return cached
 
     def _rust_file_is_indexed(self, rel_parts: Sequence[str]) -> bool:
-        """Whether the graph holds this file, per `--exclude` and `.cgrignore`.
+        """Whether the graph holds this file, per `--exclude` and `.cgrignore`
+        and the walk's own rules.
 
         The redirect sweep already walks with the indexer's predicate (#1088),
         but the per-file declaration reads behind it did not, so a declaration
         in a file the user excluded still decided where an indexed module sits
-        (issue #1100).
+        (issue #1100). The walk also leaves out anything but a regular file
+        with a UTF-8 name (#3721, #3722): a pipe at `src/engine.rs` must not
+        claim `engine` from the `src/engine/mod.rs` the graph holds.
         """
         if not rel_parts:
+            return False
+        if not all(is_utf8_name(part) for part in rel_parts):
+            return False
+        if not is_regular_file(self.repo_path.joinpath(*rel_parts)):
             return False
         return not should_skip_rel_file(
             cs.SEPARATOR_SLASH.join(rel_parts),
