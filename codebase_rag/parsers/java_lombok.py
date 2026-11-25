@@ -25,6 +25,7 @@ from loguru import logger
 from .. import constants as cs
 from .. import logs as ls
 from ..config import settings
+from ..utils.path_utils import is_utf8_name
 from .java_generated import _build_dirs
 
 _LOMBOK_MARKER = "lombok"
@@ -106,7 +107,10 @@ def _overlay_from_root(
     for expanded in out_dir.rglob(f"*{cs.EXT_JAVA}"):
         rel_in_root = expanded.relative_to(out_dir)
         original = source_root / rel_in_root
-        if not original.is_file():
+        key = original.relative_to(repo_path).as_posix()
+        # The walk leaves out a name that is not UTF-8, so no parse asks for
+        # its expansion, and `overlay_identity` cannot encode it (#3722).
+        if not original.is_file() or not is_utf8_name(key):
             continue
         try:
             expanded_bytes = expanded.read_bytes()
@@ -116,7 +120,7 @@ def _overlay_from_root(
                 continue
         except OSError:
             continue
-        overlay[original.relative_to(repo_path).as_posix()] = expanded_bytes
+        overlay[key] = expanded_bytes
     return overlay
 
 

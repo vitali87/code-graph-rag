@@ -39,6 +39,7 @@ from codebase_rag.tests.test_graph_updater_index_engine import (
     _calls,
     _write,
 )
+from codebase_rag.tests.test_symlink_policy import _make_undecodable
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PROJECT = "demo"
@@ -96,6 +97,79 @@ _CALLS = (
     "RETURN a.qualified_name AS caller, b.qualified_name AS callee"
 )
 _FUNCTIONS = "MATCH (f:Function) RETURN f.qualified_name AS qn"
+_FILE_PATHS = "MATCH (f:File) RETURN f.path AS path"
+_FOLDER_PATHS = "MATCH (f:Folder) RETURN f.path AS path"
+_PACKAGE_PATHS = "MATCH (p:Package) RETURN p.path AS path"
+_NODE_NAMES = "MATCH (n) RETURN n.qualified_name AS qn, n.name AS name, n.path AS path"
+# How `os.walk` spells the byte 0xff of a name that is not valid UTF-8.
+_UNDECODED_BYTE = "\udcff"
+# Per language: the indexed files at the root, one importing a package that a
+# folder named `bad\xff` holds, and that package's files (issue #3722).
+_IMPORTED_FROM_A_BAD_NAME: dict[str, tuple[dict[str, str], dict[str, str]]] = {
+    "dart": (
+        {
+            "pubspec.yaml": "name: app\n",
+            "test/app_test.dart": "import 'package:bad/x.dart';\n\n"
+            "void main() {\n  f();\n}\n",
+        },
+        {"pubspec.yaml": "name: bad\n", "lib/x.dart": "void f() {}\n"},
+    ),
+    "go": (
+        {
+            "go.mod": "module example.com/m\n",
+            "main.go": 'package main\n\nimport "example.com/bad"\n\n'
+            "func main() {\n\tbad.F()\n}\n",
+        },
+        {
+            "go.mod": "module example.com/bad\n",
+            "lib.go": "package bad\n\nfunc F() {}\n",
+        },
+    ),
+    # Generated sources beside a build file, which the walk then rescues.
+    "java": (
+        {
+            "src/main/java/com/app/App.java": "package com.app;\n\n"
+            "import com.gen.Gen;\n\n"
+            "public class App {\n  void f() {\n    Gen.g();\n  }\n}\n",
+        },
+        {
+            "pom.xml": "<project/>\n",
+            "target/generated-sources/annotations/com/gen/Gen.java": (
+                "package com.gen;\n\n"
+                "public class Gen {\n  public static void g() {}\n}\n"
+            ),
+        },
+    ),
+    "js": (
+        {
+            "app.js": "import { f } from '@acme/bad';\n\n"
+            "export function g() {\n  return f();\n}\n",
+        },
+        {
+            "package.json": '{"name": "@acme/bad", "main": "index.js"}\n',
+            "index.js": "export function f() {\n  return 1;\n}\n",
+        },
+    ),
+    "julia": (
+        {"src/App.jl": "module App\nusing .Foo\nend\n"},
+        {"Foo.jl": "module Foo\nf() = 1\nend\n"},
+    ),
+    "python": (
+        {"app.py": "from pkg.mod import f\n\n\ndef g():\n    return f()\n"},
+        {"pkg/__init__.py": "", "pkg/mod.py": "def f():\n    return 1\n"},
+    ),
+    # A `paths` alias from the tsconfig in that folder.
+    "ts": (
+        {
+            "app.ts": "import { f } from '@/x';\n\n"
+            "export function g() {\n  return f();\n}\n",
+        },
+        {
+            "tsconfig.json": '{"compilerOptions": {"paths": {"@/*": ["src/*"]}}}\n',
+            "src/x.ts": "export function f() {\n  return 1;\n}\n",
+        },
+    ),
+}
 # Names and paths outside ASCII, which the files keep as UTF-8.
 UNICODE_FIXTURE = {
     "grüße.py": "def grüße():\n    return 'é'\n\n\ndef call():\n    return grüße()\n",
@@ -347,6 +421,69 @@ class TestTheFilePlan:
 
         assert updater.skipped_because_in_sync
         assert list(handoffs.iterdir()) == []
+
+
+class TestANameThatIsNotUtf8:
+    """Issue #3722: one such name ended the run where it was written out.
+
+    Into the embedded graph without a hand-off directory, into `files.txt`
+    with one. The walk now leaves the entry out, file or directory.
+    """
+
+    @pytest.mark.parametrize("with_hand_offs", [False, True])
+    def test_the_run_completes_without_it(
+        self, tmp_path: Path, with_hand_offs: bool
+    ) -> None:
+        repo = _write(tmp_path / "repo", CALLER_FIXTURE)
+        _make_undecodable(repo, b"notes\xff.txt", "notes\n")
+        _make_undecodable(repo / "pkg", b"bad\xff.py", "def g():\n    return 2\n")
+        folder = _make_undecodable(repo, b"dir\xff")
+        (folder / "c.py").write_text("def c():\n    return 3\n", encoding="utf-8")
+        handoffs = tmp_path / "handoffs" if with_hand_offs else None
+        with _embedded_graph(tmp_path / "graph.sqlite") as ingestor:
+            _updater(
+                repo, ingestor, state_dir=tmp_path / "state", handoff_dir=handoffs
+            ).run()
+            files = {row["path"] for row in ingestor.fetch_all(_FILE_PATHS)}
+            folders = {row["path"] for row in ingestor.fetch_all(_FOLDER_PATHS)}
+            packages = {row["path"] for row in ingestor.fetch_all(_PACKAGE_PATHS)}
+
+        indexed = ["main.py", "pkg/__init__.py", "pkg/util.py"]
+        assert sorted(files) == indexed
+        assert folders == set()
+        assert packages == {"pkg"}
+        if handoffs is not None:
+            planned = [line.split("\t")[1] for line in _lines(handoffs / _FILES)[1:]]
+            assert sorted(planned) == indexed
+
+    @pytest.mark.parametrize("with_hand_offs", [False, True])
+    @pytest.mark.parametrize("language", sorted(_IMPORTED_FROM_A_BAD_NAME))
+    def test_a_package_under_it_is_never_resolved_into(
+        self, tmp_path: Path, language: str, with_hand_offs: bool
+    ) -> None:
+        # Each language's resolver finds packages, modules or source roots
+        # by a listing of its own, so an import of one under such a folder
+        # still carried its name into the graph or the project index.
+        importer, package = _IMPORTED_FROM_A_BAD_NAME[language]
+        repo = _write(tmp_path / "repo", importer)
+        _write(_make_undecodable(repo, b"bad\xff"), package)
+        handoffs = tmp_path / "handoffs" if with_hand_offs else None
+        with _embedded_graph(tmp_path / "graph.sqlite") as ingestor:
+            _updater(
+                repo, ingestor, state_dir=tmp_path / "state", handoff_dir=handoffs
+            ).run()
+            files = {row["path"] for row in ingestor.fetch_all(_FILE_PATHS)}
+            names = ingestor.fetch_all(_NODE_NAMES)
+
+        assert files == set(importer)
+        assert not [
+            row
+            for row in names
+            if any(_UNDECODED_BYTE in str(value) for value in row.values())
+        ]
+        if handoffs is not None:
+            for written in sorted(handoffs.iterdir()):
+                written.read_bytes().decode("utf-8")
 
 
 class TestTheProjectIndex:

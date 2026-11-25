@@ -26,7 +26,12 @@ from .. import constants as cs
 from .. import logs as ls
 from ..types_defs import JsonValue
 from ..utils.json_io import loads_json
-from ..utils.path_utils import is_symlink_entry, should_skip_path
+from ..utils.path_utils import (
+    is_regular_file,
+    is_symlink_entry,
+    is_utf8_name,
+    should_skip_path,
+)
 
 
 class ContractOperation(NamedTuple):
@@ -52,10 +57,13 @@ def discover_contract_operations(
     # `dist/` the user rescued) is not skipped here while being indexed.
     operations: list[ContractOperation] = []
     for directory, subdirs, filenames in os.walk(repo_path):
+        # A name that is not UTF-8 is left out, as by the file walk: no graph
+        # key can hold it (#3722).
         subdirs[:] = [
             d
             for d in subdirs
-            if not should_skip_path(
+            if is_utf8_name(d)
+            and not should_skip_path(
                 Path(directory) / d,
                 repo_path,
                 exclude_paths,
@@ -66,8 +74,12 @@ def discover_contract_operations(
         for filename in filenames:
             path = Path(directory) / filename
             # A link is not followed, as by the file walk (issue #2451).
-            if is_symlink_entry(path) or should_skip_path(
-                path, repo_path, exclude_paths, unignore_paths, is_file=True
+            if (
+                not is_utf8_name(filename)
+                or is_symlink_entry(path)
+                or should_skip_path(
+                    path, repo_path, exclude_paths, unignore_paths, is_file=True
+                )
             ):
                 continue
             suffix = path.suffix.lower()
@@ -92,6 +104,10 @@ def _sort_key(operation: ContractOperation) -> tuple[str, str, str, str, str]:
 
 
 def _read_text(path: Path) -> str | None:
+    # This walk is not the indexer's, so it must leave out a pipe, socket or
+    # device itself: the read below would block on a pipe for good (#3721).
+    if not is_regular_file(path):
+        return None
     try:
         if path.stat().st_size > cs.CONTRACT_MAX_FILE_BYTES:
             return None

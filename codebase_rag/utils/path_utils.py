@@ -412,6 +412,56 @@ def is_symlink_entry(path: str | os.PathLike[str]) -> bool:
     return os.path.islink(path)
 
 
+def is_special_file_entry(path: str | os.PathLike[str]) -> bool:
+    """Whether a repository walk leaves this entry out as a pipe, socket or device.
+
+    Opening a named pipe blocks until something writes to it, so hashing one
+    hung the run for good (issue #3721), and a device can be read forever.
+    Judged by `os.lstat`, which never opens the entry. A regular file and a
+    directory are not special, nor is a link, which `is_symlink_entry` judges
+    on its own. An entry `lstat` cannot read is not special either: the
+    unreadable-file handling deals with it, as it did before.
+    """
+    try:
+        mode = os.lstat(path).st_mode
+    except OSError:
+        return False
+    return not (stat.S_ISREG(mode) or stat.S_ISDIR(mode) or stat.S_ISLNK(mode))
+
+
+def is_regular_file(path: str | os.PathLike[str]) -> bool:
+    """Whether a file a reader found by listing a directory itself may be read.
+
+    The walk leaves pipes, sockets and devices out (`is_special_file_entry`),
+    but a resolver that lists folders on its own sees them, and opening a
+    named pipe blocks until something writes to it: one manifest or source
+    of that name hung the whole run (issue #3721). `os.path.isfile` follows
+    a link, so a link to a pipe counts as the pipe, and holds for a regular
+    file only; a path it cannot stat reads as absent, as a failed read did.
+    """
+    return os.path.isfile(path)
+
+
+def is_utf8_name(name: str) -> bool:
+    """Whether a name from a repository walk can be stored as text.
+
+    `os.walk` decodes bytes that are not valid UTF-8 as lone surrogates
+    (PEP 383), and no surrogate encodes: one such file or directory name
+    reached the graph's keys and the hand-off files, and failing to write it
+    ended the whole run (issue #3722). The walk leaves such an entry out.
+    """
+    try:
+        name.encode(cs.ENCODING_UTF8)
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def readable_name(name: str) -> str:
+    """A path `is_utf8_name` rejects, spelled for a log: each bad byte as `\\xff`."""
+    return os.fsencode(name).decode(cs.ENCODING_UTF8, cs.DECODE_ERRORS_BACKSLASHREPLACE)
+
+
 def is_ignored_filename(name: str) -> bool:
     """Whether a filename is a machine-generated artefact, by its ending.
 
@@ -903,12 +953,39 @@ def _skipped_link(
     return True
 
 
+def _skipped_name(
+    name: str, rel_path_str: str, on_undecodable: Callable[[str], None] | None
+) -> bool:
+    """Whether the walk leaves this entry out by its name, reporting it if so."""
+    if is_utf8_name(name):
+        return False
+    if on_undecodable is not None:
+        on_undecodable(rel_path_str)
+    return True
+
+
+def _skipped_special(
+    dirpath: str,
+    name: str,
+    rel_path_str: str,
+    on_special: Callable[[str], None] | None,
+) -> bool:
+    """Whether the walk leaves this file out as a pipe, socket or device."""
+    if not is_special_file_entry(os.path.join(dirpath, name)):
+        return False
+    if on_special is not None:
+        on_special(rel_path_str)
+    return True
+
+
 def walk_eligible_files(
     repo_path: Path,
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
     on_dir: Callable[[str, str], None] | None = None,
     on_symlink: Callable[[str], None] | None = None,
+    on_special: Callable[[str], None] | None = None,
+    on_undecodable: Callable[[str], None] | None = None,
 ) -> Iterator[tuple[str, str, str]]:
     """Yield ``(dirpath, filename, rel_path)`` for every indexable file, in order.
 
@@ -928,7 +1005,11 @@ def walk_eligible_files(
 
     A symbolic link is never walked (`is_symlink_entry`), and ``on_symlink``
     receives the repo-relative path of each one the ignore rules would
-    otherwise have let through, file or directory.
+    otherwise have let through, file or directory. The same goes for a pipe,
+    socket or device (`is_special_file_entry`, reported to ``on_special``)
+    and for a file or directory whose name is not valid UTF-8
+    (`is_utf8_name`, reported to ``on_undecodable``): only regular files the
+    graph can name are yielded.
     """
     repo_str = str(repo_path)
     # A repo path that already ends in a separator (the filesystem root, "/")
@@ -945,18 +1026,25 @@ def walk_eligible_files(
             for d in dirnames
             if should_keep_dir(d, dir_prefix, exclude_paths, unignore_paths)
             and not _skipped_link(dirpath, d, f"{dir_prefix}{d}", on_symlink)
+            and not _skipped_name(d, f"{dir_prefix}{d}", on_undecodable)
         )
         for fname in sorted(filenames):
             if fname in state_filenames:
                 continue
             rel_path_str = f"{dir_prefix}{fname}"
-            if not should_skip_rel_file(
-                rel_path_str,
-                dir_parts,
-                exclude_paths=exclude_paths,
-                unignore_paths=unignore_paths,
-            ) and not _skipped_link(dirpath, fname, rel_path_str, on_symlink):
-                yield dirpath, fname, rel_path_str
+            if (
+                should_skip_rel_file(
+                    rel_path_str,
+                    dir_parts,
+                    exclude_paths=exclude_paths,
+                    unignore_paths=unignore_paths,
+                )
+                or _skipped_link(dirpath, fname, rel_path_str, on_symlink)
+                or _skipped_name(fname, rel_path_str, on_undecodable)
+                or _skipped_special(dirpath, fname, rel_path_str, on_special)
+            ):
+                continue
+            yield dirpath, fname, rel_path_str
 
 
 def rescued_files(
@@ -1005,11 +1093,14 @@ def is_walked_dir(
     """Whether `walk_eligible_files` descends into this repo-relative directory.
 
     The walk prunes one level at a time, so a directory is reached only when
-    every ancestor passes `should_keep_dir` too.
+    every ancestor passes `should_keep_dir` too, under a name `is_utf8_name`
+    accepts.
     """
     prefix = ""
     for part in dir_parts:
-        if not should_keep_dir(part, prefix, exclude_paths, unignore_paths):
+        if not is_utf8_name(part) or not should_keep_dir(
+            part, prefix, exclude_paths, unignore_paths
+        ):
             return False
         prefix = f"{prefix}{part}{cs.SEPARATOR_SLASH}"
     return True
@@ -1029,7 +1120,7 @@ def is_eligible_rel_file(
     under one the user had excluded.
     """
     *dirs, filename = rel_path_str.split(cs.SEPARATOR_SLASH)
-    if filename in cs.CGR_STATE_FILENAMES:
+    if filename in cs.CGR_STATE_FILENAMES or not is_utf8_name(filename):
         return False
     dir_parts = tuple(dirs)
     if not is_walked_dir(dir_parts, exclude_paths, unignore_paths):

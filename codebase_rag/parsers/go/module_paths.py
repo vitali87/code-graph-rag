@@ -7,12 +7,18 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
+from ...utils.path_utils import is_regular_file, is_utf8_name
 
 
 def _module_directive(gomod: Path) -> str | None:
     # The module path is the sole `module <path>` directive; no parenthesised
     # form exists for it, so a line scan suffices. ValueError covers
     # UnicodeDecodeError on a non-UTF-8 go.mod; skip it rather than crash indexing.
+    # Found by `rglob`, not the indexer's walk, so a pipe of this name, or a
+    # link to one, reaches here, and the read below would block on it for
+    # good (#3721).
+    if not is_regular_file(gomod):
+        return None
     try:
         text = gomod.read_text(encoding=cs.ENCODING_UTF8)
     except (OSError, ValueError):
@@ -35,7 +41,12 @@ def discover_go_module_paths(repo_path: Path) -> list[tuple[str, str, Path]]:
     mappings: list[tuple[str, str, Path]] = []
     for gomod in repo_path.rglob(cs.DEP_FILE_GOMOD):
         rel_dir = gomod.parent.relative_to(repo_path)
-        if any(part in cs.IGNORE_PATTERNS for part in rel_dir.parts):
+        # A folder the walk leaves out for its name holds no module either:
+        # its path would reach the import map, which cannot store it (#3722).
+        if any(
+            part in cs.IGNORE_PATTERNS or not is_utf8_name(part)
+            for part in rel_dir.parts
+        ):
             continue
         if module_path := _module_directive(gomod):
             dotted = (
@@ -54,8 +65,12 @@ def discover_go_module_paths(repo_path: Path) -> list[tuple[str, str, Path]]:
 
 def _has_importable_root_package(anchor: Path) -> bool:
     # True when a .go file directly in `anchor` declares a non-main package.
+    # Listed here, not by the indexer's walk, so a pipe with that suffix must
+    # be left out here: the read below would block on it for good (#3721).
     try:
-        go_files = [p for p in anchor.iterdir() if p.suffix == cs.EXT_GO]
+        go_files = [
+            p for p in anchor.iterdir() if p.suffix == cs.EXT_GO and is_regular_file(p)
+        ]
     except OSError:
         return False
     for path in go_files:

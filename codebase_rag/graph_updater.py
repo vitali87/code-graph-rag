@@ -184,9 +184,12 @@ from .utils.path_utils import (
     cached_file_identity_posix,
     cached_relative_path,
     cached_resolve_posix,
+    is_special_file_entry,
+    is_utf8_name,
     normalize_project_name,
     project_roots_from_rows,
     python_stub_has_implementation,
+    readable_name,
     rescued_files,
     should_keep_dir,
     should_skip_path,
@@ -1422,9 +1425,18 @@ def _scan_dir_children(dir_path_str: str) -> tuple[set[str], set[str]]:
             # The walk follows no link, file or directory (issue #2451), so
             # neither may the listing compared against its cache: a file link
             # here would read as a new file and refuse the fast path forever.
-            if name in cs.CGR_STATE_FILENAMES or _entry_flag(entry.is_symlink):
+            # The same goes for a name the walk cannot store (issue #3722)
+            # and for a pipe, socket or device (issue #3721).
+            if (
+                name in cs.CGR_STATE_FILENAMES
+                or _entry_flag(entry.is_symlink)
+                or not is_utf8_name(name)
+            ):
                 continue
-            (dirs if _entry_flag(entry.is_dir) else files).add(name)
+            if _entry_flag(entry.is_dir):
+                dirs.add(name)
+            elif not is_special_file_entry(entry.path):
+                files.add(name)
     return files, dirs
 
 
@@ -1466,6 +1478,15 @@ def _log_skipped_symlinks(repo_path: Path, rel_paths: list[str]) -> None:
     logger.info(ls.SYMLINKS_SKIPPED.format(count=len(rel_paths)))
 
 
+def _log_skipped_entries(template: str, rel_paths: list[str]) -> None:
+    # One warning per run naming every entry, so a file missing from the
+    # graph is traced to the rule that left it out (issues #3721, #3722).
+    if not rel_paths:
+        return
+    names = sorted(readable_name(rel_path) for rel_path in rel_paths)
+    logger.warning(template.format(count=len(names), paths=", ".join(names)))
+
+
 def _cached_file_unchanged(
     file_path_str: str, old_hash: str, cache_mtime: float
 ) -> bool:
@@ -1480,8 +1501,9 @@ def _cached_file_unchanged(
     # A cached path that is a link now, or was indexed through one before
     # links stopped being followed (issue #2451), is not walked, so it is not
     # unchanged: the sync must drop it. `lstat` costs what `stat` did, and
-    # equals it for every other file.
-    if stat.S_ISLNK(info.st_mode):
+    # equals it for every other file. Nor is a pipe, socket or device, which
+    # the hash below would open: a pipe blocks that open for good (#3721).
+    if not stat.S_ISREG(info.st_mode):
         return False
     if _last_changed(info) <= cache_mtime:
         return True
@@ -8097,15 +8119,21 @@ class GraphUpdater:
         # One shared walk with the C++ module-qn map, so the two cannot drift
         # in ORDER as well as in membership (issues #1025, #1099).
         skipped_links: list[str] = []
+        skipped_special: list[str] = []
+        skipped_undecodable: list[str] = []
         for dirpath, fname, rel_path_str in walk_eligible_files(
             self.repo_path,
             self.exclude_paths,
             self.unignore_paths,
             on_dir=_record_dir_mtime,
             on_symlink=skipped_links.append,
+            on_special=skipped_special.append,
+            on_undecodable=skipped_undecodable.append,
         ):
             eligible.append((Path(f"{dirpath}/{fname}"), rel_path_str))
         _log_skipped_symlinks(self.repo_path, skipped_links)
+        _log_skipped_entries(ls.SPECIAL_FILES_SKIPPED, skipped_special)
+        _log_skipped_entries(ls.UNDECODABLE_NAMES_SKIPPED, skipped_undecodable)
         return eligible
 
     def _process_files(self, force: bool = False) -> None:
@@ -9839,14 +9867,18 @@ class GraphUpdater:
         # ignore rules apply here exactly as they do to the walk: a path
         # under `node_modules`, a generated `.min.js`, or a CLI-excluded
         # directory must not become a Module the next update then keeps,
-        # because its hash matches and the walk never revisits it.
+        # because its hash matches and the walk never revisits it. Its name
+        # rule too: the scans that re-parse the other files of a Go package,
+        # or of a folder that became or stopped being a package, list the
+        # folder themselves and ask only this, and a file the walk leaves out
+        # for a name that is not UTF-8 broke the graph write (#3722).
         return should_skip_path(
             path,
             self.repo_path,
             exclude_paths=self.exclude_paths,
             unignore_paths=self.unignore_paths,
             is_file=True,
-        )
+        ) or not is_utf8_name(cached_relative_path(path, self.repo_path).as_posix())
 
     def _reingest_flux_survivors(
         self, present: dict[str, Path], gone: dict[str, Path], hashes: FileHashCache
