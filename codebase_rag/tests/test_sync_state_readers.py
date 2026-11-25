@@ -7,11 +7,14 @@ not convert, raised out of `_load_hash_cache`, and a folder time too large
 for a float out of `_load_dir_mtimes`. A name holding a byte that is not
 UTF-8, which a cache written before #3722 can spell as a `\\udcXX` escape,
 reached the graph's writes and ended the sync; the readers drop such
-entries and keep the rest (docs/reports/PHASE2_FRAME.md, section 6).
+entries and keep the rest. A well-named file whose hash is unusable keeps
+its name, marked unreadable, so the next pass re-reads it as a known file
+(docs/reports/PHASE2_FRAME.md, section 6).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -73,16 +76,31 @@ class TestHashCache:
         assert len(warned) == 1
         assert str(cache) in warned[0]
 
-    def test_an_entry_naming_a_byte_that_is_not_utf8_is_dropped(
+    def test_a_name_with_a_byte_that_is_not_utf8_is_dropped_and_a_bad_hash_kept_unread(
         self, tmp_path: Path
     ) -> None:
+        # A file whose name is fine but whose hash is not keeps its name,
+        # marked as a file the last run could not read: dropping it would hide
+        # an edit to it from the in-sync check and parse it as a new file,
+        # leaving its old definitions in the graph.
         cache = tmp_path / cs.HASH_CACHE_FILENAME
         cache.write_text(
-            json.dumps({"a.py": "1" * 32, OLD_NAME: "2" * 32, "b.py": "bad\udcff"}),
+            json.dumps(
+                {
+                    "a.py": "1" * 32,
+                    OLD_NAME: "2" * 32,
+                    "b.py": "bad\udcff",
+                    "c.py": None,
+                }
+            ),
             encoding=cs.ENCODING_UTF8,
         )
 
-        assert _load_hash_cache(cache) == {"a.py": "1" * 32}
+        assert _load_hash_cache(cache) == {
+            "a.py": "1" * 32,
+            "b.py": cs.HASH_CACHE_UNREADABLE,
+            "c.py": cs.HASH_CACHE_UNREADABLE,
+        }
 
     def test_a_sync_over_a_cache_holding_such_a_name_completes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -126,6 +144,56 @@ class TestHashCache:
             **recorded,
             OLD_NAME: "0" * 32,
         }
+
+    def test_an_edit_to_a_file_whose_cached_hash_is_unusable_is_synced(
+        self, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        edited = repo / "b.py"
+        edited.write_text("def old():\n    return 1\n", encoding="utf-8")
+        graph = tmp_path / "graph.sqlite"
+        parsers, queries = load_parsers()
+
+        def sync() -> GraphUpdater:
+            with MemgraphIngestor(
+                host="unused",
+                port=0,
+                dialect=get_dialect(DIALECT_SQLITE),
+                sqlite_path=str(graph),
+            ) as ingestor:
+                ingestor.ensure_constraints()
+                updater = GraphUpdater(
+                    ingestor, repo, parsers, queries, skip_embeddings=True
+                )
+                updater.run()
+                return updater
+
+        sync()
+        cache = state_file(repo, cs.HASH_CACHE_FILENAME)
+        recorded = json.loads(cache.read_text(encoding=cs.ENCODING_UTF8))
+        stamp = cache.stat()
+        cache.write_text(
+            json.dumps({**recorded, "b.py": "bad\udcff"}, indent=2),
+            encoding=cs.ENCODING_UTF8,
+        )
+        os.utime(cache, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        # Edited in place: the folder's own time does not move, so only the
+        # file's cache entry can tell the in-sync check about the edit.
+        folder = repo.stat()
+        edited.write_text("def new():\n    return 2\n", encoding="utf-8")
+        os.utime(repo, ns=(folder.st_atime_ns, folder.st_mtime_ns))
+        future = stamp.st_mtime_ns + 10_000_000_000
+        os.utime(edited, ns=(future, future))
+
+        updater = sync()
+
+        assert updater.skipped_because_in_sync is False
+        assert (
+            json.loads(cache.read_text(encoding=cs.ENCODING_UTF8))["b.py"]
+            == hashlib.md5(edited.read_bytes()).hexdigest()
+        )
 
 
 class TestFolderTimes:
