@@ -54,13 +54,21 @@ def _package_roots(generated_dir: Path, depth: int) -> list[Path]:
     # not UTF-8 is no root, for the reason `_build_dirs` gives.
     roots = [generated_dir]
     for _ in range(depth):
-        roots = [
-            child
-            for parent in roots
-            for child in sorted(parent.iterdir())
-            if child.is_dir() and is_utf8_name(child.name)
-        ]
+        roots = [child for parent in roots for child in _child_dirs(parent)]
     return roots
+
+
+def _child_dirs(parent: Path) -> list[Path]:
+    # A folder cgr may not list or enter holds no root. Python 3.12 and 3.13
+    # raise PermissionError from `iterdir` and `Path.is_dir` there, which
+    # ended the run (#3748); `os.path.isdir` never raises.
+    try:
+        children = sorted(parent.iterdir())
+    except OSError:
+        return []
+    return [
+        child for child in children if os.path.isdir(child) and is_utf8_name(child.name)
+    ]
 
 
 def discover_generated_source_roots(repo_path: Path) -> list[tuple[str, ...]]:
@@ -69,14 +77,17 @@ def discover_generated_source_roots(repo_path: Path) -> list[tuple[str, ...]]:
     repo_path = repo_path.resolve()
     roots: list[tuple[str, ...]] = []
     for build_dir in _build_dirs(repo_path):
+        # `os.path.isdir`, never `Path.is_dir`: a `target/` or `build/` cgr
+        # may not enter (one a container build left root-owned) raised
+        # PermissionError on Python 3.12 and 3.13 and ended the run (#3748).
         maven = build_dir.joinpath(*_MAVEN_GENERATED)
-        if maven.is_dir():
+        if os.path.isdir(maven):
             roots.extend(
                 tuple(root.relative_to(repo_path).parts)
                 for root in _package_roots(maven, 1)
             )
         gradle = build_dir.joinpath(*_GRADLE_GENERATED)
-        if gradle.is_dir():
+        if os.path.isdir(gradle):
             roots.extend(
                 tuple(root.relative_to(repo_path).parts)
                 for root in _package_roots(gradle, 2)

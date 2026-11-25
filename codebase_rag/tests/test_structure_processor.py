@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag import constants as cs
 from codebase_rag.constants import SupportedLanguage
 from codebase_rag.models import LanguageSpec
 from codebase_rag.parsers import structure_processor
 from codebase_rag.parsers.structure_processor import StructureProcessor
-from codebase_rag.tests.conftest import create_and_run_updater, get_node_names
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    entry_denied,
+    get_node_names,
+    needs_binding_permissions,
+)
 
 
 def _make_mock_queries(
@@ -387,33 +389,32 @@ class TestIdentifyStructure:
         assert Path("a") not in processor.structural_elements
         assert Path("a/b/c") not in processor.structural_elements
 
-    @pytest.mark.skipif(
-        sys.platform == cs.PLATFORM_WINDOWS or os.geteuid() == 0,
-        reason="needs POSIX permissions that bind the user running the tests",
+    @needs_binding_permissions
+    @pytest.mark.parametrize(
+        "locked_rel",
+        ["locked", "pkg/sub/locked"],
+        ids=["one-level-below-the-root", "inside-a-nested-package"],
     )
     def test_a_folder_the_walk_may_not_enter_is_not_a_package(
-        self, temp_repo: Path, mock_ingestor: MagicMock
+        self, temp_repo: Path, mock_ingestor: MagicMock, locked_rel: str
     ) -> None:
         # Issue #3748: the parent lists the folder but nothing in it can be
         # stat'ed, and on Python 3.12 and 3.13 asking for its `__init__.py`
         # raised PermissionError out of the whole run. Python 3.14 reads it
-        # as absent, so the folder is a Folder on every version. Three levels
-        # down because the TypeScript alias search stats `tsconfig.json` in
-        # the first two on its own, before the structure pass runs.
+        # as absent, so the folder is a Folder on every version. One level
+        # down, the run's setup (the tsconfig search) raised before this.
         package = temp_repo / "pkg" / "sub"
-        locked = package / "locked"
-        locked.mkdir(parents=True)
+        package.mkdir(parents=True)
+        locked = temp_repo / locked_rel
+        locked.mkdir(exist_ok=True)
         for directory in (package.parent, package, locked):
             (directory / "__init__.py").touch()
         (package / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
-        locked.chmod(0o000)
-        try:
+        with entry_denied(locked):
             updater = create_and_run_updater(
                 temp_repo, mock_ingestor, skip_if_missing="python"
             )
             is_package = updater.factory.structure_processor.is_package_dir(locked)
-        finally:
-            locked.chmod(0o755)
 
         assert is_package is False
         recorded = {
@@ -424,7 +425,7 @@ class TestIdentifyStructure:
         assert recorded == {
             ("Package", "pkg"),
             ("Package", "pkg/sub"),
-            ("Folder", "pkg/sub/locked"),
+            ("Folder", locked_rel),
         }
         modules = get_node_names(mock_ingestor, "Module")
         assert any(name.endswith(".pkg.sub.mod") for name in modules), modules

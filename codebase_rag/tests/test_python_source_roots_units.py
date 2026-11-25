@@ -13,6 +13,7 @@ from codebase_rag.parsers.python_source_roots import (
     discover_python_source_roots,
     resolve_via_source_roots,
 )
+from codebase_rag.tests.conftest import entry_denied, needs_binding_permissions
 
 PYPROJECT = "[tool.setuptools.package-dir]\n"
 
@@ -407,3 +408,39 @@ def test_the_package_signal_is_recorded_before_the_pyproject_signal(
     assert discover_python_source_roots(tmp_path) == {
         "acme": [("acme", "libs.acme"), ("acme", "libs.acme.inner")]
     }
+
+
+# --- a folder cgr may not enter (#3748) -------------------------------------
+# On Python 3.12 and 3.13 `Path.is_file`, `Path.is_dir` and `iterdir` raised
+# PermissionError there, and discovery runs before the walk, so one such
+# folder ended the run. It now reads as absent, as on Python 3.14.
+
+
+@needs_binding_permissions
+def test_a_src_child_cgr_may_not_enter_reads_as_having_no_init(
+    tmp_path: Path,
+) -> None:
+    # The same answer as when it can be entered: there the package signal
+    # records it, here the src signal does.
+    _pkg(tmp_path, "src/locked")
+    with entry_denied(tmp_path / "src/locked"):
+        roots = discover_python_source_roots(tmp_path)
+    assert roots == {"locked": [("locked", "src.locked")]}
+
+
+@needs_binding_permissions
+def test_a_default_remap_cgr_may_not_list_yields_no_remaps(tmp_path: Path) -> None:
+    (tmp_path / "lib/alpha").mkdir(parents=True)
+    path = _pyproject(tmp_path, PYPROJECT + '"" = "lib"\n')
+    with entry_denied(tmp_path / "lib"):
+        assert _package_dir_remaps(path, tmp_path) == []
+
+
+@needs_binding_permissions
+def test_a_remap_under_a_folder_cgr_may_not_enter_is_skipped(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "locked/inner").mkdir(parents=True)
+    path = _pyproject(tmp_path, PYPROJECT + 'mypkg = "locked/inner"\n')
+    with entry_denied(tmp_path / "locked"):
+        assert _package_dir_remaps(path, tmp_path) == []

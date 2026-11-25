@@ -48,7 +48,10 @@ def _remap_target(base: Path, rel: object, repo_path: Path) -> tuple[Path, str] 
     if not isinstance(rel, str):
         return None
     target = (base / rel).resolve()
-    if not target.is_dir():
+    # `os.path.isdir`, not `Path.is_dir`: on Python 3.12 and 3.13 the latter
+    # raised PermissionError for a target under a folder cgr may not enter,
+    # which ended the run (#3748). Such a target is no remap.
+    if not os.path.isdir(target):
         return None
     try:
         return target, _dotted(target.relative_to(repo_path))
@@ -59,8 +62,14 @@ def _remap_target(base: Path, rel: object, repo_path: Path) -> tuple[Path, str] 
 def _default_remap_children(target: Path, dotted_dir: str) -> list[tuple[str, str]]:
     """The importable children of a default (`"" = "lib"`) remap directory."""
     remaps: list[tuple[str, str]] = []
-    for child in sorted(target.iterdir()):
-        if child.is_dir():
+    # A target cgr may not list or enter has no importable children; letting
+    # its PermissionError through ended the run (#3748).
+    try:
+        children = sorted(target.iterdir())
+    except OSError:
+        return []
+    for child in children:
+        if os.path.isdir(child):
             remaps.append((child.name, f"{dotted_dir}{cs.SEPARATOR_DOT}{child.name}"))
         elif child.suffix == cs.EXT_PY and child.name != cs.INIT_PY:
             remaps.append((child.stem, f"{dotted_dir}{cs.SEPARATOR_DOT}{child.stem}"))
@@ -115,7 +124,9 @@ def _src_dir_roots(
     roots = [
         (child, _dotted(rel / child))
         for child in dirnames
-        if not (current / child / cs.INIT_PY).is_file()
+        # `is_regular_file` never raises: `Path.is_file` did on Python 3.12
+        # and 3.13 for a child cgr may not enter, and ended the run (#3748).
+        if not is_regular_file(current / child / cs.INIT_PY)
     ]
     for filename in filenames:
         if filename.endswith(cs.EXT_PY) and filename != cs.INIT_PY:

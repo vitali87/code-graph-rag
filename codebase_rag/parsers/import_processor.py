@@ -689,7 +689,10 @@ def _find_tsconfig_files(repo_path: Path) -> list[Path]:
     for directory in search_dirs:
         for name in cs.TSCONFIG_FILENAMES:
             candidate = directory / name
-            if candidate.is_file():
+            # `is_regular_file` never raises: `Path.is_file` did on Python
+            # 3.12 and 3.13 inside a folder cgr may not enter, which ended
+            # the run before the walk began (#3748).
+            if is_regular_file(candidate):
                 found.append(candidate)
     return found
 
@@ -753,9 +756,11 @@ def _tsconfig_extends(data: dict, cfg: Path, repo_path: Path) -> list[Path]:
         if not isinstance(entry, str) or not entry.startswith(cs.PATH_CURRENT_DIR):
             continue
         target = Path(os.path.normpath(cfg.parent / entry))
-        if not target.is_file():
+        # `is_regular_file`, as in `_find_tsconfig_files`: a base in a folder
+        # cgr may not enter is not followed, where `Path.is_file` raised (#3748).
+        if not is_regular_file(target):
             target = target.with_name(f"{target.name}{cs.TSCONFIG_EXTENSION}")
-        if target.is_file() and target.is_relative_to(repo_path):
+        if is_regular_file(target) and target.is_relative_to(repo_path):
             found.append(target)
     return found
 

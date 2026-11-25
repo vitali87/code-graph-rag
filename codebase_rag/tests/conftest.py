@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Generator, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Self
@@ -972,6 +973,28 @@ class _MockIngestor:
 @pytest.fixture
 def mock_ingestor() -> _MockIngestor:
     return _MockIngestor()
+
+
+# Mode bits bind only a non-root user on POSIX: root enters a mode-000
+# folder anyway, and Windows ignores the bits.
+needs_binding_permissions = pytest.mark.skipif(
+    sys.platform == rag_cs.PLATFORM_WINDOWS or os.geteuid() == 0,
+    reason="needs POSIX permissions that bind the user running the tests",
+)
+
+
+@contextmanager
+def entry_denied(directory: Path) -> Iterator[None]:
+    """Hold `directory` at mode 000: its parent lists it, nothing in it is reached.
+
+    A folder cgr may not enter (issue #3748). The mode is restored on the
+    way out, so the fixture that made the folder can remove it.
+    """
+    directory.chmod(0o000)
+    try:
+        yield
+    finally:
+        directory.chmod(0o755)
 
 
 def run_updater(

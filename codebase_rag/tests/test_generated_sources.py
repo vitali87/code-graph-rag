@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from codebase_rag.capture import ALL_ENABLED
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -17,6 +19,7 @@ from codebase_rag.parsers.java_generated import (
     generated_prefixes_for,
     generator_hint,
 )
+from codebase_rag.tests.conftest import entry_denied, needs_binding_permissions
 
 _CALLER = (
     "package com.app;\n\nimport com.example.gen.Widget;\n\n"
@@ -184,3 +187,34 @@ def test_generated_provenance_survives_the_protobuf_round_trip(
     ]
     assert generated
     assert all(m.generator == "annotations" for m in generated)
+
+
+@needs_binding_permissions
+@pytest.mark.parametrize(
+    "locked_rel",
+    [
+        "target",
+        "target/generated-sources",
+        "build",
+        "build/generated/sources/annotationProcessor",
+    ],
+)
+def test_a_generated_dir_cgr_may_not_enter_holds_no_root(
+    tmp_path: Path, locked_rel: str
+) -> None:
+    # Issue #3748: a `target/` or `build/` a container build left root-owned
+    # raised PermissionError out of discovery on Python 3.12 and 3.13, which
+    # ended the run before the walk. Only the roots beneath it are lost.
+    (tmp_path / "pom.xml").write_text("<project/>\n", encoding="utf-8")
+    (tmp_path / "build.gradle").write_text("\n", encoding="utf-8")
+    (tmp_path / "target/generated-sources/annotations").mkdir(parents=True)
+    gradle = tmp_path / "build/generated/sources/annotationProcessor/java/main"
+    gradle.mkdir(parents=True)
+    every_root = discover_generated_source_roots(tmp_path)
+    locked = tuple(locked_rel.split("/"))
+
+    with entry_denied(tmp_path / locked_rel):
+        roots = discover_generated_source_roots(tmp_path)
+
+    assert len(every_root) == 2
+    assert roots == [r for r in every_root if r[: len(locked)] != locked]
