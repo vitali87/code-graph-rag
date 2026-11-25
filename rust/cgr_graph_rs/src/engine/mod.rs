@@ -15,13 +15,17 @@
 //! ignore files; `discover` is the walk, which with the hashes gives the
 //! run's file plan. `state` is change detection's file half: the state
 //! folder, the hash cache and folder times, the in-sync check, and each
-//! run's new, changed and deleted files.
+//! run's new, changed and deleted files. `structure` is the structure pass:
+//! the Package and Folder rows, the map of each folder's package, and the
+//! File rows, built as `rows` that Python's ingestor writes.
 
 pub mod discover;
 pub mod ignore;
 #[cfg(feature = "python")]
 pub mod python;
+pub mod rows;
 pub mod state;
+pub mod structure;
 #[cfg(test)]
 mod tests;
 

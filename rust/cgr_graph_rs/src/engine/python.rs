@@ -1,6 +1,11 @@
 //! The Python face of `engine`: the `Engine`, `IgnoreRules` and
 //! `ChangeBaseline` classes that `codebase_rag/engine_frame.py` wraps. They
 //! are internal to cgr, not part of its public surface.
+//!
+//! A row the frame builds for the ingestor crosses as the tuple
+//! `(label, [(key, value), ...], start, rel_type, end)`: the node's label
+//! and its properties in order, then the edge from what contains it, each
+//! end a `(label, key, value)` node identifier.
 
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashSet};
@@ -13,6 +18,7 @@ use pyo3::types::{PyBytes, PyList, PyString, PyTuple};
 
 use super::discover;
 use super::ignore::{self, PatternError};
+use super::rows::{self, ContainedRow, NodeId};
 use super::state::{self, json, Entries};
 
 #[pyclass(frozen, name = "Engine", module = "cgr_graph_rs")]
@@ -423,6 +429,84 @@ impl PyEngine {
         PyTuple::new(py, fields)
     }
 
+    /// The graph schema's names the frame's rows carry, as it holds them:
+    /// `cs.NodeLabel`'s, the property keys and `cs.RelationshipType`'s.
+    #[classattr]
+    #[pyo3(name = "NODE_LABELS")]
+    fn node_labels() -> Vec<&'static str> {
+        rows::NODE_LABELS.to_vec()
+    }
+
+    #[classattr]
+    #[pyo3(name = "PROPERTY_KEYS")]
+    fn property_keys() -> Vec<&'static str> {
+        rows::PROPERTY_KEYS.to_vec()
+    }
+
+    #[classattr]
+    #[pyo3(name = "RELATIONSHIP_TYPES")]
+    fn relationship_types() -> Vec<&'static str> {
+        rows::RELATIONSHIP_TYPES.to_vec()
+    }
+
+    /// The structure pass over the repository at `root`, for the project
+    /// `project_name`, a folder holding a file named as any of `markers` a
+    /// package: `(elements, rows)`, the `structural_elements` map as
+    /// `(path from the root, qualified name or None)` pairs in Python's
+    /// order, and the Package and Folder rows in the order Python writes
+    /// them. Raises `ValueError` where Python's walk raises on a pattern.
+    /// The interpreter lock is released for the walk.
+    #[pyo3(signature = (root, project_name, markers, exclude = None, unignore = None))]
+    fn structure<'py>(
+        &self,
+        py: Python<'py>,
+        root: PathBuf,
+        project_name: String,
+        markers: &Bound<'py, PyAny>,
+        exclude: Option<&Bound<'py, PyAny>>,
+        unignore: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        let rules = ignore::IgnoreRules::new(strings(exclude)?, strings(unignore)?);
+        let markers = strings(Some(markers))?;
+        let found = py
+            .detach(|| {
+                self.engine
+                    .structure(root.as_os_str(), &project_name, &markers, &rules)
+            })
+            .map_err(value_error)?;
+        let rows = found
+            .rows
+            .iter()
+            .map(|row| row_tuple(py, row))
+            .collect::<PyResult<Vec<_>>>()?;
+        (found.elements, rows).into_pyobject(py)
+    }
+
+    /// The File row of each of `paths`, in order, as `process_generic_file`
+    /// writes it for a repository at `root` whose structure map is
+    /// `elements`; None for a path not under `root`. `dot_suffix` is
+    /// whether the running Python gives a name ending in a dot a suffix.
+    /// The interpreter lock is released meanwhile.
+    fn file_rows<'py>(
+        &self,
+        py: Python<'py>,
+        root: PathBuf,
+        project_name: String,
+        elements: Vec<(String, Option<String>)>,
+        paths: Vec<PathBuf>,
+        dot_suffix: bool,
+    ) -> PyResult<Bound<'py, PyList>> {
+        let found = py.detach(|| {
+            self.engine
+                .file_rows(&root, &project_name, &elements, &paths, dot_suffix)
+        });
+        let rows = found
+            .iter()
+            .map(|row| row.as_ref().map(|row| row_tuple(py, row)).transpose())
+            .collect::<PyResult<Vec<_>>>()?;
+        PyList::new(py, rows)
+    }
+
     /// `load_ignore_patterns(root)` as the frame reads the two ignore files
     /// and runs the tracked-source rescue: `(exclude, unignore,
     /// refused_lines, unreadable, tracked_dirs)`, the sets sorted,
@@ -444,6 +528,26 @@ impl PyEngine {
         )
             .into_pyobject(py)
     }
+}
+
+/// A row as it crosses to Python (see the module's doc).
+fn row_tuple<'py>(py: Python<'py>, row: &ContainedRow) -> PyResult<Bound<'py, PyTuple>> {
+    let identifier = |node: &NodeId| (node.label, node.key, node.value.clone());
+    let properties = PyList::new(
+        py,
+        row.node
+            .properties
+            .iter()
+            .map(|(key, value)| (*key, value.as_os_str())),
+    )?;
+    (
+        row.node.label,
+        properties,
+        identifier(&row.relationship.start),
+        row.relationship.rel_type,
+        identifier(&row.relationship.end),
+    )
+        .into_pyobject(py)
 }
 
 /// A run's change-detection baseline (`engine::state::Baseline`), read
