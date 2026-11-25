@@ -8,6 +8,8 @@ smaller pieces (#1669) without a behaviour change hiding in the seams.
 
 from pathlib import Path
 
+import pytest
+
 from codebase_rag.parsers.python_source_roots import (
     _package_dir_remaps,
     discover_python_source_roots,
@@ -410,22 +412,20 @@ def test_the_package_signal_is_recorded_before_the_pyproject_signal(
     }
 
 
-# --- a folder cgr may not enter (#3748) -------------------------------------
-# On Python 3.12 and 3.13 `Path.is_file`, `Path.is_dir` and `iterdir` raised
-# PermissionError there, and discovery runs before the walk, so one such
-# folder ended the run. It now reads as absent, as on Python 3.14.
+# --- a folder cgr may not enter (#3748, #3750) -----------------------------
+# The walk indexes nothing inside such a folder, so it is no source root, and
+# an import into it resolves as if it were absent. On Python 3.12 and 3.13
+# asking about it with `Path.is_file`, `Path.is_dir` or `iterdir` raised
+# PermissionError: discovery ended the run, resolution lost the file's imports.
 
 
 @needs_binding_permissions
-def test_a_src_child_cgr_may_not_enter_reads_as_having_no_init(
-    tmp_path: Path,
-) -> None:
-    # The same answer as when it can be entered: there the package signal
-    # records it, here the src signal does.
+def test_a_src_child_cgr_may_not_enter_is_no_root(tmp_path: Path) -> None:
     _pkg(tmp_path, "src/locked")
+    _pkg(tmp_path, "src/open")
     with entry_denied(tmp_path / "src/locked"):
         roots = discover_python_source_roots(tmp_path)
-    assert roots == {"locked": [("locked", "src.locked")]}
+    assert roots == {"open": [("open", "src.open")]}
 
 
 @needs_binding_permissions
@@ -437,10 +437,34 @@ def test_a_default_remap_cgr_may_not_list_yields_no_remaps(tmp_path: Path) -> No
 
 
 @needs_binding_permissions
-def test_a_remap_under_a_folder_cgr_may_not_enter_is_skipped(
-    tmp_path: Path,
+def test_a_default_remap_child_cgr_may_not_enter_is_no_remap(tmp_path: Path) -> None:
+    (tmp_path / "lib/alpha").mkdir(parents=True)
+    (tmp_path / "lib/beta").mkdir()
+    path = _pyproject(tmp_path, PYPROJECT + '"" = "lib"\n')
+    with entry_denied(tmp_path / "lib/alpha"):
+        assert _package_dir_remaps(path, tmp_path) == [("beta", "lib.beta")]
+
+
+@needs_binding_permissions
+@pytest.mark.parametrize("target", ["locked", "locked/inner"])
+def test_a_remap_into_a_folder_cgr_may_not_enter_is_skipped(
+    tmp_path: Path, target: str
 ) -> None:
     (tmp_path / "locked/inner").mkdir(parents=True)
-    path = _pyproject(tmp_path, PYPROJECT + 'mypkg = "locked/inner"\n')
+    path = _pyproject(tmp_path, PYPROJECT + f'mypkg = "{target}"\n')
     with entry_denied(tmp_path / "locked"):
         assert _package_dir_remaps(path, tmp_path) == []
+
+
+@needs_binding_permissions
+def test_a_submodule_in_a_folder_cgr_may_not_enter_resolves_as_if_absent(
+    tmp_path: Path,
+) -> None:
+    # The on-disk check answers False there instead of raising, so the sole
+    # match is trusted, exactly as it is when the folder is not there at all.
+    (tmp_path / "src/okpkg/locked").mkdir(parents=True)
+    (tmp_path / "src/okpkg/locked/sub.py").write_text("", encoding="utf-8")
+    roots = {"okpkg": [("okpkg", "src.okpkg")]}
+    with entry_denied(tmp_path / "src/okpkg/locked"):
+        resolved = resolve_via_source_roots(tmp_path, roots, "okpkg.locked.sub")
+    assert resolved == "src.okpkg.locked.sub"

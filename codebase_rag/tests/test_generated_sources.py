@@ -195,8 +195,10 @@ def test_generated_provenance_survives_the_protobuf_round_trip(
     [
         "target",
         "target/generated-sources",
+        "target/generated-sources/annotations",
         "build",
         "build/generated/sources/annotationProcessor",
+        "build/generated/sources/annotationProcessor/java/main",
     ],
 )
 def test_a_generated_dir_cgr_may_not_enter_holds_no_root(
@@ -204,7 +206,8 @@ def test_a_generated_dir_cgr_may_not_enter_holds_no_root(
 ) -> None:
     # Issue #3748: a `target/` or `build/` a container build left root-owned
     # raised PermissionError out of discovery on Python 3.12 and 3.13, which
-    # ended the run before the walk. Only the roots beneath it are lost.
+    # ended the run before the walk. A root cgr may not enter is no root
+    # either: the walk indexes nothing in it. Only the roots there are lost.
     (tmp_path / "pom.xml").write_text("<project/>\n", encoding="utf-8")
     (tmp_path / "build.gradle").write_text("\n", encoding="utf-8")
     (tmp_path / "target/generated-sources/annotations").mkdir(parents=True)

@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -274,7 +275,10 @@ class StdlibExtractor:
             self.repo_path / Path(*relative_parts[:-1]) / f"{relative_parts[-1]}.py"
         )
         module_init = self.repo_path / Path(*relative_parts) / "__init__.py"
-        return module_file.exists() or module_init.exists()
+        # `os.path.exists`, never `Path.exists`: on Python 3.12 and 3.13 the
+        # latter raised PermissionError for a module inside a folder cgr may
+        # not enter, which ended the run (#3750). Such a module is absent.
+        return os.path.exists(module_file) or os.path.exists(module_init)
 
     def _extract_js_stdlib_path(self, full_qualified_name: str) -> str:
         cached_result = _get_cached_stdlib_result(
