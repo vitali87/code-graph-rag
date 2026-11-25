@@ -185,9 +185,10 @@ def test_a_first_use_moves_old_state_in_as_python_does(
     monkeypatch.setattr(settings, "CGR_HOME", python_home)
 
     python_dir = prepare_state_dir(python_repo)
-    frame_dir, adopted, failed, unavailable = _engine().prepare_state_dir(
-        frame_home, frame_repo
-    )
+    prepared = _engine().prepare_state_dir(frame_home, frame_repo)
+
+    assert prepared is not None
+    frame_dir, adopted, failed, unavailable = prepared
 
     assert (failed, unavailable) == ([], None)
     assert adopted == [cs.HASH_CACHE_FILENAME, cs.PARSER_FINGERPRINT_FILENAME]
@@ -207,9 +208,10 @@ def test_a_link_under_a_state_file_s_name_is_neither_moved_nor_followed(
     secret.write_text("not cgr's", encoding=cs.ENCODING_UTF8)
     (repo / cs.HASH_CACHE_FILENAME).symlink_to(secret)
 
-    frame_dir, adopted, _failed, _unavailable = _engine().prepare_state_dir(
-        settings.CGR_HOME, repo
-    )
+    prepared = _engine().prepare_state_dir(settings.CGR_HOME, repo)
+
+    assert prepared is not None
+    frame_dir, adopted, _failed, _unavailable = prepared
 
     assert adopted == []
     assert not (Path(frame_dir) / cs.HASH_CACHE_FILENAME).exists()
@@ -838,8 +840,13 @@ def _planted(monkeypatch: pytest.MonkeyPatch, rel_path: str) -> None:
     not among the files to re-parse, and absent from its cache."""
     original = engine_frame.frame_changes
 
-    def planted(*args: object, **kwargs: object) -> engine_frame.FileChanges | None:
-        changes = original(*args, **kwargs)  # type: ignore[arg-type]
+    def planted(
+        baseline: engine_frame.ChangeBaseline,
+        inputs: engine_frame.StateInputs,
+        single: tuple[Path, str | None] | None,
+        graph_paths: frozenset[str] | None,
+    ) -> engine_frame.FileChanges | None:
+        changes = original(baseline, inputs, single, graph_paths)
         assert changes is not None
         hashes = tuple(pair for pair in changes.hashes if pair[0] != rel_path)
         return changes._replace(
@@ -884,9 +891,15 @@ class TestChoosing:
         used: list[tuple[engine_frame.FileChanges, engine_frame.FileChanges]] = []
         original = engine_frame.changes_for_run
 
-        def recording(*args: object) -> engine_frame.FileChanges:
-            chosen = original(*args)  # type: ignore[arg-type]
-            used.append((args[-1], chosen))  # type: ignore[arg-type]
+        def recording(
+            baseline: engine_frame.ChangeBaseline | None,
+            inputs: engine_frame.StateInputs,
+            single: tuple[Path, str | None] | None,
+            graph_paths: frozenset[str] | None,
+            python: engine_frame.FileChanges,
+        ) -> engine_frame.FileChanges:
+            chosen = original(baseline, inputs, single, graph_paths, python)
+            used.append((python, chosen))
             return chosen
 
         monkeypatch.setattr(engine_frame, "changes_for_run", recording)

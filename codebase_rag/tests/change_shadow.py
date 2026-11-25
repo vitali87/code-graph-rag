@@ -33,7 +33,7 @@ import json
 import os
 import sys
 import tempfile
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 
 import pytest
@@ -103,7 +103,7 @@ def _publish_calls() -> tuple[object, ...]:
 _PUBLISH_CALLS = _publish_calls()
 
 
-def _compared(original: object, name: str) -> bool:
+def _compared(original: Callable[..., object], name: str) -> bool:
     """Whether a call can be compared: its function unpatched, and the
     session's check able to compare a run now."""
     if getattr(gu, name) is not original or not FramePlanCheck.compares_changes(_CHECK):
@@ -207,10 +207,13 @@ def _shadow_save_mtimes(cache_path: Path, mtimes: DirMtimesCache) -> None:
 
 # Installed before the check is made, so the check takes the wrappers for
 # the module's own functions, and a test that patches one is not compared.
-gu._load_hash_cache = _shadow_load_hashes
-gu._load_dir_mtimes = _shadow_load_mtimes
-gu._publish_hash_cache = _shadow_publish
-gu._save_dir_mtimes = _shadow_save_mtimes
+for _name, _shadow in (
+    ("_load_hash_cache", _shadow_load_hashes),
+    ("_load_dir_mtimes", _shadow_load_mtimes),
+    ("_publish_hash_cache", _shadow_publish),
+    ("_save_dir_mtimes", _shadow_save_mtimes),
+):
+    setattr(gu, _name, _shadow)
 _CHECK = _Check(_differences.append)
 engine_frame.CHECK = _CHECK
 # Modules that imported a function by name before this plugin loaded hold

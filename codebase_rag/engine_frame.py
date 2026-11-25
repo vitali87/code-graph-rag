@@ -209,6 +209,28 @@ class Engine(Protocol):
 
     def state_dir(self, cgr_home: Path, repo: Path) -> str | None: ...
 
+    def prepare_state_dir(
+        self, cgr_home: Path, repo: Path
+    ) -> tuple[str, list[str], list[tuple[str, str]], str | None] | None: ...
+
+    def read_hash_cache(
+        self, path: Path
+    ) -> tuple[list[tuple[str, str]], str | None]: ...
+
+    def read_dir_mtimes(self, path: Path) -> list[tuple[str, float]]: ...
+
+    def hash_cache_text(self, entries: Sequence[tuple[str, str]]) -> str: ...
+
+    def dir_mtimes_text(self, entries: Sequence[tuple[str, float]]) -> str: ...
+
+    def publish_hash_cache(
+        self, path: Path, entries: Sequence[tuple[str, str]], stamp: float
+    ) -> None: ...
+
+    def save_dir_mtimes(
+        self, path: Path, entries: Sequence[tuple[str, float]]
+    ) -> None: ...
+
     def in_sync(
         self,
         repo: Path,
