@@ -22,8 +22,8 @@ both: every index a test makes compares the frame's file plan with Python's
 walk, whatever language is on Rust, at no second index, and a difference
 fails the test as above. `both` keeps Python's plan for the run; `rust` turns
 the frame on (`engine_frame.ENABLED`), so the run goes on with the frame's.
-A test that patches the built-in names or endings the frame holds copies of
-is not compared.
+A test that patches the built-in names or endings the frame holds copies of,
+or what Python's walk decides with or reads files by, is not compared.
 
 While the build can index no language on Rust (`rust_engine_languages()` is
 empty), `rust` runs exactly what `python` runs and `both` indexes nothing
@@ -43,6 +43,7 @@ nothing.
 
 from __future__ import annotations
 
+import builtins
 import functools
 import hashlib
 import json
@@ -385,14 +386,17 @@ def frame_holds_python_constants() -> bool:
 
 
 def _walk_functions() -> tuple[Callable[..., object], ...]:
-    """What Python's walk decides with: its predicates, and the system calls
-    `os.walk` and they make."""
+    """What Python's walk decides with and its files are read by: the walk's
+    predicates, the system calls `os.walk` and they make, and the reads the
+    sync and the comparison hash with."""
     from codebase_rag.utils import path_utils
 
     return (
         *(getattr(path_utils, name) for name in WALK_PREDICATES),
         *(getattr(os, name) for name in WALK_SYSTEM_CALLS),
         os.path.islink,
+        builtins.open,
+        Path.read_bytes,
     )
 
 
@@ -419,8 +423,9 @@ class FramePlanCheck:
 
     Not compared: a run made while a test has patched the built-in names or
     endings, or one of the functions or system calls Python's walk decides
-    with, to stand in for an older cgr or a failing system. The frame walks
-    by its own copies and the real file system.
+    with or reads files by, to stand in for an older cgr or a failing system
+    (a file that cannot be read). The frame walks and reads by its own
+    copies and the real file system.
     """
 
     def __init__(self, file_report: Callable[[str], None]) -> None:
