@@ -19,7 +19,7 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as rag_cs
-from codebase_rag import graph_audit
+from codebase_rag import engine_frame, graph_audit
 from codebase_rag.capture import CaptureSelection
 from codebase_rag.checkout_state import state_file
 from codebase_rag.config import ModelConfig, settings
@@ -274,15 +274,24 @@ def _grammars_missing_for(updater: GraphUpdater) -> frozenset[rag_cs.SupportedLa
     # would ignore anyway (node_modules, exclusions, hidden dirs) must not
     # gate the test on its language's grammar.
     # The probe is the harness's, not the run's: what the walk logs (each
-    # skipped symlink and their summary, issue #2451) belongs to the run.
+    # skipped symlink and their summary, issue #2451) belongs to the run, and
+    # so does the frame's plan check, which counts and compares each run's
+    # walk. A project run's files are therefore Python's walk taken directly,
+    # the plan `_collect_eligible_files` hands the check, not the check itself.
     logger.disable(GraphUpdater.__module__)
     try:
-        files = updater._collect_eligible_files()
+        if updater._single_file is not None:
+            files = [path for path, _rel_path in updater._collect_eligible_files()]
+        else:
+            plan = engine_frame.python_file_plan(
+                updater.repo_path, updater.exclude_paths, updater.unignore_paths
+            )
+            files = [engine_frame.file_path(file) for file in plan.files]
     finally:
         logger.enable(GraphUpdater.__module__)
     return frozenset(
         language
-        for path, _rel_path in files
+        for path in files
         if (language := get_language_for_extension(path.suffix)) is not None
         and language in unavailable
     )
