@@ -76,7 +76,9 @@ STDERR_TAIL = 4000
 # Where a run writes how the frame differed from Python, empty when it did
 # not: not a hand-off, which both engines write.
 FRAME_FILE = "frame.txt"
-FRAME_READING = "{side} ignore {kind}\t{pattern}"
+FRAME_READING = "ignore {kind}\t{pattern}"
+FRAME_EXCLUDE = "exclude"
+FRAME_UNIGNORE = "unignore"
 FRAME_NOT_COMPARED = "! the frame was not compared: the extension lacks it"
 FILE_LINE = f"{cs.HandoffKind.FILE}{cs.REFERENCE_FIELD_SEPARATOR}"
 
@@ -220,13 +222,13 @@ def _reading_difference(repo_path: Path, ignore: CgrignorePatterns) -> list[str]
     if frame is None:
         return [FRAME_NOT_COMPARED]
     sides = (
-        ("-", "exclude", ignore.exclude - frame.exclude),
-        ("-", "unignore", ignore.unignore - frame.unignore),
-        ("+", "exclude", frame.exclude - ignore.exclude),
-        ("+", "unignore", frame.unignore - ignore.unignore),
+        (cs.REFERENCE_ONLY_EXPECTED, FRAME_EXCLUDE, ignore.exclude - frame.exclude),
+        (cs.REFERENCE_ONLY_EXPECTED, FRAME_UNIGNORE, ignore.unignore - frame.unignore),
+        (cs.REFERENCE_ONLY_ACTUAL, FRAME_EXCLUDE, frame.exclude - ignore.exclude),
+        (cs.REFERENCE_ONLY_ACTUAL, FRAME_UNIGNORE, frame.unignore - ignore.unignore),
     )
     return [
-        FRAME_READING.format(side=side, kind=kind, pattern=pattern)
+        side.format(line=FRAME_READING.format(kind=kind, pattern=pattern))
         for side, kind, patterns in sides
         for pattern in sorted(patterns)
     ]
