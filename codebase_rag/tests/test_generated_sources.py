@@ -6,6 +6,9 @@
 # hint. A repo without build files keeps today's prune untouched.
 from __future__ import annotations
 
+import errno
+import os
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -221,3 +224,30 @@ def test_a_generated_dir_cgr_may_not_enter_holds_no_root(
 
     assert len(every_root) == 2
     assert roots == [r for r in every_root if r[: len(locked)] != locked]
+
+
+def test_a_generated_dir_that_vanishes_before_its_listing_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A build can remove (or lock) `target/generated-sources` between the
+    # check that admits it and the listing of it. The listing's own catch
+    # skips it; the error otherwise ended the whole scan (Greptile on #3749).
+    (tmp_path / "pom.xml").write_text("<project/>\n", encoding="utf-8")
+    (tmp_path / "build.gradle").write_text("\n", encoding="utf-8")
+    (tmp_path / "target/generated-sources/annotations").mkdir(parents=True)
+    (tmp_path / "build/generated/sources/annotationProcessor/java/main").mkdir(
+        parents=True
+    )
+    vanished = tmp_path.resolve() / "target/generated-sources"
+    real_iterdir = Path.iterdir
+
+    def iterdir(self: Path) -> Iterator[Path]:
+        if self == vanished:
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(self))
+        yield from real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+
+    assert discover_generated_source_roots(tmp_path) == [
+        ("build", "generated", "sources", "annotationProcessor", "java", "main")
+    ]

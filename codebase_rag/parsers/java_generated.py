@@ -59,11 +59,17 @@ def _package_roots(generated_dir: Path, depth: int) -> list[Path]:
 
 
 def _child_dirs(parent: Path) -> list[Path]:
-    # `parent` is enterable, so listing it cannot fail. A child folder cgr
-    # may not enter holds no root: the walk indexes nothing in it (#3748).
+    # A child folder cgr may not enter holds no root: the walk indexes
+    # nothing in it (#3748). The listing keeps its own catch: `parent` passed
+    # that check, but a build can remove or lock it before it is listed, and
+    # the error would end the whole scan.
+    try:
+        children = sorted(parent.iterdir())
+    except OSError:
+        return []
     return [
         child
-        for child in sorted(parent.iterdir())
+        for child in children
         if is_enterable_dir(child) and is_utf8_name(child.name)
     ]
 

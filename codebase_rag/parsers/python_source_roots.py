@@ -61,7 +61,13 @@ def _remap_target(base: Path, rel: object, repo_path: Path) -> tuple[Path, str] 
 def _default_remap_children(target: Path, dotted_dir: str) -> list[tuple[str, str]]:
     """The importable children of a default (`"" = "lib"`) remap directory."""
     remaps: list[tuple[str, str]] = []
-    for child in sorted(target.iterdir()):
+    # `target` passed `is_enterable_dir`, but it can still vanish or be
+    # locked before it is listed, and the error would end the run (#3748).
+    try:
+        children = sorted(target.iterdir())
+    except OSError:
+        return []
+    for child in children:
         if os.path.isdir(child):
             # Nor is a child folder cgr may not enter (#3748, #3750).
             if is_enterable_dir(child):

@@ -6,6 +6,9 @@ branch has a test naming it, which is what lets the functions be split into
 smaller pieces (#1669) without a behaviour change hiding in the seams.
 """
 
+import errno
+import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -468,3 +471,25 @@ def test_a_submodule_in_a_folder_cgr_may_not_enter_resolves_as_if_absent(
     with entry_denied(tmp_path / "src/okpkg/locked"):
         resolved = resolve_via_source_roots(tmp_path, roots, "okpkg.locked.sub")
     assert resolved == "src.okpkg.locked.sub"
+
+
+def test_a_default_remap_that_vanishes_before_its_listing_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `lib` passes the check that admits it, then is gone (or locked) when it
+    # is listed. The listing's own catch skips it and the other remap stands;
+    # the error otherwise ended the run (Greptile on #3749).
+    (tmp_path / "lib/alpha").mkdir(parents=True)
+    (tmp_path / "other").mkdir()
+    path = _pyproject(tmp_path, PYPROJECT + '"" = "lib"\nmypkg = "other"\n')
+    vanished = (tmp_path / "lib").resolve()
+    real_iterdir = Path.iterdir
+
+    def iterdir(self: Path) -> Iterator[Path]:
+        if self == vanished:
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(self))
+        yield from real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+
+    assert _package_dir_remaps(path, tmp_path) == [("mypkg", "other")]
