@@ -18,6 +18,7 @@ from codebase_rag.parser_loader import (
 )
 
 THREADS = 6
+THREAD_DEADLINE_S = 60
 
 
 def test_load_parsers_defers_grammar_work() -> None:
@@ -198,22 +199,27 @@ def test_threads_parse_large_sources_at_once() -> None:
         f"def f{i}(a, b):\n    return [a * b for _ in range({i})]\n\n\n".encode()
         for i in range(20_000)
     )
-    start = threading.Barrier(THREADS)
+    # A worker that fails before the barrier breaks it, so the others stop
+    # waiting, and every wait and join is bounded: a failure is reported,
+    # never a hung run.
+    start = threading.Barrier(THREADS, timeout=THREAD_DEADLINE_S)
     failures: list[BaseException] = []
 
     def parse() -> None:
-        parser = load_parsers()[0][cs.SupportedLanguage.PYTHON]
-        start.wait()
         try:
+            parser = load_parsers()[0][cs.SupportedLanguage.PYTHON]
+            start.wait()
             for _ in range(3):
                 assert parser.parse(source).root_node.child_count > 0
         except BaseException as error:  # reported below, not swallowed
+            start.abort()
             failures.append(error)
 
-    threads = [threading.Thread(target=parse) for _ in range(THREADS)]
+    threads = [threading.Thread(target=parse, daemon=True) for _ in range(THREADS)]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join()
+        thread.join(THREAD_DEADLINE_S)
 
+    assert not any(thread.is_alive() for thread in threads), "a parse never ended"
     assert failures == []
