@@ -958,6 +958,78 @@ def test_every_index_checks_the_frame_s_file_plan_failing_on_a_difference(
     assert fnmatch.fnmatch(lines[0], "    - file\ta.py\t*\t*repo\ta.py")
 
 
+STRUCTURE = """
+from codebase_rag import engine_frame
+
+
+@pytest.fixture
+def planted_structure(monkeypatch):
+    original = engine_frame.frame_structure
+
+    def plant(*args):
+        found = original(*args)
+        *kept, last = found.rows
+        properties = tuple(
+            (key, "renamed" if key == "name" else value)
+            for key, value in last.node.properties
+        )
+        node = last.node._replace(properties=properties)
+        return found._replace(rows=(*kept, last._replace(node=node)))
+
+    monkeypatch.setattr(engine_frame, "frame_structure", plant)
+
+
+def folder_repo(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "pkg").mkdir(parents=True)
+    (repo / "pkg" / "a.py").write_text("X = 1\\n", encoding="utf-8")
+    return repo
+
+
+def test_structure_clean(tmp_path):
+    index(folder_repo(tmp_path), tmp_path)
+
+
+def test_structure_planted(planted_structure, tmp_path):
+    updater = index(folder_repo(tmp_path), tmp_path)
+    folders = [
+        call.args[1]["name"]
+        for call in updater.ingestor.ensure_node_batch.call_args_list
+        if call.args[0] == "Folder"
+    ]
+    print(f"\\nPROBE test_structure_planted {folders}")
+"""
+
+
+@pytest.mark.parametrize("mode", ["both", "rust"])
+def test_every_index_checks_the_frame_s_structure_failing_on_a_difference(
+    pytester: pytest.Pytester, clean_env: None, mode: str
+) -> None:
+    pytester.makepyfile(INDEXING + STRUCTURE)
+
+    result = _run(pytester, "-s", "--engine-mode", mode)
+
+    # The planted run's own test passed, and fails at teardown; `rust` wrote
+    # the frame's rows, which the strict check still reports.
+    result.assert_outcomes(passed=2, errors=1)
+    assert any(
+        "ERROR at teardown of test_structure_planted" in line
+        for line in result.outlines
+    )
+    assert _printed(result, "test_structure_planted") == [
+        "['renamed']" if mode == "rust" else "['pkg']"
+    ]
+    start = next(
+        i
+        for i, line in enumerate(result.outlines)
+        if line.startswith("The frame's structure differs from Python's on ")
+    )
+    heading, removed, added = result.outlines[start : start + 3]
+    assert heading.endswith(": 1 lines only in Python's, 1 only in the frame's")
+    assert fnmatch.fnmatch(removed, "    - node\tFolder\tpath=pkg\tname=pkg\t*")
+    assert fnmatch.fnmatch(added, "    + node\tFolder\tpath=pkg\tname=renamed\t*")
+
+
 def test_python_mode_leaves_the_frame_alone(
     pytester: pytest.Pytester, clean_env: None
 ) -> None:
