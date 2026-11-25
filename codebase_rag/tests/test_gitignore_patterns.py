@@ -207,6 +207,27 @@ def test_a_negation_indexing_cannot_compile_is_skipped(
     assert "secret.py" not in files, sorted(files)
 
 
+@pytest.mark.parametrize("line", ["[z-a]", "src/[9-0].py"])
+def test_a_line_whose_range_runs_backwards_is_skipped(
+    tmp_path: Path, line: str
+) -> None:
+    # pathspec hands a bracket range such as `[z-a]` to `re.compile`
+    # unchanged, which raises `re.error`: not a ValueError, so it escaped the
+    # per-line check and stopped the run. It is skipped with one warning.
+    root = _repo(tmp_path, f"secret.py\n{line}\n", ["a.py", "secret.py"])
+    gitignore = root / GITIGNORE_FILENAME
+
+    excludes, warnings = _load_logging_warnings(root)
+
+    assert excludes == frozenset({"secret.py"})
+    assert len(warnings) == 1, warnings
+    assert str(gitignore) in warnings[0], warnings
+    assert "line 2" in warnings[0], warnings
+    files = _indexed_files(root)
+    assert "a.py" in files, sorted(files)
+    assert "secret.py" not in files, sorted(files)
+
+
 def test_a_byte_order_mark_is_not_part_of_the_first_pattern(tmp_path: Path) -> None:
     # Issue #3724: an editor that saves a UTF-8 byte-order mark put it in
     # front of the first pattern, which then matched nothing. Git skips it.

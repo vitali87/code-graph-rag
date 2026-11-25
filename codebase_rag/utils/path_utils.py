@@ -271,7 +271,7 @@ def compiled_ignore_spec(patterns: frozenset[str]) -> _IgnoreMatcher:
     )
 
 
-def ignore_line_error(line: str) -> ValueError | None:
+def ignore_line_error(line: str) -> ValueError | re.error | None:
     """Why pathspec refuses `line` as an ignore pattern, or None if it takes it.
 
     `compiled_ignore_spec` compiles a pattern set at once, so a single line it
@@ -279,12 +279,14 @@ def ignore_line_error(line: str) -> ValueError | None:
     failed the whole run (#3723). The ignore files are checked line by line as
     they are read, so such a line is left out on its own. A line can end up
     among the plain patterns or in an ordered `.gitignore` block, so it is
-    compiled the way each of them compiles it.
+    compiled the way each of them compiles it. pathspec refuses some lines
+    itself (ValueError) and hands others, such as the backwards range
+    `[z-a]`, to `re.compile`, which raises `re.error`.
     """
     try:
         PathSpec.from_lines(cs.GITWILDMATCH_STYLE, [line])
         GitIgnoreSpec.from_lines([line])
-    except ValueError as error:
+    except (ValueError, re.error) as error:
         return error
     return None
 
