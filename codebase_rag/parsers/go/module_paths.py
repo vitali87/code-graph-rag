@@ -173,7 +173,10 @@ def resolve_go_import_path(
                 if dotted_dir
                 else dotted_rel
             )
-            matches.append((module_path, candidate, (anchor / rel).is_dir()))
+            # `os.path.isdir` never raises: `Path.is_dir` did on Python 3.12
+            # and 3.13 for a package in a folder cgr may not enter, and the
+            # import parse lost every import of the file (#3750).
+            matches.append((module_path, candidate, os.path.isdir(anchor / rel)))
     if not matches:
         return None
     longest = max(len(m[0]) for m in matches)

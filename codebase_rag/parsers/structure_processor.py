@@ -1,5 +1,5 @@
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import NamedTuple
 
@@ -96,10 +96,19 @@ class StructureProcessor:
         two container nodes for one directory while reporting that nothing
         changed (greptile-local, issue #1798).
         """
-        return any(
-            (directory / indicator).exists()
-            for indicator in self.package_indicator_names()
-        )
+        return self._has_package_indicator(directory, self.package_indicator_names())
+
+    @staticmethod
+    def _has_package_indicator(directory: Path, indicators: Iterable[str]) -> bool:
+        """Whether any of these indicator files is in the directory.
+
+        `os.path.exists`, never `Path.exists`: on Python 3.12 and 3.13 the
+        latter raised PermissionError for a directory the walk lists but
+        may not enter (mode 000), which ended the whole run. Python 3.14 and
+        `os.path.exists` read that as absent, so such a directory is a
+        Folder on every version (issue #3748).
+        """
+        return any(os.path.exists(directory / indicator) for indicator in indicators)
 
     def _directories_to_derive(self, only: set[str] | None) -> set[Path]:
         """Every walkable directory, or just the ones `only` names.
@@ -256,11 +265,7 @@ class StructureProcessor:
         parent_rel_path = relative_root.parent
         parent_container_qn = self.structural_elements.get(parent_rel_path)
 
-        is_package = any(
-            (root / indicator).exists() for indicator in package_indicators
-        )
-
-        if is_package:
+        if self._has_package_indicator(root, package_indicators):
             package_qn = cs.SEPARATOR_DOT.join(
                 [self.project_name] + list(relative_root.parts)
             )

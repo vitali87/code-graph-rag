@@ -6,13 +6,19 @@ branch has a test naming it, which is what lets the functions be split into
 smaller pieces (#1669) without a behaviour change hiding in the seams.
 """
 
+import errno
+import os
+from collections.abc import Iterator
 from pathlib import Path
+
+import pytest
 
 from codebase_rag.parsers.python_source_roots import (
     _package_dir_remaps,
     discover_python_source_roots,
     resolve_via_source_roots,
 )
+from codebase_rag.tests.conftest import entry_denied, needs_binding_permissions
 
 PYPROJECT = "[tool.setuptools.package-dir]\n"
 
@@ -407,3 +413,83 @@ def test_the_package_signal_is_recorded_before_the_pyproject_signal(
     assert discover_python_source_roots(tmp_path) == {
         "acme": [("acme", "libs.acme"), ("acme", "libs.acme.inner")]
     }
+
+
+# --- a folder cgr may not enter (#3748, #3750) -----------------------------
+# The walk indexes nothing inside such a folder, so it is no source root, and
+# an import into it resolves as if it were absent. On Python 3.12 and 3.13
+# asking about it with `Path.is_file`, `Path.is_dir` or `iterdir` raised
+# PermissionError: discovery ended the run, resolution lost the file's imports.
+
+
+@needs_binding_permissions
+def test_a_src_child_cgr_may_not_enter_is_no_root(tmp_path: Path) -> None:
+    _pkg(tmp_path, "src/locked")
+    _pkg(tmp_path, "src/open")
+    with entry_denied(tmp_path / "src/locked"):
+        roots = discover_python_source_roots(tmp_path)
+    assert roots == {"open": [("open", "src.open")]}
+
+
+@needs_binding_permissions
+def test_a_default_remap_cgr_may_not_list_yields_no_remaps(tmp_path: Path) -> None:
+    (tmp_path / "lib/alpha").mkdir(parents=True)
+    path = _pyproject(tmp_path, PYPROJECT + '"" = "lib"\n')
+    with entry_denied(tmp_path / "lib"):
+        assert _package_dir_remaps(path, tmp_path) == []
+
+
+@needs_binding_permissions
+def test_a_default_remap_child_cgr_may_not_enter_is_no_remap(tmp_path: Path) -> None:
+    (tmp_path / "lib/alpha").mkdir(parents=True)
+    (tmp_path / "lib/beta").mkdir()
+    path = _pyproject(tmp_path, PYPROJECT + '"" = "lib"\n')
+    with entry_denied(tmp_path / "lib/alpha"):
+        assert _package_dir_remaps(path, tmp_path) == [("beta", "lib.beta")]
+
+
+@needs_binding_permissions
+@pytest.mark.parametrize("target", ["locked", "locked/inner"])
+def test_a_remap_into_a_folder_cgr_may_not_enter_is_skipped(
+    tmp_path: Path, target: str
+) -> None:
+    (tmp_path / "locked/inner").mkdir(parents=True)
+    path = _pyproject(tmp_path, PYPROJECT + f'mypkg = "{target}"\n')
+    with entry_denied(tmp_path / "locked"):
+        assert _package_dir_remaps(path, tmp_path) == []
+
+
+@needs_binding_permissions
+def test_a_submodule_in_a_folder_cgr_may_not_enter_resolves_as_if_absent(
+    tmp_path: Path,
+) -> None:
+    # The on-disk check answers False there instead of raising, so the sole
+    # match is trusted, exactly as it is when the folder is not there at all.
+    (tmp_path / "src/okpkg/locked").mkdir(parents=True)
+    (tmp_path / "src/okpkg/locked/sub.py").write_text("", encoding="utf-8")
+    roots = {"okpkg": [("okpkg", "src.okpkg")]}
+    with entry_denied(tmp_path / "src/okpkg/locked"):
+        resolved = resolve_via_source_roots(tmp_path, roots, "okpkg.locked.sub")
+    assert resolved == "src.okpkg.locked.sub"
+
+
+def test_a_default_remap_that_vanishes_before_its_listing_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `lib` passes the check that admits it, then is gone (or locked) when it
+    # is listed. The listing's own catch skips it and the other remap stands;
+    # the error otherwise ended the run (Greptile on #3749).
+    (tmp_path / "lib/alpha").mkdir(parents=True)
+    (tmp_path / "other").mkdir()
+    path = _pyproject(tmp_path, PYPROJECT + '"" = "lib"\nmypkg = "other"\n')
+    vanished = (tmp_path / "lib").resolve()
+    real_iterdir = Path.iterdir
+
+    def iterdir(self: Path) -> Iterator[Path]:
+        if self == vanished:
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(self))
+        yield from real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+
+    assert _package_dir_remaps(path, tmp_path) == [("mypkg", "other")]

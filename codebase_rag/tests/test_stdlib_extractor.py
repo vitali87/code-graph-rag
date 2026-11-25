@@ -7,6 +7,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.parsers import stdlib_extractor as se
 from codebase_rag.parsers.stdlib_extractor import StdlibExtractor
+from codebase_rag.tests.conftest import entry_denied, needs_binding_permissions
 
 
 @pytest.fixture(autouse=True)
@@ -733,3 +734,24 @@ class TestJsExtractorWithMockedNode:
             )
 
             assert result == "http"
+
+
+@needs_binding_permissions
+def test_a_module_in_a_folder_cgr_may_not_enter_is_no_project_module(
+    tmp_path: Path,
+) -> None:
+    # Issue #3750: the project-module check raised PermissionError there on
+    # Python 3.12 and 3.13 and ended the run. Such a module now reads as
+    # absent, so an entity in it resolves to its parent module.
+    project = "cgr_issue_3750_project"
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "mod.py").write_text("def g():\n    return 1\n", encoding="utf-8")
+    extractor = StdlibExtractor(
+        function_registry=None, repo_path=tmp_path, project_name=project
+    )
+
+    with entry_denied(locked):
+        resolved = extractor.extract_module_path(f"{project}.locked.mod")
+
+    assert resolved == f"{project}.locked"

@@ -394,6 +394,26 @@ def test_a_same_language_pair_keeps_the_first_walked_rule(
     assert _module_qns(store) == expected
 
 
+@pytest.mark.parametrize("init", ["__init__.py", "__init__.pyi"])
+def test_a_package_s_init_shares_no_stem_with_another_language_s_init(
+    tmp_path: Path, init: str
+) -> None:
+    # A package's `__init__.py`, or its stub `__init__.pyi`, is named after
+    # its folder, not its stem, so an `__init__.js` beside it is no same-stem
+    # sibling: the stub keeps the package's name, as the source does, and the
+    # JS file its bare one. The stub was taken for a sibling of the JS file
+    # and the two were renamed `proj.pkg.pyi` and `proj.pkg.__init__.js`.
+    root = tmp_path / "proj"
+    _write(root, {f"pkg/{init}": "def f() -> int: ...\n", "pkg/__init__.js": JS_UTIL})
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    assert _module_qns(store) == {
+        f"pkg/{init}": "proj.pkg",
+        "pkg/__init__.js": "proj.pkg.__init__",
+    }
+
+
 @pytest.mark.parametrize(
     ("sibling", "exclude"),
     [(("util.md", "# util\n"), None), (("util.js", JS_UTIL), frozenset({"util.js"}))],

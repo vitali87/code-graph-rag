@@ -689,7 +689,10 @@ def _find_tsconfig_files(repo_path: Path) -> list[Path]:
     for directory in search_dirs:
         for name in cs.TSCONFIG_FILENAMES:
             candidate = directory / name
-            if candidate.is_file():
+            # `is_regular_file` never raises: `Path.is_file` did on Python
+            # 3.12 and 3.13 inside a folder cgr may not enter, which ended
+            # the run before the walk began (#3748).
+            if is_regular_file(candidate):
                 found.append(candidate)
     return found
 
@@ -753,9 +756,11 @@ def _tsconfig_extends(data: dict, cfg: Path, repo_path: Path) -> list[Path]:
         if not isinstance(entry, str) or not entry.startswith(cs.PATH_CURRENT_DIR):
             continue
         target = Path(os.path.normpath(cfg.parent / entry))
-        if not target.is_file():
+        # `is_regular_file`, as in `_find_tsconfig_files`: a base in a folder
+        # cgr may not enter is not followed, where `Path.is_file` raised (#3748).
+        if not is_regular_file(target):
             target = target.with_name(f"{target.name}{cs.TSCONFIG_EXTENSION}")
-        if target.is_file() and target.is_relative_to(repo_path):
+        if is_regular_file(target) and target.is_relative_to(repo_path):
             found.append(target)
     return found
 
@@ -2832,10 +2837,15 @@ class ImportProcessor:
                 *self.java_generated_roots,
             ):
                 base = repo_path.joinpath(*root)
-                if base.joinpath(*parts).is_dir() or any(
-                    base.joinpath(
-                        *parts[: end - 1], f"{parts[end - 1]}{cs.EXT_JAVA}"
-                    ).is_file()
+                # Never raises: `Path.is_dir` and `is_file` did on Python 3.12
+                # and 3.13 inside a folder cgr may not enter, and the import
+                # parse lost every import of the file (#3750).
+                if os.path.isdir(base.joinpath(*parts)) or any(
+                    is_regular_file(
+                        base.joinpath(
+                            *parts[: end - 1], f"{parts[end - 1]}{cs.EXT_JAVA}"
+                        )
+                    )
                     for end in range(len(parts), 0, -1)
                 ):
                     return (
@@ -4667,11 +4677,15 @@ class ImportProcessor:
         segments = full_name[len(project_prefix) :].split(cs.SEPARATOR_DOT)
         for end in range(len(segments), 0, -1):
             candidate = segments[:end]
-            if self.repo_path.joinpath(*candidate).is_dir():
+            # Never raises, for the reason `_java_source_root_prefix_cached`
+            # gives (#3750).
+            if os.path.isdir(self.repo_path.joinpath(*candidate)):
                 break
-            if self.repo_path.joinpath(
-                *candidate[:-1], f"{candidate[-1]}{cs.EXT_JAVA}"
-            ).is_file():
+            if is_regular_file(
+                self.repo_path.joinpath(
+                    *candidate[:-1], f"{candidate[-1]}{cs.EXT_JAVA}"
+                )
+            ):
                 return project_prefix + cs.SEPARATOR_DOT.join(candidate)
         return full_name
 
@@ -5076,10 +5090,12 @@ class ImportProcessor:
             # A folder the walk leaves out for its name holds no crate the
             # graph can name: its path would reach the import map, which
             # cannot store it (#3722).
+            # `os.path.isdir` never raises: `Path.is_dir` did on Python 3.12
+            # and 3.13 for a match in a folder cgr may list but not enter (#3750).
             dirs.extend(
                 match
                 for match in matches
-                if match.is_dir()
+                if os.path.isdir(match)
                 and is_utf8_name(match.relative_to(self.repo_path).as_posix())
             )
         return dirs
@@ -5991,7 +6007,9 @@ class ImportProcessor:
             return declared
         if rest and (
             f"{rest[0]}{cs.EXT_RS}" in entries
-            or (rest[0] in entries and (directory / rest[0]).is_dir())
+            # `os.path.isdir`: `Path.is_dir` raised in a directory cgr may
+            # list but not enter, on Python 3.12 and 3.13 (#3750).
+            or (rest[0] in entries and os.path.isdir(directory / rest[0]))
         ):
             return self._rust_join_mods([*dir_parts, rest[0]], rest[1:])
         if rest and not definitive and chosen is not None:
@@ -6343,8 +6361,11 @@ class ImportProcessor:
             return False
         rel = module_qn[len(prefix) :].replace(cs.SEPARATOR_DOT, cs.SEPARATOR_SLASH)
         # A stub-only package's `__init__.pyi` names the package too (#2445).
+        # `is_regular_file` never raises: `Path.is_file` did on Python 3.12
+        # and 3.13 inside a folder cgr may not enter (#3750).
         return any(
-            (self.repo_path / rel / init).is_file() for init in cs.PY_PACKAGE_INIT_FILES
+            is_regular_file(self.repo_path / rel / init)
+            for init in cs.PY_PACKAGE_INIT_FILES
         )
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
@@ -6621,14 +6642,17 @@ class ImportProcessor:
         the tsconfig-alias resolver and the unresolved-specifier probe so the
         two cannot disagree about what "exists" means.
         """
+        # Never raises: `Path.is_file` and `is_dir` did on Python 3.12 and
+        # 3.13 inside a folder cgr may not enter, and the import parse lost
+        # every import of the file (#3750).
         if any(
-            (self.repo_path / f"{normalized}{ext}").is_file()
+            is_regular_file(self.repo_path / f"{normalized}{ext}")
             for ext in cs.JS_TS_MODULE_EXTENSIONS
         ):
             return normalized
         directory = self.repo_path / normalized
-        if directory.is_dir() and any(
-            (directory / f"{cs.JS_INDEX_STEM}{ext}").is_file()
+        if os.path.isdir(directory) and any(
+            is_regular_file(directory / f"{cs.JS_INDEX_STEM}{ext}")
             for ext in cs.JS_TS_MODULE_EXTENSIONS
         ):
             return f"{normalized}{cs.SEPARATOR_SLASH}{cs.JS_INDEX_STEM}"
@@ -8983,7 +9007,9 @@ class ImportProcessor:
         found = sorted(
             c
             for c in candidates
-            if (self.repo_path / c).is_file()
+            # `is_regular_file` never raises: `Path.is_file` did on Python
+            # 3.12 and 3.13 inside a folder cgr may not enter (#3750).
+            if is_regular_file(self.repo_path / c)
             and not self._julia_candidate_excluded(c)
             and (
                 importer_root is None or self._julia_nested_pkg_root(c) == importer_root

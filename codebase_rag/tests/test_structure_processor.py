@@ -9,6 +9,12 @@ from codebase_rag.constants import SupportedLanguage
 from codebase_rag.models import LanguageSpec
 from codebase_rag.parsers import structure_processor
 from codebase_rag.parsers.structure_processor import StructureProcessor
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    entry_denied,
+    get_node_names,
+    needs_binding_permissions,
+)
 
 
 def _make_mock_queries(
@@ -382,6 +388,47 @@ class TestIdentifyStructure:
         assert Path("a/b") in processor.structural_elements
         assert Path("a") not in processor.structural_elements
         assert Path("a/b/c") not in processor.structural_elements
+
+    @needs_binding_permissions
+    @pytest.mark.parametrize(
+        "locked_rel",
+        ["locked", "pkg/sub/locked"],
+        ids=["one-level-below-the-root", "inside-a-nested-package"],
+    )
+    def test_a_folder_the_walk_may_not_enter_is_not_a_package(
+        self, temp_repo: Path, mock_ingestor: MagicMock, locked_rel: str
+    ) -> None:
+        # Issue #3748: the parent lists the folder but nothing in it can be
+        # stat'ed, and on Python 3.12 and 3.13 asking for its `__init__.py`
+        # raised PermissionError out of the whole run. Python 3.14 reads it
+        # as absent, so the folder is a Folder on every version. One level
+        # down, the run's setup (the tsconfig search) raised before this.
+        package = temp_repo / "pkg" / "sub"
+        package.mkdir(parents=True)
+        locked = temp_repo / locked_rel
+        locked.mkdir(exist_ok=True)
+        for directory in (package.parent, package, locked):
+            (directory / "__init__.py").touch()
+        (package / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        with entry_denied(locked):
+            updater = create_and_run_updater(
+                temp_repo, mock_ingestor, skip_if_missing="python"
+            )
+            is_package = updater.factory.structure_processor.is_package_dir(locked)
+
+        assert is_package is False
+        recorded = {
+            (c.args[0], c.args[1].get("path"))
+            for c in mock_ingestor.ensure_node_batch.call_args_list
+            if c.args[0] in ("Package", "Folder")
+        }
+        assert recorded == {
+            ("Package", "pkg"),
+            ("Package", "pkg/sub"),
+            ("Folder", locked_rel),
+        }
+        modules = get_node_names(mock_ingestor, "Module")
+        assert any(name.endswith(".pkg.sub.mod") for name in modules), modules
 
 
 class TestProcessGenericFile:

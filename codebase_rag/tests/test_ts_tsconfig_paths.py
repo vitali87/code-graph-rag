@@ -4,6 +4,11 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.import_processor import (
+    _find_tsconfig_files,
+    _tsconfig_extends,
+)
+from codebase_rag.tests.conftest import entry_denied, needs_binding_permissions
 from evals.cgr_graph import _capture
 
 
@@ -110,3 +115,31 @@ def test_tsconfig_paths_alias_calls_resolve_to_first_party_files(
     # first-party file, so the alias must NOT apply and the external `pkgCollide`
     # call must not rebind to the first-party `src/collide.pkgCollide`.
     assert ("proj.a.useExternal", "proj.src.collide.pkgCollide") not in calls
+
+
+@needs_binding_permissions
+def test_the_tsconfig_search_passes_a_folder_cgr_may_not_enter(
+    tmp_path: Path,
+) -> None:
+    # Issue #3748: the search asks for a config in every folder one and two
+    # levels down, before the walk. In one cgr may not enter `Path.is_file`
+    # raised PermissionError on Python 3.12 and 3.13 and ended the run.
+    (tmp_path / "tsconfig.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "locked").mkdir()
+    (tmp_path / "locked" / "tsconfig.json").write_text("{}\n", encoding="utf-8")
+    with entry_denied(tmp_path / "locked"):
+        assert _find_tsconfig_files(tmp_path) == [tmp_path / "tsconfig.json"]
+
+
+@needs_binding_permissions
+def test_an_extends_into_a_folder_cgr_may_not_enter_is_not_followed(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "locked" / "base.json"
+    base.parent.mkdir()
+    base.write_text("{}\n", encoding="utf-8")
+    cfg = tmp_path / "tsconfig.json"
+    data = {"extends": "./locked/base.json"}
+    assert _tsconfig_extends(data, cfg, tmp_path) == [base]
+    with entry_denied(base.parent):
+        assert _tsconfig_extends(data, cfg, tmp_path) == []

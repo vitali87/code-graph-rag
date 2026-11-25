@@ -18,7 +18,7 @@ from ...types_defs import (
     PropertyDict,
     SimpleNameLookup,
 )
-from ...utils.path_utils import cached_resolve_posix
+from ...utils.path_utils import cached_resolve_posix, is_regular_file
 from ..cpp.utils import cpp_include_local_name
 from ..definition_docstring import libclang_docstring
 from . import constants as fc
@@ -72,7 +72,10 @@ def find_compile_commands(start: Path) -> Path | None:
             if candidate in seen:
                 continue
             seen.add(candidate)
-            if (candidate / _COMPILE_COMMANDS).is_file():
+            # `is_regular_file` never raises: `Path.is_file` did on Python
+            # 3.12 and 3.13 under a `build/` cgr may not enter, and ended
+            # the run (#3748).
+            if is_regular_file(candidate / _COMPILE_COMMANDS):
                 return candidate
     return None
 
