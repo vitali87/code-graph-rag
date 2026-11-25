@@ -242,14 +242,16 @@ def _stored_language(path: object) -> cs.SupportedLanguage | None:
     )
 
 
-def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
-    owner: str | None = None
-    for candidate in module_qns:
-        if qn.startswith(candidate + cs.SEPARATOR_DOT) and (
-            owner is None or len(candidate) > len(owner)
-        ):
-            owner = candidate
-    return owner
+def _owning_module_qn(qn: str, module_qns: Collection[str]) -> str | None:
+    # The longest module qn `qn` sits under. Read off `qn`'s own prefixes, so
+    # a lookup costs its depth whatever the number of modules: the
+    # foreign-definer lookup asks once for every definition of the run.
+    head, separator, _tail = qn.rpartition(cs.SEPARATOR_DOT)
+    while separator:
+        if head in module_qns:
+            return head
+        head, separator, _tail = head.rpartition(cs.SEPARATOR_DOT)
+    return None
 
 
 def _route_label(node_type: NodeType) -> cs.NodeLabel:
@@ -6501,8 +6503,16 @@ class GraphUpdater:
 
         The span records already name the registering module, so the files
         to re-parse are exactly those that recorded a qn under a departing
-        module without being that module themselves. Read before
-        `remove_file_from_state` runs, while the run's records still stand.
+        module without being that module themselves. A module nested under
+        the departing one keeps what it records in its own namespace:
+        `proj.pkg.types.sub.s` is pkg/types/sub.py's, and matched by the
+        prefix alone a reused updater re-parsed sub.py where a fresh process
+        did not (issue #3727). Only the registering module is weighed against
+        the departing one, not every module: a module qn can spell a type
+        path (pkg/types/box.go is `proj.pkg.types.box`, as is the type `box`
+        in pkg/types.go), and methods.go's `proj.pkg.types.box.Grow` still
+        hangs off types.go. Read before `remove_file_from_state` runs, while
+        the run's records still stand.
         """
         gone = set(gone_keys)
         if not gone:
@@ -6520,8 +6530,12 @@ class GraphUpdater:
             if span_module in gone_modules:
                 continue
             qn = location.qualified_name
-            if any(
-                qn.startswith(f"{module}{cs.SEPARATOR_DOT}") for module in gone_modules
+            owner = _owning_module_qn(qn, gone_modules)
+            # The nearer of the two: box.cpp is `proj.box`, above box.h's
+            # `proj.box.h`, so its `proj.box.h.Box.grow` is still box.h's.
+            if (
+                owner is not None
+                and _owning_module_qn(qn, (owner, span_module)) == owner
             ):
                 definers.add(span_module)
         return {
@@ -7849,7 +7863,10 @@ class GraphUpdater:
         # directory lets a toolchain probe that times out reuse an earlier
         # run's answer instead of reading as a missing toolchain.
         if stored is None or stored != compute_parser_fingerprint(
-            repo_path=self.repo_path, capture=self.capture, state_dir=self.state_dir
+            repo_path=self.repo_path,
+            capture=self.capture,
+            state_dir=self.state_dir,
+            engines=self.engines,
         ):
             self._parser_changed = True
             logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
@@ -9299,7 +9316,10 @@ class GraphUpdater:
             is_full_build or (self._parser_changed and self._single_file is None)
         ):
             self._pending_parser_fingerprint = compute_parser_fingerprint(
-                repo_path=self.repo_path, capture=self.capture, state_dir=self.state_dir
+                repo_path=self.repo_path,
+                capture=self.capture,
+                state_dir=self.state_dir,
+                engines=self.engines,
             )
 
     def _forget_evicted_captures(self, file_path: Path) -> None:
@@ -10627,28 +10647,42 @@ class GraphUpdater:
         if self._exposes_map_kept:
             # As at the batch commit: the cache owes the skipped cleanup.
             hashes = _unconfirmed(hashes)
-        _save_hash_cache(cache_path, hashes)
         # The cache's mtime is the instant every file NOT in it was last
         # judged (`_is_already_in_sync` and the walk skip files no newer
-        # than it). Writing moves it to now, which would hide an edit made
+        # than it). A write moves it to now, which would hide an edit made
         # before this call to a file this call was not told about: the next
         # update would read it as older than the cache and keep the stale
-        # hash. Put the previous instant back; the files re-ingested here
-        # are newer than it, so the next run re-hashes them and finds them
-        # already current. Fail closed like `run()`: a cache stamped with
-        # the wrong time is worse than no cache.
+        # hash. So the previous instant is kept, and set before the cache
+        # becomes visible, by the publish `run()` uses (#1646, #1700).
+        # Written in place and backdated after, the cache followed a link at
+        # its path, and a stop between the write and the backdate left the
+        # write time on it (issue #3726). The files re-ingested here are
+        # newer than that instant, so the next run re-hashes them and finds
+        # them already current.
+        if _publish_hash_cache(cache_path, hashes, observed_at):
+            return
+        # A failed publish leaves the previous cache whole and at its own
+        # instant, as it does for `run()`. Being one call behind costs the
+        # next run a re-hash of the files re-parsed here, which are newer
+        # than that instant. It stays: it is the record the watcher reads to
+        # retract the files under a deleted directory or a file that became
+        # a link, and no later scoped call recreates a missing one
+        # (Greptile and CodeRabbit, PR #3733).
+        if not self._exposes_map_kept:
+            return
+        # Unless this call owes a skipped EXPOSES cleanup that only the cache
+        # could record (`_unconfirmed` above): the previous one marks every
+        # file confirmed, so the next run could take the in-sync path past
+        # it. Fail closed: no cache costs that run a rebuild instead.
+        logger.warning(ls.REINGEST_CACHE_PUBLISH_FAILED, path=cache_path)
         try:
-            os.utime(cache_path, (observed_at, observed_at))
-        except OSError as e:
-            logger.warning(ls.REINGEST_CACHE_STAMP_FAILED, path=cache_path, error=e)
-            try:
-                cache_path.unlink(missing_ok=True)
-            except OSError as unlink_error:
-                logger.warning(
-                    ls.REINGEST_CACHE_STAMP_CLEANUP_FAILED,
-                    path=cache_path,
-                    error=unlink_error,
-                )
+            cache_path.unlink(missing_ok=True)
+        except OSError as unlink_error:
+            logger.warning(
+                ls.REINGEST_CACHE_PUBLISH_CLEANUP_FAILED,
+                path=cache_path,
+                error=unlink_error,
+            )
 
     def has_indexed(self, path: Path) -> bool:
         """Whether the last run or re-ingest indexed the file at `path`.

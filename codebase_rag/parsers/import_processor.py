@@ -1,6 +1,7 @@
 import os
 import posixpath
 import re
+import threading
 import tomllib
 from collections.abc import Iterator, Mapping, Sequence
 from enum import Enum, auto
@@ -309,6 +310,16 @@ def _rs_char_escape_end(source: str, k: int) -> int:
     if k < n and source[k] == "x":
         return k + 3
     return k + 1
+
+
+class _ThreadJuliaParser(threading.local):
+    # The Julia fallback's lazily loaded parser, one per thread.
+    def __init__(self) -> None:
+        self.loaded = False
+        self.parser: Parser | None = None
+
+
+_JULIA_PARSER = _ThreadJuliaParser()
 
 
 class RustEntryDecls(NamedTuple):
@@ -8765,7 +8776,9 @@ class ImportProcessor:
         one on demand. tree-sitter-julia ships with the treesitter-full
         extra; without it the fallback degrades to the path/stem lookups.
         """
-        if not hasattr(cls, "_julia_ts_parser"):
+        # One per thread: py-tree-sitter 0.27 refuses a second parse on a
+        # parser already in use, and re-ingests run on MCP worker threads.
+        if not _JULIA_PARSER.loaded:
             parser: Parser | None = None
             try:
                 import importlib
@@ -8778,8 +8791,9 @@ class ImportProcessor:
                 parser = Parser(Language(grammar.language()))
             except Exception:
                 parser = None
-            cls._julia_ts_parser = parser
-        return cls._julia_ts_parser
+            _JULIA_PARSER.parser = parser
+            _JULIA_PARSER.loaded = True
+        return _JULIA_PARSER.parser
 
     def _julia_nested_pkg_root(self, path: str) -> str | None:
         # The nearest enclosing directory with its own Project.toml (the

@@ -421,6 +421,10 @@ CGRIGNORE_LOADED = (
     "Loaded {exclude_count} exclude and {unignore_count} unignore patterns from {path}"
 )
 CGRIGNORE_READ_FAILED = "Failed to read {path}: {error}"
+CGRIGNORE_LINE_SKIPPED = (
+    "Skipping line {line_number} of {path}, which is not a valid ignore "
+    "pattern: {error}"
+)
 
 CGR_INSTRUCTIONS_LOADED = "Loaded project instructions from {path} ({chars} chars)"
 CGR_INSTRUCTIONS_READ_FAILED = "Failed to read project instructions {path}: {error}"
@@ -1333,17 +1337,21 @@ HASH_CACHE_SAVE_FAILED = (
     "Failed to save hash cache to {path}: {error} "
     "(errno={errno} strerror={strerror} failing_path={failing_path})"
 )
-# A scoped re-ingest backdates the hash cache to the instant it observed
-# (`_reingest_update_hashes`); these name that step, distinct from the
-# atomic publish's own temporary-file cleanup below.
-REINGEST_CACHE_STAMP_FAILED = (
-    "Could not backdate {path} to the observed instant ({error}); removing it so "
-    "the next run rebuilds rather than trusting a stamp that can hide edits"
+# A scoped re-ingest publishes the hash cache stamped with the instant it
+# observed (`_reingest_update_hashes`). When that fails it keeps the previous
+# cache, unless the cache alone owed a skipped EXPOSES cleanup; these name
+# that removal, distinct from the atomic publish's own temporary-file cleanup
+# below. The publish logs its own cause first.
+REINGEST_CACHE_PUBLISH_FAILED = (
+    "Could not publish {path} stamped with the observed instant; removing it so "
+    "the next run rebuilds rather than trusting a cache that does not record the "
+    "EXPOSES cleanup this re-ingest owes"
 )
-REINGEST_CACHE_STAMP_CLEANUP_FAILED = (
-    "Could not remove {path} after its backdate failed ({error}); it keeps a write "
-    "time later than any edit made during this run, so the next run may skip that "
-    "file. Delete it by hand, or re-run once the path is writable"
+REINGEST_CACHE_PUBLISH_CLEANUP_FAILED = (
+    "Could not remove {path} after its publish failed ({error}); it still marks "
+    "every file confirmed, so the next run may treat the project as in sync and "
+    "skip the EXPOSES cleanup this re-ingest owes. Delete it by hand, or re-run "
+    "once the path is writable"
 )
 CACHE_STAMP_CLEANUP_FAILED = (
     "Could not remove the temporary cache file {path} ({error}); it is inert, since "
