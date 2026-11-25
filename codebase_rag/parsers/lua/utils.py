@@ -205,7 +205,7 @@ def extract_pcall_second_identifier(call_node: Node) -> str | None:
     for i in range(variable_list.child_count):
         if variable_list.field_name_for_child(i) == cs.FIELD_NAME:
             name_node = variable_list.child(i)
-            if name_node and name_node.type == cs.TS_LUA_IDENTIFIER:
+            if name_node is not None and name_node.type == cs.TS_LUA_IDENTIFIER:
                 if decoded := safe_decode_text(name_node):
                     names.append(decoded)
 

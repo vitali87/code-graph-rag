@@ -552,6 +552,47 @@ class _LazyLanguageView[V](Mapping[cs.SupportedLanguage, V]):
         return len(self._data)
 
 
+class _ThreadEntries[V](threading.local):
+    # One thread's own entries, made on first use; a fresh dict per thread.
+    def __init__(self) -> None:
+        self.made: dict[cs.SupportedLanguage, V] = {}
+
+
+class _ThreadLanguageView[V](Mapping[cs.SupportedLanguage, V]):
+    # The store's per-language entries as the calling thread sees them.
+    # py-tree-sitter 0.27 releases the interpreter lock while it parses a
+    # large buffer and refuses a second parse on a parser already in use
+    # ("the parser is already in use"), where 0.26 held the lock and so
+    # serialised every parse. The MCP server runs tool calls on worker
+    # threads, so one process-wide parser shared by two of them failed one.
+    # Each thread gets its own entry, made from the shared one on first use
+    # (a Parser is cheap; the Language and the compiled queries are shared),
+    # and the same object every time after that. Availability, iteration and
+    # length are the shared view's.
+    __slots__ = ("_entries", "_make", "_shared")
+
+    def __init__(
+        self,
+        shared: Mapping[cs.SupportedLanguage, V],
+        make: Callable[[cs.SupportedLanguage, V], V],
+    ) -> None:
+        self._shared = shared
+        self._make = make
+        self._entries: _ThreadEntries[V] = _ThreadEntries()
+
+    def __getitem__(self, lang_name: cs.SupportedLanguage) -> V:
+        made = self._entries.made
+        if (entry := made.get(lang_name)) is None:
+            entry = made[lang_name] = self._make(lang_name, self._shared[lang_name])
+        return entry
+
+    def __iter__(self) -> Iterator[cs.SupportedLanguage]:
+        return iter(self._shared)
+
+    def __len__(self) -> int:
+        return len(self._shared)
+
+
 class _LazyGrammarStore:
     # Process-wide cache: grammars load once per interpreter, not once per
     # load_parsers() call (which previously recompiled EVERY language's
@@ -563,12 +604,32 @@ class _LazyGrammarStore:
         self._query_data: dict[cs.SupportedLanguage, LanguageQueries] = {}
         self._attempted: set[object] = set()
         self._lock = threading.Lock()
-        self.parsers: Mapping[cs.SupportedLanguage, Parser] = _LazyLanguageView(
+        shared_parsers = _LazyLanguageView(
             self._parser_data, self._ensure, self._probe_all
         )
-        self.queries: Mapping[cs.SupportedLanguage, LanguageQueries] = (
+        self._shared_queries: Mapping[cs.SupportedLanguage, LanguageQueries] = (
             _LazyLanguageView(self._query_data, self._ensure, self._probe_all)
         )
+        self.parsers: Mapping[cs.SupportedLanguage, Parser] = _ThreadLanguageView(
+            shared_parsers, self._thread_parser
+        )
+        self.queries: Mapping[cs.SupportedLanguage, LanguageQueries] = (
+            _ThreadLanguageView(self._shared_queries, self._thread_queries)
+        )
+
+    def _thread_parser(
+        self, lang_name: cs.SupportedLanguage, _shared: Parser
+    ) -> Parser:
+        return Parser(self._shared_queries[lang_name]["language"])
+
+    def _thread_queries(
+        self, lang_name: cs.SupportedLanguage, shared: LanguageQueries
+    ) -> LanguageQueries:
+        # The thread's query set names the thread's parser, which the indexer
+        # reads from it (`KEY_PARSER`).
+        own = shared.copy()
+        own["parser"] = self.parsers[lang_name]
+        return own
 
     def _ensure(self, lang_name: object) -> bool:
         # the lock-free fast path must see BOTH twin entries: the loader
