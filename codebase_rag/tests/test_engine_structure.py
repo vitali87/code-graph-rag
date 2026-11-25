@@ -105,6 +105,12 @@ class _Recorded:
     def structure_differs(self, repo_path: Path, difference: Sequence[str]) -> None:
         self.structures.append(list(difference))
 
+    def compares_modules(self) -> bool:
+        return False
+
+    def modules_differ(self, repo_path: Path, difference: Sequence[str]) -> None:
+        raise AssertionError(list(difference))
+
 
 @pytest.fixture
 def checked(monkeypatch: pytest.MonkeyPatch) -> _Recorded:

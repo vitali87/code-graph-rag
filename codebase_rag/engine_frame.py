@@ -34,6 +34,13 @@ Package and Folder rows and the map of each folder's package
 (`structure_for_run`), and the File rows of the files a run indexes
 (`file_rows_for_run`), checked the same way. The frame builds the rows;
 the structure processor still writes them, at the point it always has.
+
+The merge (src/engine/merge.rs) folds each parsed file's summary into the
+project's index in walk order. In phase 2 it fills the module names: which
+file claims each module's bare name and which keep their extension
+(`modules_for_run`), compared with the module map the definition processor
+filled, as `index.txt`'s `module` lines. Python's map is the one every run
+goes on with until phase 3, so a difference is only told or warned of.
 """
 
 from __future__ import annotations
@@ -51,8 +58,13 @@ from . import constants as cs
 from . import logs as ls
 from .canonical_graph import difference_in_order
 from .embedded_graph.extension import rust_extension
+from .language_spec import LANGUAGE_SPECS, get_language_for_extension
 from .types_defs import NodeIdentifier
-from .utils.path_utils import readable_name, walk_eligible_files
+from .utils.path_utils import (
+    cached_relative_path,
+    readable_name,
+    walk_eligible_files,
+)
 
 # Whether the indexer uses the frame. Off until phase 2's last step; the
 # parity tests compare the frame with the Python engine either way.
@@ -195,6 +207,22 @@ class Structure(NamedTuple):
     rows: tuple[ContainedRow, ...]
 
 
+class ModuleClaim(NamedTuple):
+    """A file a run parsed into the module map, as the frame's summary of it
+    carries it: its place in the order the run parses its files, which is
+    the file plan's, its path from the root, and the language it was read
+    as."""
+
+    walk_index: int
+    rel_path: str
+    language: cs.SupportedLanguage
+
+
+class ModuleNaming(Protocol):
+    """The language tables the frame derives module names by, held for
+    `Engine.module_plan`."""
+
+
 class ChangeBaseline(Protocol):
     """The frame's baseline for a run, held for `Engine.changes`."""
 
@@ -239,6 +267,9 @@ type RawNodeId = tuple[str, str, str]
 # edge from what contains it.
 type RawRow = tuple[str, list[tuple[str, str]], RawNodeId, str, RawNodeId]
 type RawStructure = tuple[list[tuple[str, str | None]], list[RawRow]]
+# A module the frame's plan holds: its qualified name, then the path from the
+# root and the language of the file that claimed it.
+type PlannedModule = tuple[str, str, str]
 
 
 class Engine(Protocol):
@@ -330,6 +361,17 @@ class Engine(Protocol):
         dot_suffix: bool,
     ) -> list[RawRow | None]: ...
 
+    def module_plan(
+        self,
+        root: Path,
+        project_name: str,
+        naming: ModuleNaming,
+        claims: Sequence[ModuleClaim],
+        dot_suffix: bool,
+        exclude: Iterable[str] | None = None,
+        unignore: Iterable[str] | None = None,
+    ) -> list[PlannedModule]: ...
+
 
 class IgnoreRules(Protocol):
     """The ignore rules over one exclude set and one unignore set.
@@ -366,8 +408,9 @@ class PlanCheck(Protocol):
     run's plan can be compared at all, and `differs` receives the
     difference, as `-` lines of Python's plan and `+` lines of the frame's;
     `compares_changes` and `changes_differ` do the same for the run's change
-    detection, and `compares_structure` and `structure_differs` for its
-    structure and File rows.
+    detection, `compares_structure` and `structure_differs` for its
+    structure and File rows, and `compares_modules` and `modules_differ`
+    for its module-name plan.
     """
 
     def compares(self) -> bool: ...
@@ -381,6 +424,10 @@ class PlanCheck(Protocol):
     def compares_structure(self) -> bool: ...
 
     def structure_differs(self, repo_path: Path, difference: Sequence[str]) -> None: ...
+
+    def compares_modules(self) -> bool: ...
+
+    def modules_differ(self, repo_path: Path, difference: Sequence[str]) -> None: ...
 
 
 # None in production. While a check is in place every run compares the two
@@ -617,11 +664,24 @@ def _settled[T](
     is told and a frame that is on is still used, or, with no check, one
     warning names the first differing lines and the run uses Python's.
     """
+    if _warned(repo_path, difference, report, warning):
+        return python
+    return frame if ENABLED and frame is not None else python
+
+
+def _warned(
+    repo_path: Path,
+    difference: Sequence[str],
+    report: Callable[[Path, Sequence[str]], None] | None,
+    warning: str,
+) -> bool:
+    """Tell the check of a difference, or, with no check in place, log one
+    warning naming its first lines; whether the warning was logged."""
     if not difference:
-        return frame if ENABLED and frame is not None else python
+        return False
     if report is not None:
         report(repo_path, difference)
-        return frame if ENABLED and frame is not None else python
+        return False
     logger.warning(
         warning.format(
             repo=repo_path,
@@ -630,7 +690,7 @@ def _settled[T](
             ),
         )
     )
-    return python
+    return True
 
 
 def _raised(error: ValueError) -> list[str]:
@@ -1125,4 +1185,135 @@ def file_rows_for_run(
         file_rows_difference(paths, python, frame),
         None if check is None else check.structure_differs,
         ls.ENGINE_FRAME_FILE_ROWS_DIFFER,
+    )
+
+
+def modules_compared() -> bool:
+    """Whether a run's module-name plan is compared: with the frame on or a
+    check in place, unless the check cannot compare this run."""
+    check = CHECK
+    if check is None:
+        return ENABLED
+    return check.compares_modules()
+
+
+@cache
+def naming_rules() -> ModuleNaming | None:
+    """The language tables the frame names modules by, as the definition
+    processor's naming reads them, or None when the extension is from before
+    the merge: each extension's language, the families, the module
+    extensions a stem drops whole and the prefix marking a declaration, the
+    files named after their folder, and a notebook's suffix."""
+    naming_type = getattr(rust_extension(), cs.EG_RUST_MODULE_NAMING, None)
+    if naming_type is None:
+        return None
+    languages = {
+        extension: language
+        for spec in LANGUAGE_SPECS.values()
+        for extension in spec.file_extensions
+        if (language := get_language_for_extension(extension)) is not None
+    }
+    return naming_type(
+        sorted(languages.items()),
+        [sorted(family) for family in cs.LANGUAGE_FAMILIES],
+        list(cs.JS_TS_MODULE_EXTENSIONS),
+        cs.DECLARATION_EXT_PREFIX,
+        [*cs.PY_PACKAGE_INIT_FILES, cs.MOD_RS],
+        cs.EXT_IPYNB,
+    )
+
+
+def frame_module_plan(
+    repo_path: Path,
+    project_name: str,
+    claims: Sequence[ModuleClaim],
+    exclude: frozenset[str] | None = None,
+    unignore: frozenset[str] | None = None,
+) -> tuple[PlannedModule, ...] | None:
+    """The frame's module-name plan for the files a run parsed into the
+    module map, by qualified name; None when the extension is from before
+    the merge. Raises `ValueError` where Python raises on a pattern."""
+    made = engine()
+    naming = naming_rules()
+    if made is None or naming is None or not hasattr(made, cs.EG_RUST_MODULE_PLAN):
+        return None
+    return tuple(
+        made.module_plan(
+            repo_path,
+            project_name,
+            naming,
+            list(claims),
+            _DOT_SUFFIX,
+            exclude,
+            unignore,
+        )
+    )
+
+
+def module_lines(modules: Iterable[tuple[str, str, str | None]]) -> list[str]:
+    """Modules, each `(qualified name, path, language)`, as `index.txt`'s
+    `module` lines, sorted as it writes them."""
+    # Here, not at the top: the hand-off module reads the notebook rule from
+    # the parsers, whose structure processor imports this module.
+    from .handoff import module_line
+
+    return sorted(module_line(qn, path, language) for qn, path, language in modules)
+
+
+def python_modules(
+    repo_path: Path, modules: Mapping[str, Path]
+) -> list[tuple[str, str, str | None]]:
+    """The definition processor's module map as the frame's plan holds its
+    modules: each name, with its file's path from the root and language."""
+    from .handoff import module_language
+
+    return [
+        (qn, cached_relative_path(path, repo_path).as_posix(), module_language(path))
+        for qn, path in modules.items()
+    ]
+
+
+def modules_difference(
+    repo_path: Path,
+    python: Mapping[str, Path],
+    frame: Iterable[tuple[str, str, str | None]],
+) -> list[str]:
+    """How the frame's module-name plan differs from Python's module map,
+    line by line of `index.txt`: `-` for a line only Python's holds, `+` for
+    one only the frame's does."""
+    return _difference(
+        module_lines(python_modules(repo_path, python)), module_lines(frame)
+    )
+
+
+def modules_for_run(
+    repo_path: Path,
+    project_name: str,
+    claims: Sequence[ModuleClaim],
+    exclude: frozenset[str] | None,
+    unignore: frozenset[str] | None,
+    python: Mapping[str, Path],
+) -> None:
+    """Compare the frame's module-name plan for a run's claims with the
+    module map Python's pass 2 filled from the same files.
+
+    For a run `modules_compared` says is compared. Python's map is the one
+    the run goes on with, whatever the comparison finds (docs/reports/
+    PHASE2_FRAME.md, section 3): a difference is told to the check, or, with
+    no check, named in one warning.
+    """
+    check = CHECK
+    try:
+        frame = frame_module_plan(repo_path, project_name, claims, exclude, unignore)
+    except ValueError as error:
+        difference = _raised(error)
+    else:
+        if frame is None:
+            return
+        difference = modules_difference(repo_path, python, frame)
+    _warned(
+        repo_path,
+        difference,
+        None if check is None else check.modules_differ,
+        ls.ENGINE_FRAME_MODULES_DIFFER,
     )

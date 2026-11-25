@@ -90,7 +90,8 @@ def write_file_plan(
     _write(directory, cs.HandoffFile.FILES, lines)
 
 
-def _module_language(path: Path) -> cs.SupportedLanguage | None:
+def module_language(path: Path) -> cs.SupportedLanguage | None:
+    """The language a module's `index.txt` line names for its file."""
     # A notebook's cells are parsed as Python (issue #2480), as the call
     # resolver reads a module's language.
     if is_notebook_path(path):
@@ -98,17 +99,24 @@ def _module_language(path: Path) -> cs.SupportedLanguage | None:
     return get_language_for_extension(path.suffix)
 
 
+def module_line(module_qn: str, path: str, language: str | None) -> str:
+    """A module's line in `index.txt`: its qualified name, then the language
+    and the path from the root of the file that claimed it."""
+    return _line(
+        cs.HandoffKind.MODULE,
+        module_qn,
+        {cs.HANDOFF_KEY_LANGUAGE: language, cs.HANDOFF_KEY_PATH: path},
+    )
+
+
 def write_project_index(directory: Path, repo_path: Path, index: ProjectIndex) -> None:
     """Write `index.txt`: the modules, definitions, simple names, imports and
     parents the run registered, every line sorted."""
     lines = [
-        _line(
-            cs.HandoffKind.MODULE,
+        module_line(
             module_qn,
-            {
-                cs.HANDOFF_KEY_LANGUAGE: _module_language(path),
-                cs.HANDOFF_KEY_PATH: cached_relative_path(path, repo_path).as_posix(),
-            },
+            cached_relative_path(path, repo_path).as_posix(),
+            module_language(path),
         )
         for module_qn, path in index.modules.items()
     ]

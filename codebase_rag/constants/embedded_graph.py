@@ -568,6 +568,12 @@ FRAME_NO_FILE_ROW_LINE = "no row\t{path}"
 FRAME_TRAILING_DOT_NAME = "a."
 FRAME_TRAILING_DOT_SUFFIX = "."
 
+# The frame's merge (engine_frame.py), which an extension from before phase
+# 2's step 8 lacks: the language tables module names are derived by, and the
+# module-name plan, compared as the `module` lines of `index.txt`.
+EG_RUST_MODULE_NAMING = "ModuleNaming"
+EG_RUST_MODULE_PLAN = "module_plan"
+
 
 # Bridge methods a build from before the scope walks, or from before the
 # interface fingerprint, lacks.
