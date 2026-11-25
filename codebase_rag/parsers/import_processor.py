@@ -44,8 +44,9 @@ from ..utils.path_utils import (
     base_module_qn,
     cached_relative_path,
     declaration_extension,
+    is_regular_file,
+    is_utf8_name,
     module_extension,
-    should_keep_dir,
     should_skip_rel_file,
     walk_eligible_files,
 )
@@ -660,7 +661,8 @@ def _warn_unparseable_tsconfig(path: Path, _mtime_ns: int) -> None:
 def _child_dirs(path: Path) -> list[Path]:
     # Immediate subdirectories worth searching, pruning dependency/build/VCS trees
     # at traversal time so we never stat into node_modules (thousands of package
-    # tsconfigs) or hidden dirs.
+    # tsconfigs) or hidden dirs. A folder the walk leaves out for its name goes
+    # too: an alias into it would carry that name into the import map (#3722).
     try:
         return sorted(
             child
@@ -668,6 +670,7 @@ def _child_dirs(path: Path) -> list[Path]:
             if child.is_dir()
             and child.name not in cs.TS_ALIAS_SKIP_DIRS
             and not child.name.startswith(cs.PATH_CURRENT_DIR)
+            and is_utf8_name(child.name)
         )
     except OSError:
         return []
@@ -4971,11 +4974,15 @@ class ImportProcessor:
         return result
 
     def _rust_read_manifest(self, directory: Path) -> dict:
+        manifest = directory / cs.PKG_CARGO_TOML
+        # Every manifest is looked up by name, not found by the indexer's
+        # walk, so one that is a pipe, or links to one, reaches here; the
+        # read below would block on it for good (#3721). It reads as absent.
+        if not is_regular_file(manifest):
+            return {}
         try:
             return tomllib.loads(
-                (directory / cs.PKG_CARGO_TOML).read_text(
-                    encoding=cs.RS_ENCODING_UTF8, errors="ignore"
-                )
+                manifest.read_text(encoding=cs.RS_ENCODING_UTF8, errors="ignore")
             )
         except (OSError, tomllib.TOMLDecodeError):
             return {}
@@ -5053,7 +5060,15 @@ class ImportProcessor:
                     ls.RUST_WORKSPACE_MEMBER_UNEXPANDED, pattern=pattern, error=error
                 )
                 continue
-            dirs.extend(match for match in matches if match.is_dir())
+            # A folder the walk leaves out for its name holds no crate the
+            # graph can name: its path would reach the import map, which
+            # cannot store it (#3722).
+            dirs.extend(
+                match
+                for match in matches
+                if match.is_dir()
+                and is_utf8_name(match.relative_to(self.repo_path).as_posix())
+            )
         return dirs
 
     def _rust_member_lib_root(
@@ -5683,10 +5698,14 @@ class ImportProcessor:
             stem = entry.rsplit(cs.SEPARATOR_DOT, 1)[0]
             if stem in decls:
                 continue
+            path = self.repo_path.joinpath(*dir_parts, entry)
+            # The entry is found by this directory's own listing, not the
+            # walk, so it can be a pipe, which the read would block on for
+            # good (#3721); it is left unfilled like an unreadable entry.
+            if not is_regular_file(path):
+                continue
             try:
-                source = self.repo_path.joinpath(*dir_parts, entry).read_text(
-                    encoding=cs.RS_ENCODING_UTF8, errors="ignore"
-                )
+                source = path.read_text(encoding=cs.RS_ENCODING_UTF8, errors="ignore")
             except OSError:
                 # The listing says the entry exists but the read failed: a
                 # storm's transient absence. Leave the stem unfilled so the
@@ -5747,6 +5766,10 @@ class ImportProcessor:
         else:
             self._rust_module_mod_decls[key] = None
             return None
+        # Found by a listing of its own, so it can be a pipe, which the read
+        # would block on for good (#3721); it is passed over as unreadable.
+        if not is_regular_file(path):
+            return None
         try:
             source = path.read_text(encoding=cs.RS_ENCODING_UTF8, errors="ignore")
         except OSError:
@@ -5801,53 +5824,27 @@ class ImportProcessor:
         if self._rust_redirect_parents is not None:
             return self._rust_redirect_parents
         parents: dict[str, str] = {}
-        for dirpath, dirnames, filenames in os.walk(self.repo_path):
-            try:
-                here = Path(dirpath).relative_to(self.repo_path).parts
-            except ValueError:
-                continue
-            # Sorted so the tie-break below is the same on every filesystem,
-            # and pruned by the very predicate the indexer walks with: a
-            # declaration in a subtree the user excluded must claim nothing,
-            # and one in a subtree `.cgrignore` rescued must be read, or
-            # `super::` in the target counts from the wrong module (issue
-            # #1088). Cargo's src/bin/ carve-out rides along (issue #1085).
-            dir_prefix = f"{'/'.join(here)}/" if here else ""
-            dirnames[:] = sorted(
-                name
-                for name in dirnames
-                if should_keep_dir(
-                    name, dir_prefix, self.exclude_paths, self.unignore_paths
-                )
-            )
-            for path in self._swept_rust_files(dirpath, dir_prefix, here, filenames):
-                for key, declarer in self._rust_redirects_in(path, list(here)):
-                    # Several files may name one target (a helper shared by
-                    # two binaries), and rustc compiles it into each tree.
-                    # The graph keys it once, so the walk order decides.
-                    parents.setdefault(key, declarer)
-        self._rust_redirect_parents = parents
-        return parents
-
-    def _swept_rust_files(
-        self,
-        dirpath: str,
-        dir_prefix: str,
-        here: tuple[str, ...],
-        filenames: list[str],
-    ) -> Iterator[Path]:
-        """One directory's Rust sources the indexer would hold, sorted."""
-        for filename in sorted(filenames):
+        # The indexer's own walk, in its sorted order, so the tie-break below
+        # is the same on every filesystem: a declaration in a subtree the
+        # user excluded must claim nothing, and one in a subtree `.cgrignore`
+        # rescued must be read, or `super::` in the target counts from the
+        # wrong module (issue #1088). Cargo's src/bin/ carve-out rides along
+        # (issue #1085). It yields regular files only, so a pipe named like a
+        # source, which the read below would block on for good, is never
+        # reached (issue #3721).
+        for dirpath, filename, rel_path in walk_eligible_files(
+            self.repo_path, self.exclude_paths, self.unignore_paths
+        ):
             if not filename.endswith(cs.EXT_RS):
                 continue
-            if should_skip_rel_file(
-                f"{dir_prefix}{filename}",
-                here,
-                exclude_paths=self.exclude_paths,
-                unignore_paths=self.unignore_paths,
-            ):
-                continue
-            yield Path(dirpath, filename)
+            here = rel_path.split(cs.SEPARATOR_SLASH)[:-1]
+            for key, declarer in self._rust_redirects_in(Path(dirpath, filename), here):
+                # Several files may name one target (a helper shared by
+                # two binaries), and rustc compiles it into each tree.
+                # The graph keys it once, so the walk order decides.
+                parents.setdefault(key, declarer)
+        self._rust_redirect_parents = parents
+        return parents
 
     def _rust_redirects_in(
         self, path: Path, dir_parts: list[str]
@@ -8983,7 +8980,11 @@ class ImportProcessor:
 
     def _julia_candidate_excluded(self, rel_file: str) -> bool:
         # The same exclude/unignore predicate the indexer walks with, so an
-        # excluded generated module cannot win import resolution.
+        # excluded generated module cannot win import resolution. Its name
+        # rule too: these indexes are filled by `rglob`, and a file or folder
+        # whose name is not UTF-8 would carry it into the import map (#3722).
+        if not is_utf8_name(rel_file):
+            return True
         parts = rel_file.split(cs.SEPARATOR_SLASH)
         return should_skip_rel_file(
             rel_file,

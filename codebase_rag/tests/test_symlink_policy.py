@@ -32,7 +32,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 from loguru import logger
-from watchdog.events import FileCreatedEvent, FileDeletedEvent
+from watchdog.events import FileCreatedEvent, FileDeletedEvent, FileModifiedEvent
 
 from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
@@ -44,6 +44,11 @@ from codebase_rag.main import detect_excludable_directories
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import structure_processor
 from codebase_rag.parsers.contracts import discover_contract_operations
+from codebase_rag.parsers.csharp_frontend.frontend import (
+    find_csharp_project,
+    uncovered_csharp_projects,
+)
+from codebase_rag.parsers.java_lombok import _overlay_from_root, overlay_identity
 from codebase_rag.parsers.js_ts.module_paths import (
     _read_manifest as _read_package_manifest,
 )
@@ -435,12 +440,34 @@ def _pipe_repo(root: Path) -> Path:
 
 
 def _manifest_repo(root: Path) -> Path:
-    """A repository with a Python, a JavaScript and a Go module and no manifest."""
+    """A repository with a Python, a JavaScript, a Go, a Rust and a Dart module
+    and no manifest. The Rust and Dart ones import a module of their own, which
+    is what makes the resolver look its manifest up."""
     repo = root / "repo"
     _write(repo / "a.py", "def a():\n    return 1\n")
     _write(repo / "b.js", "export function b() {\n  return 1;\n}\n")
     _write(repo / "c.go", "package main\n\nfunc c() int {\n\treturn 1\n}\n")
+    _write(
+        repo / "src" / "main.rs",
+        "mod d;\nuse crate::d::d;\n\nfn main() {\n    d();\n}\n",
+    )
+    _write(repo / "src" / "d.rs", "pub fn d() {}\n")
+    _write(
+        repo / "lib" / "e.dart",
+        "import 'package:repo/f.dart';\n\nvoid e() {\n  f();\n}\n",
+    )
+    _write(repo / "lib" / "f.dart", "void f() {}\n")
     return repo
+
+
+# The manifests a resolver looks up by name rather than finds by the walk.
+_LOOKED_UP_MANIFESTS = [
+    "go.mod",
+    "package.json",
+    "pyproject.toml",
+    cs.PKG_CARGO_TOML,
+    cs.DEP_FILE_PUBSPEC,
+]
 
 
 def _emitted_paths(mock_ingestor: MagicMock) -> set[str]:
@@ -492,7 +519,7 @@ class TestSpecialFiles:
         assert len(warnings) == 1
         assert "pipe.py" in warnings[0] and "sub/mypipe" in warnings[0]
 
-    @pytest.mark.parametrize("manifest", ["go.mod", "package.json", "pyproject.toml"])
+    @pytest.mark.parametrize("manifest", _LOOKED_UP_MANIFESTS)
     def test_a_pipe_named_as_a_manifest_is_never_read(
         self, tmp_path: Path, mock_ingestor: MagicMock, manifest: str
     ) -> None:
@@ -511,7 +538,7 @@ class TestSpecialFiles:
         assert "a.py" in paths
         assert manifest not in paths
 
-    @pytest.mark.parametrize("manifest", ["go.mod", "package.json", "pyproject.toml"])
+    @pytest.mark.parametrize("manifest", _LOOKED_UP_MANIFESTS)
     def test_a_manifest_linked_to_a_pipe_is_never_read(
         self, tmp_path: Path, mock_ingestor: MagicMock, manifest: str
     ) -> None:
@@ -600,6 +627,107 @@ class TestSpecialFiles:
         paths = _emitted_paths(mock_ingestor)
         assert "cmd/main.go" in paths
         assert "zz.go" not in paths
+
+    def test_a_pipe_among_the_rust_sources_is_never_read(
+        self, tmp_path: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # A `super::` import has the resolver sweep every `.rs` file of the
+        # repository for `#[path]` attributes, by a walk of its own.
+        repo = tmp_path / "repo"
+        _write(repo / cs.PKG_CARGO_TOML, '[package]\nname = "c"\n')
+        _write(repo / "src" / "lib.rs", "mod a;\nmod b;\n")
+        _write(repo / "src" / "a.rs", "use super::b::f;\n\npub fn g() {\n    f();\n}\n")
+        _write(repo / "src" / "b.rs", "pub fn f() {}\n")
+        os.mkfifo(repo / "src" / "zz.rs")
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor, repo_path=repo, parsers=parsers, queries=queries
+        )
+
+        _run_within_deadline(updater, repo / "src" / "zz.rs")
+
+        paths = _emitted_paths(mock_ingestor)
+        assert {"src/a.rs", "src/b.rs"} <= paths
+        assert "src/zz.rs" not in paths
+
+    def test_a_workspace_members_manifest_that_is_a_pipe_is_never_read(
+        self, tmp_path: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # A `use` of another crate has the resolver read the manifest of every
+        # member the workspace's `members` globs match.
+        repo = tmp_path / "repo"
+        _write(repo / cs.PKG_CARGO_TOML, '[workspace]\nmembers = ["crates/*"]\n')
+        _write(
+            repo / "crates" / "app" / cs.PKG_CARGO_TOML,
+            '[package]\nname = "app"\n\n[dependencies]\nother = { path = "../other" }\n',
+        )
+        _write(
+            repo / "crates" / "app" / "src" / "main.rs",
+            "use other::thing;\n\nfn main() {\n    thing();\n}\n",
+        )
+        _write(repo / "crates" / "other" / "src" / "lib.rs", "pub fn thing() {}\n")
+        pipe = repo / "crates" / "other" / cs.PKG_CARGO_TOML
+        os.mkfifo(pipe)
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor, repo_path=repo, parsers=parsers, queries=queries
+        )
+
+        _run_within_deadline(updater, pipe)
+
+        paths = _emitted_paths(mock_ingestor)
+        assert "crates/app/src/main.rs" in paths
+        assert "crates/other/Cargo.toml" not in paths
+
+    @pytest.mark.parametrize("pipe", ["src/lib.rs", "src/a.rs"])
+    def test_a_rust_entry_or_module_file_that_is_a_pipe_is_never_read(
+        self, tmp_path: Path, mock_ingestor: MagicMock, pipe: str
+    ) -> None:
+        # A `crate::` path has the resolver read the crate's entry files, and
+        # the file of each module the path walks through, which it finds by
+        # listing their directories.
+        repo = tmp_path / "repo"
+        files = {
+            cs.PKG_CARGO_TOML: '[package]\nname = "c"\n',
+            "src/main.rs": "mod a;\nuse crate::a::inner::x;\n\nfn main() {\n    x();\n}\n",
+            "src/lib.rs": "pub mod a;\n",
+            "src/a.rs": "pub mod inner;\n",
+            "src/a/inner.rs": "pub fn x() {}\n",
+        }
+        for rel, text in files.items():
+            if rel != pipe:
+                _write(repo / rel, text)
+        os.mkfifo(repo / pipe)
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor, repo_path=repo, parsers=parsers, queries=queries
+        )
+
+        _run_within_deadline(updater, repo / pipe)
+
+        paths = _emitted_paths(mock_ingestor)
+        assert "src/main.rs" in paths
+        assert pipe not in paths
+
+    def test_a_pipe_named_as_a_csharp_project_is_never_a_candidate(
+        self, tmp_path: Path
+    ) -> None:
+        # Where dotnet is installed, the Roslyn pre-pass picks a solution or
+        # project by `rglob` and reads the solution to learn its members.
+        repo = tmp_path / "repo"
+        _write(repo / "src" / "App.csproj", "<Project />\n")
+        os.mkfifo(repo / "App.sln")
+        os.mkfifo(repo / "bench.csproj")
+        found: list[object] = []
+
+        def _discover() -> None:
+            project = find_csharp_project(repo)
+            assert project is not None
+            found.extend([project, uncovered_csharp_projects(repo, project)])
+
+        _call_within_deadline(_discover, repo / "App.sln")
+
+        assert found == [repo / "src" / "App.csproj", []]
 
     def test_a_cached_file_replaced_by_a_pipe_is_dropped_by_the_next_sync(
         self, tmp_path: Path
@@ -728,6 +856,89 @@ class TestUndecodableNames:
         assert len(warnings) == 1
         for name in _UNDECODABLE:
             assert name in warnings[0]
+
+    def test_an_edit_in_a_go_package_reparses_no_sibling_with_such_a_name(
+        self,
+        tmp_path: Path,
+        mock_ingestor: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The watcher drops an event for such a name, but an edit to a sibling
+        # has the re-ingest list the package's folder for every `.go` file.
+        monkeypatch.setattr(settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+        repo = tmp_path / "repo"
+        _write(repo / "go.mod", "module example.com/m\n\ngo 1.21\n")
+        _write(repo / "a.go", "package main\n\nfunc a() int {\n\treturn 1\n}\n")
+        _make_undecodable(
+            repo, b"bad\xff.go", "package main\n\nfunc b() int {\n\treturn 2\n}\n"
+        )
+        updater = create_and_run_updater(repo, mock_ingestor)
+        mock_ingestor.reset_mock()
+
+        edited = _write(
+            repo / "a.go", "package main\n\nfunc a() int {\n\treturn 3\n}\n"
+        )
+        CodeChangeEventHandler(updater, debounce_seconds=0).dispatch(
+            FileModifiedEvent(str(edited))
+        )
+
+        assert "a.go" in _emitted_paths(mock_ingestor)
+        assert _unstorable(mock_ingestor) == []
+
+    def test_a_package_flip_reparses_no_file_with_such_a_name(
+        self, tmp_path: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # A folder that becomes a package has every file in it re-parsed onto
+        # the new Package, found by listing the folder.
+        repo = tmp_path / "repo"
+        _write(repo / "pkg" / "core.py", "def helper():\n    return 1\n")
+        _make_undecodable(repo / "pkg", b"bad\xff.py", "def g():\n    return 2\n")
+        updater = create_and_run_updater(repo, mock_ingestor)
+        mock_ingestor.reset_mock()
+
+        updater.reingest((_write(repo / "pkg" / "__init__.py", ""),))
+
+        assert "pkg/core.py" in _emitted_paths(mock_ingestor)
+        assert _unstorable(mock_ingestor) == []
+
+    def test_a_workspace_member_with_such_a_name_maps_no_crate(
+        self, tmp_path: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # The crate map is filled from the members the workspace globs match,
+        # and a `use` of a crate it holds resolves into the member's folder.
+        repo = tmp_path / "repo"
+        _write(repo / cs.PKG_CARGO_TOML, '[workspace]\nmembers = ["crates/*"]\n')
+        _write(repo / "crates" / "app" / cs.PKG_CARGO_TOML, '[package]\nname = "app"\n')
+        _write(repo / "crates" / "app" / "src" / "lib.rs", "pub fn run() {}\n")
+        member = _make_undecodable(repo / "crates", b"other\xff")
+        _write(member / cs.PKG_CARGO_TOML, '[package]\nname = "other"\n')
+        _write(member / "src" / "lib.rs", "pub fn thing() {}\n")
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor, repo_path=repo, parsers=parsers, queries=queries
+        )
+
+        crates = updater.factory.import_processor._rust_workspace_crate_roots()
+
+        assert crates == {"app": (("crates", "app"), ("crates", "app", "src"), "lib")}
+
+    def test_a_delomboked_file_with_such_a_name_is_left_out(
+        self, tmp_path: Path
+    ) -> None:
+        # The overlay keys each expansion by the file's path, and its identity
+        # hashes every key as UTF-8.
+        repo = tmp_path / "repo"
+        source_root = repo / "src" / "main" / "java"
+        expanded = tmp_path / "expanded"
+        _write(source_root / "Good.java", "class Good {}\n")
+        _write(expanded / "Good.java", "class Good { int x; }\n")
+        _make_undecodable(source_root, b"Bad\xff.java", "class Bad {}\n")
+        _make_undecodable(expanded, b"Bad\xff.java", "class Bad { int y; }\n")
+
+        overlay = _overlay_from_root(repo, source_root, expanded)
+
+        assert sorted(overlay) == ["src/main/java/Good.java"]
+        assert overlay_identity(overlay)
 
 
 @pytest.fixture

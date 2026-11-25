@@ -106,6 +106,14 @@ _UNDECODED_BYTE = "\udcff"
 # Per language: the indexed files at the root, one importing a package that a
 # folder named `bad\xff` holds, and that package's files (issue #3722).
 _IMPORTED_FROM_A_BAD_NAME: dict[str, tuple[dict[str, str], dict[str, str]]] = {
+    "dart": (
+        {
+            "pubspec.yaml": "name: app\n",
+            "test/app_test.dart": "import 'package:bad/x.dart';\n\n"
+            "void main() {\n  f();\n}\n",
+        },
+        {"pubspec.yaml": "name: bad\n", "lib/x.dart": "void f() {}\n"},
+    ),
     "go": (
         {
             "go.mod": "module example.com/m\n",
@@ -115,6 +123,21 @@ _IMPORTED_FROM_A_BAD_NAME: dict[str, tuple[dict[str, str], dict[str, str]]] = {
         {
             "go.mod": "module example.com/bad\n",
             "lib.go": "package bad\n\nfunc F() {}\n",
+        },
+    ),
+    # Generated sources beside a build file, which the walk then rescues.
+    "java": (
+        {
+            "src/main/java/com/app/App.java": "package com.app;\n\n"
+            "import com.gen.Gen;\n\n"
+            "public class App {\n  void f() {\n    Gen.g();\n  }\n}\n",
+        },
+        {
+            "pom.xml": "<project/>\n",
+            "target/generated-sources/annotations/com/gen/Gen.java": (
+                "package com.gen;\n\n"
+                "public class Gen {\n  public static void g() {}\n}\n"
+            ),
         },
     ),
     "js": (
@@ -127,9 +150,24 @@ _IMPORTED_FROM_A_BAD_NAME: dict[str, tuple[dict[str, str], dict[str, str]]] = {
             "index.js": "export function f() {\n  return 1;\n}\n",
         },
     ),
+    "julia": (
+        {"src/App.jl": "module App\nusing .Foo\nend\n"},
+        {"Foo.jl": "module Foo\nf() = 1\nend\n"},
+    ),
     "python": (
         {"app.py": "from pkg.mod import f\n\n\ndef g():\n    return f()\n"},
         {"pkg/__init__.py": "", "pkg/mod.py": "def f():\n    return 1\n"},
+    ),
+    # A `paths` alias from the tsconfig in that folder.
+    "ts": (
+        {
+            "app.ts": "import { f } from '@/x';\n\n"
+            "export function g() {\n  return f();\n}\n",
+        },
+        {
+            "tsconfig.json": '{"compilerOptions": {"paths": {"@/*": ["src/*"]}}}\n',
+            "src/x.ts": "export function f() {\n  return 1;\n}\n",
+        },
     ),
 }
 # Names and paths outside ASCII, which the files keep as UTF-8.
@@ -423,9 +461,9 @@ class TestANameThatIsNotUtf8:
     def test_a_package_under_it_is_never_resolved_into(
         self, tmp_path: Path, language: str, with_hand_offs: bool
     ) -> None:
-        # The Go, JavaScript and Python resolvers find packages by walks of
-        # their own, so an import of one under such a folder still carried
-        # its name into the graph or the project index.
+        # Each language's resolver finds packages, modules or source roots
+        # by a listing of its own, so an import of one under such a folder
+        # still carried its name into the graph or the project index.
         importer, package = _IMPORTED_FROM_A_BAD_NAME[language]
         repo = _write(tmp_path / "repo", importer)
         _write(_make_undecodable(repo, b"bad\xff"), package)

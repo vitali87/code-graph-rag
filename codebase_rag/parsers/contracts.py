@@ -26,7 +26,12 @@ from .. import constants as cs
 from .. import logs as ls
 from ..types_defs import JsonValue
 from ..utils.json_io import loads_json
-from ..utils.path_utils import is_symlink_entry, is_utf8_name, should_skip_path
+from ..utils.path_utils import (
+    is_regular_file,
+    is_symlink_entry,
+    is_utf8_name,
+    should_skip_path,
+)
 
 
 class ContractOperation(NamedTuple):
@@ -101,7 +106,7 @@ def _sort_key(operation: ContractOperation) -> tuple[str, str, str, str, str]:
 def _read_text(path: Path) -> str | None:
     # This walk is not the indexer's, so it must leave out a pipe, socket or
     # device itself: the read below would block on a pipe for good (#3721).
-    if not os.path.isfile(path):
+    if not is_regular_file(path):
         return None
     try:
         if path.stat().st_size > cs.CONTRACT_MAX_FILE_BYTES:

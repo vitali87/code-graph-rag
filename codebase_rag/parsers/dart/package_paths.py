@@ -8,7 +8,7 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
-from ...utils.path_utils import should_keep_dir
+from ...utils.path_utils import is_regular_file, is_utf8_name, should_keep_dir
 
 _PUBSPEC_NAME = re.compile(cs.DART_PUBSPEC_NAME_PATTERN, re.MULTILINE)
 
@@ -31,20 +31,26 @@ def discover_dart_packages(
         # Pruned by the indexer's own predicate: `.dart_tool`, `build` and
         # vendored trees hold pubspec copies that name no package of this
         # project, an excluded package's modules are not in the graph, and
-        # an unignored one's are.
+        # an unignored one's are. Its name rule too: a package under a folder
+        # whose name is not UTF-8 would carry it into the import map (#3722).
         subdirs[:] = sorted(
             d
             for d in subdirs
             if should_keep_dir(d, dir_prefix, exclude_paths, unignore_paths)
+            and is_utf8_name(d)
         )
         if cs.DEP_FILE_PUBSPEC not in filenames or not should_keep_dir(
             cs.DART_PACKAGE_LIB_DIR, dir_prefix, exclude_paths, unignore_paths
         ):
             continue
+        pubspec = package_dir / cs.DEP_FILE_PUBSPEC
+        # This walk is not the indexer's, so it must leave out a pipe of this
+        # name, or a link to one, itself: the read below would block on it for
+        # good (#3721).
+        if not is_regular_file(pubspec):
+            continue
         try:
-            text = (package_dir / cs.DEP_FILE_PUBSPEC).read_text(
-                encoding=cs.ENCODING_UTF8_SIG
-            )
+            text = pubspec.read_text(encoding=cs.ENCODING_UTF8_SIG)
         except (OSError, ValueError):
             continue
         if (match := _PUBSPEC_NAME.search(text)) is None:

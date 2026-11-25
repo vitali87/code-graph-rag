@@ -7,7 +7,7 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
-from ...utils.path_utils import is_utf8_name
+from ...utils.path_utils import is_regular_file, is_utf8_name
 
 
 def _module_directive(gomod: Path) -> str | None:
@@ -16,8 +16,8 @@ def _module_directive(gomod: Path) -> str | None:
     # UnicodeDecodeError on a non-UTF-8 go.mod; skip it rather than crash indexing.
     # Found by `rglob`, not the indexer's walk, so a pipe of this name, or a
     # link to one, reaches here, and the read below would block on it for
-    # good (#3721). `isfile` follows a link and holds for a regular file only.
-    if not os.path.isfile(gomod):
+    # good (#3721).
+    if not is_regular_file(gomod):
         return None
     try:
         text = gomod.read_text(encoding=cs.ENCODING_UTF8)
@@ -69,7 +69,7 @@ def _has_importable_root_package(anchor: Path) -> bool:
     # be left out here: the read below would block on it for good (#3721).
     try:
         go_files = [
-            p for p in anchor.iterdir() if p.suffix == cs.EXT_GO and os.path.isfile(p)
+            p for p in anchor.iterdir() if p.suffix == cs.EXT_GO and is_regular_file(p)
         ]
     except OSError:
         return False

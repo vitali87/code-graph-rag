@@ -9867,14 +9867,18 @@ class GraphUpdater:
         # ignore rules apply here exactly as they do to the walk: a path
         # under `node_modules`, a generated `.min.js`, or a CLI-excluded
         # directory must not become a Module the next update then keeps,
-        # because its hash matches and the walk never revisits it.
+        # because its hash matches and the walk never revisits it. Its name
+        # rule too: the scans that re-parse the other files of a Go package,
+        # or of a folder that became or stopped being a package, list the
+        # folder themselves and ask only this, and a file the walk leaves out
+        # for a name that is not UTF-8 broke the graph write (#3722).
         return should_skip_path(
             path,
             self.repo_path,
             exclude_paths=self.exclude_paths,
             unignore_paths=self.unignore_paths,
             is_file=True,
-        )
+        ) or not is_utf8_name(cached_relative_path(path, self.repo_path).as_posix())
 
     def _reingest_flux_survivors(
         self, present: dict[str, Path], gone: dict[str, Path], hashes: FileHashCache

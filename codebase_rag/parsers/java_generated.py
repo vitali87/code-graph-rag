@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from ..utils.path_utils import should_keep_dir
+from ..utils.path_utils import is_utf8_name, should_keep_dir
 
 _BUILD_FILES = ("pom.xml", "build.gradle", "build.gradle.kts")
 _MAVEN_GENERATED = ("target", "generated-sources")
@@ -24,7 +24,9 @@ _GRADLE_GENERATED = ("build", "generated", "sources", "annotationProcessor")
 def _build_dirs(repo_path: Path) -> list[Path]:
     # Directories holding a build file, found with the standard prune so
     # vendored trees never contribute (the generated dirs themselves are
-    # probed by EXACT subpath, never walked into here).
+    # probed by EXACT subpath, never walked into here). Its name rule too:
+    # a root under a folder whose name is not UTF-8 would carry it into the
+    # import map and the graph (#3722).
     out: list[Path] = []
     repo_str = str(repo_path)
     prefix_len = len(repo_str) + 1
@@ -36,7 +38,9 @@ def _build_dirs(repo_path: Path) -> list[Path]:
         )
         dir_prefix = f"{rel_dir}/" if rel_dir else ""
         dirnames[:] = sorted(
-            d for d in dirnames if should_keep_dir(d, dir_prefix, None, None)
+            d
+            for d in dirnames
+            if should_keep_dir(d, dir_prefix, None, None) and is_utf8_name(d)
         )
         if any(name in filenames for name in _BUILD_FILES):
             out.append(Path(dirpath))
@@ -46,14 +50,15 @@ def _build_dirs(repo_path: Path) -> list[Path]:
 def _package_roots(generated_dir: Path, depth: int) -> list[Path]:
     # The processor-named (maven: annotations/, protobuf/) or
     # sourceSet-named (gradle: java/main/) level(s) under the generated dir
-    # are the package-tree roots the import probe needs.
+    # are the package-tree roots the import probe needs. One whose name is
+    # not UTF-8 is no root, for the reason `_build_dirs` gives.
     roots = [generated_dir]
     for _ in range(depth):
         roots = [
             child
             for parent in roots
             for child in sorted(parent.iterdir())
-            if child.is_dir()
+            if child.is_dir() and is_utf8_name(child.name)
         ]
     return roots
 

@@ -429,6 +429,19 @@ def is_special_file_entry(path: str | os.PathLike[str]) -> bool:
     return not (stat.S_ISREG(mode) or stat.S_ISDIR(mode) or stat.S_ISLNK(mode))
 
 
+def is_regular_file(path: str | os.PathLike[str]) -> bool:
+    """Whether a file a reader found by listing a directory itself may be read.
+
+    The walk leaves pipes, sockets and devices out (`is_special_file_entry`),
+    but a resolver that lists folders on its own sees them, and opening a
+    named pipe blocks until something writes to it: one manifest or source
+    of that name hung the whole run (issue #3721). `os.path.isfile` follows
+    a link, so a link to a pipe counts as the pipe, and holds for a regular
+    file only; a path it cannot stat reads as absent, as a failed read did.
+    """
+    return os.path.isfile(path)
+
+
 def is_utf8_name(name: str) -> bool:
     """Whether a name from a repository walk can be stored as text.
 

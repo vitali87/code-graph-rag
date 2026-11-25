@@ -11,7 +11,7 @@ from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import JsonValue
 from ...utils.json_io import loads_json
-from ...utils.path_utils import is_utf8_name
+from ...utils.path_utils import is_regular_file, is_utf8_name
 
 
 class _ManifestTargets(NamedTuple):
@@ -45,8 +45,8 @@ def discover_js_workspace_packages(repo_path: Path) -> list[tuple[str, Path]]:
         manifest = package_dir / cs.DEP_FILE_PACKAGE_JSON
         # This walk is not the indexer's, so it must leave out a pipe of this
         # name, or a link to one, itself: the read below would block on it for
-        # good (#3721). `isfile` follows a link and holds for a regular file only.
-        if not os.path.isfile(manifest):
+        # good (#3721).
+        if not is_regular_file(manifest):
             continue
         try:
             manifest_data = loads_json(
@@ -133,7 +133,7 @@ def _read_manifest(package_dir: Path) -> dict[str, JsonValue]:
     # The watcher keeps the packages it found at start-up and reads one's
     # manifest again on a later import; by then it can be a pipe, which the
     # read below would block on for good (#3721).
-    if not os.path.isfile(manifest):
+    if not is_regular_file(manifest):
         return {}
     try:
         data = loads_json(manifest.read_text(encoding=cs.ENCODING_UTF8_SIG))
