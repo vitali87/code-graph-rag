@@ -15,14 +15,16 @@
 //!   always one.
 //! - **Order.** Python's path order, `sorted()` over the folders' paths:
 //!   part by part, so `a/b` comes before `a-b`, each part by code point,
-//!   and on Windows with every part lower-cased first.
+//!   and on Windows with every part lower-cased first. The root comes
+//!   first, unless it was given as the current folder, `.`, which sorts
+//!   after a folder whose name is below `.`, such as `-x`.
 //! - **Kinds.** A folder holding a file or folder named as any of the
 //!   package markers is a package; a marker is a name, never a pattern, so
-//!   `*.vcxproj` is matched literally. Its qualified name is
-//!   the project's and its parts joined by dots, the root's the project's
-//!   own. Any other folder maps to none, and the root gets no Folder row.
-//!   The markers are the language specs' (`LanguageSpec.package_indicators`),
-//!   which Python passes in.
+//!   `*.vcxproj` is matched literally. Its qualified name is the project's
+//!   and its parts joined by dots, the root's the project's own. Any other
+//!   folder maps to none, and the root gets no Folder row. The markers are
+//!   the language specs' (`LanguageSpec.package_indicators`), which Python
+//!   passes in.
 //! - **What contains a row**: the Project for the root and for anything at
 //!   the root, else the parent's Package when the map names one for it,
 //!   else its Folder, by its resolved path.
