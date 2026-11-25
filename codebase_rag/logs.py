@@ -1586,6 +1586,12 @@ UNDECODABLE_NAMES_SKIPPED = (
     "Skipped {count} path(s) whose names are not valid UTF-8, which the graph "
     "cannot store: {paths}"
 )
+# The Rust engine's frame checked against Python's walk (engine_frame.py):
+# on any difference the run uses Python's plan.
+ENGINE_FRAME_PLAN_DIFFERS = (
+    "The Rust engine's file plan for {repo} differs from Python's, first at "
+    "{first}; this run uses Python's"
+)
 
 # Exclude prompt logs
 EXCLUDE_INVALID_INDEX = "Invalid index: {index} (out of range)"

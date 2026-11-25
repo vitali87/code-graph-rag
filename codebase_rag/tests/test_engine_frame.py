@@ -8,6 +8,7 @@ the sync records for each file.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -46,7 +47,18 @@ def _files(root: Path) -> list[Path]:
 
 
 def test_it_is_off_until_the_last_step() -> None:
-    assert engine_frame.ENABLED is False
+    # The `rust` cells turn it on for their whole session, and they and the
+    # `both` cells put a check in place (engine_modes.py), so the module's
+    # own assignments are what hold the defaults.
+    tree = ast.parse(Path(engine_frame.__file__).read_text(encoding="utf-8"))
+    defaults = {
+        node.target.id: node.value.value
+        for node in tree.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and isinstance(node.value, ast.Constant)
+    }
+    assert defaults == {"ENABLED": False, "CHECK": None}
 
 
 def test_the_hashes_are_the_ones_the_sync_records(

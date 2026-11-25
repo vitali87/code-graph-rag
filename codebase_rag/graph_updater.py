@@ -25,6 +25,7 @@ from tree_sitter import Node, Parser, QueryCursor
 
 from . import constants as cs
 from . import cypher_queries as cq
+from . import engine_frame
 from . import exceptions as ex
 from . import logs as ls
 from .analyzers import FindingAnalyzer
@@ -1488,7 +1489,7 @@ def _last_changed(info: os.stat_result) -> float:
     return max(info.st_mtime, info.st_ctime)
 
 
-def _log_skipped_symlinks(repo_path: Path, rel_paths: list[str]) -> None:
+def _log_skipped_symlinks(repo_path: Path, rel_paths: Sequence[str]) -> None:
     # Each link at DEBUG and one count at INFO, so a module missing from the
     # graph can be traced to the link that was not followed (issue #2451).
     if not rel_paths:
@@ -1506,7 +1507,7 @@ def _log_skipped_symlinks(repo_path: Path, rel_paths: list[str]) -> None:
     logger.info(ls.SYMLINKS_SKIPPED.format(count=len(rel_paths)))
 
 
-def _log_skipped_entries(template: str, rel_paths: list[str]) -> None:
+def _log_skipped_entries(template: str, rel_paths: Sequence[str]) -> None:
     # One warning per run naming every entry, so a file missing from the
     # graph is traced to the rule that left it out (issues #3721, #3722).
     if not rel_paths:
@@ -8135,7 +8136,6 @@ class GraphUpdater:
                 return [(self._single_file, file_key)]
             return []
 
-        eligible: list[tuple[Path, str]] = []
         self._collected_dir_mtimes = {}
 
         def _record_dir_mtime(dir_key: str, dirpath: str) -> None:
@@ -8145,24 +8145,23 @@ class GraphUpdater:
                 pass
 
         # One shared walk with the C++ module-qn map, so the two cannot drift
-        # in ORDER as well as in membership (issues #1025, #1099).
-        skipped_links: list[str] = []
-        skipped_special: list[str] = []
-        skipped_undecodable: list[str] = []
-        for dirpath, fname, rel_path_str in walk_eligible_files(
+        # in ORDER as well as in membership (issues #1025, #1099). The
+        # folder times stay the ones taken as Python's walk lists each folder.
+        plan = engine_frame.plan_for_run(
             self.repo_path,
             self.exclude_paths,
             self.unignore_paths,
-            on_dir=_record_dir_mtime,
-            on_symlink=skipped_links.append,
-            on_special=skipped_special.append,
-            on_undecodable=skipped_undecodable.append,
-        ):
-            eligible.append((Path(f"{dirpath}/{fname}"), rel_path_str))
-        _log_skipped_symlinks(self.repo_path, skipped_links)
-        _log_skipped_entries(ls.SPECIAL_FILES_SKIPPED, skipped_special)
-        _log_skipped_entries(ls.UNDECODABLE_NAMES_SKIPPED, skipped_undecodable)
-        return eligible
+            engine_frame.python_file_plan(
+                self.repo_path,
+                self.exclude_paths,
+                self.unignore_paths,
+                on_dir=_record_dir_mtime,
+            ),
+        )
+        _log_skipped_symlinks(self.repo_path, plan.symlinks)
+        _log_skipped_entries(ls.SPECIAL_FILES_SKIPPED, plan.special)
+        _log_skipped_entries(ls.UNDECODABLE_NAMES_SKIPPED, plan.undecodable)
+        return [(engine_frame.file_path(file), file.rel_path) for file in plan.files]
 
     def _process_files(self, force: bool = False) -> None:
         self.factory.import_processor.reset_rust_path_caches()

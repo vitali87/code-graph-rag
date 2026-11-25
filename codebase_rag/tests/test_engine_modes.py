@@ -872,6 +872,103 @@ def test_both_compares_a_broader_scoped_fixtures_run_and_reports_on_its_tests(
     assert diff[1:] == [f"    {line}" for line in PLANTED_NODE]
 
 
+# The frame's file plan checked on every index (docs/reports/PHASE2_FRAME.md,
+# section 4), whatever language is on Rust: a Python repository indexed
+# cleanly, with the frame's walk planted with a difference (its first file
+# left out), and so planted while the test patches Python's walk.
+FRAME = """
+from codebase_rag import engine_frame
+from codebase_rag.utils import path_utils
+
+
+@pytest.fixture
+def planted_frame(monkeypatch):
+    original = engine_frame.frame_file_plan
+
+    def plant(repo_path, exclude=None, unignore=None):
+        plan = original(repo_path, exclude, unignore)
+        return plan._replace(files=plan.files[1:], hashes=plan.hashes[1:])
+
+    monkeypatch.setattr(engine_frame, "frame_file_plan", plant)
+
+
+def py_repo(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("def a():\\n    return 1\\n", encoding="utf-8")
+    (repo / "b.py").write_text("def b():\\n    return 2\\n", encoding="utf-8")
+    return repo
+
+
+def test_probe():
+    check = type(engine_frame.CHECK).__name__
+    print(f"\\nPROBE test_probe ENABLED={engine_frame.ENABLED} CHECK={check}")
+
+
+def test_clean(tmp_path):
+    index(py_repo(tmp_path), tmp_path)
+
+
+def test_planted(planted_frame, tmp_path):
+    index(py_repo(tmp_path), tmp_path)
+
+
+def test_patched_walk(planted_frame, monkeypatch, tmp_path):
+    monkeypatch.setattr(path_utils, "is_symlink_entry", lambda _path: False)
+    index(py_repo(tmp_path), tmp_path)
+"""
+
+
+def _frame_report(result: pytest.RunResult) -> list[str]:
+    """The lines of the first frame report in the session's output."""
+    lines = result.outlines
+    start = next(
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("The frame's file plan differs from Python's on ")
+    )
+    end = start + 1
+    while end < len(lines) and lines[end].startswith("    "):
+        end += 1
+    return lines[start:end]
+
+
+@pytest.mark.parametrize("mode", ["both", "rust"])
+def test_every_index_checks_the_frame_s_file_plan_failing_on_a_difference(
+    pytester: pytest.Pytester, clean_env: None, mode: str
+) -> None:
+    pytester.makepyfile(INDEXING + FRAME)
+
+    result = _run(pytester, "-s", "--engine-mode", mode)
+
+    # Only the planted run differs; a test patching Python's walk is not
+    # compared. The planted test's own run passed, and fails at teardown.
+    result.assert_outcomes(passed=4, errors=1)
+    assert _printed(result, "test_probe") == [
+        f"ENABLED={mode == 'rust'} CHECK=FramePlanCheck"
+    ]
+    assert any("ERROR at teardown of test_planted" in line for line in result.outlines)
+    heading, *lines = _frame_report(result)
+    assert fnmatch.fnmatch(
+        heading,
+        "The frame's file plan differs from Python's on *repo:"
+        " 1 lines only in Python's, 0 only in the frame's",
+    )
+    assert len(lines) == 1
+    assert fnmatch.fnmatch(lines[0], "    - file\ta.py\t*\t*repo\ta.py")
+
+
+def test_python_mode_leaves_the_frame_alone(
+    pytester: pytest.Pytester, clean_env: None
+) -> None:
+    pytester.makepyfile(INDEXING + FRAME)
+
+    result = _run(pytester, "-s", "--engine-mode", "python")
+
+    result.assert_outcomes(passed=4)
+    assert _printed(result, "test_probe") == ["ENABLED=False CHECK=NoneType"]
+
+
 def test_the_pass_failure_gate_leaves_scratch_runs_to_the_comparison(
     temp_repo: Path,
     mock_ingestor: MagicMock,

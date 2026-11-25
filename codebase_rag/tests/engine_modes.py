@@ -17,6 +17,14 @@ The `--engine-mode` option (docs/reports/PHASE1_SEAMS.md, section 2):
   engines part. When any differs, the test fails at teardown; for a run in a
   shared fixture, every test that uses it does.
 
+The engine's frame (docs/reports/PHASE2_FRAME.md, section 4) is checked in
+both: every index a test makes compares the frame's file plan with Python's
+walk, whatever language is on Rust, at no second index, and a difference
+fails the test as above. `both` keeps Python's plan for the run; `rust` turns
+the frame on (`engine_frame.ENABLED`), so the run goes on with the frame's.
+A test that patches the built-in names or endings the frame holds copies of,
+or what Python's walk decides with or reads files by, is not compared.
+
 While the build can index no language on Rust (`rust_engine_languages()` is
 empty), `rust` runs exactly what `python` runs and `both` indexes nothing
 twice: an updater with no language on Rust is skipped before its repository
@@ -35,6 +43,7 @@ nothing.
 
 from __future__ import annotations
 
+import builtins
 import functools
 import hashlib
 import json
@@ -43,7 +52,7 @@ import re
 import tempfile
 import traceback
 from collections import defaultdict
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from enum import StrEnum
 from pathlib import Path
@@ -123,6 +132,19 @@ REPORT_SWALLOWED = "  {engine} run swallowed {count} pass failure{plural}:"
 REPORT_RAISED = "  {engine} run raised:"
 REPORT_SEPARATOR = "\n\n"
 REPORT_SHARED = "In the {scope}-scoped fixture {argname!r}, which this test uses:\n"
+# The functions in `utils/path_utils.py` and `os` Python's walk decides with.
+WALK_PREDICATES = (
+    "is_symlink_entry",
+    "is_special_file_entry",
+    "is_utf8_name",
+    "should_keep_dir",
+    "should_skip_rel_file",
+)
+WALK_SYSTEM_CALLS = ("walk", "scandir", "lstat", "stat")
+FRAME_REPORT_HEADING = (
+    "The frame's file plan differs from Python's on {repo}: {python} lines only "
+    "in Python's, {rust} only in the frame's"
+)
 REPORT_SECTION = "engine comparison"
 TEARDOWN = "teardown"
 FUNCTION_SCOPE = "function"
@@ -222,6 +244,11 @@ class EngineSession:
         self._compared: defaultdict[str, set[RepoState]] = defaultdict(set)
         self._test_reports: defaultdict[str, list[str]] = defaultdict(list)
         self._fixture_reports: defaultdict[SharedFixture, list[str]] = defaultdict(list)
+        from codebase_rag import engine_frame
+
+        self._patch.setattr(engine_frame, "CHECK", FramePlanCheck(self._file_report))
+        if mode is EngineMode.RUST:
+            self._patch.setattr(engine_frame, "ENABLED", True)
         if mode is EngineMode.BOTH:
             self._compare_after_every_run()
 
@@ -246,20 +273,27 @@ class EngineSession:
     def _compare(self, updater: GraphUpdater, run: Run) -> None:
         if not updater.rust_languages:
             return
-        fixture = self._fixtures[-1] if self._fixtures else None
-        if fixture is not None:
-            label = fixture.label
-        elif self._item is not None:
-            label = self._item.nodeid
-        else:
-            label = OUTSIDE_A_TEST
+        label = self._label()
         report = compare_engines(updater, run, self._compared[label], label)
-        if report is None:
-            return
-        if fixture is not None:
-            self._fixture_reports[fixture].append(report)
+        if report is not None:
+            self._file_report(report)
+
+    def _label(self) -> str:
+        """Where a run returning now was made: the innermost shared fixture
+        being set up, else the test running."""
+        if self._fixtures:
+            return self._fixtures[-1].label
+        if self._item is not None:
+            return self._item.nodeid
+        return OUTSIDE_A_TEST
+
+    def _file_report(self, report: str) -> None:
+        """`report` against what made the run: the shared fixture being set
+        up, else the test running, each failing at teardown."""
+        if self._fixtures:
+            self._fixture_reports[self._fixtures[-1]].append(report)
         elif self._item is not None:
-            self._test_reports[label].append(report)
+            self._test_reports[self._item.nodeid].append(report)
         else:
             # No test to fail: collection, or a thread a test left running.
             pytest.fail(report, pytrace=False)
@@ -323,6 +357,89 @@ class EngineSession:
 
     def pytest_unconfigure(self, config: pytest.Config) -> None:
         self._patch.undo()
+
+
+def frame_holds_python_constants() -> bool:
+    """Whether the frame's copies of the walk's built-in names and endings
+    are Python's: a test that patches one, to stand in for an older cgr,
+    walks by rules the frame does not hold."""
+    from codebase_rag import constants as cs
+    from codebase_rag import engine_frame
+
+    made = engine_frame.engine()
+    rules = engine_frame.new_ignore_rules()
+    if made is None or rules is None:
+        return False
+    engine_type, rules_type = type(made), type(rules)
+    unconditional = frozenset(getattr(rules_type, "UNCONDITIONAL_IGNORE_SUFFIXES"))
+    rescuable = frozenset(getattr(rules_type, "RESCUABLE_IGNORE_SUFFIXES"))
+    return (
+        frozenset(cs.IGNORE_PATTERNS)
+        == frozenset(getattr(rules_type, "BUILTIN_IGNORED_DIRS"))
+        and frozenset(cs.VCS_METADATA_DIRS)
+        == frozenset(getattr(rules_type, "VCS_METADATA_DIRS"))
+        and frozenset(cs.UNCONDITIONAL_IGNORE_FILENAME_ENDINGS) == unconditional
+        and frozenset(cs.IGNORE_FILENAME_ENDINGS) == unconditional | rescuable
+        and frozenset(cs.CGR_STATE_FILENAMES)
+        == frozenset(getattr(engine_type, "STATE_FILENAMES"))
+    )
+
+
+def _walk_functions() -> tuple[Callable[..., object], ...]:
+    """What Python's walk decides with and its files are read by: the walk's
+    predicates, the system calls `os.walk` and they make, and the reads the
+    sync and the comparison hash with."""
+    from codebase_rag.utils import path_utils
+
+    return (
+        *(getattr(path_utils, name) for name in WALK_PREDICATES),
+        *(getattr(os, name) for name in WALK_SYSTEM_CALLS),
+        os.path.islink,
+        builtins.open,
+        Path.read_bytes,
+    )
+
+
+def frame_report(repo_path: Path, difference: list[str]) -> str:
+    """The message for a file plan the frame and Python's walk differ on:
+    the repository, the count on each side, and the first differing lines,
+    `-` for Python's and `+` for the frame's."""
+    python = sum(1 for line in difference if line.startswith(DIFF_ONLY_PYTHON))
+    lines = [
+        FRAME_REPORT_HEADING.format(
+            repo=repo_path, python=python, rust=len(difference) - python
+        )
+    ]
+    lines.extend(REPORT_LINE.format(line=line) for line in difference[:REPORT_LINES])
+    if len(difference) > REPORT_LINES:
+        lines.append(REPORT_MORE.format(count=len(difference) - REPORT_LINES))
+    return "\n".join(lines)
+
+
+class FramePlanCheck:
+    """`engine_frame.CHECK` in the `rust` and `both` modes: every index is
+    compared, and a difference is filed against the test or the shared
+    fixture that made the run.
+
+    Not compared: a run made while a test has patched the built-in names or
+    endings, or one of the functions or system calls Python's walk decides
+    with or reads files by, to stand in for an older cgr or a failing system
+    (a file that cannot be read). The frame walks and reads by its own
+    copies and the real file system.
+    """
+
+    def __init__(self, file_report: Callable[[str], None]) -> None:
+        self._file_report = file_report
+        self._walk = _walk_functions()
+
+    def compares(self) -> bool:
+        current = _walk_functions()
+        return frame_holds_python_constants() and all(
+            now is found for now, found in zip(current, self._walk, strict=True)
+        )
+
+    def differs(self, repo_path: Path, difference: Sequence[str]) -> None:
+        self._file_report(frame_report(repo_path, list(difference)))
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

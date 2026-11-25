@@ -3,12 +3,14 @@
 //! part of its public surface.
 
 use std::borrow::Cow;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyString};
+use pyo3::types::{PyBytes, PyList, PyString, PyTuple};
 
+use super::discover;
 use super::ignore::{self, PatternError};
 
 #[pyclass(frozen, name = "Engine", module = "cgr_graph_rs")]
@@ -39,6 +41,124 @@ impl PyEngine {
     /// files are read.
     fn md5_files(&self, py: Python<'_>, paths: Vec<PathBuf>) -> Vec<Option<String>> {
         py.detach(|| self.engine.md5_files(&paths))
+    }
+
+    /// `cs.CGR_STATE_FILENAMES` as the walk holds it.
+    #[classattr]
+    #[pyo3(name = "STATE_FILENAMES")]
+    fn state_filenames() -> Vec<&'static str> {
+        discover::STATE_FILENAMES.to_vec()
+    }
+
+    /// `cs.ROOT_DIR_KEY` as the walk holds it.
+    #[classattr]
+    #[pyo3(name = "ROOT_DIR_KEY")]
+    fn root_dir_key() -> &'static str {
+        discover::ROOT_DIR_KEY
+    }
+
+    /// `cs.TRACKED_SOURCE_DIR_NAMES` as the rescue holds it.
+    #[classattr]
+    #[pyo3(name = "TRACKED_SOURCE_DIR_NAMES")]
+    fn tracked_source_dir_names() -> Vec<&'static str> {
+        ignore::TRACKED_SOURCE_DIR_NAMES.to_vec()
+    }
+
+    /// The characters `cs.TRACKED_PATH_PATTERN_CHARS` finds, as one str.
+    #[classattr]
+    #[pyo3(name = "TRACKED_PATH_PATTERN_CHARS")]
+    fn tracked_path_pattern_chars() -> String {
+        ignore::TRACKED_PATH_PATTERN_CHARS.iter().collect()
+    }
+
+    /// `cs.GIT_LS_FILES_TIMEOUT_S` as the rescue holds it.
+    #[classattr]
+    #[pyo3(name = "GIT_LS_FILES_TIMEOUT_S")]
+    fn git_ls_files_timeout_s() -> u64 {
+        ignore::GIT_LS_FILES_TIMEOUT.as_secs()
+    }
+
+    /// The repository's file plan: what `walk_eligible_files(root, exclude,
+    /// unignore)` yields and reports, and each file's md5, as the tuple
+    /// `(files, dirs, symlinks, special, undecodable, hashes)`. `files`
+    /// holds `(dirpath, filename, rel_path)` in walk order, `dirs` what
+    /// `on_dir` receives, in order, and each report list the path from the
+    /// root of every entry reported, a name that is not UTF-8 spelled as
+    /// Python spells it. Raises `ValueError` where Python's walk raises on
+    /// a pattern pathspec refuses. The interpreter lock is released for the
+    /// walk and the hashing.
+    #[pyo3(signature = (root, exclude = None, unignore = None))]
+    fn file_plan<'py>(
+        &self,
+        py: Python<'py>,
+        root: PathBuf,
+        exclude: Option<&Bound<'py, PyAny>>,
+        unignore: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        let rules = ignore::IgnoreRules::new(strings(exclude)?, strings(unignore)?);
+        let plan = py
+            .detach(|| self.engine.file_plan(root.as_os_str(), &rules))
+            .map_err(value_error)?;
+        // One str per folder, shared by its files' tuples.
+        let dirpaths: Vec<Bound<'py, PyString>> = plan
+            .dirs
+            .iter()
+            .map(|dir| {
+                let Ok(dirpath) = dir.dirpath.as_os_str().into_pyobject(py);
+                dirpath
+            })
+            .collect();
+        let files = PyList::new(
+            py,
+            plan.files.iter().map(|file| {
+                (
+                    dirpaths[file.dir].clone(),
+                    file.name.as_str(),
+                    file.rel_path.as_str(),
+                )
+            }),
+        )?;
+        let dirs = PyList::new(
+            py,
+            plan.dirs
+                .iter()
+                .zip(&dirpaths)
+                .map(|(dir, dirpath)| (dir.key.as_str(), dirpath.clone())),
+        )?;
+        let reported = |paths: &[OsString]| PyList::new(py, paths.iter().map(OsString::as_os_str));
+        PyTuple::new(
+            py,
+            [
+                files.into_any(),
+                dirs.into_any(),
+                reported(&plan.links)?.into_any(),
+                reported(&plan.special)?.into_any(),
+                reported(&plan.undecodable)?.into_any(),
+                PyList::new(py, plan.hashes)?.into_any(),
+            ],
+        )
+    }
+
+    /// `load_ignore_patterns(root)` as the frame reads the two ignore files
+    /// and runs the tracked-source rescue: `(exclude, unignore,
+    /// refused_lines, unreadable, tracked_dirs)`, the sets sorted,
+    /// `refused_lines` each `(file name, line number)` Python warns of,
+    /// `unreadable` each file name it warns of, and `tracked_dirs` the
+    /// folders it logs. The interpreter lock is released meanwhile.
+    fn ignore_patterns<'py>(
+        &self,
+        py: Python<'py>,
+        root: PathBuf,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        let found = py.detach(|| ignore::load_ignore_patterns(&root));
+        (
+            found.exclude.into_iter().collect::<Vec<_>>(),
+            found.unignore.into_iter().collect::<Vec<_>>(),
+            found.refused_lines,
+            found.unreadable,
+            found.tracked_dirs.into_iter().collect::<Vec<_>>(),
+        )
+            .into_pyobject(py)
     }
 }
 

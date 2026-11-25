@@ -384,3 +384,177 @@ fn hostile_patterns_compile_within_bounds_or_are_refused() {
         }
     }
 }
+
+#[test]
+fn a_name_is_held_as_python_holds_it_for_the_rules() {
+    use std::ffi::OsStr;
+
+    // A valid name is itself, borrowed.
+    assert!(matches!(
+        string_from_os_str(OsStr::new("é/中.py")),
+        Cow::Borrowed("é/中.py")
+    ));
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        // surrogateescape gives each stray byte b the surrogate U+DC00 + b,
+        // however the decoder splits the invalid run: the str Python builds
+        // for each name, as code points, and what the binding makes of it.
+        let cases: [(&[u8], &[u32]); 5] = [
+            (b"bad\xff.py", &[0x62, 0x61, 0x64, 0xDCFF, 0x2E, 0x70, 0x79]),
+            (b"\xe2\x82A", &[0xDCE2, 0xDC82, 0x41]),
+            (b"\xed\xa0\x80", &[0xDCED, 0xDCA0, 0xDC80]),
+            (b"\xf0\x9f\x98", &[0xDCF0, 0xDC9F, 0xDC98]),
+            (b"\xc3\xa9\xff\xc3\xa9", &[0xE9, 0xDCFF, 0xE9]),
+        ];
+        for (bytes, python) in cases {
+            assert_eq!(
+                string_from_os_str(OsStr::from_bytes(bytes)),
+                string_from_code_points(python.iter().copied()).unwrap(),
+                "{bytes:?}"
+            );
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+        // A name that is not UTF-16 keeps its unpaired surrogate unit.
+        let units = [0x61, 0xD800, 0x62, 0xDFFF];
+        assert_eq!(
+            string_from_os_str(&OsString::from_wide(&units)),
+            string_from_code_points(units.iter().map(|&unit| u32::from(unit))).unwrap()
+        );
+    }
+}
+
+#[test]
+fn an_ignore_line_is_trimmed_as_python_trims_it() {
+    // Recorded from `config.trim_ignore_line`.
+    let cases = [
+        ("  a.py  ", "a.py"),
+        ("t.py\\ ", "t.py\\ "),
+        ("t.py\\\\ ", "t.py\\\\"),
+        ("t.py\\  ", "t.py\\ "),
+        ("\tx\u{0b}", "x"),
+        ("x\u{1c}", "x"),
+        ("\u{3000}y\u{3000}", "y"),
+        ("x\\", "x\\"),
+        ("a b", "a b"),
+        ("   ", ""),
+        ("x\u{a0}", "x"),
+        ("\\ ", "\\ "),
+        ("x\u{85}", "x"),
+    ];
+    for (line, trimmed) in cases {
+        assert_eq!(files::trim_ignore_line(line), trimmed, "{line:?}");
+    }
+}
+
+#[test]
+fn a_text_file_ends_its_lines_at_any_line_end() {
+    assert_eq!(
+        files::universal_lines("a\r\nb\rc\nd\u{0b}e\u{2028}f"),
+        ["a", "b", "c", "d\u{0b}e\u{2028}f"]
+    );
+    assert_eq!(files::universal_lines("a\n"), ["a", ""]);
+}
+
+/// A root with these two ignore files, outside any git checkout.
+fn ignore_root(name: &str, cgrignore: &[u8], gitignore: &[u8]) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("cgr-ignore-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join(CGRIGNORE_FILENAME), cgrignore).unwrap();
+    std::fs::write(root.join(GITIGNORE_FILENAME), gitignore).unwrap();
+    root
+}
+
+fn set(items: &[&str]) -> BTreeSet<String> {
+    items.iter().map(|item| (*item).to_owned()).collect()
+}
+
+#[test]
+fn the_ignore_files_give_python_s_sets() {
+    let root = ignore_root(
+        "sets",
+        b"\xef\xbb\xbfgen/\n# note\n\n!a\n!  keep.py\nt.py\\ \n",
+        b"a\nb/\n!b/keep\nc\n!c\n!d\n",
+    );
+
+    let found = load_ignore_patterns(&root);
+    let _ = std::fs::remove_dir_all(&root);
+
+    // As `config.load_ignore_patterns` gives them: `a` cancelled by the
+    // `.cgrignore` unignore, `c` by the `!c` after it, and the surviving
+    // `!` lines make `.gitignore` one ordered block.
+    assert_eq!(
+        found.exclude,
+        set(&["b/\n!b/keep\n!c\n!d", "gen/", "t.py\\ "])
+    );
+    assert_eq!(found.unignore, set(&["a", "b/keep", "c", "d", "keep.py"]));
+    assert!(found.refused_lines.is_empty());
+    assert!(found.unreadable.is_empty());
+}
+
+#[test]
+fn a_line_pathspec_refuses_is_left_out_alone() {
+    let root = ignore_root("refused", b"ok.py\nbad\\\n[z-a]\n!\n!!\n", b"x\r\n\xff\n");
+
+    let found = load_ignore_patterns(&root);
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(found.exclude, set(&["ok.py"]));
+    assert!(found.unignore.is_empty());
+    assert_eq!(
+        found.refused_lines,
+        [
+            (CGRIGNORE_FILENAME, 2),
+            (CGRIGNORE_FILENAME, 3),
+            (CGRIGNORE_FILENAME, 4),
+            (CGRIGNORE_FILENAME, 5)
+        ]
+    );
+    // Not UTF-8: the whole file is skipped.
+    assert_eq!(found.unreadable, [GITIGNORE_FILENAME]);
+}
+
+#[test]
+fn tracked_files_under_an_ambiguous_name_are_rescued_by_their_own_path() {
+    let listing = [
+        "bin/main.dart",
+        "tools/out/gen.go",
+        "vendor/bin/x.js",
+        "src/bin/[x].rs",
+        "tmp/space ",
+        "pkg/target/a/b.rs",
+        "README.md",
+        "",
+    ]
+    .join("\0");
+
+    let found = tracked::rescue(&listing);
+
+    assert_eq!(
+        found.rescued,
+        set(&["/bin/main.dart", "/pkg/target/a/b.rs", "/tools/out/gen.go"])
+    );
+    assert_eq!(found.dirs, set(&["bin", "pkg/target", "tools/out"]));
+}
+
+#[test]
+fn git_s_output_is_read_as_python_reads_it() {
+    // Recorded from `bytes.decode("utf-8", "replace")`, then subprocess's
+    // newline translation.
+    let cases: [(&[u8], &str); 6] = [
+        (b"a\xffb", "a\u{FFFD}b"),
+        (b"\xe2\x82A", "\u{FFFD}A"),
+        (b"\xf0\x80\x80A", "\u{FFFD}\u{FFFD}\u{FFFD}A"),
+        (b"\xed\xa0\x80", "\u{FFFD}\u{FFFD}\u{FFFD}"),
+        (b"\xc0\xafx", "\u{FFFD}\u{FFFD}x"),
+        (b"a\r\nb\rc", "a\nb\nc"),
+    ];
+    for (bytes, text) in cases {
+        assert_eq!(tracked::python_text(bytes), text, "{bytes:?}");
+    }
+}
