@@ -64,6 +64,14 @@ def test_a_difference_made_in_a_fixture_fails_its_test_and_the_run(
             workers,
             "-p",
             plugin,
+            # Rooted at its own folder, so collection starts there. Rooted at
+            # the checkout (on another drive, on Windows CI) or at a folder
+            # above both, pytest collects each folder from there down to the
+            # file, the shared temporary folder among them, and another
+            # process's folder can vanish between that listing and the stat
+            # Windows makes of each one listed (`samefile_nofollow`).
+            "--rootdir",
+            str(tmp_path),
             str(tests),
         ],
         cwd=REPO_ROOT,
