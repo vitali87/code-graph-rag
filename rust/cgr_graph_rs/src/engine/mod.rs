@@ -10,8 +10,10 @@
 //!
 //! Its first job is the hash the sync's change detection records for each
 //! file: the md5 of its raw bytes, as `_hash_file` in
-//! `codebase_rag/graph_updater.py` computes it.
+//! `codebase_rag/graph_updater.py` computes it. `ignore` holds the rules the
+//! walk will leave paths out by, a port of the Python walk's own.
 
+pub mod ignore;
 #[cfg(feature = "python")]
 pub mod python;
 #[cfg(test)]
