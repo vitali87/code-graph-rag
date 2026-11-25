@@ -174,6 +174,83 @@ def test_a_run_that_writes_other_files_fails_the_check(
     ]
 
 
+def _frame_files(monkeypatch: pytest.MonkeyPatch, plant: bytes = b"") -> list[bytes]:
+    """What each run wrote of how the frame differed from Python, with
+    `plant` written in its place on the runs after the first."""
+    written: list[bytes] = []
+    original = handoff.index_run
+
+    def kept(
+        repo: ReferenceRepo,
+        source: Path,
+        seed: int | None,
+        out: Path,
+        index_engine: str | None,
+    ) -> None:
+        original(repo, source, seed, out, index_engine)
+        written.append((out / handoff.FRAME_FILE).read_bytes())
+        if seed is not None and plant:
+            (out / handoff.FRAME_FILE).write_bytes(plant)
+
+    monkeypatch.setattr(handoff, "index_run", kept)
+    return written
+
+
+def test_each_run_checks_the_frame_s_plan_and_reading_of_the_ignore_files(
+    pinned: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    (pinned / ".gitignore").write_text("build/\n!build/keep.py\n", encoding="utf-8")
+    written = _frame_files(monkeypatch)
+
+    status = handoff.run([REPO], tmp_path / "cache", 2)
+
+    assert status == 0, capsys.readouterr().out
+    # Compared, and the same: an empty file, where a run that could not
+    # compare says so.
+    assert written == [b"", b""]
+
+
+def test_a_frame_that_differs_from_python_fails_the_check(
+    pinned: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    _frame_files(monkeypatch, plant=b"- file\tmain.py\t0\n+ symlink\tmain.py")
+
+    status = handoff.run([REPO], tmp_path / "cache", 2)
+    out = capsys.readouterr().out.splitlines()
+
+    assert status == cs.REFERENCE_EXIT_DIFFERENT
+    assert out == [
+        "demo (python): 3 files, 10 index lines",
+        "  the frame differs from Python in the run with PYTHONHASHSEED=1: "
+        "1 lines only before, 1 only after",
+        "    - file\tmain.py\t0",
+        "    + symlink\tmain.py",
+    ]
+
+
+def test_the_frame_s_reading_of_the_ignore_files_is_compared(
+    pinned: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from codebase_rag import engine_frame
+    from codebase_rag.config import load_ignore_patterns
+
+    (pinned / ".cgrignore").write_text("docs/\n!keep.py\n", encoding="utf-8")
+    python = load_ignore_patterns(pinned)
+    assert handoff._reading_difference(pinned, python) == []
+    read = engine_frame.frame_ignore_patterns(pinned)
+    assert read is not None
+    monkeypatch.setattr(
+        engine_frame,
+        "frame_ignore_patterns",
+        lambda _repo: read._replace(exclude=frozenset({"doc/"})),
+    )
+
+    assert handoff._reading_difference(pinned, python) == [
+        "- ignore exclude\tdocs/",
+        "+ ignore exclude\tdoc/",
+    ]
+
+
 def test_a_recording_writes_the_first_runs_files_once_every_run_agrees(
     pinned: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
