@@ -786,14 +786,20 @@ class TestSingleFile:
         _sync(repo)
         target = repo / "pkg" / "b.py"
         updater = _updater(target)
-        original = GraphUpdater._collect_eligible_files
+        original = GraphUpdater._prepare_flux_stems
 
-        def then_delete(self: GraphUpdater) -> list[tuple[Path, str]]:
-            files = original(self)
+        def then_delete(
+            self: GraphUpdater,
+            eligible_files: list[tuple[Path, str]],
+            old_hashes: dict[str, str],
+            is_full_build: bool,
+        ) -> set[str]:
+            # Once the run has its file, before it hashes it; the harness's
+            # grammar probe collects the file too, and must still find it.
             target.unlink()
-            return files
+            return original(self, eligible_files, old_hashes, is_full_build)
 
-        monkeypatch.setattr(GraphUpdater, "_collect_eligible_files", then_delete)
+        monkeypatch.setattr(GraphUpdater, "_prepare_flux_stems", then_delete)
         updater.run()
 
         python, frame = answers[-2:]
