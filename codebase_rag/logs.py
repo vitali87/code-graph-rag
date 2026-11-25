@@ -1575,6 +1575,17 @@ SYMLINKS_SKIPPED = (
     "the repository is never read and one inside it is indexed only under its "
     "own path (each is logged at DEBUG)"
 )
+# Nor is a pipe, socket or device, which reading could block on for good
+# (issue #3721), or a name that is not valid UTF-8, which the graph cannot
+# store (issue #3722). Each list is one warning per run.
+SPECIAL_FILES_SKIPPED = (
+    "Skipped {count} special file(s) (named pipes, sockets or devices), which "
+    "are never opened: {paths}"
+)
+UNDECODABLE_NAMES_SKIPPED = (
+    "Skipped {count} path(s) whose names are not valid UTF-8, which the graph "
+    "cannot store: {paths}"
+)
 
 # Exclude prompt logs
 EXCLUDE_INVALID_INDEX = "Invalid index: {index} (out of range)"

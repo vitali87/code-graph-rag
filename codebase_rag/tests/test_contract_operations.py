@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -322,3 +323,32 @@ class TestProtoDiscovery:
         assert discover_contract_operations(tmp_path) == [
             ContractOperation("S", "Do", None, None, tmp_path / "a.proto")
         ]
+
+
+class TestNamesThatAreNotUtf8:
+    # Issue #3722: the file walk skips a name that is not valid UTF-8, but
+    # contract discovery lists the repository on its own. A spec under such a
+    # name reached the graph's keys, which cannot encode it (Neo4j refuses it
+    # outright), so discovery skips those files and folders as the walk does.
+    @staticmethod
+    def _write_bytes_path(root: Path, rel: bytes, text: str) -> None:
+        path = os.fsencode(root) + b"/" + rel
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        except (OSError, UnicodeError):
+            pytest.skip("this filesystem refuses names that are not UTF-8")
+
+    def test_specs_under_such_names_are_not_read(self, tmp_path: Path) -> None:
+        spec = json.dumps(_OPENAPI)
+        _write(tmp_path, {"good/openapi.json": spec})
+        self._write_bytes_path(tmp_path, b"bad\xff/openapi.json", spec)
+        self._write_bytes_path(tmp_path, b"spec\xff.json", spec)
+
+        operations = discover_contract_operations(tmp_path)
+
+        sources = {op.source.as_posix() for op in operations}
+        assert sources, "the well-named spec must still be read"
+        for source in sources:
+            source.encode("utf-8")

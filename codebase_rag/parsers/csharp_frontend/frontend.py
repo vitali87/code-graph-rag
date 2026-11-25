@@ -24,6 +24,7 @@ from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
 from ...utils import safe_xml
+from ...utils.path_utils import is_regular_file
 from ..build_lock import artifact_fresh, build_cached_artifact, newest_source_mtime
 from ..frontend_mode import resolve_frontend_mode
 
@@ -132,9 +133,16 @@ def _project_candidates(repo_path: Path) -> list[Path]:
     def not_ignored(p: Path) -> bool:
         return not any(part in _IGNORE_DIRS for part in p.relative_to(repo_path).parts)
 
+    # Found by `rglob`, not the indexer's walk, so a pipe of one of these
+    # names reaches here, and reading the solution would block on it for
+    # good (#3721): only a regular file is a candidate.
     def shortest_first(pattern: str) -> list[Path]:
         return sorted(
-            (p for p in repo_path.rglob(pattern) if not_ignored(p)),
+            (
+                p
+                for p in repo_path.rglob(pattern)
+                if not_ignored(p) and is_regular_file(p)
+            ),
             key=lambda p: len(str(p)),
         )
 
@@ -197,7 +205,7 @@ def uncovered_csharp_projects(repo_path: Path, project: Path) -> list[Path]:
     return sorted(
         p
         for p in repo_path.rglob("*.csproj")
-        if not_ignored(p) and p.resolve() not in members
+        if not_ignored(p) and is_regular_file(p) and p.resolve() not in members
     )
 
 

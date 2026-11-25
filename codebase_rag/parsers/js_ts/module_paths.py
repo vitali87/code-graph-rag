@@ -11,6 +11,7 @@ from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import JsonValue
 from ...utils.json_io import loads_json
+from ...utils.path_utils import is_regular_file, is_utf8_name
 
 
 class _ManifestTargets(NamedTuple):
@@ -32,12 +33,21 @@ def discover_js_workspace_packages(repo_path: Path) -> list[tuple[str, Path]]:
     for directory, subdirs, filenames in os.walk(repo_path):
         # Prune rather than filter afterwards: node_modules holds more
         # package.json files than the repo does, and every project pays this
-        # walk, including ones with no JavaScript at all.
-        subdirs[:] = [d for d in subdirs if d not in cs.IGNORE_PATTERNS]
+        # walk, including ones with no JavaScript at all. A folder the walk
+        # leaves out for its name goes too: the import map cannot store its
+        # path (#3722).
+        subdirs[:] = [
+            d for d in subdirs if d not in cs.IGNORE_PATTERNS and is_utf8_name(d)
+        ]
         if cs.DEP_FILE_PACKAGE_JSON not in filenames:
             continue
         package_dir = Path(directory)
         manifest = package_dir / cs.DEP_FILE_PACKAGE_JSON
+        # This walk is not the indexer's, so it must leave out a pipe of this
+        # name, or a link to one, itself: the read below would block on it for
+        # good (#3721).
+        if not is_regular_file(manifest):
+            continue
         try:
             manifest_data = loads_json(
                 manifest.read_text(encoding=cs.ENCODING_UTF8_SIG)
@@ -119,12 +129,14 @@ def _package_module(
 
 
 def _read_manifest(package_dir: Path) -> dict[str, JsonValue]:
+    manifest = package_dir / cs.DEP_FILE_PACKAGE_JSON
+    # The watcher keeps the packages it found at start-up and reads one's
+    # manifest again on a later import; by then it can be a pipe, which the
+    # read below would block on for good (#3721).
+    if not is_regular_file(manifest):
+        return {}
     try:
-        data = loads_json(
-            (package_dir / cs.DEP_FILE_PACKAGE_JSON).read_text(
-                encoding=cs.ENCODING_UTF8_SIG
-            )
-        )
+        data = loads_json(manifest.read_text(encoding=cs.ENCODING_UTF8_SIG))
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}

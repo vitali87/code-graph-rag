@@ -15,6 +15,7 @@ from ..utils.path_utils import (
     cached_relative_path,
     cached_resolve_posix,
     is_symlink_entry,
+    is_utf8_name,
     should_skip_path,
 )
 
@@ -120,13 +121,18 @@ class StructureProcessor:
                 path = parent / name
                 # A linked directory is not walked (issue #2451), so it gets no
                 # container either: an in-repo one was an empty Package whose
-                # absolute path was its target's.
-                if is_symlink_entry(path) or should_skip_path(
-                    path,
-                    self.repo_path,
-                    exclude_paths=self.exclude_paths,
-                    unignore_paths=self.unignore_paths,
-                    is_file=False,
+                # absolute path was its target's. Nor is one whose name is not
+                # valid UTF-8 (issue #3722): the graph cannot store its path.
+                if (
+                    is_symlink_entry(path)
+                    or not is_utf8_name(name)
+                    or should_skip_path(
+                        path,
+                        self.repo_path,
+                        exclude_paths=self.exclude_paths,
+                        unignore_paths=self.unignore_paths,
+                        is_file=False,
+                    )
                 ):
                     continue
                 walked.append(name)
