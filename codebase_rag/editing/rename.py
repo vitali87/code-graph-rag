@@ -56,6 +56,7 @@ from ..utils import qn_markers
 from ..utils.path_utils import (
     base_module_qn,
     declaration_implementations,
+    is_regular_file,
     python_stub_implementations,
     walk_eligible_files,
 )
@@ -2280,7 +2281,9 @@ class Renamer:
         pattern = re.compile(_IDENTIFIER_RE % re.escape(old_name))
         found: list[str] = []
         for path in sorted(self.repo_root.rglob("*.md")):
-            if any(
+            # This scan lists the repository itself, and opening a named pipe
+            # it finds blocks until something writes to it (issue #3737).
+            if not is_regular_file(path) or any(
                 part in cs.IGNORE_PATTERNS
                 for part in path.relative_to(self.repo_root).parts
             ):
