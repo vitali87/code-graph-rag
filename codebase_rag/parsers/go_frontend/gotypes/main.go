@@ -25,7 +25,8 @@
 // type-check cleanly; a missing toolchain, no go.mod, a load error, an
 // ill-typed package or an empty result all leave cgr on pure tree-sitter.
 //
-// Run: gotypes <repo-root>   (honours CGR_IGNORE_DIRS, comma-separated)
+// Run: gotypes <repo-root>   (honours CGR_IGNORE_DIRS, comma-separated, and
+// CGR_GO_OVERLAY, a `go build -overlay` file)
 //
 // The module asks for the oldest Go the helper builds with (issue #2395), and
 // below go 1.23 the default GODEBUG resolves `type A = B` to B's Named type,
@@ -187,6 +188,13 @@ func main() {
 			packages.NeedDeps | packages.NeedModule,
 		Dir:   root,
 		Tests: true,
+	}
+	// cgr's overlay deletes each named pipe, socket and device from the
+	// build's view: a load opens every source file of a package to read its
+	// build constraints, and opening a pipe blocks until something writes to
+	// it (issue #3736).
+	if overlay := os.Getenv("CGR_GO_OVERLAY"); overlay != "" {
+		cfg.BuildFlags = []string{"-overlay=" + overlay}
 	}
 	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
