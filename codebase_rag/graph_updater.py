@@ -242,14 +242,16 @@ def _stored_language(path: object) -> cs.SupportedLanguage | None:
     )
 
 
-def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
-    owner: str | None = None
-    for candidate in module_qns:
-        if qn.startswith(candidate + cs.SEPARATOR_DOT) and (
-            owner is None or len(candidate) > len(owner)
-        ):
-            owner = candidate
-    return owner
+def _owning_module_qn(qn: str, module_qns: Collection[str]) -> str | None:
+    # The longest module qn `qn` sits under. Read off `qn`'s own prefixes, so
+    # a lookup costs its depth whatever the number of modules: the
+    # foreign-definer lookup asks once for every definition of the run.
+    head, separator, _tail = qn.rpartition(cs.SEPARATOR_DOT)
+    while separator:
+        if head in module_qns:
+            return head
+        head, separator, _tail = head.rpartition(cs.SEPARATOR_DOT)
+    return None
 
 
 def _route_label(node_type: NodeType) -> cs.NodeLabel:
@@ -6501,8 +6503,16 @@ class GraphUpdater:
 
         The span records already name the registering module, so the files
         to re-parse are exactly those that recorded a qn under a departing
-        module without being that module themselves. Read before
-        `remove_file_from_state` runs, while the run's records still stand.
+        module without being that module themselves. A module nested under
+        the departing one keeps what it records in its own namespace:
+        `proj.pkg.types.sub.s` is pkg/types/sub.py's, and matched by the
+        prefix alone a reused updater re-parsed sub.py where a fresh process
+        did not (issue #3727). Only the registering module is weighed against
+        the departing one, not every module: a module qn can spell a type
+        path (pkg/types/box.go is `proj.pkg.types.box`, as is the type `box`
+        in pkg/types.go), and methods.go's `proj.pkg.types.box.Grow` still
+        hangs off types.go. Read before `remove_file_from_state` runs, while
+        the run's records still stand.
         """
         gone = set(gone_keys)
         if not gone:
@@ -6520,8 +6530,12 @@ class GraphUpdater:
             if span_module in gone_modules:
                 continue
             qn = location.qualified_name
-            if any(
-                qn.startswith(f"{module}{cs.SEPARATOR_DOT}") for module in gone_modules
+            owner = _owning_module_qn(qn, gone_modules)
+            # The nearer of the two: box.cpp is `proj.box`, above box.h's
+            # `proj.box.h`, so its `proj.box.h.Box.grow` is still box.h's.
+            if (
+                owner is not None
+                and _owning_module_qn(qn, (owner, span_module)) == owner
             ):
                 definers.add(span_module)
         return {
