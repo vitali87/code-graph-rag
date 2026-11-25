@@ -65,3 +65,10 @@ path = "fuzz_targets/xml_elements.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "ignore_patterns"
+path = "fuzz_targets/ignore_patterns.rs"
+test = false
+doc = false
+bench = false
