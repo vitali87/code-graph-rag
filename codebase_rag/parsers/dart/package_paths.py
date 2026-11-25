@@ -43,20 +43,10 @@ def discover_dart_packages(
             cs.DART_PACKAGE_LIB_DIR, dir_prefix, exclude_paths, unignore_paths
         ):
             continue
-        pubspec = package_dir / cs.DEP_FILE_PUBSPEC
-        # This walk is not the indexer's, so it must leave out a pipe of this
-        # name, or a link to one, itself: the read below would block on it for
-        # good (#3721).
-        if not is_regular_file(pubspec):
-            continue
-        try:
-            text = pubspec.read_text(encoding=cs.ENCODING_UTF8_SIG)
-        except (OSError, ValueError):
-            continue
-        if (match := _PUBSPEC_NAME.search(text)) is None:
+        if (name := _pubspec_name(package_dir / cs.DEP_FILE_PUBSPEC)) is None:
             continue
         rel = (package_dir / cs.DART_PACKAGE_LIB_DIR).relative_to(repo_path)
-        found.append((len(rel.parts), rel.as_posix(), match.group(1)))
+        found.append((len(rel.parts), rel.as_posix(), name))
     packages: dict[str, str] = {}
     # Deterministic: a name two pubspecs claim goes to the shallower one.
     for _depth, rel_posix, name in sorted(found):
@@ -65,3 +55,21 @@ def discover_dart_packages(
         packages[name] = rel_posix.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
         logger.debug(ls.IMP_DART_PACKAGE, package=name, path=rel_posix)
     return packages
+
+
+def _pubspec_name(pubspec: Path) -> str | None:
+    """The `name:` a pubspec declares, or None when it has none or can't be read.
+
+    The package walk is not the indexer's, so it must leave out a pipe of this
+    name, or a link to one, itself: the read would block on it for good
+    (#3721).
+    """
+    if not is_regular_file(pubspec):
+        return None
+    try:
+        text = pubspec.read_text(encoding=cs.ENCODING_UTF8_SIG)
+    except (OSError, ValueError):
+        return None
+    if (match := _PUBSPEC_NAME.search(text)) is None:
+        return None
+    return match.group(1)

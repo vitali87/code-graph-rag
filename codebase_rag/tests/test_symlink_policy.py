@@ -519,7 +519,8 @@ class TestSpecialFiles:
             if level == "WARNING" and "pipe" in text.lower()
         ]
         assert len(warnings) == 1
-        assert "pipe.py" in warnings[0] and "sub/mypipe" in warnings[0]
+        assert "pipe.py" in warnings[0]
+        assert "sub/mypipe" in warnings[0]
 
     @pytest.mark.parametrize("manifest", _LOOKED_UP_MANIFESTS)
     def test_a_pipe_named_as_a_manifest_is_never_read(
