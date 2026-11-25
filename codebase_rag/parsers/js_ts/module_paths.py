@@ -129,12 +129,14 @@ def _package_module(
 
 
 def _read_manifest(package_dir: Path) -> dict[str, JsonValue]:
+    manifest = package_dir / cs.DEP_FILE_PACKAGE_JSON
+    # The watcher keeps the packages it found at start-up and reads one's
+    # manifest again on a later import; by then it can be a pipe, which the
+    # read below would block on for good (#3721).
+    if not os.path.isfile(manifest):
+        return {}
     try:
-        data = loads_json(
-            (package_dir / cs.DEP_FILE_PACKAGE_JSON).read_text(
-                encoding=cs.ENCODING_UTF8_SIG
-            )
-        )
+        data = loads_json(manifest.read_text(encoding=cs.ENCODING_UTF8_SIG))
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}

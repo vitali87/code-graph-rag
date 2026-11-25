@@ -43,6 +43,9 @@ from codebase_rag.main import detect_excludable_directories
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import structure_processor
 from codebase_rag.parsers.contracts import discover_contract_operations
+from codebase_rag.parsers.js_ts.module_paths import (
+    _read_manifest as _read_package_manifest,
+)
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
     force_mtime_after_cache,
@@ -386,7 +389,12 @@ needs_fifo = pytest.mark.skipif(sys.platform == "win32", reason="named pipes are
 
 
 def _run_within_deadline(updater: GraphUpdater, pipe: Path, **kwargs: bool) -> None:
-    """Run `updater` on a thread, failing the test if it is still blocked on `pipe`.
+    """Run `updater` on a thread, failing the test if it is still blocked on `pipe`."""
+    _call_within_deadline(lambda: updater.run(**kwargs), pipe)
+
+
+def _call_within_deadline(work: Callable[[], object], pipe: Path) -> None:
+    """Call `work` on a thread, failing the test if it is still blocked on `pipe`.
 
     Opening a named pipe for reading waits for a writer, so a run that reads
     one never returns. Past the deadline the pipe is opened for writing, which
@@ -396,7 +404,7 @@ def _run_within_deadline(updater: GraphUpdater, pipe: Path, **kwargs: bool) -> N
 
     def _run() -> None:
         try:
-            updater.run(**kwargs)
+            work()
         except BaseException as exc:
             raised.append(exc)
 
@@ -546,6 +554,24 @@ class TestSpecialFiles:
         paths = _emitted_paths(mock_ingestor)
         assert "a.py" in paths
         assert contract not in paths
+
+    def test_a_package_manifest_that_became_a_pipe_is_never_read(
+        self, tmp_path: Path
+    ) -> None:
+        # The watcher keeps the packages it found at start-up and reads a
+        # package's manifest again when a later import names it; by then the
+        # manifest can have been replaced by a pipe.
+        package = tmp_path / "pkg"
+        package.mkdir()
+        os.mkfifo(package / cs.DEP_FILE_PACKAGE_JSON)
+        read: list[object] = []
+
+        _call_within_deadline(
+            lambda: read.append(_read_package_manifest(package)),
+            package / cs.DEP_FILE_PACKAGE_JSON,
+        )
+
+        assert read == [{}]
 
     def test_a_pipe_in_a_go_module_root_is_never_read(
         self, tmp_path: Path, mock_ingestor: MagicMock
