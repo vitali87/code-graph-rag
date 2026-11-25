@@ -73,12 +73,14 @@ posix_name = pytest.mark.skipif(
 )
 
 
+REBUILD = "the extension lacks change detection; rebuild the crate"
+
+
 def _engine() -> engine_frame.Engine:
     made = engine_frame.engine()
     # The checkout builds its own crate, so the state files are always there.
-    assert made is not None and hasattr(made, "changes"), (
-        "the extension lacks change detection; rebuild the crate"
-    )
+    assert made is not None, REBUILD
+    assert hasattr(made, "changes"), REBUILD
     return made
 
 
@@ -399,11 +401,11 @@ def test_a_cache_written_by_either_is_the_other_s_byte_for_byte(
 def test_a_cache_the_frame_cannot_publish_leaves_the_last_one(tmp_path: Path) -> None:
     blocked = tmp_path / "file"
     blocked.write_text("", encoding=cs.ENCODING_UTF8)
+    made = _engine()
+    cache = blocked / cs.HASH_CACHE_FILENAME
 
     with pytest.raises(OSError):
-        _engine().publish_hash_cache(
-            blocked / cs.HASH_CACHE_FILENAME, [("a.py", "x")], 1.0
-        )
+        made.publish_hash_cache(cache, [("a.py", "x")], 1.0)
     assert blocked.read_text(encoding=cs.ENCODING_UTF8) == ""
 
 
@@ -903,11 +905,8 @@ class TestSingleFile:
         python, frame = answers[-2:]
         assert engine_frame.changes_difference(python, frame) == []
         assert checked.changes == []
-        assert frame.merge_base is not None and dict(frame.merge_base).keys() == {
-            "a.py",
-            "pkg/b.py",
-            "pkg/sub/c.py",
-        }
+        assert frame.merge_base is not None
+        assert dict(frame.merge_base).keys() == {"a.py", "pkg/b.py", "pkg/sub/c.py"}
         assert frame.stamp == before.st_mtime
         assert (frame.mtimes, frame.mtimes_text, frame.deleted) == (None, None, ())
         assert frame.changed == (("pkg/b.py", False),)
