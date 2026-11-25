@@ -8,7 +8,6 @@ the sync records for each file.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -16,8 +15,6 @@ import pytest
 import codebase_rag
 from codebase_rag import engine_frame
 from codebase_rag.graph_updater import _hash_file
-
-CORES = os.cpu_count() or 1
 
 
 @pytest.fixture
@@ -71,25 +68,29 @@ def test_a_file_that_cannot_be_read_has_no_hash(
     assert hashes == [None, None, _hash_file(present)]
 
 
-@pytest.mark.parametrize("threads", sorted({1, 2, CORES}))
+@pytest.mark.parametrize("threads", [0, 1, 2, 3])
 def test_any_number_of_threads_gives_the_same_hashes_in_order(
     threads: int, tmp_path: Path
 ) -> None:
     # cgr's own sources: hundreds of files of every size, plus the fixture's.
+    # 0 is the default pool, one thread per core the process may use.
     package = Path(codebase_rag.__file__).parent
     paths = sorted(package.rglob("*.py")) + _files(tmp_path)
     made = engine_frame.new_engine(threads)
     assert made is not None
 
-    assert made.threads == threads
+    assert made.threads == threads or (threads == 0 and made.threads >= 1)
     assert made.md5_files(paths) == [_hash_file(path) for path in paths]
 
 
-def test_zero_threads_means_one_per_core() -> None:
+def test_zero_threads_gives_the_default_pool() -> None:
+    # Its exact size is the Rust side's `available_parallelism`, which counts
+    # the CPUs this process may use (affinity, cgroup quota); `os.cpu_count()`
+    # counts the machine's, so only Rust's own test checks the number.
     made = engine_frame.new_engine(0)
     assert made is not None
 
-    assert made.threads == CORES
+    assert made.threads >= 1
 
 
 def test_the_shared_engine_is_made_once() -> None:
@@ -97,7 +98,9 @@ def test_the_shared_engine_is_made_once() -> None:
 
     assert first is not None
     assert engine_frame.engine() is first
-    assert first.threads == CORES
+    default = engine_frame.new_engine(0)
+    assert default is not None
+    assert first.threads == default.threads
 
 
 def test_without_the_extensions_engine_there_is_none(
