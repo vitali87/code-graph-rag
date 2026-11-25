@@ -19,7 +19,8 @@
 //!   map each folder (the root as `.`) to its mtime as Python's float,
 //!   `sec + nsec * 1e-9`, compared exactly. Both are read as `json.loads`
 //!   reads them (`json`); an entry whose name holds a lone surrogate, as a
-//!   cache from before #3722 can, is dropped.
+//!   cache from before #3722 can, is dropped, and a well-named file whose
+//!   hash is no string, or holds one, reads as `unreadable`.
 //! - **Prepared, not published.** `changes` returns the cache and folder
 //!   times a run would publish; Python publishes the ones the run used, at
 //!   its commit point, after the graph's writes are flushed.
@@ -572,8 +573,10 @@ pub struct HashCacheRead {
 
 /// `_load_hash_cache`: each file's hash, in the file's order. A file that
 /// is missing, cannot be read or decoded, or holds no object reads as no
-/// cache; only str values count, and an entry whose name or hash holds a
-/// lone surrogate is dropped.
+/// cache. An entry whose name holds a lone surrogate is dropped; one whose
+/// hash is no str, or holds one, is kept as `unreadable`, so the in-sync
+/// check and the next run still see the file, hash it and re-parse it as
+/// a known one.
 pub fn read_hash_cache(path: &Path) -> HashCacheRead {
     hash_cache_from(read_members(path))
 }
@@ -597,9 +600,9 @@ fn hash_cache_from(found: Result<Option<Vec<(Text, Value)>>, String>) -> HashCac
     let entries = as_dict(members)
         .into_items()
         .into_iter()
-        .filter_map(|(name, value)| match value {
-            Value::Str(Some(hash)) => Some((name, hash)),
-            _ => None,
+        .map(|(name, value)| match value {
+            Value::Str(Some(hash)) => (name, hash),
+            _ => (name, UNREADABLE.to_owned()),
         })
         .collect();
     HashCacheRead {
