@@ -490,6 +490,28 @@ EG_RUST_ENGINE = "Engine"
 # The frame's ignore rules (engine_frame.py), which a build from before
 # phase 2's step 4 lacks.
 EG_RUST_IGNORE_RULES = "IgnoreRules"
+# The frame's walk and its reading of the ignore files (engine_frame.py),
+# which an `Engine` from before phase 2's step 5 lacks.
+EG_RUST_FILE_PLAN = "file_plan"
+EG_RUST_IGNORE_PATTERNS = "ignore_patterns"
+# A file plan as lines, to compare two (engine_frame.py): each file in walk
+# order, each folder listed in order, then each kind of report, sorted. A
+# file that cannot be read has the hash the sync records for it.
+FRAME_PLAN_FILE_LINE = "file\t{rel_path}\t{md5}\t{dirpath}\t{name}"
+FRAME_PLAN_DIR_LINE = "dir\t{key}\t{dirpath}"
+FRAME_PLAN_REPORT_LINE = "{kind}\t{rel_path}"
+FRAME_PLAN_RAISED_LINE = "raised\t{error}"
+# How many differing lines the warning names.
+FRAME_PLAN_NAMED_LINES = 2
+FRAME_PLAN_NAMES_SEPARATOR = ", "
+
+
+class FramePlanReport(StrEnum):
+    SYMLINK = "symlink"
+    SPECIAL = "special"
+    UNDECODABLE = "undecodable"
+
+
 # Bridge methods a build from before the scope walks, or from before the
 # interface fingerprint, lacks.
 EG_RUST_SCOPE_FACTS = "scope_facts"
