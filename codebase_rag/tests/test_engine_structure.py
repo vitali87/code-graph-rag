@@ -607,41 +607,35 @@ _STRUCTURE_EDGES = (
 LAYOUT = ["pkg/__init__.py", "pkg/sub/mod.py", "plain/notes.md", "top.json"]
 
 
-def _relocated(value: object, old: str, new: str) -> object:
-    """`value` with every `old` in its text spelled `new`, kinds kept."""
-    if isinstance(value, str):
-        return type(value)(value.replace(old, new)) if old in value else value
-    if isinstance(value, tuple):
-        return tuple(_relocated(item, old, new) for item in value)
-    if isinstance(value, dict):
-        return {key: _relocated(item, old, new) for key, item in value.items()}
-    return value
-
-
-def _structure_writes(repo: Path) -> list[tuple[str, object]]:
-    """What a run of `repo` writes of the structure, in order, its resolved
-    path spelled `<repo>`, each label and edge type with its own type."""
+def _structure_writes(repo: Path) -> list[str]:
+    """What a run of `repo` writes of the structure, in order, each call as
+    its repr, which names a label's and an edge type's own type, with the
+    repository's resolved path spelled `<repo>`."""
     ingestor = _MockIngestor()
     calls = MagicMock()
     calls.attach_mock(ingestor.ensure_node_batch, "ensure_node_batch")
     calls.attach_mock(ingestor.ensure_relationship_batch, "ensure_relationship_batch")
     create_and_run_updater(repo, ingestor)
     root = repo.resolve().as_posix()
-    written: list[tuple[str, object]] = []
-    for name, args, _kwargs in calls.mock_calls:
-        kind = args[0] if name == "ensure_node_batch" else args[1]
-        if kind in (*_STRUCTURE_LABELS, *_STRUCTURE_EDGES):
-            written.append((name, _relocated(args, root, "<repo>")))
-            written.append((name, type(kind).__name__))
-    return written
+    return [
+        repr(call).replace(root, "<repo>")
+        for call in calls.mock_calls
+        if (call.args[0] if call[0] == "ensure_node_batch" else call.args[1])
+        in (*_STRUCTURE_LABELS, *_STRUCTURE_EDGES)
+    ]
 
 
-def _recording(
-    monkeypatch: pytest.MonkeyPatch,
-) -> list[tuple[str, object, object]]:
+type Choice = tuple[
+    str,
+    engine_frame.Structure | tuple[engine_frame.ContainedRow | None, ...],
+    engine_frame.Structure | tuple[engine_frame.ContainedRow | None, ...],
+]
+
+
+def _recording(monkeypatch: pytest.MonkeyPatch) -> list[Choice]:
     """Each structure and File-row choice a run makes: what it was, Python's
     answer and the one used."""
-    found: list[tuple[str, object, object]] = []
+    found: list[Choice] = []
     structure_for_run = engine_frame.structure_for_run
     file_rows_for_run = engine_frame.file_rows_for_run
 
@@ -719,9 +713,10 @@ class TestRuns:
         written = _structure_writes(_tree(tmp_path / "b" / "repo", LAYOUT))
 
         assert written == today
-        # Three folders and four files, each a node and its edge, with a
-        # label and an edge type each.
-        assert len(today) == 2 * 2 * 7
+        # Three folders and four files, each a node and its edge.
+        assert len(today) == 2 * 7
+        assert "(<NodeLabel.PACKAGE: 'Package'>, {" in today[0]
+        assert "<RelationshipType.CONTAINS_PACKAGE: " in today[1]
         # With the frame on, what was written was the frame's.
         assert [(kind, used is not python) for kind, python, used in found] == (
             [("structure", True), ("file rows", True)]
