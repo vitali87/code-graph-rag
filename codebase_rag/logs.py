@@ -1596,6 +1596,14 @@ ENGINE_FRAME_CHANGES_DIFFER = (
     "The Rust engine's change detection for {repo} differs from Python's, "
     "first at {first}; this run uses Python's"
 )
+ENGINE_FRAME_STRUCTURE_DIFFERS = (
+    "The Rust engine's folder structure for {repo} differs from Python's, "
+    "first at {first}; this run uses Python's"
+)
+ENGINE_FRAME_FILE_ROWS_DIFFER = (
+    "The Rust engine's File rows for {repo} differ from Python's, first at "
+    "{first}; this run uses Python's"
+)
 
 # Exclude prompt logs
 EXCLUDE_INVALID_INDEX = "Invalid index: {index} (out of range)"

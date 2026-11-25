@@ -1,12 +1,13 @@
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
 from loguru import logger
 
 from .. import constants as cs
-from .. import logs
+from .. import engine_frame, logs
+from ..engine_frame import ContainedRow, NodeRow, RelationshipRow
 from ..language_spec import LANGUAGE_SPECS
 from ..services import IngestorProtocol
 from ..types_defs import LanguageQueries, NodeIdentifier
@@ -34,6 +35,8 @@ class StructureProcessor:
         "structural_elements",
         "unignore_paths",
         "exclude_paths",
+        "frame_elements",
+        "file_rows",
     )
 
     def __init__(
@@ -52,6 +55,14 @@ class StructureProcessor:
         self.structural_elements: dict[Path, str | None] = {}
         self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
+        # The frame's map from the last whole derivation that asked the
+        # frame (engine_frame.py), which its File rows read; None when the
+        # frame was not asked.
+        self.frame_elements: tuple[tuple[str, str | None], ...] | None = None
+        # The File rows a run settled on for the files it is indexing, each
+        # written as its file is processed; empty otherwise, when every file
+        # gets Python's own.
+        self.file_rows: dict[Path, ContainedRow] = {}
 
     def _get_parent_identifier(
         self, parent_rel_path: Path, parent_container_qn: str | None
@@ -143,59 +154,71 @@ class StructureProcessor:
             dirnames[:] = walked
         return directories
 
-    def _emit_package(
+    def _package_row(
         self,
         root: Path,
         relative_root: Path,
         package_qn: str,
         parent_rel_path: Path,
         parent_container_qn: str | None,
-    ) -> None:
-        """Write the Package node and its parent containment edge."""
-        self.ingestor.ensure_node_batch(
-            cs.NodeLabel.PACKAGE,
-            {
-                cs.KEY_QUALIFIED_NAME: package_qn,
-                cs.KEY_NAME: root.name,
-                cs.KEY_PATH: relative_root.as_posix(),
-                cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(root),
-            },
-        )
-        self.ingestor.ensure_relationship_batch(
-            self._get_parent_identifier(parent_rel_path, parent_container_qn),
-            cs.RelationshipType.CONTAINS_PACKAGE,
-            (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, package_qn),
+    ) -> ContainedRow:
+        """The Package node and its parent containment edge."""
+        return ContainedRow(
+            node=NodeRow(
+                label=cs.NodeLabel.PACKAGE,
+                properties=(
+                    (cs.KEY_QUALIFIED_NAME, package_qn),
+                    (cs.KEY_NAME, root.name),
+                    (cs.KEY_PATH, relative_root.as_posix()),
+                    (cs.KEY_ABSOLUTE_PATH, cached_resolve_posix(root)),
+                ),
+            ),
+            relationship=RelationshipRow(
+                start=self._get_parent_identifier(parent_rel_path, parent_container_qn),
+                rel_type=cs.RelationshipType.CONTAINS_PACKAGE,
+                end=(cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, package_qn),
+            ),
         )
 
-    def _emit_folder(
+    def _folder_row(
         self,
         root: Path,
         relative_root: Path,
         parent_rel_path: Path,
         parent_container_qn: str | None,
-    ) -> None:
-        """Write the Folder node and its parent containment edge.
+    ) -> ContainedRow:
+        """The Folder node and its parent containment edge.
 
         Folder identity is the absolute path, not the relative one: relative
         paths collide across same-layout projects in the shared graph
         (issue #897).
         """
-        self.ingestor.ensure_node_batch(
-            cs.NodeLabel.FOLDER,
-            {
-                cs.KEY_PATH: relative_root.as_posix(),
-                cs.KEY_NAME: root.name,
-                cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(root),
-            },
-        )
-        self.ingestor.ensure_relationship_batch(
-            self._get_parent_identifier(parent_rel_path, parent_container_qn),
-            cs.RelationshipType.CONTAINS_FOLDER,
-            (
-                cs.NodeLabel.FOLDER,
-                cs.KEY_ABSOLUTE_PATH,
-                cached_resolve_posix(root),
+        return ContainedRow(
+            node=NodeRow(
+                label=cs.NodeLabel.FOLDER,
+                properties=(
+                    (cs.KEY_PATH, relative_root.as_posix()),
+                    (cs.KEY_NAME, root.name),
+                    (cs.KEY_ABSOLUTE_PATH, cached_resolve_posix(root)),
+                ),
             ),
+            relationship=RelationshipRow(
+                start=self._get_parent_identifier(parent_rel_path, parent_container_qn),
+                rel_type=cs.RelationshipType.CONTAINS_FOLDER,
+                end=(
+                    cs.NodeLabel.FOLDER,
+                    cs.KEY_ABSOLUTE_PATH,
+                    cached_resolve_posix(root),
+                ),
+            ),
+        )
+
+    def _write(self, row: ContainedRow) -> None:
+        """Write a node, then the edge from what contains it."""
+        self.ingestor.ensure_node_batch(row.node.label, dict(row.node.properties))
+        relationship = row.relationship
+        self.ingestor.ensure_relationship_batch(
+            relationship.start, relationship.rel_type, relationship.end
         )
 
     def identify_structure(
@@ -223,6 +246,11 @@ class StructureProcessor:
 
         Returns how many packages and folders it derived, which a full run
         reports in place of one line per directory (issue #2398).
+
+        A whole derivation is the frame's too (engine_frame.py): Python's
+        map and rows are compared with the frame's, and the frame's are the
+        ones kept and written when it is on and the two agree. Either way
+        they are written here, in the order Python derives them.
         """
         directories = self._directories_to_derive(only)
         if only is None:
@@ -231,25 +259,62 @@ class StructureProcessor:
             # since stopped admitting (excluded, no longer rescued, a link),
             # and the prune read its Folder as still in the tree (#2884).
             self.structural_elements.clear()
+        self.frame_elements = None
+        self.file_rows.clear()
         package_indicators = self.package_indicator_names()
 
-        packages = folders = 0
-        for root in sorted(directories):
-            match self._derive_one_directory(root, package_indicators, emit=emit):
-                case cs.NodeLabel.PACKAGE:
-                    packages += 1
-                case cs.NodeLabel.FOLDER:
-                    folders += 1
-        return StructureSummary(packages=packages, folders=folders)
+        rows = [
+            row
+            for root in sorted(directories)
+            if (row := self._derive_one_directory(root, package_indicators)) is not None
+        ]
+        if only is None:
+            rows = self._settled_structure(rows, package_indicators)
+        if emit:
+            for row in rows:
+                self._write(row)
+        return StructureSummary(
+            packages=sum(row.node.label == cs.NodeLabel.PACKAGE for row in rows),
+            folders=sum(row.node.label == cs.NodeLabel.FOLDER for row in rows),
+        )
+
+    def _settled_structure(
+        self, rows: list[ContainedRow], package_indicators: set[str]
+    ) -> list[ContainedRow]:
+        """The rows a whole derivation writes, Python's or the frame's, with
+        the map made the same one's. The map is refilled in place: others
+        hold it."""
+        python = engine_frame.Structure(
+            elements=tuple(
+                (key.as_posix(), qn) for key, qn in self.structural_elements.items()
+            ),
+            rows=tuple(rows),
+        )
+        used, frame = engine_frame.structure_for_run(
+            self.repo_path,
+            self.project_name,
+            package_indicators,
+            self.exclude_paths,
+            self.unignore_paths,
+            python,
+        )
+        self.frame_elements = None if frame is None else frame.elements
+        if used is not python:
+            self.structural_elements.clear()
+            self.structural_elements.update(
+                (Path(key), qn) for key, qn in used.elements
+            )
+        return list(used.rows)
 
     def _derive_one_directory(
-        self, root: Path, package_indicators: set[str], *, emit: bool
-    ) -> cs.NodeLabel | None:
-        """Record one directory's kind in the map, and emit it when asked.
+        self, root: Path, package_indicators: set[str]
+    ) -> ContainedRow | None:
+        """Record one directory's kind in the map, and return the row it
+        writes: none for the root unless it is a package.
 
         Split out of `identify_structure` to keep it under the
         cognitive-complexity limit: the loop, the indicator scan and the two
-        emission branches nest three deep together, and the per-directory
+        row branches nest three deep together, and the per-directory
         decision stands on its own.
         """
         relative_root = cached_relative_path(root, self.repo_path)
@@ -266,15 +331,9 @@ class StructureProcessor:
             )
             self.structural_elements[relative_root] = package_qn
             logger.debug(logs.STRUCT_IDENTIFIED_PACKAGE.format(package_qn=package_qn))
-            if emit:
-                self._emit_package(
-                    root,
-                    relative_root,
-                    package_qn,
-                    parent_rel_path,
-                    parent_container_qn,
-                )
-            return cs.NodeLabel.PACKAGE
+            return self._package_row(
+                root, relative_root, package_qn, parent_rel_path, parent_container_qn
+            )
 
         # Recorded for the ROOT too, which the Folder emission below
         # deliberately skips. Without this the root's stale package qn
@@ -286,11 +345,19 @@ class StructureProcessor:
         if root == self.repo_path:
             return None
         logger.debug(logs.STRUCT_IDENTIFIED_FOLDER.format(relative_root=relative_root))
-        if emit:
-            self._emit_folder(root, relative_root, parent_rel_path, parent_container_qn)
-        return cs.NodeLabel.FOLDER
+        return self._folder_row(
+            root, relative_root, parent_rel_path, parent_container_qn
+        )
 
     def process_generic_file(self, file_path: Path, file_name: str) -> None:
+        """Write the file's File node and its parent containment edge: the
+        row its run settled on, else Python's own."""
+        row = self.file_rows.pop(file_path, None)
+        self._write(row if row is not None else self.file_row(file_path, file_name))
+
+    def file_row(self, file_path: Path, file_name: str) -> ContainedRow:
+        """The File node and its parent containment edge, as the map now
+        places the file."""
         relative_filepath = cached_relative_path(file_path, self.repo_path).as_posix()
         relative_root = cached_relative_path(file_path.parent, self.repo_path)
 
@@ -300,18 +367,50 @@ class StructureProcessor:
         )
 
         file_identity = cached_file_identity_posix(file_path)
-        self.ingestor.ensure_node_batch(
-            cs.NodeLabel.FILE,
-            {
-                cs.KEY_PATH: relative_filepath,
-                cs.KEY_NAME: file_name,
-                cs.KEY_EXTENSION: file_path.suffix,
-                cs.KEY_ABSOLUTE_PATH: file_identity,
-            },
+        return ContainedRow(
+            node=NodeRow(
+                label=cs.NodeLabel.FILE,
+                properties=(
+                    (cs.KEY_PATH, relative_filepath),
+                    (cs.KEY_NAME, file_name),
+                    (cs.KEY_EXTENSION, file_path.suffix),
+                    (cs.KEY_ABSOLUTE_PATH, file_identity),
+                ),
+            ),
+            relationship=RelationshipRow(
+                start=parent_identifier,
+                rel_type=cs.RelationshipType.CONTAINS_FILE,
+                end=(cs.NodeLabel.FILE, cs.KEY_ABSOLUTE_PATH, file_identity),
+            ),
         )
 
-        self.ingestor.ensure_relationship_batch(
-            parent_identifier,
-            cs.RelationshipType.CONTAINS_FILE,
-            (cs.NodeLabel.FILE, cs.KEY_ABSOLUTE_PATH, file_identity),
+    def settle_file_rows(self, paths: Sequence[Path]) -> None:
+        """Settle the File rows of the files a run is about to index.
+
+        With the frame asked for this run's structure, its File rows are
+        compared with Python's and kept when it is on and the two agree,
+        for `process_generic_file` to write as each file is processed.
+        Otherwise nothing is kept, and each file gets Python's own row then,
+        as before the frame.
+        """
+        self.file_rows.clear()
+        if self.frame_elements is None:
+            return
+        python = tuple(self._file_row_or_none(path) for path in paths)
+        used = engine_frame.file_rows_for_run(
+            self.repo_path, self.project_name, self.frame_elements, paths, python
         )
+        if used is python:
+            return
+        self.file_rows.update(
+            (path, row)
+            for path, row in zip(paths, used, strict=True)
+            if row is not None
+        )
+
+    def _file_row_or_none(self, file_path: Path) -> ContainedRow | None:
+        # A path not under the root has none; its own processing raises.
+        try:
+            return self.file_row(file_path, file_path.name)
+        except ValueError:
+            return None

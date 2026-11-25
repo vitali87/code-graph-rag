@@ -436,6 +436,7 @@ class _Recorded:
         self.compared = 0
         self.plans: list[list[str]] = []
         self.changes: list[list[str]] = []
+        self.structures: list[list[str]] = []
 
     def compares(self) -> bool:
         return self._compares
@@ -449,6 +450,12 @@ class _Recorded:
 
     def changes_differ(self, repo_path: Path, difference: Sequence[str]) -> None:
         self.changes.append(list(difference))
+
+    def compares_structure(self) -> bool:
+        return self._compares
+
+    def structure_differs(self, repo_path: Path, difference: Sequence[str]) -> None:
+        self.structures.append(list(difference))
 
 
 @pytest.fixture

@@ -28,6 +28,12 @@ files with the hash cache and folder times it would publish
 writes its placeholder cache). Both are checked the way the plan is. The
 frame prepares the cache and the folder times and never writes them: the
 updater publishes the ones the run used, at its commit point.
+
+The structure pass is the frame's as well (src/engine/structure.rs): the
+Package and Folder rows and the map of each folder's package
+(`structure_for_run`), and the File rows of the files a run indexes
+(`file_rows_for_run`), checked the same way. The frame builds the rows;
+the structure processor still writes them, at the point it always has.
 """
 
 from __future__ import annotations
@@ -36,7 +42,7 @@ import hashlib
 import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import cache
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import NamedTuple, Protocol
 
 from loguru import logger
@@ -45,6 +51,7 @@ from . import constants as cs
 from . import logs as ls
 from .canonical_graph import difference_in_order
 from .embedded_graph.extension import rust_extension
+from .types_defs import NodeIdentifier
 from .utils.path_utils import readable_name, walk_eligible_files
 
 # Whether the indexer uses the frame. Off until phase 2's last step; the
@@ -151,6 +158,43 @@ class FileChanges(NamedTuple):
     mtimes_text: str | None
 
 
+class NodeRow(NamedTuple):
+    """A node the ingestor writes: its label and its properties, in the
+    order its dict holds them."""
+
+    label: cs.NodeLabel
+    properties: tuple[tuple[str, str], ...]
+
+
+class RelationshipRow(NamedTuple):
+    """An edge the ingestor writes: `start -[rel_type]-> end`."""
+
+    start: NodeIdentifier
+    rel_type: cs.RelationshipType
+    end: NodeIdentifier
+
+
+class ContainedRow(NamedTuple):
+    """A node and the edge from what contains it, written in that order:
+    what the structure pass writes for each package, folder and file."""
+
+    node: NodeRow
+    relationship: RelationshipRow
+
+
+class Structure(NamedTuple):
+    """What the structure pass derives for a repository.
+
+    `elements` is `structural_elements` in the order it is filled: each
+    folder's path from the root as `as_posix()` spells it (`.` for the
+    root) and its package's qualified name, None for a plain folder.
+    `rows` are the Package and Folder rows in the order they are written.
+    """
+
+    elements: tuple[tuple[str, str | None], ...]
+    rows: tuple[ContainedRow, ...]
+
+
 class ChangeBaseline(Protocol):
     """The frame's baseline for a run, held for `Engine.changes`."""
 
@@ -190,6 +234,11 @@ type RawChanges = tuple[
 type RawIgnoreFiles = tuple[
     list[str], list[str], list[tuple[str, int]], list[str], list[str]
 ]
+type RawNodeId = tuple[str, str, str]
+# A row as `Engine` hands it on: the node's label and properties, then the
+# edge from what contains it.
+type RawRow = tuple[str, list[tuple[str, str]], RawNodeId, str, RawNodeId]
+type RawStructure = tuple[list[tuple[str, str | None]], list[RawRow]]
 
 
 class Engine(Protocol):
@@ -263,6 +312,24 @@ class Engine(Protocol):
         graph_paths: Iterable[str] | None = None,
     ) -> RawChanges: ...
 
+    def structure(
+        self,
+        root: Path,
+        project_name: str,
+        markers: Iterable[str],
+        exclude: Iterable[str] | None = None,
+        unignore: Iterable[str] | None = None,
+    ) -> RawStructure: ...
+
+    def file_rows(
+        self,
+        root: Path,
+        project_name: str,
+        elements: Sequence[tuple[str, str | None]],
+        paths: Sequence[Path],
+        dot_suffix: bool,
+    ) -> list[RawRow | None]: ...
+
 
 class IgnoreRules(Protocol):
     """The ignore rules over one exclude set and one unignore set.
@@ -299,7 +366,8 @@ class PlanCheck(Protocol):
     run's plan can be compared at all, and `differs` receives the
     difference, as `-` lines of Python's plan and `+` lines of the frame's;
     `compares_changes` and `changes_differ` do the same for the run's change
-    detection.
+    detection, and `compares_structure` and `structure_differs` for its
+    structure and File rows.
     """
 
     def compares(self) -> bool: ...
@@ -309,6 +377,10 @@ class PlanCheck(Protocol):
     def compares_changes(self) -> bool: ...
 
     def changes_differ(self, repo_path: Path, difference: Sequence[str]) -> None: ...
+
+    def compares_structure(self) -> bool: ...
+
+    def structure_differs(self, repo_path: Path, difference: Sequence[str]) -> None: ...
 
 
 # None in production. While a check is in place every run compares the two
@@ -849,4 +921,208 @@ def changes_for_run(
         difference,
         None if check is None else check.changes_differ,
         ls.ENGINE_FRAME_CHANGES_DIFFER,
+    )
+
+
+# Whether this Python gives a name ending in a dot a suffix (3.14 on), which
+# the frame's File rows are told, so their extension is this Python's.
+_DOT_SUFFIX: bool = (
+    PurePath(cs.FRAME_TRAILING_DOT_NAME).suffix == cs.FRAME_TRAILING_DOT_SUFFIX
+)
+
+
+def _asks_structure(check: PlanCheck | None) -> bool:
+    """Whether a run's structure is compared: with the frame on or a check
+    in place, unless the check cannot compare this run."""
+    if check is None:
+        return ENABLED
+    return check.compares_structure()
+
+
+def _identifier(raw: RawNodeId) -> NodeIdentifier:
+    label, key, value = raw
+    return (cs.NodeLabel(label), key, value)
+
+
+def _row(raw: RawRow) -> ContainedRow:
+    """A row the frame built, with the schema's own label and edge type."""
+    label, properties, start, rel_type, end = raw
+    return ContainedRow(
+        node=NodeRow(label=cs.NodeLabel(label), properties=tuple(properties)),
+        relationship=RelationshipRow(
+            start=_identifier(start),
+            rel_type=cs.RelationshipType(rel_type),
+            end=_identifier(end),
+        ),
+    )
+
+
+def frame_structure(
+    repo_path: Path,
+    project_name: str,
+    markers: Iterable[str],
+    exclude: frozenset[str] | None = None,
+    unignore: frozenset[str] | None = None,
+) -> Structure | None:
+    """The frame's structure of the repository under these sets, a folder
+    holding a file named as any of `markers` a package; None when the
+    extension is from before it. Raises `ValueError` where Python's walk
+    raises on a pattern."""
+    made = engine()
+    if made is None or not hasattr(made, cs.EG_RUST_STRUCTURE):
+        return None
+    elements, rows = made.structure(
+        repo_path, project_name, sorted(markers), exclude, unignore
+    )
+    return Structure(elements=tuple(elements), rows=tuple(_row(row) for row in rows))
+
+
+def frame_file_rows(
+    repo_path: Path,
+    project_name: str,
+    elements: Sequence[tuple[str, str | None]],
+    paths: Sequence[Path],
+) -> tuple[ContainedRow | None, ...] | None:
+    """The frame's File row of each of `paths`, under the structure map
+    `elements`, None for a path it cannot place under the root; None when
+    the extension is from before it."""
+    made = engine()
+    if made is None or not hasattr(made, cs.EG_RUST_FILE_ROWS):
+        return None
+    rows = made.file_rows(
+        repo_path, project_name, list(elements), list(paths), _DOT_SUFFIX
+    )
+    return tuple(None if row is None else _row(row) for row in rows)
+
+
+def _identifier_text(identifier: NodeIdentifier) -> str:
+    label, key, value = identifier
+    return cs.FRAME_ROW_IDENTIFIER.format(
+        label=label, key=key, value=readable_name(str(value))
+    )
+
+
+def row_lines(row: ContainedRow) -> list[str]:
+    """A row as two lines: its node, with each property in order, then the
+    edge from what contains it."""
+    properties = cs.FRAME_ROW_FIELDS_SEPARATOR.join(
+        cs.FRAME_ROW_PROPERTY.format(key=key, value=readable_name(value))
+        for key, value in row.node.properties
+    )
+    relationship = row.relationship
+    return [
+        cs.FRAME_NODE_ROW_LINE.format(label=row.node.label, properties=properties),
+        cs.FRAME_EDGE_ROW_LINE.format(
+            start=_identifier_text(relationship.start),
+            rel_type=relationship.rel_type,
+            end=_identifier_text(relationship.end),
+        ),
+    ]
+
+
+def structure_lines(structure: Structure) -> list[str]:
+    """A structure as lines: each folder's map entry in order, then each
+    row in the order it is written."""
+    lines = [
+        cs.FRAME_ELEMENT_LINE.format(key=key)
+        if qn is None
+        else cs.FRAME_PACKAGE_ELEMENT_LINE.format(key=key, qn=qn)
+        for key, qn in structure.elements
+    ]
+    lines.extend(line for row in structure.rows for line in row_lines(row))
+    return lines
+
+
+def structure_difference(python: Structure, frame: Structure) -> list[str]:
+    """How the frame's structure differs from Python's, in order: `-` for a
+    line only Python's holds, `+` for one only the frame's does."""
+    return _difference(structure_lines(python), structure_lines(frame))
+
+
+def file_row_lines(
+    paths: Sequence[Path], rows: Sequence[ContainedRow | None]
+) -> list[str]:
+    """Each path's File row as lines, in order, or a line naming a path
+    that has none."""
+    lines: list[str] = []
+    for path, row in zip(paths, rows, strict=True):
+        if row is None:
+            lines.append(
+                cs.FRAME_NO_FILE_ROW_LINE.format(path=readable_name(str(path)))
+            )
+        else:
+            lines.extend(row_lines(row))
+    return lines
+
+
+def file_rows_difference(
+    paths: Sequence[Path],
+    python: Sequence[ContainedRow | None],
+    frame: Sequence[ContainedRow | None],
+) -> list[str]:
+    """How the frame's File rows for `paths` differ from Python's, in order:
+    `-` for a line only Python's hold, `+` for one only the frame's do."""
+    return _difference(file_row_lines(paths, python), file_row_lines(paths, frame))
+
+
+def structure_for_run(
+    repo_path: Path,
+    project_name: str,
+    markers: Iterable[str],
+    exclude: frozenset[str] | None,
+    unignore: frozenset[str] | None,
+    python: Structure,
+) -> tuple[Structure, Structure | None]:
+    """The structure a run writes, given Python's, and the frame's when it
+    was asked.
+
+    Compared, and chosen, as `plan_for_run` chooses a plan: with the frame
+    off and no check in place, Python's, the frame never asked.
+    """
+    check = CHECK
+    if not _asks_structure(check):
+        return python, None
+    try:
+        frame = frame_structure(repo_path, project_name, markers, exclude, unignore)
+    except ValueError as error:
+        frame = None
+        difference = _raised(error)
+    else:
+        if frame is None:
+            return python, None
+        difference = structure_difference(python, frame)
+    used = _settled(
+        repo_path,
+        python,
+        frame,
+        difference,
+        None if check is None else check.structure_differs,
+        ls.ENGINE_FRAME_STRUCTURE_DIFFERS,
+    )
+    return used, frame
+
+
+def file_rows_for_run(
+    repo_path: Path,
+    project_name: str,
+    elements: Sequence[tuple[str, str | None]],
+    paths: Sequence[Path],
+    python: tuple[ContainedRow | None, ...],
+) -> tuple[ContainedRow | None, ...]:
+    """The File rows a run writes for `paths`, given Python's: the frame's
+    under its own structure map `elements`, compared and chosen as
+    `structure_for_run` chooses."""
+    check = CHECK
+    if not _asks_structure(check):
+        return python
+    frame = frame_file_rows(repo_path, project_name, elements, paths)
+    if frame is None:
+        return python
+    return _settled(
+        repo_path,
+        python,
+        frame,
+        file_rows_difference(paths, python, frame),
+        None if check is None else check.structure_differs,
+        ls.ENGINE_FRAME_FILE_ROWS_DIFFER,
     )

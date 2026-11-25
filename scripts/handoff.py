@@ -19,9 +19,10 @@ directly with a hand-off directory; the hand-offs are not reachable through
 Each run also checks the Rust engine's frame (docs/reports/PHASE2_FRAME.md,
 section 4): its file plan against Python's walk, as the index takes it, its
 change detection (the hash cache and folder times the run would publish)
-against Python's, and its reading of the ignore files against
-`load_ignore_patterns`. Any difference, written to `frame.txt` beside the
-hand-offs, fails the check.
+against Python's, its structure (the Package and Folder rows, the map of
+each folder's package and the File rows) against Python's, and its reading
+of the ignore files against `load_ignore_patterns`. Any difference, written
+to `frame.txt` beside the hand-offs, fails the check.
 
     uv run python -m scripts.handoff check --runs 2      # exit 1 on a difference
     uv run python -m scripts.handoff check uuid --index-engine go=rust
@@ -200,8 +201,8 @@ def index_in_process(repo_path: Path, out: Path, project_name: str) -> None:
 
 
 class _FrameCheck:
-    """`engine_frame.CHECK` for one run: it compares the run's plan and its
-    change detection, and keeps the differences."""
+    """`engine_frame.CHECK` for one run: it compares the run's plan, its
+    change detection and its structure, and keeps the differences."""
 
     def __init__(self) -> None:
         self.compared = 0
@@ -219,6 +220,13 @@ class _FrameCheck:
         return True
 
     def changes_differ(self, repo_path: Path, difference: Sequence[str]) -> None:
+        self.lines.extend(difference)
+
+    def compares_structure(self) -> bool:
+        self.compared += 1
+        return True
+
+    def structure_differs(self, repo_path: Path, difference: Sequence[str]) -> None:
         self.lines.extend(difference)
 
 
