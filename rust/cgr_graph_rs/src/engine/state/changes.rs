@@ -29,8 +29,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use rayon::prelude::*;
-
 use super::super::discover::{ROOT_DIR_KEY, STATE_FILENAMES};
 use super::super::ignore::{IgnoreRules, PatternError};
 use super::super::{md5_file, Engine};
@@ -73,10 +71,8 @@ impl Engine {
         if !dirs_unchanged(inputs.repo, &old, &dirs, rules)? {
             return Ok(false);
         }
-        Ok(self.pool.install(|| {
-            old.items.par_iter().all(|(key, hash)| {
-                cached_file_unchanged(&child_path(inputs.repo, key), hash, cache_mtime)
-            })
+        Ok(self.all_of(&old.items, |(key, hash)| {
+            cached_file_unchanged(&child_path(inputs.repo, key), hash, cache_mtime)
         }))
     }
 }

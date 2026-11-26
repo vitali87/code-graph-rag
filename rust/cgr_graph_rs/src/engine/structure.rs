@@ -50,8 +50,6 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use rayon::prelude::*;
-
 use super::discover::{child_dirpath, list, ROOT_DIR_KEY};
 use super::ignore::{IgnoreRules, PatternError};
 use super::rows::{
@@ -270,11 +268,8 @@ impl Engine {
         }];
         let mut level = vec![0];
         while !level.is_empty() {
-            let found: Vec<Result<Vec<Folder>, PatternError>> = self.pool.install(|| {
-                level
-                    .par_iter()
-                    .map(|&id| subfolders(rules, &folders[id], &resolved_root))
-                    .collect()
+            let found: Vec<Result<Vec<Folder>, PatternError>> = self.map_ordered(&level, |&id| {
+                subfolders(rules, &folders[id], &resolved_root)
             });
             let mut next = Vec::new();
             for kept in found {

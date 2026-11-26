@@ -43,8 +43,6 @@ use std::fs::{self, FileType};
 use std::mem;
 use std::path::{Path, PathBuf, MAIN_SEPARATOR_STR};
 
-use rayon::prelude::*;
-
 use super::ignore::{string_from_os_str, IgnoreRules, PatternError};
 use super::state::python_mtime;
 use super::Engine;
@@ -134,12 +132,7 @@ impl Engine {
         let mut nodes = vec![Node::root(root)];
         let mut level = vec![0];
         while !level.is_empty() {
-            let visits: Vec<Visit> = self.pool.install(|| {
-                level
-                    .par_iter()
-                    .map(|&id| visit(rules, &nodes[id]))
-                    .collect()
-            });
+            let visits: Vec<Visit> = self.map_ordered(&level, |&id| visit(rules, &nodes[id]));
             let mut next = Vec::new();
             for (&id, mut visit) in level.iter().zip(visits) {
                 if let Visit::Listed(listed) = &mut visit {

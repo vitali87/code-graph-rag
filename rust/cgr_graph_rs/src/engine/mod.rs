@@ -44,11 +44,21 @@ use rayon::{ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder};
 const READ_CHUNK: usize = 1 << 16;
 /// Worker threads are named after the engine, for profiles and debuggers.
 const THREAD_NAME: &str = "cgr-engine";
+/// A batch of fewer items than this runs on the calling thread. Handing a
+/// batch to the pool wakes its threads, which then spin a while before they
+/// sleep again: for a small repository's few folders and files that costs
+/// more than the batch itself, and the spinning takes the cores other work
+/// runs on. Either way each item is the same work and the results keep
+/// their order, so the output does not change.
+const POOLED_FROM: usize = 16;
 
 /// The frame's thread pool, of its own: the engine never shares rayon's
 /// global pool, so its size is exactly what the caller asked for.
 pub struct Engine {
     pool: ThreadPool,
+    /// `POOLED_FROM`, or 0 for an engine that pools every batch, which
+    /// tests hold the calling thread's results to.
+    pooled_from: usize,
 }
 
 impl Engine {
@@ -62,7 +72,19 @@ impl Engine {
             .num_threads(threads)
             .thread_name(|i| format!("{THREAD_NAME}-{i}"))
             .build()?;
-        Ok(Engine { pool })
+        Ok(Engine {
+            pool,
+            pooled_from: POOLED_FROM,
+        })
+    }
+
+    /// An engine that hands every batch to the pool, whatever its size.
+    #[cfg(test)]
+    pub(crate) fn always_pooled(threads: usize) -> Result<Engine, ThreadPoolBuildError> {
+        Ok(Engine {
+            pooled_from: 0,
+            ..Engine::new(threads)?
+        })
     }
 
     /// How many worker threads the engine runs.
@@ -71,14 +93,30 @@ impl Engine {
     }
 
     /// `work` applied to every item on the pool, the results in the items'
-    /// order whatever order the threads finish in.
+    /// order whatever order the threads finish in; on the calling thread
+    /// for a batch too small to share (`POOLED_FROM`).
     pub fn map_ordered<T, R, F>(&self, items: &[T], work: F) -> Vec<R>
     where
         T: Sync,
         R: Send,
         F: Fn(&T) -> R + Sync + Send,
     {
+        if items.len() < self.pooled_from {
+            return items.iter().map(work).collect();
+        }
         self.pool.install(|| items.par_iter().map(work).collect())
+    }
+
+    /// Whether `test` holds for every item, asked as `map_ordered` asks.
+    pub fn all_of<T, F>(&self, items: &[T], test: F) -> bool
+    where
+        T: Sync,
+        F: Fn(&T) -> bool + Sync + Send,
+    {
+        if items.len() < self.pooled_from {
+            return items.iter().all(test);
+        }
+        self.pool.install(|| items.par_iter().all(test))
     }
 
     /// Each file's md5, as lowercase hex, over its raw bytes; `None` for a
