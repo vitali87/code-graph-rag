@@ -105,7 +105,11 @@ package = true
 
 # Patched grammars: upstream tree-sitter-c drops declarations after a
 # #define whose value embeds a block comment (issue #555). Our forks carry
-# the repeat(preproc_arg) fix; drop these overrides once upstream releases it.
+# the repeat(preproc_arg) fix. cgr-graph-rs compiles them in at these commits
+# and cgr parses C and C++ with that copy on every install, since PyPI
+# refuses dependencies from git; these overrides give a checkout the forks'
+# Python packages, which test_grammar_pins.py compares the compiled grammars
+# with. Drop both once upstream releases the fix.
 [tool.uv.sources]
 # A checkout builds the crate it carries (with a Rust toolchain), so the
 # Python and Rust halves of a change are tested together; installs from
@@ -190,11 +194,16 @@ treesitter-full = [
     "tree-sitter-javascript>=0.23.1",
     "tree-sitter-typescript>=0.23.2",
     "tree-sitter-rust>=0.24.0",
-    "tree-sitter-go>=0.23.4",
+    # Exact pins, as cgr-graph-rs compiles each of these three grammars in
+    # (rust/cgr_graph_rs/Cargo.toml): Go's at this release, and C's and C++'s
+    # as the forks above, whose versions these are. Each moves with its crate
+    # pin in one pull request (AGENTS.md); test_grammar_pins.py fails while
+    # the two disagree. C and C++ load from the crate, never from these.
+    "tree-sitter-go==0.25.0",
     "tree-sitter-scala>=0.24.0",
     "tree-sitter-java>=0.23.5",
-    "tree-sitter-c>=0.24.1",
-    "tree-sitter-cpp>=0.23.0",
+    "tree-sitter-c==0.24.1",
+    "tree-sitter-cpp==0.23.4",
     "tree-sitter-lua>=0.0.19",
     "tree-sitter-julia>=0.23.1",
     "tree-sitter-php>=0.24.1",

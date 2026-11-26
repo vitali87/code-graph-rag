@@ -13,6 +13,7 @@ from tree_sitter import Language, Parser, Query
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
+from .crate_grammars import highlights_query, language_loader
 from .language_spec import LANGUAGE_SPECS, LanguageSpec
 from .query_predicates import compile_query
 from .source_checkout import source_checkout_root
@@ -191,18 +192,6 @@ def _language_imports() -> list[LanguageImport]:
             cs.SupportedLanguage.JAVA,
         ),
         LanguageImport(
-            cs.SupportedLanguage.C,
-            cs.TreeSitterModule.C,
-            cs.QUERY_LANGUAGE,
-            cs.SupportedLanguage.C,
-        ),
-        LanguageImport(
-            cs.SupportedLanguage.CPP,
-            cs.TreeSitterModule.CPP,
-            cs.QUERY_LANGUAGE,
-            cs.SupportedLanguage.CPP,
-        ),
-        LanguageImport(
             cs.SupportedLanguage.LUA,
             cs.TreeSitterModule.LUA,
             cs.QUERY_LANGUAGE,
@@ -260,8 +249,11 @@ def grammar_installed(lang_name: str) -> bool:
     is never imported or built here: importing runs the checkout's
     `__init__.py`, and a listing must not execute checkout code or start a
     compile to answer a yes/no (Greptile reviews of PR 2508). So a binding
-    built once that no longer loads still reads as installed.
+    built once that no longer loads still reads as installed. C and C++
+    come from the Rust extension alone (`cs.CRATE_GRAMMAR_LANGUAGES`).
     """
+    if lang_name in cs.CRATE_GRAMMAR_LANGUAGES:
+        return language_loader(lang_name) is not None
     lang_import = _IMPORT_SPECS.get(lang_name)
     if lang_import is None:
         return _submodule_binding_built(lang_name)
@@ -299,7 +291,12 @@ def _get_language_library(lang_name: cs.SupportedLanguage) -> LanguageLoader:
     if lang_name in _loader_cache:
         return _loader_cache[lang_name]
     lang_import = _IMPORT_SPECS.get(lang_name)
-    if lang_import is not None:
+    if lang_name in cs.CRATE_GRAMMAR_LANGUAGES:
+        # The patched forks compiled into the extension, never a Python
+        # package or a grammar checkout: one grammar on every install and on
+        # both engines (crate_grammars.py says why).
+        loader = language_loader(lang_name)
+    elif lang_import is not None:
         loader = _try_import_language(
             lang_import.module_path,
             lang_import.attr_name,
@@ -366,20 +363,14 @@ def _highlights_language(lang_name: cs.SupportedLanguage) -> cs.SupportedLanguag
 
 
 def _highlights_source(lang_name: cs.SupportedLanguage) -> str:
-    query_str = ""
     query_lang_name = _highlights_language(lang_name)
-
-    try:
-        module_name = (
-            f"{cs.TREE_SITTER_MODULE_PREFIX}{query_lang_name.replace('-', '_')}"
-        )
-        module = importlib.import_module(module_name)
-        if hasattr(module, "HIGHLIGHTS_QUERY"):
-            query_str = module.HIGHLIGHTS_QUERY
-    except Exception as e:
-        logger.debug(
-            f"Failed to load standard highlights query for {query_lang_name}: {e}"
-        )
+    if query_lang_name in cs.CRATE_GRAMMAR_LANGUAGES:
+        # The compiled grammar's own query file, the one its Python package
+        # reads: modifiers come from it, so it must be the same on every
+        # install, with or without that package.
+        query_str = highlights_query(query_lang_name) or ""
+    else:
+        query_str = _package_highlights(query_lang_name)
 
     fallback_path = (
         Path(__file__).parent / "queries" / "highlights" / f"{query_lang_name}.scm"
@@ -388,6 +379,21 @@ def _highlights_source(lang_name: cs.SupportedLanguage) -> str:
         custom_queries = fallback_path.read_text(encoding="utf-8")
         query_str = query_str + "\n" + custom_queries if query_str else custom_queries
     return query_str
+
+
+def _package_highlights(query_lang_name: cs.SupportedLanguage) -> str:
+    try:
+        module_name = (
+            f"{cs.TREE_SITTER_MODULE_PREFIX}{query_lang_name.replace('-', '_')}"
+        )
+        module = importlib.import_module(module_name)
+        if hasattr(module, "HIGHLIGHTS_QUERY"):
+            return module.HIGHLIGHTS_QUERY
+    except Exception as e:
+        logger.debug(
+            f"Failed to load standard highlights query for {query_lang_name}: {e}"
+        )
+    return ""
 
 
 def _create_highlights_query(
@@ -409,23 +415,25 @@ def _create_highlights_query(
 def missing_grammars() -> list[cs.SupportedLanguage]:
     """Supported languages a sync could not parse for want of a grammar.
 
-    The base package ships Python's grammar only; the rest come from the
-    `treesitter-full` extra (issue #2905). An installed pip grammar must also
-    load, as a sync loads it: one built for another tree-sitter ABI is
-    dropped there, so it counts as missing here. A grammar checkout is
-    never imported or built, by `grammar_installed`'s rule that a yes/no
-    must not run checkout code: its built binding counts as present.
+    The base package ships Python's grammar, and C's and C++'s inside the
+    Rust extension; the rest come from the `treesitter-full` extra (issue
+    #2905). An installed pip grammar must also load, as a sync loads it: one
+    built for another tree-sitter ABI is dropped there, so it counts as
+    missing here. A grammar checkout is never imported or built, by
+    `grammar_installed`'s rule that a yes/no must not run checkout code: its
+    built binding counts as present.
     """
     return sorted(lang for lang in LANGUAGE_SPECS if not _grammar_loads(lang))
 
 
 def _grammar_loads(lang_name: cs.SupportedLanguage) -> bool:
     lang_import = _IMPORT_SPECS.get(lang_name)
-    loader = (
-        None
-        if lang_import is None
-        else _import_pip_grammar(lang_import.module_path, lang_import.attr_name)
-    )
+    if lang_name in cs.CRATE_GRAMMAR_LANGUAGES:
+        loader = language_loader(lang_name)
+    elif lang_import is None:
+        loader = None
+    else:
+        loader = _import_pip_grammar(lang_import.module_path, lang_import.attr_name)
     if loader is None:
         return grammar_installed(lang_name)
     try:

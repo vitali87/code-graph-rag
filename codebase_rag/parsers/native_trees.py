@@ -11,9 +11,9 @@ walks the subtree node by node through py-tree-sitter: every
 `node.children`, `node.type` and `node.text` crosses into C and builds a
 Python object.
 `TreeBridge` (rust/cgr_graph_rs/src/trees) walks the same subtree in Rust. It is handed the Python `Node` itself and
-reads the C node inside it, so nothing is parsed twice and no grammar is
-compiled into the extension; its tree-sitter runtime is the very C code
-compiled into the py-tree-sitter release cgr pins.
+reads the C node inside it, so nothing is parsed twice and it needs no
+grammar of its own; its tree-sitter runtime is the very C code compiled into
+the py-tree-sitter release cgr pins.
 
 Each Rust walk returns exactly what its Python twin returns, which stays the
 reference and runs whenever the bridge is off: the extension is missing or
