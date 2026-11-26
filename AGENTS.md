@@ -86,9 +86,10 @@ in one pull request:
 To move one:
 
 1. For Go, take the crates.io release with the PyPI release's version. For C
-   or C++, rebase the fork, tag the new commit `code-graph-rag-pin` as the
-   current one is, and use that commit on both sides. A fork's
-   `treesitter-full` pin is the version its `pyproject.toml` declares.
+   or C++, rebase the fork, give the new commit a tag of its own so no push
+   can take it away (the tag `code-graph-rag-pin` holds the current one,
+   #2424), and use that commit on both sides. A fork's `treesitter-full` pin
+   is the version its `pyproject.toml` declares.
 2. Update the three places above, then run `uv lock`, and `cargo update -p
    <crate>` in both `rust/cgr_graph_rs` and `rust/cgr_graph_rs/fuzz`.
 3. Bump the crate's own version as for any change to the library (see
