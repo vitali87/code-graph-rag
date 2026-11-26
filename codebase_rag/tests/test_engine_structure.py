@@ -18,14 +18,16 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Sequence
-from pathlib import Path, PurePath
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from unittest.mock import MagicMock
 
 import pytest
 from loguru import logger
+from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag import engine_frame
@@ -36,6 +38,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.structure_processor import StructureProcessor
 from codebase_rag.tests.conftest import _MockIngestor, create_and_run_updater
 from codebase_rag.tests.engine_modes import STRUCTURE_SHADOW_DIR_ENV
+from codebase_rag.tests.shadows import child_env
 from codebase_rag.tests.test_symlink_policy import _link, _make_undecodable, _write
 from codebase_rag.utils.path_utils import cached_resolve_posix
 
@@ -50,6 +53,41 @@ SHADOW_MARKERS = re.compile(
     r"|NodeLabel\.(FOLDER|PACKAGE)\b"
 )
 PROJECT = "proj"
+# Folders whose order Python's paths decide in corners: `/` against
+# punctuation, case, an accent composed and decomposed, other scripts.
+ORDER_CORNERS = (
+    "a-b/x",
+    "a/b/c",
+    "a.b",
+    "B",
+    "a_b",
+    "e\u0301",
+    "\u00e9",
+    "z",
+    "\u4e2d\u6587",
+    "\U0001f389",
+    "\u00c4",
+    "\u00e4",
+)
+# Their order, with every folder on their paths, where names compare exactly.
+EXACT_ORDER = [
+    ".",
+    "B",
+    "a",
+    "a/b",
+    "a/b/c",
+    "a-b",
+    "a-b/x",
+    "a.b",
+    "a_b",
+    "e\u0301",
+    "z",
+    "\u00c4",
+    "\u00e4",
+    "\u00e9",
+    "\u4e2d\u6587",
+    "\U0001f389",
+]
 needs_links = pytest.mark.skipif(sys.platform == "win32", reason="POSIX links")
 
 
@@ -164,6 +202,23 @@ def _same_structure(
     return frame
 
 
+# The code points a name of one character is tried with: past ASCII, to
+# the end of the second plane.
+SINGLE_CHARACTER_NAMES = (0x80, 0x20000)
+SURROGATES = range(0xD800, 0xE000)
+PRIVATE_USE = range(0xE000, 0xF900)
+
+
+def _nameable(code: int) -> bool:
+    return code not in SURROGATES and code not in PRIVATE_USE
+
+
+def _folders_on_disk(repo: Path) -> list[str]:
+    return [
+        path.relative_to(repo).as_posix() for path in repo.rglob("*") if path.is_dir()
+    ]
+
+
 def _keys(structure: engine_frame.Structure) -> list[str]:
     return [key for key, _qn in structure.elements]
 
@@ -197,51 +252,68 @@ def test_the_frame_holds_the_schema_s_names() -> None:
 
 
 class TestOrder:
-    def test_folders_come_in_python_s_path_order_part_by_part(
+    def test_folders_come_in_this_python_s_path_order(
         self, tmp_path: Path, pairs: list[Pair], checked: _Recorded
     ) -> None:
-        repo = _tree(
-            tmp_path / "repo",
-            [
-                "a-b/x/",
-                "a/b/",
-                "a.b/",
-                "B/",
-                "a_b/",
-                "é/",
-                "é/",
-                "z/",
-                "中文/",
-                "🎉/",
-                "a/b/c/",
-                "Ä/",
-                "ä/",
-            ],
-        )
+        repo = _tree(tmp_path / "repo", [f"{name}/" for name in ORDER_CORNERS])
+        # Windows and macOS keep one folder of names that differ only by
+        # case or by the form of an accent.
+        on_disk = _folders_on_disk(repo)
+
+        found = _same_structure(pairs, checked, repo)
+
+        assert _keys(found) == [".", *sorted(on_disk, key=lambda rel: repo / rel)]
+
+    @pytest.mark.skipif(
+        not isinstance(PurePath(), PurePosixPath),
+        reason="Windows paths compare without case",
+    )
+    def test_where_names_compare_exactly_the_order_is_part_by_part_by_code_point(
+        self, tmp_path: Path, pairs: list[Pair], checked: _Recorded
+    ) -> None:
+        repo = _tree(tmp_path / "repo", [f"{name}/" for name in ORDER_CORNERS])
+        if sorted(_folders_on_disk(repo)) != sorted(EXACT_ORDER[1:]):
+            pytest.skip("this file system folds names that differ by case or accent")
 
         found = _same_structure(pairs, checked, repo)
 
         # `a/b` before `a-b`, though `a-b` sorts first as a string; upper
         # case before lower; then by code point, a composed `é` after the
         # decomposed one; the root first, as `.`.
-        assert _keys(found) == [
+        assert _keys(found) == EXACT_ORDER
+
+    @pytest.mark.parametrize("root", ["/repo", "."])
+    @pytest.mark.parametrize("flavour", [PurePosixPath, PureWindowsPath])
+    def test_folders_sort_as_each_flavour_of_python_path_sorts_them(
+        self, flavour: type[PurePath], root: str
+    ) -> None:
+        # A name of each character past ASCII in the first two planes,
+        # private use aside, and each `str.lower` changes inside a longer
+        # one: Rust's Unicode is newer than Python's, and lowers letters
+        # Python's leaves alone (Rust's own lowering misplaces about 40,000
+        # of these names), and a sigma lowers by its place in a word.
+        table = engine_frame.python_case_table()
+        letters = [char for pair in table for char in pair]
+        keys = [
             ".",
-            "B",
-            "a",
-            "a/b",
-            "a/b/c",
-            "a-b",
-            "a-b/x",
-            "a.b",
-            "a_b",
-            "é",
-            "z",
-            "Ä",
-            "ä",
-            "é",
-            "中文",
-            "🎉",
+            *ORDER_CORNERS,
+            *(chr(code) for code in range(*SINGLE_CHARACTER_NAMES) if _nameable(code)),
+            *(f"a{char}b" for char in letters),
+            *(f"x/{char}" for char in letters[::7]),
+            "\u039f\u0394\u039f\u03a3",
+            "\u039f\u0394\u039f\u03a3.d",
+            "\u03bf\u03b4\u03bf\u03c2",
+            "\u03bf\u03b4\u03bf\u03c3",
+            "\u03a3\u0391",
+            "-x",
         ]
+        windows = flavour is PureWindowsPath
+
+        order = engine_frame.frame_folder_order(
+            Path(root), keys, table if windows else None
+        )
+
+        assert order == sorted(keys, key=lambda key: flavour(root) / key)
 
     def test_the_root_gets_no_folder_row_unless_it_is_a_package(
         self, tmp_path: Path, pairs: list[Pair], checked: _Recorded
@@ -358,14 +430,22 @@ class TestPackages:
     def test_a_vcxproj_marker_is_a_literal_name_never_a_pattern(
         self, tmp_path: Path, pairs: list[Pair], checked: _Recorded
     ) -> None:
-        names = ["app.vcxproj", "[ab]?.vcxproj", "x*.vcxproj"]
+        # Windows refuses `*` and `?` in a name, so only the names it allows
+        # are made there; the literal marker is a name only elsewhere.
+        names = {"app": "app.vcxproj", "bracketed": "[ab]c.vcxproj"}
         if sys.platform != "win32":
-            names.append("*.vcxproj")
-        repo = _tree(tmp_path / "repo", [f"{i}/{name}" for i, name in enumerate(names)])
+            names |= {
+                "globbed": "[ab]?.vcxproj",
+                "starred": "x*.vcxproj",
+                "literal": "*.vcxproj",
+            }
+        repo = _tree(
+            tmp_path / "repo", [f"{key}/{name}" for key, name in names.items()]
+        )
 
         found = _same_structure(pairs, checked, repo)
 
-        literal = {} if sys.platform == "win32" else {"3": f"{PROJECT}.3"}
+        literal = {} if sys.platform == "win32" else {"literal": f"{PROJECT}.literal"}
         assert _packages(found) == literal
 
     def test_a_marker_that_is_a_folder_or_a_link_counts(
@@ -462,9 +542,10 @@ class TestRules:
 
     def test_a_pattern_python_refuses_is_refused(self, tmp_path: Path) -> None:
         repo = _tree(tmp_path / "repo", ["a/"])
+        refused = frozenset({"[z-a]"})
 
         with pytest.raises(ValueError):
-            engine_frame.frame_structure(repo, PROJECT, [], frozenset({"[z-a]"}))
+            engine_frame.frame_structure(repo, PROJECT, [], refused)
 
 
 def _python_rows(
@@ -706,6 +787,53 @@ class TestRuns:
         ((row),) = python_rows
         assert dict(row.node.properties)[cs.KEY_PATH] == "pkg/sub/mod.py"
 
+    @needs_links
+    def test_a_folder_that_turns_into_a_loop_of_links_mid_run_ends_no_settling(
+        self,
+        tmp_path: Path,
+        checked: _Recorded,
+        monkeypatch: pytest.MonkeyPatch,
+        _fail_on_swallowed_pass_errors: list[str],
+    ) -> None:
+        # After the files are read and before their rows are settled: the
+        # loop's file fails in its own handler, as before the frame (where
+        # resolving it raises, before 3.13), and every other file is still
+        # rebuilt; the frame places it as Python does.
+        repo = _tree(tmp_path / "repo", ["a.py", "loop/b.py", "z/c.py"])
+        pre_parse = GraphUpdater._pre_parse_changed_files
+
+        def looping(
+            updater: GraphUpdater,
+            changed_entries: list[tuple[Path, str, bool, bytes]],
+        ) -> dict[Path, tuple[Node, dict[str, list] | None]]:
+            parsed = pre_parse(updater, changed_entries)
+            shutil.rmtree(repo / "loop")
+            _link(repo / "loop", "loop", directory=True)
+            return parsed
+
+        monkeypatch.setattr(GraphUpdater, "_pre_parse_changed_files", looping)
+        ingestor = _MockIngestor()
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(ingestor, repo, parsers, queries, skip_embeddings=True)
+        loop_raises = sys.version_info < cs.FRAME_RESOLVE_LOOP_RAISES_BEFORE
+
+        if loop_raises:
+            with pytest.raises(RuntimeError):
+                updater.run()
+        else:
+            updater.run()
+
+        assert checked.structures == []
+        written = _names(ingestor, cs.NodeLabel.FILE, cs.KEY_PATH)
+        assert written == (
+            ["a.py", "z/c.py"] if loop_raises else ["a.py", "loop/b.py", "z/c.py"]
+        )
+        # Where resolving raises, the loop's file failed its parse too, as
+        # it would have before the frame.
+        assert all("loop/b.py" in line for line in _fail_on_swallowed_pass_errors)
+        assert bool(_fail_on_swallowed_pass_errors) is loop_raises
+        _fail_on_swallowed_pass_errors.clear()
+
     @pytest.mark.parametrize("enabled", [False, True])
     def test_a_run_writes_today_s_rows_in_today_s_order(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool
@@ -924,6 +1052,75 @@ class TestChoosing:
         assert _names(ingestor, cs.NodeLabel.FOLDER, cs.KEY_NAME) == ["plain", "sub"]
 
 
+# Where a run with the frame off and no check in place was reported asked
+# for its structure (#3754): after every change-detection test, in one
+# process, and in that order. Their own shadow driver, which reruns other
+# files in a process of its own, is left out. The walk's choosing tests go
+# between them: one failed under the discovery shadow the same way.
+OFF_AND_UNCHECKED = "test_engine_structure.py::TestChoosing::test_off_and_unchecked_the_frame_is_never_asked"
+SHADOW_PLUGINS = (
+    "codebase_rag.tests.ignore_rules_shadow",
+    "codebase_rag.tests.discovery_shadow",
+    "codebase_rag.tests.change_shadow",
+    SHADOW_PLUGIN,
+)
+CHANGE_DETECTION_TESTS = "test_engine_change_detection.py"
+PLAN_CHOOSING_TESTS = "test_engine_discovery.py::TestPlanForRun"
+CHANGE_DETECTION_DRIVER = (
+    "test_engine_change_detection.py"
+    "::test_every_existing_incremental_sync_test_agrees_with_the_frame"
+)
+
+
+@pytest.mark.parametrize("shadow", [None, *SHADOW_PLUGINS])
+def test_a_run_with_the_frame_off_is_unasked_after_the_change_detection_tests(
+    shadow: str | None,
+) -> None:
+    # Also under each shadow plugin, which compares the frame with Python
+    # wherever a test asks Python: the structure shadow compared each File
+    # row whatever the test had set, so this test failed under it with "the
+    # frame was asked", and a run planted with a difference failed under the
+    # discovery shadow. Each now compares only while its own check is in
+    # place.
+    plugins = () if shadow is None else ("-p", shadow)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:randomly",
+            "-n",
+            "0",
+            *plugins,
+            *(
+                (TESTS / name).relative_to(REPO_ROOT).as_posix()
+                for name in (
+                    CHANGE_DETECTION_TESTS,
+                    PLAN_CHOOSING_TESTS,
+                    OFF_AND_UNCHECKED,
+                )
+            ),
+            # By its node id, which is the path from the root.
+            "--deselect",
+            (TESTS / CHANGE_DETECTION_DRIVER).relative_to(REPO_ROOT).as_posix(),
+        ],
+        cwd=REPO_ROOT,
+        env=child_env(),
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        check=False,
+        timeout=1800,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output[-8000:]
+    assert re.search(r"\b\d{2,} passed", output), output[-4000:]
+
+
 def _shadowed_test_files() -> list[str]:
     return sorted(
         path.name
@@ -981,5 +1178,8 @@ def test_every_existing_structure_test_agrees_with_the_frame(tmp_path: Path) -> 
     total = {
         key: sum(report[key] for report in reports) for key in ("structures", "rows")
     }
+    # Hundreds of each even on a base install, which skips the tests of
+    # every grammar it lacks (710 structures and 924 rows there; about
+    # 1,450 and 1,970 with them all).
     assert total["structures"] > 300, total
-    assert total["rows"] > 1000, total
+    assert total["rows"] > 300, total

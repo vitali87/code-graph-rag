@@ -6,6 +6,9 @@ exclusions. In a repo with no `.gitignore` yet, an in-repo `.venv` made it
 crash (`.venv/bin/python` links outside the repository), and an untracked
 `node_modules/` put thousands of vendored files into `paths` and into both
 snapshot queries.
+
+A name that is not valid UTF-8, which a sync leaves out as well, stopped
+the check outright (issue #3737).
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from codebase_rag.cli import app
 from codebase_rag.config import load_ignore_patterns
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.test_symlink_policy import _make_undecodable
 from evals.cgr_graph import _StatefulIngestor
 
 PROJECT = "pyv"
@@ -176,6 +180,49 @@ def test_a_cgrignore_exclusion_is_not_checked(temp_repo: Path) -> None:
     delta = _delta(_run_check(root, store))
 
     assert delta["paths"] == ["util.py"]
+
+
+def test_an_untracked_file_whose_name_is_not_utf8_is_not_checked(
+    repo: tuple[Path, _StatefulIngestor],
+) -> None:
+    # git lists a name as its own bytes, and reading them as strict UTF-8
+    # stopped the check (issue #3737). A sync leaves such a name out (#3722).
+    root, store = repo
+    _make_undecodable(root, b"bad\xff.py", "def g():\n    return 2\n")
+
+    delta = _delta(_run_check(root, store))
+
+    assert delta["paths"] == ["util.py"]
+    assert delta["reparsed"] == ["util.py"]
+
+
+def test_an_edited_file_whose_name_is_not_utf8_is_not_checked(
+    temp_repo: Path,
+) -> None:
+    # The same name in the diff against the base: committed, then edited.
+    root = temp_repo / PROJECT
+    root.mkdir()
+    _write(root, "util.py", UTIL)
+    bad = _make_undecodable(root, b"bad\xff.py", "def g():\n    return 2\n")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "b")
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    ).run(force=True)
+    _write(root, "util.py", UTIL.replace("def pad(s):", "def pad(s, width):"))
+    bad.write_text("def g():\n    return 3\n")
+
+    delta = _delta(_run_check(root, store))
+
+    assert delta["paths"] == ["util.py"]
+    assert delta["reparsed"] == ["util.py"]
 
 
 # --- negatives: the files a sync indexes are still the check's ---------------

@@ -5,6 +5,7 @@
 # indexer records into the mock ingestor, replayed through the fixed queries.
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -14,8 +15,9 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag.editing.rename import RenameRefused, rename
+from codebase_rag.editing.rename import RenameRefused, RenameReport, rename
 from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.test_symlink_policy import _call_within_deadline, needs_fifo
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
 # Every index here reads the fingerprint's tool and grammar versions once
@@ -410,6 +412,34 @@ def test_markdown_mentions_of_the_old_name_are_reported(
     # The word boundary excludes `helperish`, and IGNORE_PATTERNS excludes
     # node_modules, so exactly one line is reported.
     assert report.doc_mentions == ("docs/guide.md:3",)
+
+
+@needs_fifo
+def test_a_pipe_named_as_markdown_is_never_read(
+    py_repo: tuple[Path, RecordedGraph],
+) -> None:
+    # The scan for mentions lists the repository on its own and read each
+    # `.md` it found there (issue #3737).
+    root, graph = py_repo
+    _write(root, "docs/guide.md", "Call helper to do the thing.\n")
+    os.mkfifo(root / "docs" / "zz.md")
+    reports: list[RenameReport] = []
+
+    _call_within_deadline(
+        lambda: reports.append(
+            rename(
+                root,
+                graph.fetch_all,
+                graph.project,
+                f"{graph.project}.pkg.util.helper",
+                "assist",
+            )
+        ),
+        root / "docs" / "zz.md",
+    )
+
+    assert reports[0].applied, reports[0].message
+    assert reports[0].doc_mentions == ("docs/guide.md:1",)
 
 
 def test_python_function_rename_rewrites_every_site_and_import(

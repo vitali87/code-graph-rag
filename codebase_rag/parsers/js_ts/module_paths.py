@@ -295,7 +295,9 @@ def _source_module(package_dir: Path, target: str, repo_path: Path) -> str | Non
         if _has_source_file(base):
             return _repo_relative(base, repo_path)
         index = base / cs.JS_INDEX_STEM
-        if base.is_dir() and _has_source_file(index):
+        # `os.path.isdir` never raises: `Path.is_dir` did on Python 3.12 and
+        # 3.13 inside a folder cgr may not enter (#3750).
+        if os.path.isdir(base) and _has_source_file(index):
             return _repo_relative(index, repo_path)
     return None
 

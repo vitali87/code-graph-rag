@@ -15,9 +15,10 @@
 //!   always one.
 //! - **Order.** Python's path order, `sorted()` over the folders' paths:
 //!   part by part, so `a/b` comes before `a-b`, each part by code point,
-//!   and on Windows with every part lower-cased first. The root comes
-//!   first, unless it was given as the current folder, `.`, which sorts
-//!   after a folder whose name is below `.`, such as `-x`.
+//!   and where paths compare without case (Windows) with every part
+//!   lower-cased first, as `str.lower` lowers it. The root comes first,
+//!   unless it was given as the current folder, `.`, which sorts after a
+//!   folder whose name is below `.`, such as `-x`.
 //! - **Kinds.** A folder holding a file or folder named as any of the
 //!   package markers is a package; a marker is a name, never a pattern, so
 //!   `*.vcxproj` is matched literally. Its qualified name is the project's
@@ -32,7 +33,12 @@
 //!   the name, the extension as `PurePath.suffix` gives it, and the
 //!   resolved folder joined with the name, so a link is named by itself,
 //!   not its target. The map they read is passed in: the frame's own map in
-//!   a run, Python's when a test holds one row to Python's.
+//!   a run, Python's when a test holds one row to Python's. A file whose
+//!   folder resolves into a loop of links has none where the running
+//!   Python's `Path.resolve()` raises on one (before 3.13).
+//!
+//! Where Python's paths differ by version or system, `PathRules` says how
+//! the running one behaves; Python fills it in.
 //!
 //! Paths are spelled as `Path.as_posix()` spells them: `/` between parts on
 //! every system. Folders are listed on the engine's pool a level at a time,
@@ -65,6 +71,75 @@ const DOT: &str = ".";
 /// `Path("..").name`: the name pathlib gives a path ending in `..`.
 const PARENT_NAME: &str = "..";
 
+/// How the running Python's paths behave where versions and systems
+/// differ: whether they compare names without case, and then lower-case
+/// them by `case`, this Python's own `str.lower` (Windows); whether a name
+/// ending in a dot has a suffix (`PurePath("a.").suffix`, `.` from 3.14
+/// on); and whether `Path.resolve()` raises on a loop of links (before
+/// 3.13).
+#[derive(Debug, Default)]
+pub struct PathRules {
+    pub case: Option<CaseTable>,
+    pub dot_suffix: bool,
+    pub loop_raises: bool,
+}
+
+/// `str.lower` as the running Python does it. Each character takes
+/// Python's own lower case, which follows the Unicode version Python was
+/// built with, not Rust's: Rust's is newer, and lowers letters Python's
+/// does not. A capital sigma is the one character lowered by its context,
+/// to the final form at the end of a word; Rust decides that by Python's
+/// rule, so the two part only where a letter beside it has a case one of
+/// their Unicode versions lacks.
+#[derive(Debug, Default)]
+pub struct CaseTable {
+    lower: HashMap<char, String>,
+}
+
+/// The one character `str.lower` lowers by its context, and its form
+/// inside a word.
+const CAPITAL_SIGMA: char = '\u{3a3}';
+const SMALL_SIGMA: char = '\u{3c3}';
+
+impl CaseTable {
+    /// The table of each character that `str.lower` changes, and what to.
+    pub fn new<I: IntoIterator<Item = (char, String)>>(lower: I) -> CaseTable {
+        CaseTable {
+            lower: lower.into_iter().collect(),
+        }
+    }
+
+    /// `text.lower()`.
+    pub fn lower(&self, text: &str) -> String {
+        if text.is_ascii() {
+            return text.to_ascii_lowercase();
+        }
+        // Rust's own lowering, only to read each sigma's form off it: it
+        // lowers every other character on its own, so it is followed
+        // character by character alongside.
+        let native: Vec<char> = if text.contains(CAPITAL_SIGMA) {
+            text.to_lowercase().chars().collect()
+        } else {
+            Vec::new()
+        };
+        let mut at = 0;
+        let mut lowered = String::with_capacity(text.len());
+        for c in text.chars() {
+            if c == CAPITAL_SIGMA {
+                lowered.push(native.get(at).copied().unwrap_or(SMALL_SIGMA));
+                at += 1;
+                continue;
+            }
+            at += c.to_lowercase().count();
+            match self.lower.get(&c) {
+                Some(lower) => lowered.push_str(lower),
+                None => lowered.push(c),
+            }
+        }
+        lowered
+    }
+}
+
 /// What the structure pass derives for a repository: the map, each
 /// folder's path from the root (`.` for the root) and its package's
 /// qualified name, or none for a plain folder, in the order Python fills
@@ -87,39 +162,46 @@ struct Folder {
 impl Engine {
     /// The structure of the repository at `root` under `rules`, the
     /// project named `project_name`, a folder holding any of `markers` a
-    /// package; an error where Python's walk raises on a pattern pathspec
-    /// refuses.
+    /// package, its folders compared as `paths` compares them; an error
+    /// where Python's walk raises on a pattern pathspec refuses.
     pub fn structure(
         &self,
         root: &OsStr,
         project_name: &str,
         markers: &[String],
         rules: &IgnoreRules,
+        paths: &PathRules,
     ) -> Result<Structure, PatternError> {
         let mut folders = self.folders(root, rules)?;
         let dot_root = lexical_parts(Path::new(root)).is_empty();
-        folders.sort_by_cached_key(|folder| order_key(&folder.parts, dot_root));
+        let case = paths.case.as_ref();
+        folders.sort_by_cached_key(|folder| order_key(&folder.parts, dot_root, case));
         let packages = self.map_ordered(&folders, |folder| is_package(&folder.path, markers));
-        Ok(derive(Path::new(root), project_name, &folders, &packages))
+        Ok(derive(
+            Path::new(root),
+            project_name,
+            &folders,
+            &packages,
+            case,
+        ))
     }
 
     /// Each file's File row and its containing edge, in the order given;
     /// `None` for a path that is not under `root`, or whose path from it
-    /// is not UTF-8. `elements` is the structure map the rows read their
-    /// folder's package from, and `dot_suffix` whether the running Python
-    /// gives a name ending in a dot a suffix (`PurePath("a.").suffix`, `.`
-    /// from 3.14 on).
+    /// is not UTF-8, or whose folder `Path.resolve()` raises on. `elements`
+    /// is the structure map the rows read their folder's package from.
     pub fn file_rows<P: AsRef<Path> + Sync>(
         &self,
         root: &Path,
         project_name: &str,
         elements: &[(String, Option<String>)],
         paths: &[P],
-        dot_suffix: bool,
+        rules: &PathRules,
     ) -> Vec<Option<ContainedRow>> {
+        let case = rules.case.as_ref();
         let map: HashMap<String, Option<&str>> = elements
             .iter()
-            .map(|(key, qn)| (fold(key), qn.as_deref()))
+            .map(|(key, qn)| (fold(key, case), qn.as_deref()))
             .collect();
         let root_parts = lexical_parts(root);
         // Each folder resolved once, as Python's resolution is cached.
@@ -135,18 +217,46 @@ impl Engine {
                 })
             })
             .collect();
-        let resolved = self.map_ordered(&parents, |parent| resolve(parent));
+        let resolved = self.map_ordered(&parents, |parent| {
+            let resolved = resolve(parent);
+            // `Path.resolve()` before 3.13 stats what it resolved, and
+            // raises on a loop of links, which ends that file's row.
+            (!(rules.loop_raises && meets_loop(&resolved))).then_some(resolved)
+        });
         let place = FilePlace {
             root_parts: &root_parts,
             project_name,
             map: &map,
-            dot_suffix,
+            rules,
         };
         paths
             .iter()
             .zip(slots)
-            .map(|(path, slot)| place.row(path.as_ref(), &resolved[slot]))
+            .map(|(path, slot)| place.row(path.as_ref(), resolved[slot].as_deref()?))
             .collect()
+    }
+
+    /// `keys`, folders' paths from `root` (`.` for the root itself), in
+    /// the order the structure pass writes them, compared as `case` says.
+    pub fn folder_order<'a>(
+        root: &Path,
+        keys: &'a [String],
+        case: Option<&CaseTable>,
+    ) -> Vec<&'a str> {
+        let dot_root = lexical_parts(root).is_empty();
+        let mut ordered: Vec<(Vec<String>, &str)> = keys
+            .iter()
+            .map(|key| {
+                let parts: Vec<String> = if key == ROOT_DIR_KEY {
+                    Vec::new()
+                } else {
+                    key.split(SLASH).map(str::to_owned).collect()
+                };
+                (order_key(&parts, dot_root, case), key.as_str())
+            })
+            .collect();
+        ordered.sort_by(|a, b| a.0.cmp(&b.0));
+        ordered.into_iter().map(|(_, key)| key).collect()
     }
 
     /// The root and every folder the structure pass keeps under it, the
@@ -220,7 +330,13 @@ fn subfolders(
 
 /// The rows and map for the folders in Python's order, `packages` saying
 /// which are packages.
-fn derive(root: &Path, project_name: &str, folders: &[Folder], packages: &[bool]) -> Structure {
+fn derive(
+    root: &Path,
+    project_name: &str,
+    folders: &[Folder],
+    packages: &[bool],
+    case: Option<&CaseTable>,
+) -> Structure {
     let mut structure = Structure::default();
     // Each folder's map entry and resolved path, for its subfolders' rows.
     let mut derived: HashMap<String, (Option<String>, OsString)> = HashMap::new();
@@ -229,7 +345,7 @@ fn derive(root: &Path, project_name: &str, folders: &[Folder], packages: &[bool]
         let absolute = posix(&folder.resolved);
         let parent = match folder.parts.split_last() {
             Some((_, parent)) if !parent.is_empty() => {
-                let found = derived.get(&fold(&parent.join(SLASH)));
+                let found = derived.get(&fold(&parent.join(SLASH), case));
                 match found {
                     Some((Some(qn), _)) if !qn.is_empty() => package_id(qn),
                     Some((_, resolved)) => folder_id(resolved.clone()),
@@ -280,18 +396,18 @@ fn derive(root: &Path, project_name: &str, folders: &[Folder], packages: &[bool]
             None
         };
         structure.elements.push((key.clone(), entry.clone()));
-        derived.insert(fold(&key), (entry, absolute));
+        derived.insert(fold(&key, case), (entry, absolute));
     }
     structure
 }
 
 /// Where the File rows are placed: the root's parts, the project, the map
-/// and the suffix rule.
+/// and the running Python's path rules.
 struct FilePlace<'a> {
     root_parts: &'a [Part],
     project_name: &'a str,
     map: &'a HashMap<String, Option<&'a str>>,
-    dot_suffix: bool,
+    rules: &'a PathRules,
 }
 
 impl FilePlace<'_> {
@@ -301,10 +417,10 @@ impl FilePlace<'_> {
         let parts = lexical_parts(path);
         // `relative_to`: the root's parts, anchor and all, then names only.
         let under = parts.len() > self.root_parts.len()
-            && parts
-                .iter()
-                .zip(self.root_parts)
-                .all(|(part, root)| fold_os(&part.text) == fold_os(&root.text))
+            && parts.iter().zip(self.root_parts).all(|(part, root)| {
+                let case = self.rules.case.as_ref();
+                fold_os(&part.text, case) == fold_os(&root.text, case)
+            })
             && !parts[self.root_parts.len()..]
                 .iter()
                 .any(|part| part.anchor);
@@ -319,7 +435,10 @@ impl FilePlace<'_> {
         let parent = if folder.is_empty() {
             project_id(self.project_name)
         } else {
-            match self.map.get(&fold(&folder.join(SLASH))) {
+            match self
+                .map
+                .get(&fold(&folder.join(SLASH), self.rules.case.as_ref()))
+            {
                 Some(Some(qn)) if !qn.is_empty() => package_id(qn),
                 _ => folder_id(posix(resolved_parent)),
             }
@@ -329,7 +448,10 @@ impl FilePlace<'_> {
             properties: vec![
                 (PATH, OsString::from(rel.join(SLASH))),
                 (NAME, OsString::from(name)),
-                (EXTENSION, OsString::from(suffix(name, self.dot_suffix))),
+                (
+                    EXTENSION,
+                    OsString::from(suffix(name, self.rules.dot_suffix)),
+                ),
                 (ABSOLUTE_PATH, posix(&resolved_parent.join(name))),
             ],
         };
@@ -408,33 +530,47 @@ fn is_package(path: &OsStr, markers: &[String]) -> bool {
 }
 
 /// How `sorted()` orders folders: their paths' parts compared in turn,
-/// each by code point, which for UTF-8 is byte order, lower-cased on
-/// Windows as `PureWindowsPath` compares. Every folder's path starts with
-/// the root's, so the root's own parts can be left out, unless the root is
-/// the current folder (`dot_root`): `Path(".")` compares as `.`, and its
-/// folders' paths hold no `.`, so a name below `.` sorts before the root.
-fn order_key(parts: &[String], dot_root: bool) -> Vec<String> {
+/// each by code point, which for UTF-8 is byte order, lower-cased first
+/// where `case` says, as `PureWindowsPath` compares (`str(path).lower()`,
+/// split at each separator, which no lower-casing crosses). Every
+/// folder's path starts with the root's, so the root's own parts can be
+/// left out, unless the root is the current folder (`dot_root`):
+/// `Path(".")` compares as `.`, and its folders' paths hold no `.`, so a
+/// name below `.` sorts before the root.
+fn order_key(parts: &[String], dot_root: bool, case: Option<&CaseTable>) -> Vec<String> {
     if parts.is_empty() && dot_root {
         return vec![DOT.to_owned()];
     }
-    parts.iter().map(|part| fold(part)).collect()
+    parts.iter().map(|part| fold(part, case)).collect()
 }
 
-/// A path's spelling as Python's paths compare it: lower-cased on Windows.
-fn fold(text: &str) -> String {
-    if cfg!(windows) {
-        text.to_lowercase()
-    } else {
-        text.to_owned()
+/// A path's spelling as Python's paths compare it: lower-cased where they
+/// compare without case.
+fn fold(text: &str, case: Option<&CaseTable>) -> String {
+    match case {
+        Some(case) => case.lower(text),
+        None => text.to_owned(),
     }
 }
 
-fn fold_os(part: &OsStr) -> OsString {
-    if cfg!(windows) {
-        OsString::from(part.to_string_lossy().to_lowercase())
-    } else {
-        part.to_owned()
+fn fold_os(part: &OsStr, case: Option<&CaseTable>) -> OsString {
+    match case {
+        Some(case) => OsString::from(case.lower(&part.to_string_lossy())),
+        None => part.to_owned(),
     }
+}
+
+/// Whether reading `path` meets a loop of links: what `Path.resolve()`
+/// before 3.13 raises on, by the errors it checks for.
+fn meets_loop(path: &Path) -> bool {
+    #[cfg(unix)]
+    const LOOP: i32 = libc::ELOOP;
+    // `ERROR_CANT_RESOLVE_FILENAME`, pathlib's `_WINERROR_CANT_RESOLVE_FILENAME`.
+    #[cfg(windows)]
+    const LOOP: i32 = 1921;
+    #[cfg(not(any(unix, windows)))]
+    const LOOP: i32 = -1;
+    fs::metadata(path).is_err_and(|error| error.raw_os_error() == Some(LOOP))
 }
 
 /// One part of a path as pathlib holds it; an anchor is the root or a

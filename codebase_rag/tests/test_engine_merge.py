@@ -207,7 +207,8 @@ def _names(
 def test_the_frame_reads_python_s_naming_tables() -> None:
     assert engine_frame.naming_rules() is not None
     made = engine_frame.engine()
-    assert made is not None and hasattr(made, cs.EG_RUST_MODULE_PLAN)
+    assert made is not None
+    assert hasattr(made, cs.EG_RUST_MODULE_PLAN)
 
 
 class TestRules:
