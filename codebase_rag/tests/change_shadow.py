@@ -24,7 +24,9 @@ to add up.
 
 Not compared: a run, a reading or a writing while a test patches what
 Python's change detection decides with or reads the files by, or the
-functions this plugin wraps, which it then cannot reach.
+functions this plugin wraps, which it then cannot reach; nor a reading or a
+writing while a test has put its own check in place of the session's, or
+none (`engine_frame.CHECK`): that test decides whether the frame is asked.
 """
 
 from __future__ import annotations
@@ -108,8 +110,12 @@ _PUBLISH_CALLS = _publish_calls()
 
 def _compared(original: Callable[..., object], name: str) -> bool:
     """Whether a call can be compared: its function unpatched, and the
-    session's check able to compare a run now."""
-    if getattr(gu, name) is not original or not FramePlanCheck.compares_changes(_CHECK):
+    session's check in place and able to compare a run now."""
+    if (
+        getattr(gu, name) is not original
+        or engine_frame.CHECK is not _CHECK
+        or not FramePlanCheck.compares_changes(_CHECK)
+    ):
         _counts["skipped"] += 1
         return False
     return True
@@ -169,6 +175,8 @@ def _shadow_publish(
         _counts["writings"] += 1
         python = os.stat(cache_path)
         python_bytes = cache_path.read_bytes()
+        # Reading the cache moved its atime, which the test may check.
+        os.utime(cache_path, ns=(python.st_atime_ns, python.st_mtime_ns))
         with tempfile.TemporaryDirectory(prefix=SCRATCH_PREFIX) as scratch:
             mirror = Path(scratch) / cache_path.name
             _engine().publish_hash_cache(mirror, list(hashes.items()), observed_at)

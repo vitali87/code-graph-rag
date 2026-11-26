@@ -19,7 +19,10 @@ runs the existing walk and ignore tests under it
 
 Not compared: a walk while a test has patched the built-in names or endings
 the frame holds copies of, and a reading while a test stands in for git
-(`subprocess.run` patched), which the frame runs for real.
+(`subprocess.run` patched), which the frame runs for real; nor either while
+a test has put its own check in place of the session's, or none
+(`engine_frame.CHECK`): that test decides whether the frame is asked, and
+one that turns it off must find it never asked.
 """
 
 from __future__ import annotations
@@ -44,7 +47,8 @@ from codebase_rag.utils import path_utils
 
 SUMMARY = (
     "discovery shadow: {walks} walks and {readings} ignore readings compared, "
-    "{differed} differed, {skipped} made with patched constants or git"
+    "{differed} differed, {skipped} made with patched constants or git, or "
+    "under a test's own check"
 )
 READING_DIFFERS = "load_ignore_patterns({repo}): Python {python}, the frame {frame}"
 FAILED = "the frame's walk or ignore files differ from Python's:\n"
@@ -76,6 +80,9 @@ def _compare_walk(
     exclude: frozenset[str] | None,
     unignore: frozenset[str] | None,
 ) -> None:
+    if engine_frame.CHECK is not _CHECK:
+        _counts["skipped"] += 1
+        return
     if not _CHECK.compares():
         return
     try:
@@ -118,7 +125,11 @@ def _shadow_walk(
 @functools.wraps(_LOAD)
 def _shadow_load(repo_path: Path) -> CgrignorePatterns:
     python = _LOAD(repo_path)
-    if subprocess.run is not _RUN or not frame_holds_python_constants():
+    if (
+        subprocess.run is not _RUN
+        or engine_frame.CHECK is not _CHECK
+        or not frame_holds_python_constants()
+    ):
         _counts["skipped"] += 1
         return python
     _counts["readings"] += 1

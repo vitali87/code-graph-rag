@@ -1049,22 +1049,34 @@ class TestChoosing:
 # Where a run with the frame off and no check in place was reported asked
 # for its structure (#3754): after every change-detection test, in one
 # process, and in that order. Their own shadow driver, which reruns other
-# files in a process of its own, is left out.
+# files in a process of its own, is left out. The walk's choosing tests go
+# between them: one failed under the discovery shadow the same way.
 OFF_AND_UNCHECKED = "test_engine_structure.py::TestChoosing::test_off_and_unchecked_the_frame_is_never_asked"
+SHADOW_PLUGINS = (
+    "codebase_rag.tests.ignore_rules_shadow",
+    "codebase_rag.tests.discovery_shadow",
+    "codebase_rag.tests.change_shadow",
+    SHADOW_PLUGIN,
+)
 CHANGE_DETECTION_TESTS = "test_engine_change_detection.py"
+PLAN_CHOOSING_TESTS = "test_engine_discovery.py::TestPlanForRun"
 CHANGE_DETECTION_DRIVER = (
     "test_engine_change_detection.py"
     "::test_every_existing_incremental_sync_test_agrees_with_the_frame"
 )
 
 
-@pytest.mark.parametrize("plugins", [(), ("-p", SHADOW_PLUGIN)], ids=["", "shadowed"])
+@pytest.mark.parametrize("shadow", [None, *SHADOW_PLUGINS])
 def test_a_run_with_the_frame_off_is_unasked_after_the_change_detection_tests(
-    plugins: tuple[str, ...],
+    shadow: str | None,
 ) -> None:
-    # Also under the structure shadow, whose comparison of each File row
-    # asked the frame whatever the test had set, and failed this test with
-    # "the frame was asked" even alone.
+    # Also under each shadow plugin, which compares the frame with Python
+    # wherever a test asks Python: the structure shadow compared each File
+    # row whatever the test had set, so this test failed under it with "the
+    # frame was asked", and a run planted with a difference failed under the
+    # discovery shadow. Each now compares only while its own check is in
+    # place.
+    plugins = () if shadow is None else ("-p", shadow)
     result = subprocess.run(
         [
             sys.executable,
@@ -1080,7 +1092,11 @@ def test_a_run_with_the_frame_off_is_unasked_after_the_change_detection_tests(
             *plugins,
             *(
                 (TESTS / name).relative_to(REPO_ROOT).as_posix()
-                for name in (CHANGE_DETECTION_TESTS, OFF_AND_UNCHECKED)
+                for name in (
+                    CHANGE_DETECTION_TESTS,
+                    PLAN_CHOOSING_TESTS,
+                    OFF_AND_UNCHECKED,
+                )
             ),
             # By its node id, which is the path from the root.
             "--deselect",
