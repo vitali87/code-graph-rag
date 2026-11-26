@@ -252,11 +252,16 @@ def _indexed(repo: Path) -> Indexed:
         updater = create_and_run_updater(repo, ingestor)
     finally:
         logger.remove(sink)
-    root = str(repo.resolve())
+    # The graph's paths are POSIX-spelled (`C:/...` on Windows), while the
+    # checkout's own spelling, raw or as a repr escapes it, can appear in
+    # other writes; each stands for the checkout, so two runs in different
+    # folders compare equal.
+    resolved = repo.resolve()
+    roots = (resolved.as_posix(), repr(str(resolved))[1:-1], str(resolved))
     cache = state_file(repo, cs.HASH_CACHE_FILENAME)
     return Indexed(
         writes=sorted(
-            SYNC_TIME.sub(SYNC_TIME_SHOWN, str(call).replace(root, REPO_SHOWN))
+            SYNC_TIME.sub(SYNC_TIME_SHOWN, _with_root_shown(str(call), roots))
             for call in ingestor.method_calls
         ),
         cache=json.loads(cache.read_text(encoding=cs.ENCODING_UTF8)),
@@ -273,6 +278,13 @@ def _prepared(root: Path, scenario: Scenario) -> Path:
         _indexed(repo)
         _edit(repo)
     return repo
+
+
+def _with_root_shown(text: str, roots: tuple[str, ...]) -> str:
+    """`text` with each spelling of the checkout's root replaced by one mark."""
+    for root in roots:
+        text = text.replace(root, REPO_SHOWN)
+    return text
 
 
 def _python_alone(root: Path, scenario: Scenario) -> Indexed:
