@@ -29,6 +29,7 @@ from codebase_rag import engine_frame
 from codebase_rag.checkout_state import state_file
 from codebase_rag.config import load_ignore_patterns
 from codebase_rag.tests.conftest import _MockIngestor, create_and_run_updater
+from codebase_rag.tests.shadows import child_env
 from codebase_rag.tests.test_symlink_policy import (
     _link,
     _make_undecodable,
@@ -816,11 +817,7 @@ def test_every_existing_walk_and_ignore_test_agrees_with_the_frame() -> None:
     # The existing walk and ignore tests, with every walk they make and
     # every reading of the ignore files compared with the frame's; any
     # difference fails the test that made it.
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("PYTEST_XDIST", "PYTEST_CURRENT_TEST"))
-    }
+    env = child_env()
     result = subprocess.run(
         [
             sys.executable,

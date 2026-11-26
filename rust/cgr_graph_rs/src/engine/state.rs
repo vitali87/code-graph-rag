@@ -449,12 +449,7 @@ fn adopt(legacy: &Path, target: &Path) -> io::Result<bool> {
 /// gone, moved by another process first.
 fn place(legacy: &Path, target: &Path) -> io::Result<bool> {
     let (file, temp) = open_exclusive_temp(target)?;
-    drop(file);
-    let placed = (|| {
-        fs::copy(legacy, &temp)?;
-        copy_times(legacy, &temp)?;
-        link_no_replace(&temp, target)
-    })();
+    let placed = copy_into(legacy, file, &temp).and_then(|()| link_no_replace(&temp, target));
     let _ = fs::remove_file(&temp);
     match placed {
         Ok(()) => Ok(true),
@@ -463,17 +458,20 @@ fn place(legacy: &Path, target: &Path) -> io::Result<bool> {
     }
 }
 
-/// `shutil.copystat`'s times: the access and modification times, to the
-/// nanosecond.
-fn copy_times(source: &Path, target: &Path) -> io::Result<()> {
+/// `shutil.copy2(source, path)` into `file`, open for writing at `path`:
+/// the bytes, then `shutil.copystat`'s access and modification times, to the
+/// nanosecond, set through `file`, then the permissions, last, as a
+/// read-only file refuses a handle that may write (bot review).
+fn copy_into(source: &Path, mut file: File, path: &Path) -> io::Result<()> {
+    io::copy(&mut File::open(source)?, &mut file)?;
     let metadata = fs::metadata(source)?;
-    let times = FileTimes::new()
-        .set_accessed(metadata.accessed()?)
-        .set_modified(metadata.modified()?);
-    OpenOptions::new()
-        .write(true)
-        .open(target)?
-        .set_times(times)
+    file.set_times(
+        FileTimes::new()
+            .set_accessed(metadata.accessed()?)
+            .set_modified(metadata.modified()?),
+    )?;
+    drop(file);
+    fs::set_permissions(path, metadata.permissions())
 }
 
 /// `_link_no_replace`: `source` under the name `target`, failing when it is
@@ -492,13 +490,9 @@ fn link_no_replace(source: &Path, target: &Path) -> io::Result<()> {
 /// `_create_exclusive`: a new `target` holding `source`'s bytes and times,
 /// removed again when the copy fails, unless something else replaced it.
 fn create_exclusive(source: &Path, target: &Path) -> io::Result<()> {
-    let mut file = exclusive_options().open(target)?;
+    let file = exclusive_options().open(target)?;
     let created = fs::symlink_metadata(target)?;
-    let copied = (|| {
-        io::copy(&mut File::open(source)?, &mut file)?;
-        fs::set_permissions(target, fs::metadata(source)?.permissions())?;
-        copy_times(source, target)
-    })();
+    let copied = copy_into(source, file, target);
     if copied.is_err() && fs::symlink_metadata(target).is_ok_and(|now| same_file(&created, &now)) {
         let _ = fs::remove_file(target);
     }

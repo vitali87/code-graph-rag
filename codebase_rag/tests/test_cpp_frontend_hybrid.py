@@ -13,7 +13,13 @@ from codebase_rag.parsers.cpp_frontend import (
     cpp_frontend_available,
     run_cpp_frontend_hybrid,
 )
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import (
+    entry_denied,
+    get_nodes,
+    get_qualified_names,
+    needs_binding_permissions,
+    run_updater,
+)
 from codebase_rag.types_defs import PropertyDict
 from evals.cgr_graph import _StatefulIngestor
 
@@ -557,6 +563,23 @@ def test_find_compile_commands_checks_parent_build_dirs(tmp_path: Path) -> None:
     target = tmp_path / "include" / "proj"
     target.mkdir(parents=True)
     assert find_compile_commands(target) == tmp_path / "build"
+
+
+@needs_binding_permissions
+def test_find_compile_commands_passes_a_build_dir_cgr_may_not_enter(
+    tmp_path: Path,
+) -> None:
+    # Issue #3748: a `build/` cgr may not enter (one a container build left
+    # root-owned) raised PermissionError on Python 3.12 and 3.13 and ended
+    # the run. The search now carries on to the next level up.
+    from codebase_rag.parsers.cpp_frontend import find_compile_commands
+
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "compile_commands.json").write_text("[]", encoding="utf-8")
+    target = tmp_path / "sub"
+    (target / "build").mkdir(parents=True)
+    with entry_denied(target / "build"):
+        assert find_compile_commands(target) == tmp_path / "build"
 
 
 def test_hybrid_incremental_expansion_call_reaches_unchanged_callee_file(
