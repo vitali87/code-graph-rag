@@ -234,18 +234,18 @@ enum Report {
 }
 
 /// One entry of a listing.
-struct Entry {
-    name: OsString,
+pub(super) struct Entry {
+    pub(super) name: OsString,
     /// Its own type, a link not followed; `None` when it cannot be read.
     kind: Option<FileType>,
     /// Whether it is a folder once links are followed: what puts it among
     /// `os.walk`'s `dirnames`.
-    is_dir: bool,
+    pub(super) is_dir: bool,
 }
 
 impl Entry {
     /// `is_symlink_entry`.
-    fn is_link(&self) -> bool {
+    pub(super) fn is_link(&self) -> bool {
         self.kind.is_some_and(|kind| kind.is_symlink())
     }
 
@@ -275,7 +275,7 @@ fn visit(rules: &IgnoreRules, node: &Node) -> Visit {
 
 /// The folder's entries in the order the system lists them, or `None` when
 /// it cannot be listed to the end.
-fn list(dirpath: &OsStr) -> Option<Vec<Entry>> {
+pub(super) fn list(dirpath: &OsStr) -> Option<Vec<Entry>> {
     let mut entries = Vec::new();
     for entry in fs::read_dir(dirpath).ok()? {
         let entry = entry.ok()?;
@@ -366,7 +366,7 @@ fn reported(prefix: &str, name: &OsStr) -> OsString {
 
 /// `os.path.join(parent, name)` for a folder name: no separator added
 /// after one already there, nor, on Windows, after a bare drive (`C:`).
-fn child_dirpath(parent: &OsStr, name: &str) -> OsString {
+pub(super) fn child_dirpath(parent: &OsStr, name: &str) -> OsString {
     let mut path = parent.to_owned();
     if !joins_without_separator(parent) {
         path.push(MAIN_SEPARATOR_STR);

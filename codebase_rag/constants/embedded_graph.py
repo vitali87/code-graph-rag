@@ -547,6 +547,32 @@ class FrameChange(StrEnum):
     CHANGED = "changed"
 
 
+# The frame's structure pass and File rows (engine_frame.py), which an
+# `Engine` from before phase 2's step 7 lacks.
+EG_RUST_STRUCTURE = "structure"
+EG_RUST_FILE_ROWS = "file_rows"
+EG_RUST_FOLDER_ORDER = "folder_order"
+# A structure as lines, to compare two (engine_frame.py): each folder's entry
+# in the map, in order, a package's qualified name after its path, then each
+# row the pass writes, its node and then the edge from what contains it. A
+# run's File rows are compared the same way, each path that has none named.
+FRAME_ELEMENT_LINE = "element\t{key}"
+FRAME_PACKAGE_ELEMENT_LINE = "element\t{key}\t{qn}"
+FRAME_NODE_ROW_LINE = "node\t{label}\t{properties}"
+FRAME_EDGE_ROW_LINE = "edge\t{start}\t{rel_type}\t{end}"
+FRAME_ROW_PROPERTY = "{key}={value}"
+FRAME_ROW_IDENTIFIER = "{label}({key}={value})"
+FRAME_ROW_FIELDS_SEPARATOR = "\t"
+FRAME_NO_FILE_ROW_LINE = "no row\t{path}"
+# Whether the running Python gives a name ending in a dot a suffix, as 3.14
+# does (`PurePath("a.").suffix == "."`): the frame's File rows follow it.
+FRAME_TRAILING_DOT_NAME = "a."
+FRAME_TRAILING_DOT_SUFFIX = "."
+# The first Python whose `Path.resolve()` no longer raises `RuntimeError` on
+# a loop of links (pathlib's docs, "Changed in version 3.13").
+FRAME_RESOLVE_LOOP_RAISES_BEFORE = (3, 13)
+
+
 # Bridge methods a build from before the scope walks, or from before the
 # interface fingerprint, lacks.
 EG_RUST_SCOPE_FACTS = "scope_facts"

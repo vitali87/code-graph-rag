@@ -19,15 +19,18 @@ The `--engine-mode` option (docs/reports/PHASE1_SEAMS.md, section 2):
 
 The engine's frame (docs/reports/PHASE2_FRAME.md, section 4) is checked in
 both: every index a test makes compares the frame's file plan with Python's
-walk, and its change detection (the in-sync check, the files new, changed
-and deleted, the hash cache and folder times it would publish) with
-Python's, whatever language is on Rust, at no second index, and a
-difference fails the test as above. `both` keeps Python's answers for the
-run; `rust` turns the frame on (`engine_frame.ENABLED`), so the run goes on
-with the frame's. A test that patches the built-in names or endings the
-frame holds copies of, or what Python's walk decides with or reads files
-by, is not compared; nor is a run's change detection while a test patches
-what Python's decides with, reads the state files by, or its clock.
+walk, its change detection (the in-sync check, the files new, changed and
+deleted, the hash cache and folder times it would publish), and its
+structure (the Package and Folder rows, the map of each folder's package,
+and the File rows of the files indexed) with Python's, whatever language is
+on Rust, at no second index, and a difference fails the test as above.
+`both` keeps Python's answers for the run; `rust` turns the frame on
+(`engine_frame.ENABLED`), so the run goes on with the frame's. A test that
+patches the built-in names or endings the frame holds copies of, or what
+Python's walk decides with or reads files by, is not compared; nor is a
+run's change detection while a test patches what Python's decides with,
+reads the state files by, or its clock, nor its structure while a test
+patches what Python's structure pass decides with.
 
 While the build can index no language on Rust (`rust_engine_languages()` is
 empty), `rust` runs exactly what `python` runs and `both` indexes nothing
@@ -93,6 +96,8 @@ PARITY_DIFF_DIR_ENV = "CGR_PARITY_DIFF_DIR"
 # Where `change_shadow.py`'s processes each write what they compared, for the
 # test that runs it under xdist to add up. Read by that plugin only.
 CHANGE_SHADOW_DIR_ENV = "CGR_CHANGE_SHADOW_DIR"
+# The same for `structure_shadow.py`.
+STRUCTURE_SHADOW_DIR_ENV = "CGR_STRUCTURE_SHADOW_DIR"
 
 # Every per-file pass swallows all exceptions so one bad file cannot abandon a
 # whole index, and only logs. Nothing looked at those logs, so a bug inside a
@@ -156,6 +161,10 @@ FRAME_CHANGES_HEADING = (
     "The frame's change detection differs from Python's on {repo}: {python} lines "
     "only in Python's, {rust} only in the frame's"
 )
+FRAME_STRUCTURE_HEADING = (
+    "The frame's structure differs from Python's on {repo}: {python} lines only "
+    "in Python's, {rust} only in the frame's"
+)
 # What Python's change detection decides with and reads the state files by,
 # in `graph_updater.py` and on `GraphUpdater`, and the calls beneath them.
 CHANGE_FUNCTIONS = (
@@ -199,6 +208,26 @@ CHANGE_PATH_METHODS = (
     "read_bytes",
     "read_text",
 )
+# What Python's structure pass decides with and resolves paths by, in
+# `parsers/structure_processor.py` and on `StructureProcessor`, and the calls
+# beneath them that its walk does not share with the file walk's.
+STRUCTURE_FUNCTIONS = (
+    "should_skip_path",
+    "is_symlink_entry",
+    "is_utf8_name",
+    "cached_relative_path",
+    "cached_resolve_posix",
+    "cached_file_identity_posix",
+)
+STRUCTURE_METHODS = (
+    "_directories_to_derive",
+    "_derive_one_directory",
+    "_get_parent_identifier",
+    "_package_row",
+    "_folder_row",
+    "file_row",
+)
+STRUCTURE_PATH_METHODS = ("exists", "resolve", "relative_to", "is_file")
 REPORT_SECTION = "engine comparison"
 TEARDOWN = "teardown"
 FUNCTION_SCOPE = "function"
@@ -473,6 +502,20 @@ def _change_functions() -> tuple[object, ...]:
     )
 
 
+def _structure_functions() -> tuple[object, ...]:
+    """What Python's structure pass decides with and resolves paths by, and
+    the system calls beneath them."""
+    from codebase_rag.parsers import structure_processor
+    from codebase_rag.parsers.structure_processor import StructureProcessor
+
+    return (
+        *(getattr(structure_processor, name) for name in STRUCTURE_FUNCTIONS),
+        *(StructureProcessor.__dict__[name] for name in STRUCTURE_METHODS),
+        *(getattr(Path, name) for name in STRUCTURE_PATH_METHODS),
+        os.path.realpath,
+    )
+
+
 def frame_report(
     repo_path: Path, difference: list[str], heading: str = FRAME_REPORT_HEADING
 ) -> str:
@@ -500,13 +543,16 @@ class FramePlanCheck:
     (a file that cannot be read). The frame walks and reads by its own
     copies and the real file system. A run's change detection is left out
     the same way while a test patches what it decides with, reads the
-    state files by, its clock or the platform it takes itself to run on.
+    state files by, its clock or the platform it takes itself to run on,
+    and its structure while a test patches what the structure pass decides
+    with or resolves paths by.
     """
 
     def __init__(self, file_report: Callable[[str], None]) -> None:
         self._file_report = file_report
         self._walk = _walk_functions()
         self._changes = _change_functions()
+        self._structure = _structure_functions()
 
     def compares(self) -> bool:
         current = _walk_functions()
@@ -527,6 +573,17 @@ class FramePlanCheck:
     def changes_differ(self, repo_path: Path, difference: Sequence[str]) -> None:
         self._file_report(
             frame_report(repo_path, list(difference), FRAME_CHANGES_HEADING)
+        )
+
+    def compares_structure(self) -> bool:
+        current = _structure_functions()
+        return self.compares() and all(
+            now is found for now, found in zip(current, self._structure, strict=True)
+        )
+
+    def structure_differs(self, repo_path: Path, difference: Sequence[str]) -> None:
+        self._file_report(
+            frame_report(repo_path, list(difference), FRAME_STRUCTURE_HEADING)
         )
 
 

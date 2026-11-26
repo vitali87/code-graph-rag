@@ -228,6 +228,16 @@ def test_a_frame_that_differs_from_python_fails_the_check(
     ]
 
 
+def test_each_run_checks_the_frame_s_structure_too(tmp_path: Path) -> None:
+    check = handoff._FrameCheck()
+    difference = ["- node\tFolder\tpath=pkg\tname=pkg", "+ node\tFolder\tpath=pkg"]
+
+    assert check.compares_structure()
+    check.structure_differs(tmp_path, difference)
+
+    assert (check.compared, check.lines) == (1, difference)
+
+
 def test_the_frame_s_reading_of_the_ignore_files_is_compared(
     pinned: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

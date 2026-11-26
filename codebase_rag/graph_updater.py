@@ -8417,6 +8417,13 @@ class GraphUpdater:
             (*reindexed_keys, *deleted_before_parse, *added_keys),
         )
 
+        # The File row each file below writes: the frame's when it is on and
+        # agrees with Python's, compared here once for the run
+        # (engine_frame.py), and written as each file is processed.
+        structure = self.factory.structure_processor
+        structure.settle_file_rows(
+            [filepath for filepath, _key, _new, _bytes in scan.changed_entries]
+        )
         with Progress(
             SpinnerColumn(),
             TextColumn(ls.PROGRESS_INDEXING_LABEL),
@@ -8457,6 +8464,8 @@ class GraphUpdater:
                     advance=1,
                     description=ls.PROGRESS_FILES_PROCESSED.format(count=changed_count),
                 )
+        # A file whose tier raised never wrote its row; no later call may.
+        structure.file_rows.clear()
 
         self._delete_reconciled_files(deleted_keys, deleted_set)
 
