@@ -3176,6 +3176,7 @@ class GraphUpdater:
             raise FileNotFoundError(ls.REPO_PATH_MISSING.format(path=self.repo_path))
 
     @holds_sync_lock(require=_require_repo_dir)
+    @engine_frame.one_run
     def run(self, force: bool = False) -> None:
         """Ingest the repository; ``force`` rebuilds instead of updating incrementally.
 
@@ -8632,6 +8633,7 @@ class GraphUpdater:
         # The frame reads its own baseline here too, before the placeholders
         # below, which it would otherwise read as this run's cache.
         self._frame_baseline = engine_frame.baseline_for_run(
+            self.repo_path,
             cache_path,
             force=force,
             single=self._single_file is not None,
