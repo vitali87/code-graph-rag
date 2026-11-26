@@ -13,12 +13,15 @@
 //! `codebase_rag/graph_updater.py` computes it. `ignore` holds the rules the
 //! walk leaves paths out by, a port of the Python walk's own, and reads the
 //! ignore files; `discover` is the walk, which with the hashes gives the
-//! run's file plan.
+//! run's file plan. `state` is change detection's file half: the state
+//! folder, the hash cache and folder times, the in-sync check, and each
+//! run's new, changed and deleted files.
 
 pub mod discover;
 pub mod ignore;
 #[cfg(feature = "python")]
 pub mod python;
+pub mod state;
 #[cfg(test)]
 mod tests;
 

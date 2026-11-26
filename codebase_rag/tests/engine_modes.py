@@ -19,11 +19,15 @@ The `--engine-mode` option (docs/reports/PHASE1_SEAMS.md, section 2):
 
 The engine's frame (docs/reports/PHASE2_FRAME.md, section 4) is checked in
 both: every index a test makes compares the frame's file plan with Python's
-walk, whatever language is on Rust, at no second index, and a difference
-fails the test as above. `both` keeps Python's plan for the run; `rust` turns
-the frame on (`engine_frame.ENABLED`), so the run goes on with the frame's.
-A test that patches the built-in names or endings the frame holds copies of,
-or what Python's walk decides with or reads files by, is not compared.
+walk, and its change detection (the in-sync check, the files new, changed
+and deleted, the hash cache and folder times it would publish) with
+Python's, whatever language is on Rust, at no second index, and a
+difference fails the test as above. `both` keeps Python's answers for the
+run; `rust` turns the frame on (`engine_frame.ENABLED`), so the run goes on
+with the frame's. A test that patches the built-in names or endings the
+frame holds copies of, or what Python's walk decides with or reads files
+by, is not compared; nor is a run's change detection while a test patches
+what Python's decides with, reads the state files by, or its clock.
 
 While the build can index no language on Rust (`rust_engine_languages()` is
 empty), `rust` runs exactly what `python` runs and `both` indexes nothing
@@ -86,6 +90,9 @@ MARKER_INVALID = "@pytest.mark.index_engine({spec!r}): {error}"
 # both sides' hand-off files and each one's difference. Read by this plugin
 # only; it is not a cgr setting.
 PARITY_DIFF_DIR_ENV = "CGR_PARITY_DIFF_DIR"
+# Where `change_shadow.py`'s processes each write what they compared, for the
+# test that runs it under xdist to add up. Read by that plugin only.
+CHANGE_SHADOW_DIR_ENV = "CGR_CHANGE_SHADOW_DIR"
 
 # Every per-file pass swallows all exceptions so one bad file cannot abandon a
 # whole index, and only logs. Nothing looked at those logs, so a bug inside a
@@ -144,6 +151,53 @@ WALK_SYSTEM_CALLS = ("walk", "scandir", "lstat", "stat")
 FRAME_REPORT_HEADING = (
     "The frame's file plan differs from Python's on {repo}: {python} lines only "
     "in Python's, {rust} only in the frame's"
+)
+FRAME_CHANGES_HEADING = (
+    "The frame's change detection differs from Python's on {repo}: {python} lines "
+    "only in Python's, {rust} only in the frame's"
+)
+# What Python's change detection decides with and reads the state files by,
+# in `graph_updater.py` and on `GraphUpdater`, and the calls beneath them.
+CHANGE_FUNCTIONS = (
+    "_hash_file",
+    "_hash_file_with_bytes",
+    "_last_changed",
+    "_vanished",
+    "_is_gone_error",
+    "_load_hash_cache",
+    "_load_dir_mtimes",
+    "_trustworthy_cache_mtime",
+    "_cached_file_unchanged",
+    "_cached_files_unchanged",
+    "_scan_dir_children",
+    "_direct_children",
+    "_entry_flag",
+)
+CHANGE_METHODS = (
+    "_files_in_sync",
+    "_cached_dirs_unchanged",
+    "_diff_dir_against_cache",
+    "_first_indexable_addition",
+    "_should_keep_dir",
+    "_load_old_hashes",
+    "_hash_baseline",
+    "_collect_eligible_files",
+    "_scan_eligible_file",
+    "_scan_mtime_fast_path",
+    "_single_target_vanished",
+    "_single_target_gone_before_scan",
+    "_keys_deleted_before_parse",
+    "_deleted_keys_for_run",
+)
+CHANGE_PATH_METHODS = (
+    "stat",
+    "lstat",
+    "is_file",
+    "exists",
+    "is_symlink",
+    "open",
+    "read_bytes",
+    "read_text",
 )
 REPORT_SECTION = "engine comparison"
 TEARDOWN = "teardown"
@@ -400,15 +454,34 @@ def _walk_functions() -> tuple[Callable[..., object], ...]:
     )
 
 
-def frame_report(repo_path: Path, difference: list[str]) -> str:
-    """The message for a file plan the frame and Python's walk differ on:
-    the repository, the count on each side, and the first differing lines,
-    `-` for Python's and `+` for the frame's."""
+def _change_functions() -> tuple[object, ...]:
+    """What Python's change detection decides with and reads the state files
+    by, the system calls beneath them, its clock and the platform it takes
+    itself to run on."""
+    from codebase_rag import graph_updater
+    from codebase_rag.graph_updater import GraphUpdater
+
+    return (
+        *(getattr(graph_updater, name) for name in CHANGE_FUNCTIONS),
+        *(GraphUpdater.__dict__[name] for name in CHANGE_METHODS),
+        *(getattr(Path, name) for name in CHANGE_PATH_METHODS),
+        os.stat,
+        os.lstat,
+        os.scandir,
+        graph_updater.time.time,
+        graph_updater.sys.platform,
+    )
+
+
+def frame_report(
+    repo_path: Path, difference: list[str], heading: str = FRAME_REPORT_HEADING
+) -> str:
+    """The message for an answer the frame and Python differ on: the
+    repository, the count on each side, and the first differing lines, `-`
+    for Python's and `+` for the frame's."""
     python = sum(1 for line in difference if line.startswith(DIFF_ONLY_PYTHON))
     lines = [
-        FRAME_REPORT_HEADING.format(
-            repo=repo_path, python=python, rust=len(difference) - python
-        )
+        heading.format(repo=repo_path, python=python, rust=len(difference) - python)
     ]
     lines.extend(REPORT_LINE.format(line=line) for line in difference[:REPORT_LINES])
     if len(difference) > REPORT_LINES:
@@ -425,12 +498,15 @@ class FramePlanCheck:
     endings, or one of the functions or system calls Python's walk decides
     with or reads files by, to stand in for an older cgr or a failing system
     (a file that cannot be read). The frame walks and reads by its own
-    copies and the real file system.
+    copies and the real file system. A run's change detection is left out
+    the same way while a test patches what it decides with, reads the
+    state files by, its clock or the platform it takes itself to run on.
     """
 
     def __init__(self, file_report: Callable[[str], None]) -> None:
         self._file_report = file_report
         self._walk = _walk_functions()
+        self._changes = _change_functions()
 
     def compares(self) -> bool:
         current = _walk_functions()
@@ -440,6 +516,18 @@ class FramePlanCheck:
 
     def differs(self, repo_path: Path, difference: Sequence[str]) -> None:
         self._file_report(frame_report(repo_path, list(difference)))
+
+    def compares_changes(self) -> bool:
+        current = _change_functions()
+        return self.compares() and all(
+            now is found or now == found
+            for now, found in zip(current, self._changes, strict=True)
+        )
+
+    def changes_differ(self, repo_path: Path, difference: Sequence[str]) -> None:
+        self._file_report(
+            frame_report(repo_path, list(difference), FRAME_CHANGES_HEADING)
+        )
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

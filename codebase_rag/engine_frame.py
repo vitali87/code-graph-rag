@@ -20,12 +20,21 @@ still runs beside the frame's, and the run uses the frame's plan only when
 the two agree: on any difference it logs one warning naming the first
 differing lines and uses Python's. Tests put a strict `CHECK` in place of
 that warning, which fails them on any difference.
+
+Change detection's file half is the frame's too (src/engine/state.rs): the
+in-sync check (`in_sync_for_run`), and each run's new, changed and deleted
+files with the hash cache and folder times it would publish
+(`changes_for_run`, from a baseline `baseline_for_run` reads before the run
+writes its placeholder cache). Both are checked the way the plan is. The
+frame prepares the cache and the folder times and never writes them: the
+updater publishes the ones the run used, at its commit point.
 """
 
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Iterable, Sequence
+import json
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import cache
 from pathlib import Path
 from typing import NamedTuple, Protocol
@@ -92,6 +101,66 @@ class IgnoreFiles(NamedTuple):
     tracked_dirs: tuple[str, ...]
 
 
+class StateInputs(NamedTuple):
+    """Where a run's change detection reads its state, and under which sets.
+
+    `cgr_home` is CGR_HOME, its `~` expanded, when the run's state folder is
+    the one `checkout_state.state_dir` names, which the frame then names
+    too; None for a run given a folder of its own.
+    """
+
+    repo_path: Path
+    cache_path: Path
+    dir_mtimes_path: Path
+    exclude: frozenset[str] | None
+    unignore: frozenset[str] | None
+    cgr_home: Path | None
+
+
+class FileChanges(NamedTuple):
+    """What a run's change detection decides.
+
+    The state folder (when it is the default one), the cache mtime the run
+    compares files against and whether it is a full build, the files forced
+    through a re-parse, then each settled file's hash or `unreadable` mark
+    in walk order, the files unreadable and still current, those to
+    re-parse in walk order with whether each is new, a single-file target
+    that is gone, the files deleted before and after the parse, a
+    single-file run's cache to merge into, the stamp the cache is published
+    with (a project run's watermark, or a single-file run's previous cache
+    mtime), the folder times in walk order, and the cache and folder times
+    as the text that would be written: `cache_text` None when the run
+    publishes no cache, `mtimes_text` None when it writes no folder times.
+    """
+
+    state_dir: str | None
+    cache_mtime: float
+    full_build: bool
+    forced: tuple[str, ...]
+    hashes: tuple[tuple[str, str], ...]
+    unreadable: tuple[str, ...]
+    current: frozenset[str]
+    changed: tuple[tuple[str, bool], ...]
+    gone: str | None
+    deleted_first: tuple[str, ...]
+    deleted: tuple[str, ...]
+    merge_base: tuple[tuple[str, str], ...] | None
+    stamp: float
+    mtimes: tuple[tuple[str, float], ...] | None
+    cache_text: str | None
+    mtimes_text: str | None
+
+
+class ChangeBaseline(Protocol):
+    """The frame's baseline for a run, held for `Engine.changes`."""
+
+    @property
+    def cache_mtime(self) -> float: ...
+
+    @property
+    def full_build(self) -> bool: ...
+
+
 type RawFilePlan = tuple[
     list[tuple[str, str, str]],
     list[tuple[str, str]],
@@ -99,6 +168,24 @@ type RawFilePlan = tuple[
     list[str],
     list[str],
     list[str | None],
+]
+# `Engine.changes`: `FileChanges` but its state folder, in its order.
+type RawChanges = tuple[
+    float,
+    bool,
+    list[str],
+    list[tuple[str, str]],
+    list[str],
+    list[str],
+    list[tuple[str, bool]],
+    str | None,
+    list[str],
+    list[str],
+    list[tuple[str, str]] | None,
+    float,
+    list[tuple[str, float]] | None,
+    str | None,
+    str | None,
 ]
 type RawIgnoreFiles = tuple[
     list[str], list[str], list[tuple[str, int]], list[str], list[str]
@@ -119,6 +206,62 @@ class Engine(Protocol):
     ) -> RawFilePlan: ...
 
     def ignore_patterns(self, root: Path) -> RawIgnoreFiles: ...
+
+    def state_dir(self, cgr_home: Path, repo: Path) -> str | None: ...
+
+    def prepare_state_dir(
+        self, cgr_home: Path, repo: Path
+    ) -> tuple[str, list[str], list[tuple[str, str]], str | None] | None: ...
+
+    def read_hash_cache(
+        self, path: Path
+    ) -> tuple[list[tuple[str, str]], str | None]: ...
+
+    def read_dir_mtimes(self, path: Path) -> list[tuple[str, float]]: ...
+
+    def hash_cache_text(self, entries: Sequence[tuple[str, str]]) -> str: ...
+
+    def dir_mtimes_text(self, entries: Sequence[tuple[str, float]]) -> str: ...
+
+    def publish_hash_cache(
+        self, path: Path, entries: Sequence[tuple[str, str]], stamp: float
+    ) -> None: ...
+
+    def save_dir_mtimes(
+        self, path: Path, entries: Sequence[tuple[str, float]]
+    ) -> None: ...
+
+    def in_sync(
+        self,
+        repo: Path,
+        cache_path: Path,
+        dir_mtimes_path: Path,
+        discard_cache: bool,
+        exclude: Iterable[str] | None = None,
+        unignore: Iterable[str] | None = None,
+    ) -> bool: ...
+
+    def change_baseline(
+        self,
+        cache_path: Path,
+        force: bool,
+        single: bool,
+        cache_dead: bool,
+        project_mismatch: bool,
+        parser_changed: bool,
+        stale_keys: Iterable[str],
+    ) -> ChangeBaseline: ...
+
+    def changes(
+        self,
+        baseline: ChangeBaseline,
+        repo: Path,
+        exclude: Iterable[str] | None = None,
+        unignore: Iterable[str] | None = None,
+        single_path: Path | None = None,
+        single_key: str | None = None,
+        graph_paths: Iterable[str] | None = None,
+    ) -> RawChanges: ...
 
 
 class IgnoreRules(Protocol):
@@ -149,17 +292,23 @@ class IgnoreRules(Protocol):
 
 
 class PlanCheck(Protocol):
-    """What replaces the warning when the frame's plan and Python's differ.
+    """What replaces the warning when the frame's answer and Python's differ.
 
     The tests' strict check (`codebase_rag/tests/engine_modes.py`) and the
     pinned repositories' (`scripts/handoff.py`): `compares` says whether this
-    run can be compared at all, and `differs` receives the difference, as
-    `-` lines of Python's plan and `+` lines of the frame's.
+    run's plan can be compared at all, and `differs` receives the
+    difference, as `-` lines of Python's plan and `+` lines of the frame's;
+    `compares_changes` and `changes_differ` do the same for the run's change
+    detection.
     """
 
     def compares(self) -> bool: ...
 
     def differs(self, repo_path: Path, difference: Sequence[str]) -> None: ...
+
+    def compares_changes(self) -> bool: ...
+
+    def changes_differ(self, repo_path: Path, difference: Sequence[str]) -> None: ...
 
 
 # None in production. While a check is in place every run compares the two
@@ -344,19 +493,10 @@ def _frame_and_difference(
     try:
         frame = frame_file_plan(repo_path, exclude, unignore)
     except ValueError as error:
-        return None, [
-            cs.REFERENCE_ONLY_ACTUAL.format(
-                line=cs.FRAME_PLAN_RAISED_LINE.format(error=error)
-            )
-        ]
+        return None, _raised(error)
     if frame is None:
         return None
     return frame, plan_difference(hashed(python), frame)
-
-
-def _plan_taken(frame: FilePlan | None, python: FilePlan) -> FilePlan:
-    """The frame's plan when the frame is on and has one, else Python's."""
-    return frame if ENABLED and frame is not None else python
 
 
 def plan_for_run(
@@ -381,13 +521,37 @@ def plan_for_run(
     if compared is None:
         return python
     frame, difference = compared
+    return _settled(
+        repo_path,
+        python,
+        frame,
+        difference,
+        None if check is None else check.differs,
+        ls.ENGINE_FRAME_PLAN_DIFFERS,
+    )
+
+
+def _settled[T](
+    repo_path: Path,
+    python: T,
+    frame: T | None,
+    difference: Sequence[str],
+    report: Callable[[Path, Sequence[str]], None] | None,
+    warning: str,
+) -> T:
+    """The answer a run uses once the frame's is compared with Python's.
+
+    The frame's when it is on and the two agree; on a difference, the check
+    is told and a frame that is on is still used, or, with no check, one
+    warning names the first differing lines and the run uses Python's.
+    """
     if not difference:
-        return _plan_taken(frame, python)
-    if check is not None:
-        check.differs(repo_path, difference)
-        return _plan_taken(frame, python)
+        return frame if ENABLED and frame is not None else python
+    if report is not None:
+        report(repo_path, difference)
+        return frame if ENABLED and frame is not None else python
     logger.warning(
-        ls.ENGINE_FRAME_PLAN_DIFFERS.format(
+        warning.format(
             repo=repo_path,
             first=cs.FRAME_PLAN_NAMES_SEPARATOR.join(
                 difference[: cs.FRAME_PLAN_NAMED_LINES]
@@ -395,3 +559,294 @@ def plan_for_run(
         )
     )
     return python
+
+
+def _raised(error: ValueError) -> list[str]:
+    """A frame that raised, as the one line only its side holds."""
+    return [
+        cs.REFERENCE_ONLY_ACTUAL.format(
+            line=cs.FRAME_PLAN_RAISED_LINE.format(error=error)
+        )
+    ]
+
+
+def _asks_changes(check: PlanCheck | None) -> bool:
+    """Whether a run's change detection is compared: with the frame on or a
+    check in place, unless the check cannot compare this run."""
+    if check is None:
+        return ENABLED
+    return check.compares_changes()
+
+
+def _difference(python: Sequence[str], frame: Sequence[str]) -> list[str]:
+    # Most runs agree, and a large cache is long: equal lines need no diff.
+    return [] if python == frame else difference_in_order(python, frame)
+
+
+def frame_state_dir(cgr_home: Path, repo_path: Path) -> str | None:
+    """The state folder the frame names for the checkout under `cgr_home`,
+    or None when the extension is from before it or Python cannot name the
+    path."""
+    made = engine()
+    if made is None or not hasattr(made, cs.EG_RUST_STATE_DIR):
+        return None
+    return made.state_dir(cgr_home, repo_path)
+
+
+def frame_in_sync(inputs: StateInputs, discard_cache: bool) -> bool | None:
+    """The frame's in-sync check, or None when the extension is from before
+    it. Raises `ValueError` where Python raises on a pattern."""
+    made = engine()
+    if made is None or not hasattr(made, cs.EG_RUST_IN_SYNC):
+        return None
+    return made.in_sync(
+        inputs.repo_path,
+        inputs.cache_path,
+        inputs.dir_mtimes_path,
+        discard_cache,
+        inputs.exclude,
+        inputs.unignore,
+    )
+
+
+def in_sync_for_run(inputs: StateInputs, discard_cache: bool, python: bool) -> bool:
+    """The in-sync verdict a run acts on, given Python's.
+
+    Compared, and chosen, as `plan_for_run` chooses a plan: with the frame
+    off and no check in place, Python's, the frame never asked.
+    """
+    check = CHECK
+    if not _asks_changes(check):
+        return python
+    try:
+        frame = frame_in_sync(inputs, discard_cache)
+    except ValueError as error:
+        frame = None
+        difference = _raised(error)
+    else:
+        if frame is None:
+            return python
+        difference = _difference(
+            [cs.FRAME_IN_SYNC_LINE.format(in_sync=python)],
+            [cs.FRAME_IN_SYNC_LINE.format(in_sync=frame)],
+        )
+    return _settled(
+        inputs.repo_path,
+        python,
+        frame,
+        difference,
+        None if check is None else check.changes_differ,
+        ls.ENGINE_FRAME_CHANGES_DIFFER,
+    )
+
+
+def baseline_for_run(
+    cache_path: Path,
+    *,
+    force: bool,
+    single: bool,
+    cache_dead: bool,
+    project_mismatch: bool,
+    parser_changed: bool,
+    stale_keys: Iterable[str],
+) -> ChangeBaseline | None:
+    """The frame's baseline for a run whose change detection is compared,
+    read as `_hash_baseline` reads Python's, before the run writes its
+    placeholder cache; None when the run is not compared or the extension
+    is from before it."""
+    if not _asks_changes(CHECK):
+        return None
+    made = engine()
+    if made is None or not hasattr(made, cs.EG_RUST_CHANGE_BASELINE):
+        return None
+    return made.change_baseline(
+        cache_path,
+        force,
+        single,
+        cache_dead,
+        project_mismatch,
+        parser_changed,
+        sorted(stale_keys),
+    )
+
+
+def frame_changes(
+    baseline: ChangeBaseline,
+    inputs: StateInputs,
+    single: tuple[Path, str | None] | None,
+    graph_paths: Iterable[str] | None,
+) -> FileChanges | None:
+    """The frame's change detection from its baseline: the repository walked
+    under the inputs' sets, or the single target `(path, key)` (the key None
+    when the rules leave it out), with the graph's module paths (None when
+    the graph could not answer). None when the extension is from before it.
+    Raises `ValueError` where Python's walk raises on a pattern."""
+    made = engine()
+    if made is None or not hasattr(made, cs.EG_RUST_CHANGES):
+        return None
+    single_path, single_key = (None, None) if single is None else single
+    found = made.changes(
+        baseline,
+        inputs.repo_path,
+        inputs.exclude,
+        inputs.unignore,
+        single_path,
+        single_key,
+        graph_paths,
+    )
+    state_dir = (
+        None
+        if inputs.cgr_home is None
+        else made.state_dir(inputs.cgr_home, inputs.repo_path)
+    )
+    (
+        cache_mtime,
+        full_build,
+        forced,
+        hashes,
+        unreadable,
+        current,
+        changed,
+        gone,
+        deleted_first,
+        deleted,
+        merge_base,
+        stamp,
+        mtimes,
+        cache_text,
+        mtimes_text,
+    ) = found
+    return FileChanges(
+        state_dir=state_dir,
+        cache_mtime=cache_mtime,
+        full_build=full_build,
+        forced=tuple(forced),
+        hashes=tuple(hashes),
+        unreadable=tuple(unreadable),
+        current=frozenset(current),
+        changed=tuple(changed),
+        gone=gone,
+        deleted_first=tuple(deleted_first),
+        deleted=tuple(deleted),
+        merge_base=None if merge_base is None else tuple(merge_base),
+        stamp=stamp,
+        mtimes=None if mtimes is None else tuple(mtimes),
+        cache_text=cache_text,
+        mtimes_text=mtimes_text,
+    )
+
+
+def prepared_cache(
+    hashes: Mapping[str, str],
+    merge_base: Mapping[str, str] | None,
+    gone: str | None,
+) -> dict[str, str] | None:
+    """The cache a run publishes: a project run's hashes, or a single-file
+    run's merged over the previous cache, its gone target left out, and
+    nothing when there was no usable cache to merge into."""
+    if merge_base is None:
+        return dict(hashes)
+    if not merge_base:
+        return None
+    merged = {**merge_base, **hashes}
+    if gone is not None:
+        merged.pop(gone, None)
+    return merged
+
+
+def cache_text(hashes: Mapping[str, str] | None) -> str | None:
+    """The hash cache as `_publish_hash_cache` writes it, None for none."""
+    if hashes is None:
+        return None
+    return json.dumps(hashes, indent=cs.HASH_CACHE_JSON_INDENT)
+
+
+def mtimes_text(mtimes: Mapping[str, float] | None) -> str | None:
+    """The folder times as `_save_dir_mtimes` writes them, None for none."""
+    return None if mtimes is None else json.dumps(mtimes)
+
+
+def change_lines(changes: FileChanges) -> list[str]:
+    """A run's change detection as lines: the state folder, the baseline,
+    the cache it would publish as the lines it would write, then the files
+    unreadable, changed (in walk order), gone and deleted, then the folder
+    times, each and as the text written, and a single-file run's kept
+    mtime. A project run's watermark is each engine's own and is left out.
+    """
+    lines = []
+    if changes.state_dir is not None:
+        lines.append(cs.FRAME_STATE_DIR_LINE.format(path=changes.state_dir))
+    lines.append(cs.FRAME_CACHE_MTIME_LINE.format(mtime=repr(changes.cache_mtime)))
+    lines.append(cs.FRAME_FULL_BUILD_LINE.format(full_build=changes.full_build))
+    lines.extend(cs.FRAME_FORCED_LINE.format(key=key) for key in changes.forced)
+    if changes.cache_text is None:
+        lines.append(cs.FRAME_NO_CACHE_LINE)
+    else:
+        lines.extend(
+            cs.FRAME_CACHE_LINE.format(line=line)
+            for line in changes.cache_text.split(cs.LINE_FEED)
+        )
+    lines.extend(cs.FRAME_UNREADABLE_LINE.format(key=key) for key in changes.unreadable)
+    lines.extend(
+        cs.FRAME_CHANGED_LINE.format(
+            key=key, kind=cs.FrameChange.NEW if is_new else cs.FrameChange.CHANGED
+        )
+        for key, is_new in changes.changed
+    )
+    if changes.gone is not None:
+        lines.append(cs.FRAME_GONE_LINE.format(key=changes.gone))
+    lines.extend(
+        cs.FRAME_DELETED_FIRST_LINE.format(key=key) for key in changes.deleted_first
+    )
+    lines.extend(cs.FRAME_DELETED_LINE.format(key=key) for key in changes.deleted)
+    if changes.mtimes is not None:
+        lines.extend(
+            cs.FRAME_MTIME_LINE.format(key=key, mtime=repr(mtime))
+            for key, mtime in changes.mtimes
+        )
+    if changes.mtimes_text is not None:
+        lines.append(cs.FRAME_MTIMES_LINE.format(text=changes.mtimes_text))
+    if changes.merge_base is not None:
+        lines.append(cs.FRAME_KEPT_MTIME_LINE.format(mtime=repr(changes.stamp)))
+    return lines
+
+
+def changes_difference(python: FileChanges, frame: FileChanges) -> list[str]:
+    """How the frame's change detection differs from Python's, in order:
+    `-` for a line only Python's holds, `+` for one only the frame's does."""
+    return _difference(change_lines(python), change_lines(frame))
+
+
+def changes_for_run(
+    baseline: ChangeBaseline | None,
+    inputs: StateInputs,
+    single: tuple[Path, str | None] | None,
+    graph_paths: Iterable[str] | None,
+    python: FileChanges,
+) -> FileChanges:
+    """The change detection a run goes on with, given Python's.
+
+    None for `baseline` means the run is not compared, and Python's is
+    used. Otherwise the frame detects the changes too, from its baseline,
+    and the two are compared and chosen as `plan_for_run` chooses a plan.
+    """
+    if baseline is None:
+        return python
+    check = CHECK
+    try:
+        frame = frame_changes(baseline, inputs, single, graph_paths)
+    except ValueError as error:
+        frame = None
+        difference = _raised(error)
+    else:
+        if frame is None:
+            return python
+        difference = changes_difference(python, frame)
+    return _settled(
+        inputs.repo_path,
+        python,
+        frame,
+        difference,
+        None if check is None else check.changes_differ,
+        ls.ENGINE_FRAME_CHANGES_DIFFER,
+    )

@@ -1,6 +1,6 @@
 [package]
 name = "cgr_graph_rs"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2021"
 description = "Native acceleration for code-graph-rag: its embedded graph, and its indexer's tree walks"
 license = "MIT"
@@ -36,6 +36,12 @@ sha2 = "0.11"
 # the two together, as AGENTS.md describes; `TreeBridge` refuses any other
 # py-tree-sitter version, and test_native_trees.py any other pair of pins.
 tree-sitter = "=0.27.2"
+
+# The engine's state files (src/engine/state): `O_NOFOLLOW` for the temporary
+# cache, and `ELOOP` among the errors that say a path is gone. Already linked
+# through pyo3, so this adds no crate to the wheel.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tree-sitter-python = "=0.25.0"

@@ -1903,6 +1903,9 @@ class GraphUpdater:
         # builds incrementally from a sync's state nor leaves state claiming
         # a live graph is current (issue #2401).
         self._state_dir: Path | None = state_dir
+        # A folder given here is the caller's own, which the frame does not
+        # name; the default one it names, and its name is compared.
+        self._state_dir_given = state_dir is not None
         # `ingestor` stays the raw object for DB queries (QueryProtocol),
         # flushes, and test introspection. `_sink` is a filtering wrapper that
         # drops disabled relationships/nodes at one choke point, so the ~20
@@ -2037,6 +2040,10 @@ class GraphUpdater:
         self._pending_hash_cache: tuple[Path, FileHashCache] | None = None
         self._pending_dir_mtimes: tuple[Path, DirMtimesCache] | None = None
         self._pending_cache_observed_at: float | None = None
+        # The frame's baseline for this run's change detection, read with
+        # Python's and taken once the run's own scan is done; None when the
+        # run is not compared (engine_frame.py).
+        self._frame_baseline: engine_frame.ChangeBaseline | None = None
         # The parser fingerprint a full build will stamp, also deferred to the
         # commit point (issue #1634): stamped inside `_process_files` it
         # outlived a build that died before its final flush, and the next run
@@ -7977,6 +7984,28 @@ class GraphUpdater:
     def _is_already_in_sync(self) -> bool:
         if self._sync_state_forces_reparse():
             return False
+        # The file half is the frame's too: compared, and taken when it is
+        # on (engine_frame.py).
+        return engine_frame.in_sync_for_run(
+            self._frame_state_inputs(),
+            self._cache_discarded_in_memory or self._parser_changed,
+            self._files_in_sync(),
+        )
+
+    def _frame_state_inputs(self) -> engine_frame.StateInputs:
+        """Where the frame reads this run's state, and under which sets."""
+        return engine_frame.StateInputs(
+            repo_path=self.repo_path,
+            cache_path=self.state_dir / cs.HASH_CACHE_FILENAME,
+            dir_mtimes_path=self.state_dir / cs.DIR_MTIMES_FILENAME,
+            exclude=self.exclude_paths,
+            unignore=self.unignore_paths,
+            cgr_home=None if self._state_dir_given else settings.CGR_HOME.expanduser(),
+        )
+
+    def _files_in_sync(self) -> bool:
+        """The in-sync check's file half: every recorded folder unchanged or
+        holding the files the cache names, and every cached file unchanged."""
         cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
         cache_mtime = _trustworthy_cache_mtime(cache_path)
         dir_mtimes_path = self.state_dir / cs.DIR_MTIMES_FILENAME
@@ -8178,6 +8207,12 @@ class GraphUpdater:
             self.factory.definition_processor.reset_interface_implementers()
 
         eligible_files = self._collect_eligible_files()
+        # The single target as the frame takes it, before a vanished one
+        # empties the list below: the frame decides that on its own.
+        frame_single: tuple[Path, str | None] | None = None
+        if self._single_file is not None:
+            target_key = eligible_files[0][1] if eligible_files else None
+            frame_single = (self._single_file, target_key)
 
         flux_stems = self._prepare_flux_stems(eligible_files, old_hashes, is_full_build)
         preexisting_paths = self._preexisting_paths_for_run(force, baseline)
@@ -8216,6 +8251,9 @@ class GraphUpdater:
             )
 
         self._restore_unreadable_flux_claims(scan.unreadable_keys)
+        baseline = self._settle_file_changes(
+            scan, baseline, eligible_files, preexisting_paths, frame_single
+        )
 
         # Before deleting any changed file's subtree (which removes the inbound
         # CALLS/IMPORTS/INSTANTIATES edges incident on it), capture those edges
@@ -8573,6 +8611,17 @@ class GraphUpdater:
         # unaffected either way and the extra arm could never fail. Its
         # absence is checked by the "still updates an existing cache" test,
         # which reddens on the publish-site guard rather than this one.
+        # The frame reads its own baseline here too, before the placeholders
+        # below, which it would otherwise read as this run's cache.
+        self._frame_baseline = engine_frame.baseline_for_run(
+            cache_path,
+            force=force,
+            single=self._single_file is not None,
+            cache_dead=self._cache_discarded_in_memory,
+            project_mismatch=self._cache_project_match is False,
+            parser_changed=self._parser_changed,
+            stale_keys=self._delombok_stale_keys,
+        )
         if self._single_file is None:
             _touch_empty_json(cache_path)
             _touch_empty_json(dir_mtimes_path)
@@ -8788,6 +8837,126 @@ class GraphUpdater:
         else:
             logger.debug(ls.FILE_HASH_NEW, path=file_key)
         scan.changed_entries.append((filepath, file_key, is_new, file_bytes))
+
+    def _settle_file_changes(
+        self,
+        scan: _FileScan,
+        baseline: _HashBaseline,
+        eligible_files: list[tuple[Path, str]],
+        preexisting_paths: frozenset[str] | None,
+        frame_single: tuple[Path, str | None] | None,
+    ) -> _HashBaseline:
+        """The run's change detection, compared with the frame's
+        (engine_frame.py), and the baseline the rest of the run goes on
+        with: Python's, or, when the run takes the frame's answer, Python's
+        with the frame's merge base and cache mtime."""
+        frame_baseline, self._frame_baseline = self._frame_baseline, None
+        if frame_baseline is None:
+            return baseline
+        python = self._python_file_changes(
+            scan, baseline, eligible_files, preexisting_paths
+        )
+        chosen = engine_frame.changes_for_run(
+            frame_baseline,
+            self._frame_state_inputs(),
+            frame_single,
+            preexisting_paths,
+            python,
+        )
+        if chosen is python:
+            return baseline
+        self._use_file_changes(scan, chosen, eligible_files)
+        return baseline._replace(
+            pristine_hashes=dict(chosen.merge_base or ()),
+            cache_mtime=chosen.cache_mtime,
+        )
+
+    def _python_file_changes(
+        self,
+        scan: _FileScan,
+        baseline: _HashBaseline,
+        eligible_files: list[tuple[Path, str]],
+        preexisting_paths: frozenset[str] | None,
+    ) -> engine_frame.FileChanges:
+        """What this run's scan decided, as the frame states its own."""
+        single = self._single_file is not None
+        merge_base = tuple(baseline.pristine_hashes.items()) if single else None
+        mtimes = None if single else tuple(self._collected_dir_mtimes.items())
+        deleted_first = self._keys_deleted_before_parse(
+            baseline,
+            preexisting_paths,
+            {key: path for path, key in eligible_files},
+            scan.unreadable_keys,
+        )
+        deleted = self._deleted_keys_for_run(
+            baseline.old_hashes, preexisting_paths, scan
+        )
+        return engine_frame.FileChanges(
+            state_dir=None if self._state_dir_given else str(self.state_dir),
+            cache_mtime=baseline.cache_mtime,
+            full_build=baseline.is_full_build,
+            forced=tuple(sorted(baseline.forced_reparse_keys)),
+            hashes=tuple(scan.new_hashes.items()),
+            unreadable=tuple(sorted(scan.unreadable_keys)),
+            current=frozenset(scan.current_file_keys),
+            changed=tuple(
+                (key, is_new) for _fp, key, is_new, _b in scan.changed_entries
+            ),
+            gone=scan.single_gone_key,
+            deleted_first=tuple(deleted_first),
+            deleted=tuple(sorted(deleted)),
+            merge_base=merge_base,
+            # What `_stash_pending_caches` stamps the cache with.
+            stamp=(
+                baseline.cache_mtime or 0.0
+                if single
+                else self._pending_cache_observed_at or 0.0
+            ),
+            mtimes=mtimes,
+            cache_text=engine_frame.cache_text(
+                engine_frame.prepared_cache(
+                    scan.new_hashes,
+                    None if merge_base is None else dict(merge_base),
+                    scan.single_gone_key,
+                )
+            ),
+            mtimes_text=engine_frame.mtimes_text(
+                None if mtimes is None else dict(mtimes)
+            ),
+        )
+
+    def _use_file_changes(
+        self,
+        scan: _FileScan,
+        chosen: engine_frame.FileChanges,
+        eligible_files: list[tuple[Path, str]],
+    ) -> None:
+        """Go on with the frame's change detection: its hashes, its files to
+        re-parse with the bytes the scan read (read now for one the scan
+        did not), its folder times, and the earlier of the two watermarks,
+        since the files parsed are the ones Python's scan read."""
+        read = {key: data for _fp, key, _new, data in scan.changed_entries}
+        paths = {key: path for path, key in eligible_files}
+        scan.new_hashes = dict(chosen.hashes)
+        scan.unreadable_keys = set(chosen.unreadable)
+        scan.unreadable_count = len(chosen.unreadable)
+        scan.current_file_keys = set(chosen.current)
+        scan.single_gone_key = chosen.gone
+        changed = []
+        for key, is_new in chosen.changed:
+            path = paths.get(key, self.repo_path / key)
+            data = read.get(key)
+            if data is None:
+                data = self._delombok_overlay.get(key, _read_bytes(path))
+            changed.append((path, key, is_new, data))
+        scan.changed_entries = changed
+        scan.skipped_count = len(chosen.current) - len(chosen.changed)
+        if chosen.mtimes is not None:
+            self._collected_dir_mtimes = dict(chosen.mtimes)
+            if self._pending_cache_observed_at is not None:
+                self._pending_cache_observed_at = min(
+                    self._pending_cache_observed_at, chosen.stamp
+                )
 
     def _keys_deleted_before_parse(
         self,

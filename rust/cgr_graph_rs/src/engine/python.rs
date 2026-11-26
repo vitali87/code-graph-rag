@@ -1,8 +1,9 @@
-//! The Python face of `engine`: the `Engine` and `IgnoreRules` classes
-//! that `codebase_rag/engine_frame.py` wraps. They are internal to cgr, not
-//! part of its public surface.
+//! The Python face of `engine`: the `Engine`, `IgnoreRules` and
+//! `ChangeBaseline` classes that `codebase_rag/engine_frame.py` wraps. They
+//! are internal to cgr, not part of its public surface.
 
 use std::borrow::Cow;
+use std::collections::{BTreeSet, HashSet};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -12,6 +13,7 @@ use pyo3::types::{PyBytes, PyList, PyString, PyTuple};
 
 use super::discover;
 use super::ignore::{self, PatternError};
+use super::state::{self, json, Entries};
 
 #[pyclass(frozen, name = "Engine", module = "cgr_graph_rs")]
 pub struct PyEngine {
@@ -139,6 +141,288 @@ impl PyEngine {
         )
     }
 
+    /// `cs.HASH_CACHE_FILENAME`, `cs.DIR_MTIMES_FILENAME`,
+    /// `cs.HASH_CACHE_UNREADABLE`, `cs.CGR_STATE_DIRNAME`,
+    /// `cs.CGR_STATE_LOCK_FILENAMES`, `cs.EDIT_HISTORY_FILENAME`,
+    /// `cs.PROJECT_NAME_DIGEST_MARKER` and `cs.PROJECT_NAME_DIGEST_LEN` as
+    /// the state files hold them, and the digit limit the reader takes as
+    /// `sys.get_int_max_str_digits()`.
+    #[classattr]
+    #[pyo3(name = "HASH_CACHE_FILENAME")]
+    fn hash_cache_filename() -> &'static str {
+        state::HASH_CACHE_FILENAME
+    }
+
+    #[classattr]
+    #[pyo3(name = "DIR_MTIMES_FILENAME")]
+    fn dir_mtimes_filename() -> &'static str {
+        state::DIR_MTIMES_FILENAME
+    }
+
+    #[classattr]
+    #[pyo3(name = "HASH_CACHE_UNREADABLE")]
+    fn hash_cache_unreadable() -> &'static str {
+        state::UNREADABLE
+    }
+
+    #[classattr]
+    #[pyo3(name = "STATE_DIRNAME")]
+    fn state_dirname() -> &'static str {
+        state::STATE_DIRNAME
+    }
+
+    #[classattr]
+    #[pyo3(name = "STATE_LOCK_FILENAMES")]
+    fn state_lock_filenames() -> Vec<&'static str> {
+        state::LOCK_FILENAMES.to_vec()
+    }
+
+    #[classattr]
+    #[pyo3(name = "EDIT_HISTORY_FILENAME")]
+    fn edit_history_filename() -> &'static str {
+        state::EDIT_HISTORY_FILENAME
+    }
+
+    #[classattr]
+    #[pyo3(name = "PROJECT_NAME_DIGEST_MARKER")]
+    fn project_name_digest_marker() -> &'static str {
+        state::DIGEST_MARKER
+    }
+
+    #[classattr]
+    #[pyo3(name = "PROJECT_NAME_DIGEST_LEN")]
+    fn project_name_digest_len() -> usize {
+        state::DIGEST_LEN
+    }
+
+    #[classattr]
+    #[pyo3(name = "INT_MAX_STR_DIGITS")]
+    fn int_max_str_digits() -> usize {
+        json::INT_MAX_STR_DIGITS
+    }
+
+    /// The checkout's state folder, `state_dir(repo)` under `cgr_home`
+    /// (CGR_HOME, its `~` expanded), or None for a path Python cannot name.
+    /// Nothing is created.
+    fn state_dir(&self, py: Python<'_>, cgr_home: PathBuf, repo: PathBuf) -> Option<OsString> {
+        py.detach(|| state::state_dir(&cgr_home, &repo).map(PathBuf::into_os_string))
+    }
+
+    /// `prepare_state_dir(repo)` under `cgr_home`, but for the edit
+    /// history, which stays Python's: `(dir, adopted, failed,
+    /// unavailable)`, the names moved in, each name left in the checkout
+    /// with why, and why the folder could not be created. None for a path
+    /// Python cannot name.
+    #[allow(clippy::type_complexity)]
+    fn prepare_state_dir(
+        &self,
+        py: Python<'_>,
+        cgr_home: PathBuf,
+        repo: PathBuf,
+    ) -> Option<(OsString, Vec<String>, Vec<(String, String)>, Option<String>)> {
+        let prepared = py.detach(|| state::prepare_state_dir(&cgr_home, &repo))?;
+        Some((
+            prepared.dir.into_os_string(),
+            prepared.adopted,
+            prepared
+                .failed
+                .into_iter()
+                .map(|(name, error)| (name, error.to_string()))
+                .collect(),
+            prepared.unavailable.map(|error| error.to_string()),
+        ))
+    }
+
+    /// The hash cache at `path` as `_load_hash_cache` reads it: `(entries,
+    /// error)`, each `(name, hash)` in the file's order, and why a file
+    /// that is there could not be used.
+    fn read_hash_cache(
+        &self,
+        py: Python<'_>,
+        path: PathBuf,
+    ) -> (Vec<(String, String)>, Option<String>) {
+        let read = py.detach(|| state::read_hash_cache(&path));
+        (read.entries.into_items(), read.error)
+    }
+
+    /// The folder times at `path` as `_load_dir_mtimes` reads them.
+    fn read_dir_mtimes(&self, py: Python<'_>, path: PathBuf) -> Vec<(String, f64)> {
+        py.detach(|| state::read_dir_mtimes(&path)).into_items()
+    }
+
+    /// `json.dumps(dict(entries), indent=2)`, as the frame writes the cache.
+    fn hash_cache_text(&self, entries: Vec<(String, String)>) -> String {
+        state::hash_cache_text(&entries.into_iter().collect())
+    }
+
+    /// `json.dumps(dict(entries))`, as the frame writes the folder times.
+    fn dir_mtimes_text(&self, entries: Vec<(String, f64)>) -> String {
+        state::dir_mtimes_text(&entries.into_iter().collect())
+    }
+
+    /// `_publish_hash_cache(path, dict(entries), stamp)`: written to a
+    /// temporary file, stamped, forced to disk and renamed. Raises OSError,
+    /// the previous cache left as it was.
+    fn publish_hash_cache(
+        &self,
+        py: Python<'_>,
+        path: PathBuf,
+        entries: Vec<(String, String)>,
+        stamp: f64,
+    ) -> PyResult<()> {
+        let entries: Entries<String> = entries.into_iter().collect();
+        Ok(py.detach(|| state::publish_hash_cache(&path, &entries, stamp))?)
+    }
+
+    /// `_save_dir_mtimes(path, dict(entries))`. Raises OSError.
+    fn save_dir_mtimes(
+        &self,
+        py: Python<'_>,
+        path: PathBuf,
+        entries: Vec<(String, f64)>,
+    ) -> PyResult<()> {
+        let entries: Entries<f64> = entries.into_iter().collect();
+        Ok(py.detach(|| state::save_dir_mtimes(&path, &entries))?)
+    }
+
+    /// `_is_already_in_sync`'s file half for the repository whose hash
+    /// cache and folder times are at these paths, under these sets;
+    /// `discard_cache` for a run that ignores the cache. Raises
+    /// `ValueError` where Python raises on a pattern pathspec refuses. The
+    /// interpreter lock is released meanwhile.
+    #[pyo3(signature = (repo, cache_path, dir_mtimes_path, discard_cache, exclude = None, unignore = None))]
+    #[allow(clippy::too_many_arguments)]
+    fn in_sync<'py>(
+        &self,
+        py: Python<'py>,
+        repo: PathBuf,
+        cache_path: PathBuf,
+        dir_mtimes_path: PathBuf,
+        discard_cache: bool,
+        exclude: Option<&Bound<'py, PyAny>>,
+        unignore: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<bool> {
+        let rules = ignore::IgnoreRules::new(strings(exclude)?, strings(unignore)?);
+        let inputs = state::SyncInputs {
+            repo: repo.as_os_str(),
+            cache_path: &cache_path,
+            dir_mtimes_path: &dir_mtimes_path,
+            discard_cache,
+        };
+        py.detach(|| self.engine.in_sync(&inputs, &rules))
+            .map_err(value_error)
+    }
+
+    /// A run's baseline, read as `_hash_baseline` reads it, before the run
+    /// writes its placeholder cache: the hash cache at `cache_path` unless
+    /// the run is forced (`force`), ignores it (`cache_dead`) or the cache
+    /// is another project's (`project_mismatch`), less `stale_keys`, every
+    /// file forced when `parser_changed`.
+    #[allow(clippy::too_many_arguments)]
+    fn change_baseline(
+        &self,
+        py: Python<'_>,
+        cache_path: PathBuf,
+        force: bool,
+        single: bool,
+        cache_dead: bool,
+        project_mismatch: bool,
+        parser_changed: bool,
+        stale_keys: &Bound<'_, PyAny>,
+    ) -> PyResult<PyChangeBaseline> {
+        let stale: BTreeSet<String> = strings(Some(stale_keys))?.into_iter().collect();
+        let baseline = py.detach(|| {
+            state::baseline(state::BaselineInputs {
+                cache_path: &cache_path,
+                force,
+                single,
+                cache_dead,
+                project_mismatch,
+                parser_changed,
+                stale,
+            })
+        });
+        Ok(PyChangeBaseline { baseline })
+    }
+
+    /// A run's change detection from `baseline`: the repository walked under
+    /// these sets, or for a single-file run its target (`single_key` None
+    /// when the rules leave it out), with the graph's module paths when the
+    /// run asked the graph (None when it could not answer): what
+    /// `engine_frame.FileChanges` holds but the state folder, in its order,
+    /// the cache to publish and the folder times as the text the frame
+    /// would write. Raises
+    /// `ValueError` where Python's walk raises on a pattern. The
+    /// interpreter lock is released for the walk and the hashing.
+    #[pyo3(signature = (baseline, repo, exclude = None, unignore = None, single_path = None, single_key = None, graph_paths = None))]
+    #[allow(clippy::too_many_arguments)]
+    fn changes<'py>(
+        &self,
+        py: Python<'py>,
+        baseline: &PyChangeBaseline,
+        repo: PathBuf,
+        exclude: Option<&Bound<'py, PyAny>>,
+        unignore: Option<&Bound<'py, PyAny>>,
+        single_path: Option<PathBuf>,
+        single_key: Option<String>,
+        graph_paths: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        let rules = ignore::IgnoreRules::new(strings(exclude)?, strings(unignore)?);
+        let graph_paths: Option<HashSet<String>> = match graph_paths {
+            Some(paths) if !paths.is_none() => Some(strings(Some(paths))?.into_iter().collect()),
+            _ => None,
+        };
+        let inputs = state::ChangeInputs {
+            repo: repo.as_os_str(),
+            single: single_path.map(|path| state::SingleTarget {
+                path,
+                key: single_key,
+            }),
+            graph_paths,
+        };
+        let changes = py
+            .detach(|| self.engine.changes(&baseline.baseline, inputs, &rules))
+            .map_err(value_error)?;
+        let baseline = &baseline.baseline;
+        let fields: [Bound<'py, PyAny>; 15] = [
+            baseline.cache_mtime.into_pyobject(py)?.into_any(),
+            baseline.full_build.into_pyobject(py)?.to_owned().into_any(),
+            sorted(py, &baseline.forced)?,
+            PyList::new(py, changes.hashes.iter())?.into_any(),
+            sorted(py, &changes.unreadable)?,
+            sorted(py, &changes.current)?,
+            PyList::new(py, changes.changed)?.into_any(),
+            changes.gone.into_pyobject(py)?.into_any(),
+            PyList::new(py, changes.deleted_first)?.into_any(),
+            sorted(py, &changes.deleted)?,
+            changes
+                .merge_base
+                .map(Entries::into_items)
+                .into_pyobject(py)?
+                .into_any(),
+            changes.stamp.into_pyobject(py)?.into_any(),
+            changes
+                .mtimes
+                .as_ref()
+                .map(|mtimes| mtimes.iter().map(|(k, &v)| (k, v)).collect::<Vec<_>>())
+                .into_pyobject(py)?
+                .into_any(),
+            changes
+                .prepared
+                .as_ref()
+                .map(state::hash_cache_text)
+                .into_pyobject(py)?
+                .into_any(),
+            changes
+                .mtimes
+                .as_ref()
+                .map(state::dir_mtimes_text)
+                .into_pyobject(py)?
+                .into_any(),
+        ];
+        PyTuple::new(py, fields)
+    }
+
     /// `load_ignore_patterns(root)` as the frame reads the two ignore files
     /// and runs the tracked-source rescue: `(exclude, unignore,
     /// refused_lines, unreadable, tracked_dirs)`, the sets sorted,
@@ -160,6 +444,33 @@ impl PyEngine {
         )
             .into_pyobject(py)
     }
+}
+
+/// A run's change-detection baseline (`engine::state::Baseline`), read
+/// before the run writes its placeholder cache and handed back to
+/// `Engine.changes` once the run's own scan is done.
+#[pyclass(frozen, name = "ChangeBaseline", module = "cgr_graph_rs")]
+pub struct PyChangeBaseline {
+    baseline: state::Baseline,
+}
+
+#[pymethods]
+impl PyChangeBaseline {
+    /// The cache's mtime the run's files are compared against.
+    #[getter]
+    fn cache_mtime(&self) -> f64 {
+        self.baseline.cache_mtime
+    }
+
+    /// Whether the run re-parses every file as a first build.
+    #[getter]
+    fn full_build(&self) -> bool {
+        self.baseline.full_build
+    }
+}
+
+fn sorted<'py>(py: Python<'py>, keys: &BTreeSet<String>) -> PyResult<Bound<'py, PyAny>> {
+    Ok(PyList::new(py, keys)?.into_any())
 }
 
 /// The ignore rules over one exclude set and one unignore set
@@ -339,5 +650,6 @@ fn value_error(error: PatternError) -> PyErr {
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyEngine>()?;
-    m.add_class::<PyIgnoreRules>()
+    m.add_class::<PyIgnoreRules>()?;
+    m.add_class::<PyChangeBaseline>()
 }

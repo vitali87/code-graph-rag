@@ -1592,6 +1592,10 @@ ENGINE_FRAME_PLAN_DIFFERS = (
     "The Rust engine's file plan for {repo} differs from Python's, first at "
     "{first}; this run uses Python's"
 )
+ENGINE_FRAME_CHANGES_DIFFER = (
+    "The Rust engine's change detection for {repo} differs from Python's, "
+    "first at {first}; this run uses Python's"
+)
 
 # Exclude prompt logs
 EXCLUDE_INVALID_INDEX = "Invalid index: {index} (out of range)"
