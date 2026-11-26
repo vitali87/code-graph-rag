@@ -2158,6 +2158,7 @@ def _one_real_go_run_per_tree(
         module_root: Path,
         ignored_dirs: frozenset[str],
         in_repo_modules: Mapping[str, frozenset[Path]] | None = None,
+        overlay: Path | None = None,
     ) -> GoSemanticFacts | None:
         key = hashlib.sha256(
             "\0".join(
@@ -2188,7 +2189,7 @@ def _one_real_go_run_per_tree(
 
             with pytest.MonkeyPatch.context() as patch:
                 patch.setattr(frontend, "_parse_payload", keep)
-                facts = run(binary, module_root, ignored_dirs, in_repo_modules)
+                facts = run(binary, module_root, ignored_dirs, in_repo_modules, overlay)
             if facts is not None and captured:
                 partial = kept.with_suffix(f".{os.getpid()}.part")
                 partial.write_text(json.dumps(captured[0]), encoding="utf-8")

@@ -12,13 +12,17 @@ Loaded as a plugin (`-p codebase_rag.tests.discovery_shadow`):
   the same ignore files (`engine_frame.frame_ignore_patterns`).
 
 Python's answer is the one used, so the tests run as they always do; a
-difference fails the test that made the call. `test_engine_discovery.py`
+difference fails the test that made the call, in its fixtures too, and the
+run (`shadows.py`). `test_engine_discovery.py`
 runs the existing walk and ignore tests under it
 (docs/reports/PHASE2_FRAME.md, section 13, step 5).
 
 Not compared: a walk while a test has patched the built-in names or endings
 the frame holds copies of, and a reading while a test stands in for git
-(`subprocess.run` patched), which the frame runs for real.
+(`subprocess.run` patched), which the frame runs for real; nor either while
+a test has put its own check in place of the session's, or none
+(`engine_frame.CHECK`): that test decides whether the frame is asked, and
+one that turns it off must find it never asked.
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ import functools
 import re
 import subprocess
 import sys
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -38,16 +42,19 @@ from codebase_rag.tests.engine_modes import (
     FramePlanCheck,
     frame_holds_python_constants,
 )
+from codebase_rag.tests.shadows import SHOWN, ShadowFailures
 from codebase_rag.utils import path_utils
 
 SUMMARY = (
     "discovery shadow: {walks} walks and {readings} ignore readings compared, "
-    "{differed} differed, {skipped} made with patched constants or git"
+    "{differed} differed, {skipped} made with patched constants or git, or "
+    "under a test's own check"
 )
 READING_DIFFERS = "load_ignore_patterns({repo}): Python {python}, the frame {frame}"
-_SHOWN = 20
+FAILED = "the frame's walk or ignore files differ from Python's:\n"
 
 _differences: list[str] = []
+_FAILURES = ShadowFailures("discovery_shadow", _differences, FAILED)
 _counts = {"walks": 0, "readings": 0, "skipped": 0}
 _WALK = path_utils.walk_eligible_files
 _LOAD = config.load_ignore_patterns
@@ -73,6 +80,9 @@ def _compare_walk(
     exclude: frozenset[str] | None,
     unignore: frozenset[str] | None,
 ) -> None:
+    if engine_frame.CHECK is not _CHECK:
+        _counts["skipped"] += 1
+        return
     if not _CHECK.compares():
         return
     try:
@@ -115,7 +125,11 @@ def _shadow_walk(
 @functools.wraps(_LOAD)
 def _shadow_load(repo_path: Path) -> CgrignorePatterns:
     python = _LOAD(repo_path)
-    if subprocess.run is not _RUN or not frame_holds_python_constants():
+    if (
+        subprocess.run is not _RUN
+        or engine_frame.CHECK is not _CHECK
+        or not frame_holds_python_constants()
+    ):
         _counts["skipped"] += 1
         return python
     _counts["readings"] += 1
@@ -153,17 +167,8 @@ def _install() -> None:
 _install()
 
 
-@pytest.hookimpl(wrapper=True)
-def pytest_runtest_call(item: pytest.Item) -> Generator[None, object, object]:
-    before = len(_differences)
-    result = yield
-    if found := _differences[before:]:
-        pytest.fail(
-            "the frame's walk or ignore files differ from Python's:\n"
-            + "\n".join(found[:_SHOWN]),
-            pytrace=False,
-        )
-    return result
+def pytest_configure(config: pytest.Config) -> None:
+    config.pluginmanager.register(_FAILURES, _FAILURES.name)
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
@@ -175,12 +180,5 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
             skipped=_counts["skipped"],
         )
     )
-    for difference in _differences[:_SHOWN]:
+    for difference in _differences[:SHOWN]:
         terminalreporter.write_line(difference)
-
-
-@pytest.hookimpl(trylast=True)
-def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    # A difference outside a test's call (in a fixture) fails the run too.
-    if _differences and session.exitstatus == pytest.ExitCode.OK:
-        session.exitstatus = pytest.ExitCode.TESTS_FAILED

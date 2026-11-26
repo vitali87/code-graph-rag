@@ -8210,11 +8210,10 @@ class GraphUpdater:
         eligible_files = self._collect_eligible_files()
         # The single target as the frame takes it, before a vanished one
         # empties the list below: the frame decides that on its own.
-        frame_single = (
-            None
-            if self._single_file is None
-            else (self._single_file, eligible_files[0][1] if eligible_files else None)
-        )
+        frame_single: tuple[Path, str | None] | None = None
+        if self._single_file is not None:
+            target_key = eligible_files[0][1] if eligible_files else None
+            frame_single = (self._single_file, target_key)
 
         flux_stems = self._prepare_flux_stems(eligible_files, old_hashes, is_full_build)
         preexisting_paths = self._preexisting_paths_for_run(force, baseline)
@@ -8474,8 +8473,12 @@ class GraphUpdater:
         # A file whose tier raised never wrote its row; no later call may.
         structure.file_rows.clear()
         # A run a file failed in is re-raised below, its map never used.
-        if modules_fresh and first_failure is None:
-            self._compare_module_plan(eligible_files, scan.changed_entries)
+        self._compare_module_plan(
+            eligible_files,
+            scan.changed_entries,
+            modules_fresh=modules_fresh,
+            completed=first_failure is None,
+        )
 
         self._delete_reconciled_files(deleted_keys, deleted_set)
 
@@ -8982,6 +8985,9 @@ class GraphUpdater:
         self,
         eligible_files: list[tuple[Path, str]],
         parsed: Sequence[tuple[Path, str, bool, bytes]],
+        *,
+        modules_fresh: bool,
+        completed: bool,
     ) -> None:
         """Compare the frame's module-name plan with the module map pass 2
         just filled from `parsed` (engine_frame.py), when it is compared.
@@ -8992,8 +8998,10 @@ class GraphUpdater:
         each at its place in the order the run parses them: the plan's,
         after any file outside it, as a single-file run parses the files it
         queued beside its target first. The map is Python's either way.
+        Only a run whose map started empty (`modules_fresh`) and in which no
+        file failed (`completed`) is compared.
         """
-        if not engine_frame.modules_compared():
+        if not (modules_fresh and completed) or not engine_frame.modules_compared():
             return
         planned = {key: index for index, (_path, key) in enumerate(eligible_files)}
         outside = [key for _fp, key, _new, _b in parsed if key not in planned]

@@ -213,16 +213,21 @@ fn the_state_folder_is_named_as_python_names_it() {
         let resolved = resolve(path);
         super::super::hex(&Sha256::digest(resolved.to_str().unwrap().as_bytes()))[..8].to_owned()
     };
-    for (name, base) in [
+    let mut names = vec![
         ("plain", "plain"),
         ("a.b c", "a_b_c"),
         // A run of such characters is one `_`.
         ("a..b  é c", "a_b_c"),
         ("мой-repo", "repo"),
         ("__x--", "x"),
-        ("...", "repo"),
+        ("-._", "repo"),
         ("é-é", "repo"),
-    ] {
+    ];
+    // Win32 strips a name's trailing dots, so `...` is its parent there.
+    if cfg!(unix) {
+        names.push(("...", "repo"));
+    }
+    for (name, base) in names {
         let dir = scratch.0.join(name);
         fs::create_dir_all(&dir).unwrap();
         assert_eq!(
@@ -283,6 +288,37 @@ fn a_first_use_moves_old_state_in_and_never_replaces_a_file() {
     assert_eq!(left, [".cgr-edit-history.json", ".cgr-sync-lock"]);
     // No temporary file is left beside the state.
     assert_eq!(fs::read_dir(&dir).unwrap().count(), 2);
+}
+
+#[test]
+fn a_read_only_old_state_file_moves_in_as_python_moves_it() {
+    // `shutil.copy2` sets the copy's times before its mode, so a read-only
+    // file moves in with its bytes, times and mode (bot review).
+    let scratch = Scratch::new("state-adopt-read-only");
+    let repo = scratch.0.join("repo");
+    let home = scratch.0.join("home");
+    let legacy = repo.join(HASH_CACHE_FILENAME);
+    write(&repo, HASH_CACHE_FILENAME, "{}");
+    let stamp = utime_instant(1_000_000_000.25).unwrap();
+    hold_mtime(&legacy, stamp);
+    let mut read_only = fs::metadata(&legacy).unwrap().permissions();
+    read_only.set_readonly(true);
+    fs::set_permissions(&legacy, read_only.clone()).unwrap();
+
+    let prepared = prepare_state_dir(&home, &repo).unwrap();
+
+    assert!(prepared.failed.is_empty(), "{:?}", prepared.failed);
+    assert_eq!(prepared.adopted, [HASH_CACHE_FILENAME]);
+    let moved = prepared.dir.join(HASH_CACHE_FILENAME);
+    assert_eq!(fs::read_to_string(&moved).unwrap(), "{}");
+    let metadata = fs::metadata(&moved).unwrap();
+    assert_eq!(metadata.modified().unwrap(), stamp);
+    assert_eq!(metadata.permissions(), read_only);
+    // Gone from the checkout, on POSIX: on Windows a read-only file can
+    // refuse its removal, as it refuses Python's unlink there.
+    if cfg!(unix) {
+        assert!(!legacy.exists());
+    }
 }
 
 #[test]
@@ -454,8 +490,19 @@ fn a_cached_hash_at_or_under_the_cache_mtime_is_kept_unread() {
         )
         .unwrap();
 
-    assert_eq!(changes.hashes.get("a.py"), Some(&"0".repeat(32)));
-    assert!(changes.changed.is_empty());
+    if cfg!(windows) {
+        // No time there says a file's bytes are unchanged, so a cached file
+        // is always hashed: the real digest replaces the forged one, and the
+        // file is re-parsed as a known one.
+        assert_eq!(
+            changes.hashes.get("a.py"),
+            md5_file(&repo.join("a.py")).as_ref()
+        );
+        assert_eq!(changes.changed, [("a.py".to_owned(), false)]);
+    } else {
+        assert_eq!(changes.hashes.get("a.py"), Some(&"0".repeat(32)));
+        assert!(changes.changed.is_empty());
+    }
     assert!(changes.deleted.is_empty());
 }
 
@@ -467,9 +514,15 @@ fn unusable_cache(md5: &str) -> String {
     )
 }
 
-/// `path`'s mtime set back to `held`, as `os.utime` sets it.
+/// `path`'s mtime set back to `held`, as `os.utime` sets it. On POSIX the
+/// owner sets a file's or a folder's times through a handle open for
+/// reading; Windows's `SetFileTime` needs one that may write attributes,
+/// which a handle open for writing may (the folders are held on POSIX only).
 fn hold_mtime(path: &Path, held: std::time::SystemTime) {
-    fs::File::open(path)
+    fs::OpenOptions::new()
+        .read(true)
+        .write(cfg!(windows))
+        .open(path)
         .unwrap()
         .set_times(fs::FileTimes::new().set_modified(held))
         .unwrap();

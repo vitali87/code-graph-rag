@@ -23,6 +23,10 @@ ENCODING_ASCII = "ascii"
 # The decode error handler a name that is not valid UTF-8 is logged with: each
 # byte that does not decode reads as `\xff` (issue #3722).
 DECODE_ERRORS_BACKSLASHREPLACE = "backslashreplace"
+# The decode error handler a list of names from git is read with: a name that
+# is not valid UTF-8 keeps its bytes as lone surrogates, as `os.walk` spells
+# it, so it can be left out by name rather than stop the read (issue #3737).
+DECODE_ERRORS_SURROGATEESCAPE = "surrogateescape"
 # Codec names (as `codecs.lookup` normalises them) whose bytes the grammar
 # already reads as they are, so a source declaring one needs no transcoding.
 UTF8_CODEC_NAMES: frozenset[str] = frozenset({ENCODING_UTF8, ENCODING_UTF8_SIG})

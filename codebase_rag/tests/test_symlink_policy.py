@@ -24,10 +24,12 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import sys
 import threading
 from collections.abc import Callable, Generator
 from pathlib import Path
+from subprocess import CompletedProcess
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -48,6 +50,12 @@ from codebase_rag.parsers.csharp_frontend.frontend import (
     find_csharp_project,
     uncovered_csharp_projects,
 )
+from codebase_rag.parsers.go_frontend import (
+    GoCallSite,
+    GoSemanticFacts,
+    run_go_frontend,
+)
+from codebase_rag.parsers.go_frontend import frontend as go_frontend
 from codebase_rag.parsers.java_lombok import _overlay_from_root, overlay_identity
 from codebase_rag.parsers.js_ts.module_paths import (
     _read_manifest as _read_package_manifest,
@@ -472,6 +480,39 @@ _LOOKED_UP_MANIFESTS = [
 ]
 
 
+def _needs_go_type_checker() -> None:
+    """Skip unless the go/types helper builds here, as the gotypes tests do."""
+    go = shutil.which("go")
+    if go is None:
+        pytest.skip("go toolchain not available")
+    if go_frontend._build_tool(go) is None:
+        pytest.skip("gotypes tool could not build in this environment")
+
+
+def _go_module_repo(root: Path) -> Path:
+    """A Go module whose subpackage calls a function of its root package."""
+    repo = root / "repo"
+    _write(repo / "go.mod", "module example.com/m\n\ngo 1.21\n")
+    _write(repo / "m.go", "package m\n\nfunc F() int {\n\treturn 1\n}\n")
+    _write(
+        repo / "sub" / "sub.go",
+        'package sub\n\nimport "example.com/m"\n\nfunc G() int {\n\treturn m.F()\n}\n',
+    )
+    return repo
+
+
+# `sub/sub.go`'s call of `m.F`, keyed as the type checker keys it, and `F`.
+_GO_CALL = ("sub/sub.go", 6, 10, "F")
+_GO_CALLEE = GoCallSite("F", "m.go", 3, 5)
+
+
+def _go_facts_within_deadline(repo: Path, pipe: Path) -> GoSemanticFacts:
+    """The type checker's facts for `repo`, failing the test if it blocks on `pipe`."""
+    facts: list[GoSemanticFacts] = []
+    _call_within_deadline(lambda: facts.append(run_go_frontend(repo)), pipe)
+    return facts[0]
+
+
 def _emitted_paths(mock_ingestor: MagicMock) -> set[str]:
     return {
         str(node_call.args[1][cs.KEY_PATH])
@@ -610,8 +651,8 @@ class TestSpecialFiles:
         # An import of exactly a module path has the resolver read each `.go`
         # file it lists in that module's root, to tell a library from a
         # `package main` stub. That is cgr's own reader, so the go toolchain's
-        # type checker is kept out: where Go is installed it loads the package
-        # itself and opens every `.go` entry in the folder (issue #3736).
+        # type checker, which loads the package on its own, is kept out: the
+        # tests below cover it (issue #3736).
         monkeypatch.setattr(settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
         repo = tmp_path / "repo"
         _write(repo / "go.mod", "module example.com/m\n\ngo 1.21\n")
@@ -630,6 +671,106 @@ class TestSpecialFiles:
         paths = _emitted_paths(mock_ingestor)
         assert "cmd/main.go" in paths
         assert "zz.go" not in paths
+
+    @pytest.mark.usefixtures("one_go_helper_per_session")
+    @pytest.mark.parametrize("pipe", ["zz.go", "sub/zz.go", "build/zz.go"])
+    def test_the_go_type_checker_never_opens_a_pipe(
+        self, tmp_path: Path, pipe: str
+    ) -> None:
+        # The type checker loads each package from its folder and opens every
+        # `.go` entry there itself (issue #3736). `build` is a folder cgr
+        # ignores and Go loads all the same.
+        _needs_go_type_checker()
+        repo = _go_module_repo(tmp_path)
+        (repo / pipe).parent.mkdir(exist_ok=True)
+        os.mkfifo(repo / pipe)
+
+        facts = _go_facts_within_deadline(repo, repo / pipe)
+
+        assert facts.degraded_modules == ()
+        assert facts.call_sites[_GO_CALL] == _GO_CALLEE
+
+    @pytest.mark.usefixtures("one_go_helper_per_session")
+    def test_the_go_type_checker_never_opens_a_link_to_a_pipe(
+        self, tmp_path: Path
+    ) -> None:
+        _needs_go_type_checker()
+        repo = _go_module_repo(tmp_path)
+        pipe = tmp_path / "pipe"
+        os.mkfifo(pipe)
+        _link(repo / "zz.go", str(pipe))
+
+        facts = _go_facts_within_deadline(repo, pipe)
+
+        assert facts.degraded_modules == ()
+        assert facts.call_sites[_GO_CALL] == _GO_CALLEE
+
+    @pytest.mark.usefixtures("one_go_helper_per_session")
+    def test_the_go_type_checker_never_opens_a_pipe_in_a_sibling_module(
+        self, tmp_path: Path
+    ) -> None:
+        # A `replace` has the run for `app` load `lib`'s packages from their
+        # folder in the repository as well.
+        _needs_go_type_checker()
+        repo = tmp_path / "repo"
+        _write(repo / "lib" / "go.mod", "module example.com/lib\n\ngo 1.21\n")
+        _write(repo / "lib" / "lib.go", "package lib\n\nfunc F() {}\n")
+        _write(
+            repo / "app" / "go.mod",
+            "module example.com/app\n\ngo 1.21\n\n"
+            "require example.com/lib v0.0.0\n\n"
+            "replace example.com/lib => ../lib\n",
+        )
+        _write(
+            repo / "app" / "main.go",
+            'package main\n\nimport "example.com/lib"\n\nfunc main() {\n\tlib.F()\n}\n',
+        )
+        os.mkfifo(repo / "lib" / "zz.go")
+
+        facts = _go_facts_within_deadline(repo, repo / "lib" / "zz.go")
+
+        assert facts.degraded_modules == ()
+        assert facts.analysed_modules == ("app", "lib")
+
+    def test_the_go_type_checker_is_told_to_leave_out_each_pipe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # What the helper is handed, so a host without Go checks it too: each
+        # pipe and link to one in the repository, and no other entry.
+        repo = _go_module_repo(tmp_path)
+        os.mkfifo(repo / "zz.go")
+        (repo / "build").mkdir()
+        os.mkfifo(repo / "build" / "zz.go")
+        pipe = tmp_path / "pipe"
+        os.mkfifo(pipe)
+        _link(repo / "yy.go", str(pipe))
+        _link(repo / "alias.go", "m.go")
+        _link(repo / "linkdir", "sub", directory=True)
+        _link(repo / "dangling.go", "missing.go")
+        handed: list[dict[str, dict[str, str]]] = []
+
+        def _run(
+            cmd: list[str], env: dict[str, str], **_kwargs: bool | int | str
+        ) -> CompletedProcess[str]:
+            overlay = Path(env[go_frontend._OVERLAY_ENV])
+            handed.append(json.loads(overlay.read_text(encoding="utf-8")))
+            return CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+        monkeypatch.setattr(go_frontend.shutil, "which", lambda _name: "go")
+        monkeypatch.setattr(go_frontend, "_build_tool", lambda _go: Path("gotypes"))
+        monkeypatch.setattr(go_frontend.subprocess, "run", _run)
+
+        run_go_frontend(repo)
+
+        assert handed == [
+            {
+                "Replace": {
+                    str(repo / "build" / "zz.go"): "",
+                    str(repo / "yy.go"): "",
+                    str(repo / "zz.go"): "",
+                }
+            }
+        ]
 
     def test_a_pipe_among_the_rust_sources_is_never_read(
         self, tmp_path: Path, mock_ingestor: MagicMock
@@ -806,6 +947,32 @@ class TestSpecialFiles:
         stamp = repo.stat().st_mtime + 1
         os.utime(repo, (stamp, stamp))
         assert _stateful_updater(repo, store)._is_already_in_sync() is True
+
+    @pytest.mark.parametrize("operation", ["search", "replace"])
+    def test_structural_search_never_opens_a_pipe(
+        self, tmp_path: Path, operation: str
+    ) -> None:
+        # It lists the repository on its own and read each source file it
+        # found there (issue #3737).
+        repo = tmp_path / "repo"
+        _write(repo / "core.py", "API_TOKEN = 1\n")
+        os.mkfifo(repo / "zz.py")
+        service = AstGrepService(project_root=str(repo))
+        files: list[list[str]] = []
+
+        def _run() -> None:
+            if operation == "search":
+                found = service.search(pattern="API_TOKEN", language="python")
+                files.append([match["file"] for match in found])
+            else:
+                changed = service.replace(
+                    pattern="API_TOKEN", rewrite="API_KEY", language="python"
+                )
+                files.append([change["file"] for change in changed])
+
+        _call_within_deadline(_run, repo / "zz.py")
+
+        assert files == [["core.py"]]
 
 
 def _make_undecodable(parent: Path, raw_name: bytes, text: str | None = None) -> Path:

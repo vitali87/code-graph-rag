@@ -25,7 +25,7 @@ from loguru import logger
 from .. import constants as cs
 from .. import logs as ls
 from ..config import settings
-from ..utils.path_utils import is_utf8_name
+from ..utils.path_utils import is_enterable_dir, is_utf8_name
 from .java_generated import _build_dirs
 
 _LOMBOK_MARKER = "lombok"
@@ -132,7 +132,9 @@ def _delombok_roots(build_dir: Path) -> list[Path]:
     return [
         root
         for parts in cs.JAVA_MAVEN_SOURCE_ROOTS
-        if (root := build_dir.joinpath(*parts)).is_dir()
+        # A source root cgr may not enter has nothing the walk indexes, and
+        # `Path.is_dir` raised there on Python 3.12 and 3.13 (#3748).
+        if is_enterable_dir(root := build_dir.joinpath(*parts))
     ]
 
 

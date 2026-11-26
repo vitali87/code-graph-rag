@@ -559,6 +559,7 @@ class FrameChange(StrEnum):
 # `Engine` from before phase 2's step 7 lacks.
 EG_RUST_STRUCTURE = "structure"
 EG_RUST_FILE_ROWS = "file_rows"
+EG_RUST_FOLDER_ORDER = "folder_order"
 # A structure as lines, to compare two (engine_frame.py): each folder's entry
 # in the map, in order, a package's qualified name after its path, then each
 # row the pass writes, its node and then the edge from what contains it. A
@@ -575,6 +576,9 @@ FRAME_NO_FILE_ROW_LINE = "no row\t{path}"
 # does (`PurePath("a.").suffix == "."`): the frame's File rows follow it.
 FRAME_TRAILING_DOT_NAME = "a."
 FRAME_TRAILING_DOT_SUFFIX = "."
+# The first Python whose `Path.resolve()` no longer raises `RuntimeError` on
+# a loop of links (pathlib's docs, "Changed in version 3.13").
+FRAME_RESOLVE_LOOP_RAISES_BEFORE = (3, 13)
 
 # The frame's merge (engine_frame.py), which an extension from before phase
 # 2's step 8 lacks: the language tables module names are derived by, and the
