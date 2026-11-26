@@ -940,6 +940,75 @@ def _labelled(ingestor: _MockIngestor, label: str) -> list[dict[str, str]]:
     ]
 
 
+def _folder_row(name: str) -> engine_frame.ContainedRow:
+    return engine_frame.ContainedRow(
+        node=engine_frame.NodeRow(
+            label=cs.NodeLabel.FOLDER,
+            properties=((cs.KEY_PATH, name), (cs.KEY_NAME, name)),
+        ),
+        relationship=engine_frame.RelationshipRow(
+            start=(cs.NodeLabel.PROJECT, cs.KEY_NAME, PROJECT),
+            rel_type=cs.RelationshipType.CONTAINS_FOLDER,
+            end=(cs.NodeLabel.FOLDER, cs.KEY_PATH, name),
+        ),
+    )
+
+
+def _structure(*names: str) -> engine_frame.Structure:
+    return engine_frame.Structure(
+        elements=((".", None), *((name, None) for name in names)),
+        rows=tuple(_folder_row(name) for name in names),
+    )
+
+
+class TestComparison:
+    # Equal answers are told without spelling their lines; one that differs
+    # anywhere is still named line by line.
+    def test_equal_structures_have_no_difference(self) -> None:
+        assert engine_frame.structure_difference(_structure("a"), _structure("a")) == []
+
+    def test_a_property_alone_is_compared(self) -> None:
+        renamed = _structure("a")._replace(rows=(_folder_row("b"),))
+
+        assert engine_frame.structure_difference(_structure("a"), renamed) == [
+            "- node\tFolder\tpath=a\tname=a",
+            "- edge\tProject(name=proj)\tCONTAINS_FOLDER\tFolder(path=a)",
+            "+ node\tFolder\tpath=b\tname=b",
+            "+ edge\tProject(name=proj)\tCONTAINS_FOLDER\tFolder(path=b)",
+        ]
+
+    def test_an_element_alone_is_compared(self) -> None:
+        packaged = _structure("a")._replace(elements=((".", None), ("a", "proj.a")))
+
+        assert engine_frame.structure_difference(_structure("a"), packaged) == [
+            "- element\ta",
+            "+ element\ta\tproj.a",
+        ]
+
+    def test_equal_file_rows_have_no_difference(self) -> None:
+        rows = (_folder_row("a"), None)
+        paths = [Path("/r/a"), Path("/r/b")]
+
+        assert engine_frame.file_rows_difference(paths, rows, rows) == []
+
+    def test_a_row_only_one_side_has_is_named(self) -> None:
+        paths = [Path("/r/a")]
+
+        assert engine_frame.file_rows_difference(
+            paths, (_folder_row("a"),), (None,)
+        ) == [
+            "- node\tFolder\tpath=a\tname=a",
+            "- edge\tProject(name=proj)\tCONTAINS_FOLDER\tFolder(path=a)",
+            f"+ no row\t{Path('/r/a')}",
+        ]
+
+    def test_rows_not_one_to_each_path_are_refused_as_before(self) -> None:
+        rows = (_folder_row("a"),)
+
+        with pytest.raises(ValueError):
+            engine_frame.file_rows_difference([Path("/r/a"), Path("/r/b")], rows, rows)
+
+
 class TestChoosing:
     def test_off_and_unchecked_the_frame_is_never_asked(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

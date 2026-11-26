@@ -10,7 +10,8 @@ each part to the Python code it replaces.
 
 The extension's `Engine` (rust/cgr_graph_rs/src/engine) runs its work on a
 thread pool of its own, with the interpreter lock released, and returns
-results in the order of its inputs whatever the number of threads. Its
+results in the order of its inputs whatever the number of threads; a batch
+too small to share runs on the calling thread instead. Its
 `IgnoreRules` (src/engine/ignore.rs) are the walk's ignore rules, a port of
 `utils/path_utils.py`'s matching and of pathspec's patterns.
 
@@ -655,10 +656,33 @@ def plan_lines(plan: FilePlan) -> list[str]:
     return lines
 
 
+def _same_plan(python: FilePlan, frame: FilePlan) -> bool:
+    """Whether `plan_lines` spells the two plans alike, told without
+    spelling them: the same files, folders and hashes in the same order,
+    one hash to each file, and the same reports in any order."""
+    return (
+        python.files == frame.files
+        and python.dirs == frame.dirs
+        and python.hashes == frame.hashes
+        and len(python.files) == len(python.hashes)
+        and all(
+            sorted(ours) == sorted(theirs)
+            for ours, theirs in (
+                (python.symlinks, frame.symlinks),
+                (python.special, frame.special),
+                (python.undecodable, frame.undecodable),
+            )
+        )
+    )
+
+
 def plan_difference(python: FilePlan, frame: FilePlan) -> list[str]:
     """How the frame's plan differs from Python's, in order: `-` for a line
     only Python's holds, `+` for one only the frame's does."""
-    return difference_in_order(plan_lines(python), plan_lines(frame))
+    # Most runs agree, and two plans alike spell the same lines.
+    if _same_plan(python, frame):
+        return []
+    return _difference(plan_lines(python), plan_lines(frame))
 
 
 def _frame_failed(error: BaseException) -> bool:
@@ -1263,6 +1287,9 @@ def structure_lines(structure: Structure) -> list[str]:
 def structure_difference(python: Structure, frame: Structure) -> list[str]:
     """How the frame's structure differs from Python's, in order: `-` for a
     line only Python's holds, `+` for one only the frame's does."""
+    # Equal structures spell the same lines.
+    if python == frame:
+        return []
     return _difference(structure_lines(python), structure_lines(frame))
 
 
@@ -1289,6 +1316,9 @@ def file_rows_difference(
 ) -> list[str]:
     """How the frame's File rows for `paths` differ from Python's, in order:
     `-` for a line only Python's hold, `+` for one only the frame's do."""
+    # Equal rows, one to each path, spell the same lines.
+    if len(python) == len(paths) and tuple(python) == tuple(frame):
+        return []
     return _difference(file_row_lines(paths, python), file_row_lines(paths, frame))
 
 

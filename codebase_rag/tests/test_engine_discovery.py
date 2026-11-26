@@ -613,6 +613,44 @@ class TestComparison:
             "- symlink\ty",
         ]
 
+    # Plans alike are told without spelling their lines; each field a plan
+    # holds still differs when it alone does.
+    def test_a_file_s_folder_alone_is_compared(self) -> None:
+        moved = _plan("a.py")._replace(
+            files=(engine_frame.WalkedFile("/s", "a.py", "a.py"),)
+        )
+
+        assert engine_frame.plan_difference(_plan("a.py"), moved) == [
+            f"- file\ta.py\t{'0' * 32}\t/r\ta.py",
+            f"+ file\ta.py\t{'0' * 32}\t/s\ta.py",
+        ]
+
+    def test_a_folder_alone_is_compared(self) -> None:
+        listed = _plan("a.py")._replace(
+            dirs=(
+                engine_frame.VisitedDir(cs.ROOT_DIR_KEY, "/r"),
+                engine_frame.VisitedDir("sub", "/r/sub"),
+            )
+        )
+
+        assert engine_frame.plan_difference(_plan("a.py"), listed) == [
+            "+ dir\tsub\t/r/sub"
+        ]
+
+    @pytest.mark.parametrize("report", ["special", "undecodable"])
+    def test_each_report_alone_is_compared(self, report: str) -> None:
+        reported = _plan("a.py")._replace(**{report: ("x",)})
+
+        assert engine_frame.plan_difference(reported, _plan("a.py")) == [
+            f"- {report}\tx"
+        ]
+
+    def test_a_plan_with_a_file_and_no_hash_is_refused_as_before(self) -> None:
+        unhashed = _plan("a.py", hashes=())
+
+        with pytest.raises(ValueError):
+            engine_frame.plan_difference(unhashed, unhashed)
+
 
 class _Recorded:
     """A `PlanCheck` that keeps what it is told."""
