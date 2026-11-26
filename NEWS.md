@@ -11,10 +11,14 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
-- **Patched C and C++ Grammars on Every Install**: PyPI installs now parse C and C++ with the same patched grammars as a source checkout, compiled into `cgr-graph-rs`, so the function or declaration after a `#define` whose value contains a block comment is no longer lost, and the graph gains its node and its calls. C and C++ also parse on the plain install, without the `treesitter-full` extra.
+- **Engine Improvements**: The Rust engine now includes a thread pool for hashing files in input order, and its skeleton is complete. It performs discovery and file plan generation, checked against Python's walk on each index.
+- **Python and Rust Engine Integration**: Design phase 1 and 2 are complete, establishing the seams between the Python and Rust engines, with hand-off files being compared in both modes.
+- **Index Enhancements**: The GraphUpdater now resolves the index engine once, routing files through a single point. The Python engine writes its file plan and project index on request.
+- **Improved Error Handling**: The system now fails on Python def <-> async def flips and on a Python def <-> async def flip. It also handles cases where a caller still reaches a moved symbol through a re-export.
+- **Refined Code Checking**: `cgr check` now leaves out names that are not UTF-8 and reads escaped trailing spaces and byte-order marks in ignore files as Git does.
+<!-- latest-release-end -->
 - **Improved Code Analysis**: Refined how query captures are read, how calls are judged, and how dead code is identified and handled.
 - **Surface Definition**: Introduced a mechanism to record and enforce the public surface of code, with CI failures for deviations.
-<!-- latest-release-end -->
 - **Improved I/O Handling**: Enhanced how the toolchain interacts with input and output streams, including inline reads, standard stream writes, and environment variable management.
 - **Credential Management**: Introduced a dedicated credential word list for each hardcoded secret within a pack, improving security.
 - **Enhanced Code Analysis**: Improved the accuracy of code analysis by considering binding contexts, structural tiers, and the order of query captures.
