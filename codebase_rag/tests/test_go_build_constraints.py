@@ -371,9 +371,11 @@ def _cpu_seconds() -> float:
     # CPU time, not wall clock, for the bounds below: each catches a walk
     # gone quadratic, and a busy `pytest -n auto` runner deschedules this
     # process for seconds without the walk doing any more work (a walk of
-    # a few tenths of a second read 5.04 s on main's coverage run). As in
-    # test_rust_attr_run_scan_perf.py (#1473).
-    return time.process_time()
+    # a few tenths of a second read 5.04 s on main's coverage run). This
+    # thread's alone: process_time also counts the threads earlier tests
+    # left running in the worker, and read 5.7 s for a walk of 0.25 s
+    # (#3758). As in test_rust_attr_run_scan_perf.py (#1473).
+    return time.thread_time()
 
 
 @pytest.mark.parametrize("tail", ["known", "unresolved"])

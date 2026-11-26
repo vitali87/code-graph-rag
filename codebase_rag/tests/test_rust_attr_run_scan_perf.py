@@ -23,8 +23,10 @@ def _scan_time(source: str) -> float:
     # CPU time, not WALL clock. The distinction is the whole fix for #1473:
     # perf_counter includes time this process was descheduled, so a busy
     # runner inflates a sample without the scanner doing any more work.
-    # process_time counts only cycles actually spent here, so contention
-    # cannot manufacture a slowdown that never happened.
+    # thread_time counts only cycles this thread actually spent, so
+    # contention cannot manufacture a slowdown that never happened, and
+    # neither can the threads earlier tests left running in this worker,
+    # which process_time would count (#3758).
     #
     # Measured on this repo, ratio of 8000-line to 2000-line input across
     # five rounds, with every core saturated by competing processes:
@@ -35,11 +37,11 @@ def _scan_time(source: str) -> float:
     # Wall clock more than doubles its spread under exactly the condition
     # that made this test flaky under `pytest -n auto`; CPU time barely
     # moves.
-    start = time.process_time()
+    start = time.thread_time()
     _RS_MOD_DECL_PATTERN.findall(source)
     _RS_ITEM_DECL_PATTERN.findall(source)
     list(_RS_MOD_REDIRECT_PATTERN.finditer(source))
-    return time.process_time() - start
+    return time.thread_time() - start
 
 
 def _best_scan_time(source: str, repeats: int = 5) -> float:
