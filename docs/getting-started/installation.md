@@ -92,7 +92,7 @@ pip install code-graph-rag
 
 *PyPI served 0.1.38 when this was recorded; it trails `main` (see [Install from git](#install-from-git)).*
 
-With all Tree-sitter grammars (Python, JS, TS, Rust, Go, Java, Scala, C, C++, Lua, PHP, C#, Dart):
+Python, C and C++ parse on the plain install: C and C++ with the patched grammars compiled into `cgr-graph-rs`, which keep the declarations the upstream grammars drop after a `#define` whose value contains a block comment. With all Tree-sitter grammars (Python, JS, TS, Rust, Go, Java, Scala, C, C++, Lua, PHP, C#, Dart):
 
 ```bash
 pip install 'code-graph-rag[treesitter-full]'
@@ -144,7 +144,7 @@ uv tool install "code-graph-rag[treesitter-full,ast-grep,semantic] @ git+https:/
 
 Replace `@main` with a tag such as `@v0.1.8` to pin an exact version.
 
-Use `uv` here: it applies the project's `[tool.uv.sources]`, which build the C and C++ grammars from forks that keep the declarations upstream drops after a `#define` whose value contains a block comment. `pip`, and `pipx` on its pip backend, ignore those sources and install the upstream grammars. Building the forks needs a C compiler on top of the [prerequisites](#prerequisites) (the Xcode Command Line Tools on macOS).
+Use `uv` here: it applies the project's `[tool.uv.sources]`, which build the forks' Python packages of the C and C++ grammars, and that needs a C compiler on top of the [prerequisites](#prerequisites) (the Xcode Command Line Tools on macOS). However it is installed, cgr parses C and C++ with the patched grammars compiled into `cgr-graph-rs`, which keep the declarations the upstream grammars drop after a `#define` whose value contains a block comment.
 
 ## Install from Source
 

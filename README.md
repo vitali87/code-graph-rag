@@ -61,6 +61,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
+- **Patched C and C++ Grammars on Every Install**: PyPI installs now parse C and C++ with the same patched grammars as a source checkout, compiled into `cgr-graph-rs`, so the function or declaration after a `#define` whose value contains a block comment is no longer lost, and the graph gains its node and its calls. C and C++ also parse on the plain install, without the `treesitter-full` extra.
 - **Improved Code Analysis**: Refined how query captures are read, how calls are judged, and how dead code is identified and handled.
 - **Surface Definition**: Introduced a mechanism to record and enforce the public surface of code, with CI failures for deviations.
 <!-- /SECTION:latest_news -->
