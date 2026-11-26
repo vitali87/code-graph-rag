@@ -503,6 +503,10 @@ jobs:
           # even when PyPI carries a newer one in range; everything else
           # resolves unlocked.
           ./.fresh-venv/bin/python -m pip install dist/*.whl dist-rust/*.whl
+          # The treesitter-full extra, as a PyPI install resolves it: it brings
+          # PyPI's upstream C and C++ grammars, which the smoke checks the
+          # parser loader leaves aside for the patched ones in cgr-graph-rs.
+          ./.fresh-venv/bin/python -m pip install "$(echo dist/*.whl)[treesitter-full]"
 
       - name: Record resolved dependency versions
         run: ./.fresh-venv/bin/python -m pip list

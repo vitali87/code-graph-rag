@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import patch
 
 import pytest
 import yaml
 
+from codebase_rag import constants as cs
+from codebase_rag import parser_loader
 from codebase_rag.config import settings
 from codebase_rag.mcp import server as mcp_server
 from codebase_rag.tests.conftest import patch_active_model
@@ -224,3 +228,50 @@ class TestMcpServerSmokeCheck:
         monkeypatch.setattr(settings, "OLLAMA_BASE_URL", "http://127.0.0.1:9")
 
         smoke_module.check_mcp_server_lists_tools()
+
+
+class TestCrateGrammarSmokeCheck:
+    """PHASE2_FRAME.md, section 11: the built wheels must parse C and C++ with
+    the patched grammars compiled into cgr-graph-rs, even beside PyPI's
+    upstream packages, which a PyPI install used to parse them with."""
+
+    @pytest.fixture
+    def fresh_store(self) -> Iterator[None]:
+        parser_loader._reset_parser_cache()
+        with patch.dict(parser_loader._loader_cache, clear=True):
+            yield
+        parser_loader._reset_parser_cache()
+
+    def test_the_check_runs_in_the_wheel_job(self, smoke_module: ModuleType) -> None:
+        assert (
+            smoke_module.check_c_and_cpp_parse_with_the_crates_grammars
+            in smoke_module.CHECKS
+        )
+
+    def test_the_job_installs_the_upstream_grammars_beside_the_crate(self) -> None:
+        script = _job_run_script(_workflow()["jobs"][JOB_ID])
+
+        assert 'pip install "$(echo dist/*.whl)[treesitter-full]"' in script
+
+    def test_the_check_passes_on_this_install(
+        self, smoke_module: ModuleType, fresh_store: None
+    ) -> None:
+        smoke_module.check_c_and_cpp_parse_with_the_crates_grammars()
+
+    def test_c_loaded_from_elsewhere_fails_the_smoke(
+        self, smoke_module: ModuleType, fresh_store: None
+    ) -> None:
+        # RED without the check: the loader before step 9 took C from the
+        # tree-sitter-c package, upstream's on a PyPI install.
+        tree_sitter_c = pytest.importorskip("tree_sitter_c")
+        package_loaders = {cs.SupportedLanguage.C: tree_sitter_c.language}
+        real = parser_loader.language_loader
+        with (
+            patch.object(
+                parser_loader,
+                "language_loader",
+                lambda lang: package_loaders.get(lang) or real(lang),
+            ),
+            pytest.raises(smoke_module.SmokeFailure, match="did not take c"),
+        ):
+            smoke_module.check_c_and_cpp_parse_with_the_crates_grammars()

@@ -233,6 +233,32 @@ def test_the_tree_sitter_pins_move_only_by_hand(crate: str) -> None:
         assert {"dependency-name": crate} in _ignores_for("cargo", directory)
 
 
+@pytest.mark.parametrize(
+    "crate", ["tree-sitter-go", "tree-sitter-c", "tree-sitter-cpp"]
+)
+def test_a_compiled_grammar_never_moves_on_the_crate_side_alone(crate: str) -> None:
+    # Each is the release or commit uv.lock holds for its Python package
+    # (PHASE2_FRAME.md, section 11), so it moves with that side by hand.
+    for directory in (_GRAPH_RS, _GRAPH_RS_FUZZ):
+        assert {"dependency-name": crate} in _ignores_for("cargo", directory)
+
+
+@pytest.mark.parametrize("package", ["tree-sitter-c", "tree-sitter-cpp"])
+def test_the_forks_python_packages_move_only_by_hand(package: str) -> None:
+    # Fetched from git at the commits the crate compiles: a PyPI release of
+    # the upstream grammar is not a version of the fork.
+    assert {"dependency-name": package} in _ignores_for("uv", "/")
+
+
+def test_the_go_python_package_still_gets_updates() -> None:
+    # Negative: its bump arrives and fails test_grammar_pins.py until the
+    # crate moves too, as a py-tree-sitter bump does test_native_trees.py.
+    ignores = _ignores_for("uv", "/")
+    assert not any(
+        fnmatch("tree-sitter-go", str(i.get("dependency-name"))) for i in ignores
+    )
+
+
 @pytest.mark.parametrize("crate", ["pyo3", "rusqlite", "blake2", "sha2"])
 def test_the_crates_other_dependencies_still_get_updates(crate: str) -> None:
     # Negative: the hold is on the tree-sitter pair alone.
