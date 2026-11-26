@@ -310,7 +310,8 @@ class TestFingerprints:
     ) -> None:
         native = native_fingerprint(crate_grammar(name))
         assert grammar_fingerprint(_crate(name)) == native
-        assert native.node_kind_count > 0 and native.field_count > 0
+        assert native.node_kind_count > 0
+        assert native.field_count > 0
 
     @pytest.mark.parametrize("name", sorted(COMPILED))
     def test_the_highlights_query_is_the_python_packages(self, name: str) -> None:
