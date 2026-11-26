@@ -47,9 +47,11 @@ def _files(root: Path) -> list[Path]:
 
 
 def test_it_is_off_until_the_last_step() -> None:
-    # The `rust` cells turn it on for their whole session, and they and the
-    # `both` cells put a check in place (engine_modes.py), so the module's
-    # own assignments are what hold the defaults.
+    # The last step (section 13's step 10) has landed: on, with no check in
+    # place, as users run it. The `both` cells turn it off for their whole
+    # session, and they and the `rust` cells put a check in place
+    # (engine_modes.py), so the module's own assignments are what hold the
+    # defaults.
     tree = ast.parse(Path(engine_frame.__file__).read_text(encoding="utf-8"))
     defaults = {
         node.target.id: node.value.value
@@ -58,7 +60,7 @@ def test_it_is_off_until_the_last_step() -> None:
         and isinstance(node.target, ast.Name)
         and isinstance(node.value, ast.Constant)
     }
-    assert defaults == {"ENABLED": False, "CHECK": None}
+    assert defaults == {"ENABLED": True, "CHECK": None}
 
 
 def test_the_hashes_are_the_ones_the_sync_records(

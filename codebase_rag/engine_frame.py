@@ -2,10 +2,11 @@
 
 Phase 2 of the Rust rewrite moves the indexing work that does not depend on
 a language into the extension: finding the files, hashing them, telling what
-changed, the folder structure and the File nodes. It lands in steps behind
-`ENABLED`, which stays off until the last one. Until then the indexer uses
-Python's answers only, and tests hold each part to the Python code it
-replaces.
+changed, the folder structure and the File nodes. It landed in steps behind
+`ENABLED`, which the last one turned on. Python's walk, hashes and structure
+still run beside the frame's on every index, and the frame's answers are
+used only where the two agree, until phase 5 removes Python's. Tests hold
+each part to the Python code it replaces.
 
 The extension's `Engine` (rust/cgr_graph_rs/src/engine) runs its work on a
 thread pool of its own, with the interpreter lock released, and returns
@@ -74,9 +75,11 @@ from .utils.path_utils import (
     walk_eligible_files,
 )
 
-# Whether the indexer uses the frame. Off until phase 2's last step; the
+# Whether the indexer uses the frame, on since phase 2's last step. Not a
+# setting: Python's answers stand beside the frame's, and a run falls back to
+# them on any difference, so there is nothing for a user to turn off. The
 # parity tests compare the frame with the Python engine either way.
-ENABLED: bool = False
+ENABLED: bool = True
 
 
 class WalkedFile(NamedTuple):
