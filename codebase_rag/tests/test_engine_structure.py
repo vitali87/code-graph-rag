@@ -38,6 +38,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.structure_processor import StructureProcessor
 from codebase_rag.tests.conftest import _MockIngestor, create_and_run_updater
 from codebase_rag.tests.engine_modes import STRUCTURE_SHADOW_DIR_ENV
+from codebase_rag.tests.shadows import child_env
 from codebase_rag.tests.test_symlink_policy import _link, _make_undecodable, _write
 from codebase_rag.utils.path_utils import cached_resolve_posix
 
@@ -1043,6 +1044,59 @@ class TestChoosing:
 
         assert checked.structures == []
         assert _names(ingestor, cs.NodeLabel.FOLDER, cs.KEY_NAME) == ["plain", "sub"]
+
+
+# Where a run with the frame off and no check in place was reported asked
+# for its structure (#3754): after every change-detection test, in one
+# process, and in that order. Their own shadow driver, which reruns other
+# files in a process of its own, is left out.
+OFF_AND_UNCHECKED = "test_engine_structure.py::TestChoosing::test_off_and_unchecked_the_frame_is_never_asked"
+CHANGE_DETECTION_TESTS = "test_engine_change_detection.py"
+CHANGE_DETECTION_DRIVER = (
+    "test_engine_change_detection.py"
+    "::test_every_existing_incremental_sync_test_agrees_with_the_frame"
+)
+
+
+@pytest.mark.parametrize("plugins", [(), ("-p", SHADOW_PLUGIN)], ids=["", "shadowed"])
+def test_a_run_with_the_frame_off_is_unasked_after_the_change_detection_tests(
+    plugins: tuple[str, ...],
+) -> None:
+    # Also under the structure shadow, whose comparison of each File row
+    # asked the frame whatever the test had set, and failed this test with
+    # "the frame was asked" even alone.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:randomly",
+            "-n",
+            "0",
+            *plugins,
+            *(
+                (TESTS / name).relative_to(REPO_ROOT).as_posix()
+                for name in (CHANGE_DETECTION_TESTS, OFF_AND_UNCHECKED)
+            ),
+            # By its node id, which is the path from the root.
+            "--deselect",
+            (TESTS / CHANGE_DETECTION_DRIVER).relative_to(REPO_ROOT).as_posix(),
+        ],
+        cwd=REPO_ROOT,
+        env=child_env(),
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        check=False,
+        timeout=1800,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output[-8000:]
+    assert re.search(r"\b\d{2,} passed", output), output[-4000:]
 
 
 def _shadowed_test_files() -> list[str]:

@@ -18,7 +18,10 @@ section 13, step 7). Under xdist each worker counts its own share, so with
 differences there, as `<worker>.json`, for the caller to add up.
 
 Not compared: a derivation or a row while a test patches what the structure
-pass decides with or resolves paths by, or the method this plugin wraps.
+pass decides with or resolves paths by, or the method this plugin wraps; nor
+a row while a test has put its own check in place of the session's, or none
+(`engine_frame.CHECK`): that test decides whether the frame is asked, and
+one that turns it off must find it never asked.
 """
 
 from __future__ import annotations
@@ -65,8 +68,10 @@ class _Check(FramePlanCheck):
 
 @functools.wraps(_PROCESS)
 def _shadow_process(self: StructureProcessor, file_path: Path, file_name: str) -> None:
-    if StructureProcessor.process_generic_file is not _shadow_process or not (
-        FramePlanCheck.compares_structure(_CHECK)
+    if (
+        StructureProcessor.process_generic_file is not _shadow_process
+        or engine_frame.CHECK is not _CHECK
+        or not FramePlanCheck.compares_structure(_CHECK)
     ):
         _counts["skipped"] += 1
     else:
