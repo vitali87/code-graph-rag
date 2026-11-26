@@ -238,6 +238,19 @@ def test_each_run_checks_the_frame_s_structure_too(tmp_path: Path) -> None:
     assert (check.compared, check.lines) == (1, difference)
 
 
+def test_each_run_checks_the_frame_s_module_names_too(tmp_path: Path) -> None:
+    check = handoff._FrameCheck()
+    difference = [
+        '- module\tdemo.main\t{"language":"python","path":"main.py"}',
+        '+ module\tdemo.main.py\t{"language":"python","path":"main.py"}',
+    ]
+
+    assert check.compares_modules()
+    check.modules_differ(tmp_path, difference)
+
+    assert (check.compared, check.lines) == (1, difference)
+
+
 def test_the_frame_s_reading_of_the_ignore_files_is_compared(
     pinned: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

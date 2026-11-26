@@ -8424,6 +8424,11 @@ class GraphUpdater:
         structure.settle_file_rows(
             [filepath for filepath, _key, _new, _bytes in scan.changed_entries]
         )
+        # The frame's module-name plan is compared on a run whose map starts
+        # empty: one that reloaded Module rows from the graph, or kept an
+        # earlier run's, also holds names no file of this run claimed
+        # (docs/reports/PHASE2_FRAME.md, section 10).
+        modules_fresh = not self.factory.definition_processor.module_qn_to_file_path
         with Progress(
             SpinnerColumn(),
             TextColumn(ls.PROGRESS_INDEXING_LABEL),
@@ -8466,6 +8471,13 @@ class GraphUpdater:
                 )
         # A file whose tier raised never wrote its row; no later call may.
         structure.file_rows.clear()
+        # A run a file failed in is re-raised below, its map never used.
+        self._compare_module_plan(
+            eligible_files,
+            scan.changed_entries,
+            modules_fresh=modules_fresh,
+            completed=first_failure is None,
+        )
 
         self._delete_reconciled_files(deleted_keys, deleted_set)
 
@@ -8966,6 +8978,58 @@ class GraphUpdater:
                 self._pending_cache_observed_at = min(
                     self._pending_cache_observed_at, chosen.stamp
                 )
+
+    def _compare_module_plan(
+        self,
+        eligible_files: list[tuple[Path, str]],
+        parsed: Sequence[tuple[Path, str, bool, bytes]],
+        *,
+        modules_fresh: bool,
+        completed: bool,
+    ) -> None:
+        """Compare the frame's module-name plan with the module map pass 2
+        just filled from `parsed` (engine_frame.py), when it is compared.
+
+        The frame's summaries are the files the map's names are claimed by:
+        each one `_route` sends to a tree-sitter grammar, and each notebook
+        the notebook reader took as Python, which only reading it tells,
+        each at its place in the order the run parses them: the plan's,
+        after any file outside it, as a single-file run parses the files it
+        queued beside its target first. The map is Python's either way.
+        Only a run whose map started empty (`modules_fresh`) and in which no
+        file failed (`completed`) is compared.
+        """
+        if not (modules_fresh and completed) or not engine_frame.modules_compared():
+            return
+        planned = {key: index for index, (_path, key) in enumerate(eligible_files)}
+        outside = [key for _fp, key, _new, _b in parsed if key not in planned]
+        order = {key: index for index, key in enumerate(outside)}
+        order.update((key, len(outside) + index) for key, index in planned.items())
+        notebooks = {
+            path for path, _language in self._parsed_files if is_notebook_path(path)
+        }
+        claims: list[engine_frame.ModuleClaim] = []
+        for filepath, key, _new, _bytes in parsed:
+            index = order[key]
+            match self._route(filepath):
+                case FileRoute(tier=cs.FileTier.TREE_SITTER, language=language) if (
+                    language is not None
+                ):
+                    claims.append(engine_frame.ModuleClaim(index, key, language))
+                case FileRoute(tier=cs.FileTier.NOTEBOOK) if filepath in notebooks:
+                    claims.append(
+                        engine_frame.ModuleClaim(
+                            index, key, cs.SupportedLanguage.PYTHON
+                        )
+                    )
+        engine_frame.modules_for_run(
+            self.repo_path,
+            self.project_name,
+            claims,
+            self.exclude_paths,
+            self.unignore_paths,
+            self.factory.definition_processor.module_qn_to_file_path,
+        )
 
     def _keys_deleted_before_parse(
         self,

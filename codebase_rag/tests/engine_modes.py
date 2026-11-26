@@ -20,17 +20,21 @@ The `--engine-mode` option (docs/reports/PHASE1_SEAMS.md, section 2):
 The engine's frame (docs/reports/PHASE2_FRAME.md, section 4) is checked in
 both: every index a test makes compares the frame's file plan with Python's
 walk, its change detection (the in-sync check, the files new, changed and
-deleted, the hash cache and folder times it would publish), and its
-structure (the Package and Folder rows, the map of each folder's package,
-and the File rows of the files indexed) with Python's, whatever language is
-on Rust, at no second index, and a difference fails the test as above.
-`both` keeps Python's answers for the run; `rust` turns the frame on
-(`engine_frame.ENABLED`), so the run goes on with the frame's. A test that
-patches the built-in names or endings the frame holds copies of, or what
-Python's walk decides with or reads files by, is not compared; nor is a
-run's change detection while a test patches what Python's decides with,
-reads the state files by, or its clock, nor its structure while a test
-patches what Python's structure pass decides with.
+deleted, the hash cache and folder times it would publish), its structure
+(the Package and Folder rows, the map of each folder's package, and the
+File rows of the files indexed) and, on a run whose module map starts
+empty, its module-name plan (which file claims each module's name) with
+Python's, whatever language is on Rust, at no second index, and a
+difference fails the test as above. `both` keeps Python's answers for the
+run; `rust` turns the frame on (`engine_frame.ENABLED`), so the run goes on
+with the frame's, but for the module names, which stay Python's until phase
+3. A test that patches the built-in names or endings the frame holds copies
+of, or what Python's walk decides with or reads files by, is not compared;
+nor is a run's change detection while a test patches what Python's decides
+with, reads the state files by, or its clock, nor its structure while a
+test patches what Python's structure pass decides with, nor its module
+names while a test patches what Python names modules by or parses a file
+into the map through.
 
 While the build can index no language on Rust (`rust_engine_languages()` is
 empty), `rust` runs exactly what `python` runs and `both` indexes nothing
@@ -96,8 +100,9 @@ PARITY_DIFF_DIR_ENV = "CGR_PARITY_DIFF_DIR"
 # Where `change_shadow.py`'s processes each write what they compared, for the
 # test that runs it under xdist to add up. Read by that plugin only.
 CHANGE_SHADOW_DIR_ENV = "CGR_CHANGE_SHADOW_DIR"
-# The same for `structure_shadow.py`.
+# The same for `structure_shadow.py`, and for `module_shadow.py`.
 STRUCTURE_SHADOW_DIR_ENV = "CGR_STRUCTURE_SHADOW_DIR"
+MODULE_SHADOW_DIR_ENV = "CGR_MODULE_SHADOW_DIR"
 
 # Every per-file pass swallows all exceptions so one bad file cannot abandon a
 # whole index, and only logs. Nothing looked at those logs, so a bug inside a
@@ -228,6 +233,50 @@ STRUCTURE_METHODS = (
     "file_row",
 )
 STRUCTURE_PATH_METHODS = ("exists", "resolve", "relative_to", "is_file")
+FRAME_MODULES_HEADING = (
+    "The frame's module names differ from Python's on {repo}: {python} lines "
+    "only in Python's, {rust} only in the frame's"
+)
+# What Python's module naming decides with, each where it is looked up: in
+# `parsers/definition_processor.py`, `language_spec.py` and
+# `utils/path_utils.py`; and what a run parses a file into the module map
+# through, on `DefinitionProcessor` and `GraphUpdater` and in
+# `graph_updater.py`.
+MODULE_DEFINITION_FUNCTIONS = (
+    "has_other_language_sibling",
+    "own_extension_module_qn",
+    "base_module_qn",
+    "declaration_extension",
+    "has_implementation_sibling",
+    "is_notebook_path",
+    "parse_with_preproc_recovery",
+    "grammar_bytes",
+)
+MODULE_LANGUAGE_FUNCTIONS = (
+    "module_extension",
+    "module_stem",
+    "should_skip_path",
+    "get_language_for_extension",
+    "_directory_names",
+)
+MODULE_PATH_FUNCTIONS = (
+    "module_stem",
+    "should_skip_path",
+    "is_symlink_entry",
+    "python_stub_has_implementation",
+)
+MODULE_DEFINITION_METHODS = (
+    "process_file",
+    "_disambiguate_module_qn",
+    "_parse_file_root",
+)
+MODULE_UPDATER_FUNCTIONS = (
+    "get_language_spec",
+    "python_stub_has_implementation",
+    "is_notebook_path",
+    "read_notebook",
+)
+MODULE_UPDATER_METHODS = ("_process_single_file", "_process_notebook", "_route")
 REPORT_SECTION = "engine comparison"
 TEARDOWN = "teardown"
 FUNCTION_SCOPE = "function"
@@ -516,6 +565,28 @@ def _structure_functions() -> tuple[object, ...]:
     )
 
 
+def _module_functions() -> tuple[object, ...]:
+    """What Python's module naming decides with, what a run parses a file
+    into the module map through, and the calls beneath them that the walk
+    does not share."""
+    from codebase_rag import graph_updater, language_spec
+    from codebase_rag.graph_updater import GraphUpdater
+    from codebase_rag.parsers import definition_processor
+    from codebase_rag.parsers.definition_processor import DefinitionProcessor
+    from codebase_rag.utils import path_utils
+
+    return (
+        *(getattr(definition_processor, name) for name in MODULE_DEFINITION_FUNCTIONS),
+        *(getattr(language_spec, name) for name in MODULE_LANGUAGE_FUNCTIONS),
+        *(getattr(path_utils, name) for name in MODULE_PATH_FUNCTIONS),
+        *(DefinitionProcessor.__dict__[name] for name in MODULE_DEFINITION_METHODS),
+        *(getattr(graph_updater, name) for name in MODULE_UPDATER_FUNCTIONS),
+        *(GraphUpdater.__dict__[name] for name in MODULE_UPDATER_METHODS),
+        os.listdir,
+        Path.is_file,
+    )
+
+
 def frame_report(
     repo_path: Path, difference: list[str], heading: str = FRAME_REPORT_HEADING
 ) -> str:
@@ -544,8 +615,9 @@ class FramePlanCheck:
     copies and the real file system. A run's change detection is left out
     the same way while a test patches what it decides with, reads the
     state files by, its clock or the platform it takes itself to run on,
-    and its structure while a test patches what the structure pass decides
-    with or resolves paths by.
+    its structure while a test patches what the structure pass decides
+    with or resolves paths by, and its module names while a test patches
+    what Python names modules by or parses a file into the map through.
     """
 
     def __init__(self, file_report: Callable[[str], None]) -> None:
@@ -553,6 +625,7 @@ class FramePlanCheck:
         self._walk = _walk_functions()
         self._changes = _change_functions()
         self._structure = _structure_functions()
+        self._modules = _module_functions()
 
     def compares(self) -> bool:
         current = _walk_functions()
@@ -584,6 +657,17 @@ class FramePlanCheck:
     def structure_differs(self, repo_path: Path, difference: Sequence[str]) -> None:
         self._file_report(
             frame_report(repo_path, list(difference), FRAME_STRUCTURE_HEADING)
+        )
+
+    def compares_modules(self) -> bool:
+        current = _module_functions()
+        return self.compares() and all(
+            now is found for now, found in zip(current, self._modules, strict=True)
+        )
+
+    def modules_differ(self, repo_path: Path, difference: Sequence[str]) -> None:
+        self._file_report(
+            frame_report(repo_path, list(difference), FRAME_MODULES_HEADING)
         )
 
 

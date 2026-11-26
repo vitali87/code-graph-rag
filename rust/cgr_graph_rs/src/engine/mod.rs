@@ -17,10 +17,13 @@
 //! folder, the hash cache and folder times, the in-sync check, and each
 //! run's new, changed and deleted files. `structure` is the structure pass:
 //! the Package and Folder rows, the map of each folder's package, and the
-//! File rows, built as `rows` that Python's ingestor writes.
+//! File rows, built as `rows` that Python's ingestor writes. `merge` folds
+//! the files' summaries into the project's index in walk order, and so
+//! plans which file claims each module's name.
 
 pub mod discover;
 pub mod ignore;
+pub mod merge;
 #[cfg(feature = "python")]
 pub mod python;
 pub mod rows;
