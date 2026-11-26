@@ -55,6 +55,15 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # A grammar cgr-graph-rs compiles in moves with its crate pin in one pull
+    # request (AGENTS.md, "Bumping a compiled grammar"), as tree-sitter moves
+    # with its crate: a tree-sitter-go bump arrives here alone and fails
+    # test_grammar_pins.py until the crate's pin moves in the same pull
+    # request. The C and C++ grammars are the forks, fetched from git and
+    # moved by hand on both sides.
+    ignore:
+      - dependency-name: "tree-sitter-c"
+      - dependency-name: "tree-sitter-cpp"
 
   # The eval oracles and the Go/C# frontend helpers are built from these on
   # demand rather than installed with the package, so monthly is enough.
@@ -106,6 +115,12 @@ updates:
       # grammar the crate's tests parse with must be one that runtime loads.
       - dependency-name: "tree-sitter"
       - dependency-name: "tree-sitter-python"
+      # The grammars compiled in (src/grammars) are the releases or commits
+      # uv.lock holds for their Python packages, so the crate side never
+      # moves alone either: it arrives with the Python side's bump, by hand.
+      - dependency-name: "tree-sitter-go"
+      - dependency-name: "tree-sitter-c"
+      - dependency-name: "tree-sitter-cpp"
 
   - package-ecosystem: "gomod"
     directory: "/codebase_rag/parsers/go_frontend/gotypes"

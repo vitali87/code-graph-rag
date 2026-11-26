@@ -272,6 +272,9 @@ jobs:
           uv sync --frozen --extra test --group dev --no-install-package cgr-graph-rs
           uv pip install wheel/*.whl
 
+      # test_grammar_pins.py: the grammars this wheel compiles in are the
+      # pinned ones, py-tree-sitter reads and parses with them as the crate
+      # does, and the parser loader takes C and C++ from them.
       - name: Compare the Rust paths with Python
         shell: bash
         run: |
@@ -279,7 +282,8 @@ jobs:
           uv run --no-sync pytest --tb=short \
             codebase_rag/tests/test_embedded_graph_rust.py \
             codebase_rag/tests/test_embedded_graph_rust_parser.py \
-            codebase_rag/tests/test_embedded_graph_native.py
+            codebase_rag/tests/test_embedded_graph_native.py \
+            codebase_rag/tests/test_grammar_pins.py
 
   # No runner runs musl, so the musl wheels answer the same questions as the
   # glibc wheel inside Alpine, with nothing installed beside them.

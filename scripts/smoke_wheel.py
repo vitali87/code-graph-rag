@@ -144,12 +144,64 @@ def check_mcp_server_lists_tools() -> None:
     print(f"      mcp {version('mcp')}: initialize + tools/list -> {len(names)} tools")
 
 
+# The shape of issue #555: a block comment between two tokens of a macro's
+# value. The upstream grammars lose what follows (an ERROR, and in C++ the
+# function after it); the forks compiled into cgr-graph-rs keep it.
+COMMENTED_MACRO = (
+    b"#define TEN(x)   \\\n  do {           \\\n    f(x);        \\\n"
+    b"    /*comment*/; \\\n  } while (0)\n\nvoid after(void) {}\n"
+)
+PATCHED_KINDS = ["preproc_function_def", "function_definition"]
+
+
+def check_c_and_cpp_parse_with_the_crates_grammars() -> None:
+    """C and C++ must load from cgr-graph-rs, as the patched forks.
+
+    PyPI cannot install the forks from git, so a PyPI install parsed C and
+    C++ with the upstream grammars, which drop what follows a `#define` whose
+    value holds a block comment (#555). The parser loader now takes both from
+    the grammars compiled into cgr-graph-rs, on every install. This job
+    installs the treesitter-full extra, so the upstream packages are present
+    too, and any loader that reached for them fails here: by the language
+    object's origin, and by how it parses the macro.
+    """
+    from codebase_rag import constants as cs
+    from codebase_rag.crate_grammars import crate_grammar, crate_language
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, queries = load_parsers()
+    crate_version = version("cgr-graph-rs")
+    for lang in sorted(cs.CRATE_GRAMMAR_LANGUAGES):
+        grammar, compiled = crate_grammar(lang), crate_language(lang)
+        if grammar is None or compiled is None:
+            raise SmokeFailure(
+                f"cgr-graph-rs {crate_version} compiles no {lang} grammar"
+            )
+        if lang not in queries or queries[lang][cs.QUERY_LANGUAGE] != compiled:
+            raise SmokeFailure(
+                f"the parser loader did not take {lang} from cgr-graph-rs "
+                f"{crate_version}; it would parse with another grammar"
+            )
+        root = parsers[lang].parse(COMMENTED_MACRO).root_node
+        kinds = [child.type for child in root.named_children]
+        if root.has_error or kinds != PATCHED_KINDS:
+            raise SmokeFailure(
+                f"{lang} parsed the commented macro as {kinds}, not "
+                f"{PATCHED_KINDS}: not the patched grammar (#555)"
+            )
+        print(
+            f"      {lang}: from cgr-graph-rs {crate_version} "
+            f"(fork commit {grammar.pin[:12]}), the macro's function kept"
+        )
+
+
 CHECKS = (
     check_package_imports,
     check_cli_entry_point,
     check_agent_run_result_usage_is_a_property,
     check_agent_loop_reports_usage,
     check_mcp_server_lists_tools,
+    check_c_and_cpp_parse_with_the_crates_grammars,
 )
 
 

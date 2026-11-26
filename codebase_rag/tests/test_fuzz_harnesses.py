@@ -215,6 +215,24 @@ def test_parse_harness_runs_every_seed(parse_harness: ModuleType) -> None:
         parse_harness.fuzz_parse_source(seed.read_bytes())
 
 
+def _selecting_python(harness: ModuleType, payload: bytes) -> bytes:
+    """`payload` with its last byte, the harness' language selector, pointing
+    at Python in this install's language list.
+
+    The corpus is built on a full install. One with fewer grammars sorts fewer
+    languages, so the same byte picks another: a base install parses Python,
+    C and C++ (C and C++ from cgr-graph-rs), and these seeds' byte, Python's
+    index among sixteen, picks C++ among three. With one language the harness
+    reads no selector byte at all.
+    """
+    from codebase_rag import constants as cs
+
+    languages = [str(language) for language in harness._LANGUAGES]
+    if len(languages) == 1:
+        return payload
+    return payload[:-1] + bytes([languages.index(cs.SupportedLanguage.PYTHON)])
+
+
 def test_known_defect_seeds_are_still_detected(parse_harness: ModuleType) -> None:
     """The other half of the exemption above.
 
@@ -227,7 +245,7 @@ def test_known_defect_seeds_are_still_detected(parse_harness: ModuleType) -> Non
     for name in sorted(_KNOWN_DEFECT_SEEDS):
         seed = FUZZ_DIR / "corpus" / "fuzz_parse_source" / name
         assert seed.exists(), f"missing seed {name}; run fuzz/build_corpus.py"
-        payload = seed.read_bytes()
+        payload = _selecting_python(parse_harness, seed.read_bytes())
 
         parse_harness._TRUNCATED_NAMES.clear()
         parse_harness.fuzz_parse_source(payload)

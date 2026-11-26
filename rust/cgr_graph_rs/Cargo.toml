@@ -1,6 +1,6 @@
 [package]
 name = "cgr_graph_rs"
-version = "0.1.15"
+version = "0.1.16"
 edition = "2021"
 description = "Native acceleration for code-graph-rag: its embedded graph, and its indexer's tree walks"
 license = "MIT"
@@ -36,6 +36,19 @@ sha2 = "0.11"
 # the two together, as AGENTS.md describes; `TreeBridge` refuses any other
 # py-tree-sitter version, and test_native_trees.py any other pair of pins.
 tree-sitter = "=0.27.2"
+# The grammars compiled in (src/grammars, PHASE2_FRAME.md section 11), each
+# exactly as uv.lock holds its Python package: Go's release, and the patched
+# C and C++ forks (issues #555 and #2424) at their commits, from git because
+# crates.io has only the unpatched ones. The parser loader hands py-tree-sitter
+# the C and C++ grammars compiled here, so both engines parse them alike on
+# every install. Each moves with its Python pin, by hand (AGENTS.md);
+# test_grammar_pins.py fails while the two disagree.
+tree-sitter-c = { git = "https://github.com/vitali87/tree-sitter-c", rev = "fa327ad98f847f8173fc46926be4165c7971f960" }
+tree-sitter-cpp = { git = "https://github.com/vitali87/tree-sitter-cpp", rev = "b4a7be2f62f36dd460a14b2d1728d42d81d2c486" }
+tree-sitter-go = "=0.25.0"
+# The grammars' entry points (`LanguageFn`). Already in the build through
+# tree-sitter, so this adds no crate.
+tree-sitter-language = "0.1"
 
 # The engine's state files (src/engine/state): `O_NOFOLLOW` for the temporary
 # cache, and `ELOOP` among the errors that say a path is gone. Already linked

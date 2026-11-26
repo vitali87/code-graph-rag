@@ -298,6 +298,13 @@ class SupportedLanguage(StrEnum):
 # The languages the C/C++ frontends cover (issue #1524 re-runs them per file).
 C_FAMILY_LANGUAGES = frozenset({SupportedLanguage.C, SupportedLanguage.CPP})
 
+# The languages py-tree-sitter parses with the grammar compiled into
+# cgr-graph-rs (crate_grammars.py), never with a Python package's: the
+# patched C and C++ forks (issues #555 and #2424), which a PyPI install cannot
+# fetch from git, so both engines parse them alike on every install
+# (docs/reports/PHASE2_FRAME.md, section 11).
+CRATE_GRAMMAR_LANGUAGES = frozenset({SupportedLanguage.C, SupportedLanguage.CPP})
+
 # Languages whose definitions store `positional_params` with the optionality
 # the signature declares (issue #2517); Python stores CPython's positional
 # names instead. A call into one is judged by the count it passes.

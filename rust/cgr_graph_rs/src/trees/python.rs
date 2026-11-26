@@ -37,7 +37,7 @@ use super::interface::{
     callable_parameter_indices, interface_fingerprint, Flavor, InterfaceRules, LanguageRules, ScanRules,
 };
 use super::scopes::{inner_scope_only_names, scope_facts, ScopeRules};
-use super::{anchor_hash, ast_fingerprint, kind, NodeMap, NodeTypes, Rules, Source, DIGEST_SIZE};
+use super::{anchor_hash, ast_fingerprint, describe, Described, NodeMap, NodeTypes, Rules, Source, DIGEST_SIZE};
 
 /// The py-tree-sitter release whose object layout and C runtime this was
 /// checked against; any other turns the bridge off.
@@ -55,10 +55,6 @@ pyo3::create_exception!(
     PyTypeError,
     "The bridge cannot read this node exactly; run the Python twin."
 );
-
-/// One node as `describe` reports it: its symbol, type, named flag, byte
-/// range, start and end points, child count and field name.
-type Described = (u16, String, bool, usize, usize, (usize, usize), (usize, usize), usize, Option<String>);
 
 /// `scope_facts` as Python receives it: parameters, plain names,
 /// (name, import paths) pairs, declared names and `nonlocal` names.
@@ -286,33 +282,7 @@ impl TreeBridge {
     /// Every node under `node` in a cursor's pre-order, as this runtime reads
     /// it, for comparing with what py-tree-sitter reports.
     fn describe(&self, node: &Bound<'_, PyAny>) -> PyResult<Vec<Described>> {
-        self.with_node(node, |root, _| {
-            let mut out = Vec::new();
-            let mut cursor = root.walk();
-            loop {
-                let n = cursor.node();
-                let (start, end) = (n.start_position(), n.end_position());
-                out.push((
-                    n.kind_id(),
-                    String::from_utf8_lossy(kind(n)).into_owned(),
-                    n.is_named(),
-                    n.start_byte(),
-                    n.end_byte(),
-                    (start.row, start.column),
-                    (end.row, end.column),
-                    n.child_count() as usize,
-                    cursor.field_name().map(str::to_owned),
-                ));
-                if cursor.goto_first_child() {
-                    continue;
-                }
-                while !cursor.goto_next_sibling() {
-                    if !cursor.goto_parent() {
-                        return out;
-                    }
-                }
-            }
-        })
+        self.with_node(node, |root, _| describe(root))
     }
 }
 

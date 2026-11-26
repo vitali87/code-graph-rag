@@ -246,7 +246,7 @@ wheels = [
 
 [[package]]
 name = "cgr-graph-rs"
-version = "0.1.15"
+version = "0.1.16"
 source = { directory = "rust/cgr_graph_rs" }
 
 [[package]]
@@ -563,7 +563,7 @@ requires-dist = [
     { name = "tree-sitter-c-sharp", marker = "extra == 'treesitter-full'", specifier = ">=0.23.5" },
     { name = "tree-sitter-cpp", marker = "extra == 'treesitter-full'", git = "https://github.com/vitali87/tree-sitter-cpp?rev=b4a7be2f62f36dd460a14b2d1728d42d81d2c486" },
     { name = "tree-sitter-dart", marker = "extra == 'treesitter-full'", specifier = "==0.1.0" },
-    { name = "tree-sitter-go", marker = "extra == 'treesitter-full'", specifier = ">=0.23.4" },
+    { name = "tree-sitter-go", marker = "extra == 'treesitter-full'", specifier = "==0.25.0" },
     { name = "tree-sitter-java", marker = "extra == 'treesitter-full'", specifier = ">=0.23.5" },
     { name = "tree-sitter-javascript", marker = "extra == 'treesitter-full'", specifier = ">=0.23.1" },
     { name = "tree-sitter-julia", marker = "extra == 'treesitter-full'", specifier = ">=0.23.1" },
