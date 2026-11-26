@@ -5,7 +5,8 @@
 //! `node.type` and `node.text` crosses into C and allocates a Python object.
 //! The functions here walk the same tree in Rust instead. They are given the
 //! very `TSNode` the Python `Node` holds (`python` says how it is borrowed),
-//! so nothing is parsed twice and no grammar is compiled into this crate.
+//! so nothing is parsed twice, and they need no grammar of their own: the
+//! tree comes with the one it was parsed with.
 //!
 //! Each function is a port of the Python function of the same name and
 //! returns the same value, byte for byte:
@@ -134,6 +135,41 @@ pub fn kind(node: Node) -> &'static [u8] {
         return &[];
     }
     unsafe { CStr::from_ptr(name) }.to_bytes()
+}
+
+/// One node as `describe` reports it: its symbol, type, named flag, byte
+/// range, start and end points (row, column), child count and field name.
+pub type Described = (u16, String, bool, usize, usize, (usize, usize), (usize, usize), usize, Option<String>);
+
+/// Every node under `root`, `root` first, in a cursor's pre-order, as this
+/// runtime reads it: what `codebase_rag/parsers/native_trees.py`'s
+/// `describe` reports for the same tree through py-tree-sitter.
+pub fn describe(root: Node) -> Vec<Described> {
+    let mut out = Vec::new();
+    let mut cursor = root.walk();
+    loop {
+        let n = cursor.node();
+        let (start, end) = (n.start_position(), n.end_position());
+        out.push((
+            n.kind_id(),
+            String::from_utf8_lossy(kind(n)).into_owned(),
+            n.is_named(),
+            n.start_byte(),
+            n.end_byte(),
+            (start.row, start.column),
+            (end.row, end.column),
+            n.child_count() as usize,
+            cursor.field_name().map(str::to_owned),
+        ));
+        if cursor.goto_first_child() {
+            continue;
+        }
+        while !cursor.goto_next_sibling() {
+            if !cursor.goto_parent() {
+                return out;
+            }
+        }
+    }
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {

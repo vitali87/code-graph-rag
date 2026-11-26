@@ -67,3 +67,45 @@ needs, with the moved test's new id when an added test has the same name.
 Write `reason` and `pull_request` yourself. Never delete an entry to quiet
 the check; the one exception is a test that is back, whose entry the check
 calls stale.
+
+## Bumping a compiled grammar
+
+`rust/cgr_graph_rs/src/grammars` compiles Go's grammar and the patched C and
+C++ forks (#555, #2424) into the crate, each at exactly the release or commit
+`uv.lock` holds for its Python package, and the parser loader hands
+py-tree-sitter the C and C++ ones on every install
+(`codebase_rag/crate_grammars.py`). So each grammar's two sides move together,
+in one pull request:
+
+| Pin | Where |
+|---|---|
+| the Python package | its exact pin in `treesitter-full` in `pyproject.toml`, and for a fork its `rev` in `[tool.uv.sources]` |
+| the crate | `tree-sitter-<lang>` in `rust/cgr_graph_rs/Cargo.toml`: `=X`, or the fork's `git` and `rev` |
+| what the build reports | `pin` in `GRAMMARS` in `rust/cgr_graph_rs/src/grammars/mod.rs` |
+
+To move one:
+
+1. For Go, take the crates.io release with the PyPI release's version. For C
+   or C++, rebase the fork, give the new commit a tag of its own so no push
+   can take it away (the tag `code-graph-rag-pin` holds the current one,
+   #2424), and use that commit on both sides. A fork's `treesitter-full` pin
+   is the version its `pyproject.toml` declares.
+2. Update the three places above, then run `uv lock`, and `cargo update -p
+   <crate>` in both `rust/cgr_graph_rs` and `rust/cgr_graph_rs/fuzz`.
+3. Bump the crate's own version as for any change to the library (see
+   "Bumping tree-sitter", step 4) and regenerate its licences with
+   `python scripts/generate_rust_licenses.py`.
+4. Run `codebase_rag/tests/test_grammar_pins.py`, `cargo test --manifest-path
+   rust/cgr_graph_rs/Cargo.toml` and `scripts/reference_graphs.py check`. A
+   new grammar can change a graph: the pull request then records the graphs
+   again and says why each line moved.
+
+`test_grammar_pins.py` fails while the two sides disagree, and also when one
+version's Python package and crate hold different grammars: it compares their
+fingerprints (ABI, node-kind, field and parse-state counts, and a hash of the
+kind and field names) and parses its samples with both. Dependabot leaves the
+crates and the forks alone. It still bumps `tree-sitter-go` in `pyproject.toml`,
+and that pull request fails the test until steps 1 to 4 are done. A grammar
+whose crate is named differently from its Python package (SQL's is
+`tree-sitter-sequel`, Markdown's `tree-sitter-md`) gets both names in that
+test's `COMPILED`.

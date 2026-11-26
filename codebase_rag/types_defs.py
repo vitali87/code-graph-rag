@@ -385,6 +385,25 @@ type DescribedNode = tuple[
 ]
 
 
+# A grammar's structure (rust/cgr_graph_rs/src/grammars): its ABI version, its
+# name and semantic version (None before ABI 15), its node-kind, field and
+# parse-state counts, and the sha256 of its kind and field names.
+class GrammarFingerprint(NamedTuple):
+    abi_version: int
+    name: str | None
+    semantic_version: tuple[int, int, int] | None
+    node_kind_count: int
+    field_count: int
+    parse_state_count: int
+    digest: str
+
+
+# `Grammar.fingerprint` as Rust returns it, the fields in that order.
+type NativeGrammarFingerprint = tuple[
+    int, str | None, tuple[int, int, int] | None, int, int, int, str
+]
+
+
 class NodeType(StrEnum):
     FUNCTION = "Function"
     METHOD = "Method"

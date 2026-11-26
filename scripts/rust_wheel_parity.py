@@ -2,7 +2,8 @@
 """Check a cgr-graph-rs wheel against another on a graph both read.
 
 `record DIR` builds a small call graph with code-graph-rag's embedded graph
-and stores what the installed extension answers for every ported procedure.
+and stores what the installed extension answers for every ported procedure,
+and how it parses a source with each grammar it compiles in.
 `check DIR` asks the extension installed where it runs the same questions,
 and needs nothing but the extension and the standard library, so it runs in
 a bare container for a libc no runner provides (musl).
@@ -30,6 +31,15 @@ PROCEDURES = (
     "betweenness_centrality.get",
 )
 JSON_SAMPLE = {"k": [1, 2.5, None, True, "é"]}
+# A source per compiled grammar (rust/cgr_graph_rs/src/grammars), each
+# reaching its external scanner where it has one, so every wheel is asked to
+# parse with the grammars it compiles in and report their structure.
+GRAMMAR = "Grammar"
+GRAMMAR_SAMPLES = {
+    "c": b"#define M(x) do { f(x); /* c */ } while (0)\nint after(void) { return M(1); }\n",
+    "cpp": b'template <class T> auto f(T t) { return R"(raw)" + t; }\nclass C { int m() const; };\n',
+    "go": b"package p\n\nfunc F[T any](xs []T) int {\n\treturn len(xs)\n}\n",
+}
 NODES = (
     "UNWIND range(1, 60) AS i "
     "CREATE (:Function {qualified_name: 'f' + toString(i), i: i})"
@@ -56,6 +66,12 @@ def _answers(reader, version: str | None) -> dict[str, str]:
         name: repr(reader.run_procedure(version, name, [], None)) for name in PROCEDURES
     }
     answers["render_json"] = _extension().render_json(JSON_SAMPLE, True)
+    grammar_type = getattr(_extension(), GRAMMAR)
+    for name, source in GRAMMAR_SAMPLES.items():
+        grammar = grammar_type(name)
+        answers[f"grammar {name}"] = repr(
+            (grammar.pin, grammar.fingerprint(), grammar.describe(source))
+        )
     return answers
 
 

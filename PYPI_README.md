@@ -69,10 +69,9 @@ To run code newer than the latest release, install from git with uv:
 uv tool install "code-graph-rag[treesitter-full,ast-grep] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
 
-Use uv for this: it applies the project's `[tool.uv.sources]`, which build the C
-and C++ grammars from forks that keep the declarations upstream drops after a
-`#define` whose value contains a block comment. `pip` ignores those sources and
-installs the upstream grammars.
+Every install, from PyPI or from git, parses C and C++ with the patched grammars
+compiled into `cgr-graph-rs`, which keep the declarations the upstream grammars
+drop after a `#define` whose value contains a block comment.
 
 To upgrade, rerun the install with `--upgrade` and the extras you chose, for
 example `pip install --upgrade 'code-graph-rag[treesitter-full,ast-grep]'`. With uv or pipx,

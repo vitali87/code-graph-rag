@@ -585,6 +585,17 @@ FRAME_RESOLVE_LOOP_RAISES_BEFORE = (3, 13)
 # module-name plan, compared as the `module` lines of `index.txt`.
 EG_RUST_MODULE_NAMING = "ModuleNaming"
 EG_RUST_MODULE_PLAN = "module_plan"
+# The grammars compiled into it (crate_grammars.py), which an extension from
+# before phase 2's step 9 lacks, and the method that hands one to
+# py-tree-sitter, as a grammar package's `language` does.
+EG_RUST_GRAMMAR = "Grammar"
+EG_RUST_GRAMMAR_LANGUAGE = "language"
+# How a grammar fingerprint's digest writes a name (src/grammars/mod.rs): its
+# UTF-8 length in 4 big-endian bytes, then the bytes; a missing name is the
+# length 0xFFFFFFFF alone.
+GRAMMAR_FP_LENGTH_BYTES = 4
+GRAMMAR_FP_BYTE_ORDER = "big"
+GRAMMAR_FP_MISSING_NAME = 0xFFFFFFFF
 
 
 # Bridge methods a build from before the scope walks, or from before the

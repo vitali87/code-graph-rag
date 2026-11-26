@@ -26,6 +26,7 @@ pub mod deadline;
 mod decode;
 pub mod engine;
 pub mod formats;
+pub mod grammars;
 pub mod ingest;
 pub mod json_text;
 #[cfg(feature = "python")]
@@ -554,6 +555,7 @@ pub(crate) mod python {
         crate::trees::python::register(m)?;
         crate::formats::python::register(m)?;
         crate::engine::python::register(m)?;
+        crate::grammars::python::register(m)?;
         Ok(())
     }
 }
