@@ -10,7 +10,7 @@ use super::super::rows::{ContainedRow, FILE, FOLDER, PACKAGE, PROJECT};
 use super::super::state::resolve;
 use super::super::tests::Scratch;
 use super::super::Engine;
-use super::{suffix, Structure};
+use super::{suffix, CaseTable, PathRules, Structure};
 
 const PROJECT_NAME: &str = "proj";
 
@@ -34,7 +34,13 @@ fn touch(root: &Path, rel: &str) {
 fn structure_on(threads: usize, root: &Path, rules: &IgnoreRules) -> Structure {
     Engine::new(threads)
         .unwrap()
-        .structure(root.as_os_str(), PROJECT_NAME, &markers(), rules)
+        .structure(
+            root.as_os_str(),
+            PROJECT_NAME,
+            &markers(),
+            rules,
+            &PathRules::default(),
+        )
         .unwrap()
 }
 
@@ -76,16 +82,10 @@ fn folders_come_in_python_s_path_order_part_by_part() {
     let found = structure(root);
 
     // `a/b` before `a-b`, though `a-b` sorts first as a string; upper case
-    // before lower; by code point; the root first, as `.`.
-    let expected = if cfg!(windows) {
-        vec![
-            ".", "a", "a/b", "a/b/c", "a-b", "a-b/x", "a.b", "a_b", "B", "z", "é", "中文", "🎉",
-        ]
-    } else {
-        vec![
-            ".", "B", "a", "a/b", "a/b/c", "a-b", "a-b/x", "a.b", "a_b", "z", "é", "中文", "🎉",
-        ]
-    };
+    // before lower, compared exactly; by code point; the root first, as `.`.
+    let expected = [
+        ".", "B", "a", "a/b", "a/b/c", "a-b", "a-b/x", "a.b", "a_b", "z", "é", "中文", "🎉",
+    ];
     assert_eq!(keys(&found), expected);
     // The root gets no Folder row; every other plain folder gets one.
     assert_eq!(found.rows.len(), expected.len() - 1);
@@ -192,10 +192,13 @@ fn a_pattern_python_refuses_is_refused() {
     fs::create_dir_all(scratch.0.join("a")).unwrap();
     let rules = IgnoreRules::new(["[z-a]"], [""; 0]);
 
-    let found =
-        Engine::new(1)
-            .unwrap()
-            .structure(scratch.0.as_os_str(), PROJECT_NAME, &markers(), &rules);
+    let found = Engine::new(1).unwrap().structure(
+        scratch.0.as_os_str(),
+        PROJECT_NAME,
+        &markers(),
+        &rules,
+        &PathRules::default(),
+    );
 
     assert!(matches!(found, Err(PatternError::BadRange { .. })));
 }
@@ -218,9 +221,18 @@ fn any_number_of_threads_gives_the_same_structure() {
 }
 
 fn file_rows(root: &Path, found: &Structure, paths: &[PathBuf]) -> Vec<Option<ContainedRow>> {
+    file_rows_under(root, found, paths, &PathRules::default())
+}
+
+fn file_rows_under(
+    root: &Path,
+    found: &Structure,
+    paths: &[PathBuf],
+    rules: &PathRules,
+) -> Vec<Option<ContainedRow>> {
     Engine::new(2)
         .unwrap()
-        .file_rows(root, PROJECT_NAME, &found.elements, paths, false)
+        .file_rows(root, PROJECT_NAME, &found.elements, paths, rules)
 }
 
 #[test]
@@ -337,4 +349,94 @@ fn the_suffix_is_python_s_before_and_from_3_14() {
         assert_eq!(suffix(name, false), before, "{name}");
         assert_eq!(suffix(name, true), after, "{name}");
     }
+}
+
+/// A few lines of `str.lower`'s table, as a Python whose Unicode lowers
+/// fewer letters than Rust's would hold it: U+A7CB is a capital Rust's
+/// Unicode lowers and Python 3.13's does not.
+fn case_table() -> CaseTable {
+    CaseTable::new(
+        [
+            ('B', "b"),
+            ('\u{c4}', "\u{e4}"),
+            ('\u{391}', "\u{3b1}"),
+            ('\u{3a3}', "\u{3c3}"),
+            ('\u{130}', "i\u{307}"),
+        ]
+        .map(|(upper, lower)| (upper, lower.to_owned())),
+    )
+}
+
+#[test]
+fn lowering_follows_python_s_table_and_a_sigma_its_context() {
+    let case = case_table();
+
+    assert_eq!(case.lower("ABC"), "abc");
+    assert_eq!(case.lower("B\u{c4}"), "b\u{e4}");
+    // Not in the table: kept, though Rust's own Unicode lowers it.
+    assert_eq!(case.lower("\u{a7cb}x"), "\u{a7cb}x");
+    assert_eq!(case.lower("\u{130}B"), "i\u{307}b");
+    // A sigma ending a word takes its final form, one inside it does not.
+    assert_eq!(case.lower("\u{391}\u{3a3}"), "\u{3b1}\u{3c2}");
+    assert_eq!(case.lower("\u{391}\u{3a3}\u{391}"), "\u{3b1}\u{3c3}\u{3b1}");
+    assert_eq!(case.lower("\u{3a3}"), "\u{3c3}");
+    // A letter after a case-ignorable dot keeps the word going.
+    assert_eq!(case.lower("\u{130}\u{3a3}.b"), "i\u{307}\u{3c3}.b");
+    assert_eq!(case.lower("\u{130}\u{3a3}."), "i\u{307}\u{3c2}.");
+}
+
+#[test]
+fn folders_compared_without_case_sort_by_their_lowered_names() {
+    let keys: Vec<String> = [
+        ".", "a_b", "B", "a", "\u{c4}", "z", "\u{e9}", "-x", "a/B", "a/b0",
+    ]
+    .iter()
+    .map(|key| (*key).to_owned())
+    .collect();
+    let case = case_table();
+
+    let folded = Engine::folder_order(Path::new("/repo"), &keys, Some(&case));
+    let exact = Engine::folder_order(Path::new("/repo"), &keys, None);
+    let dot = Engine::folder_order(Path::new("."), &keys, Some(&case));
+
+    assert_eq!(
+        folded,
+        [".", "-x", "a", "a/B", "a/b0", "a_b", "B", "z", "\u{c4}", "\u{e9}"]
+    );
+    assert_eq!(
+        exact,
+        [".", "-x", "B", "a", "a/B", "a/b0", "a_b", "z", "\u{c4}", "\u{e9}"]
+    );
+    assert_eq!(
+        dot,
+        ["-x", ".", "a", "a/B", "a/b0", "a_b", "B", "z", "\u{c4}", "\u{e9}"]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_folder_turned_into_a_loop_of_links_has_no_row_where_python_raises() {
+    let scratch = Scratch::new("structure-loop");
+    let root = &scratch.0;
+    touch(root, "a.py");
+    std::os::unix::fs::symlink("loop", root.join("loop")).unwrap();
+    let paths = [root.join("a.py"), root.join("loop").join("b.py")];
+
+    let raising = file_rows_under(
+        root,
+        &Structure::default(),
+        &paths,
+        &PathRules {
+            loop_raises: true,
+            ..PathRules::default()
+        },
+    );
+    let resolving = file_rows(root, &Structure::default(), &paths);
+
+    assert!(raising[0].is_some());
+    assert_eq!(raising[1], None);
+    // From 3.13 the loop is left as it is, the folder before it resolved.
+    let row = resolving[1].as_ref().unwrap();
+    let expected = format!("{}/loop/b.py", absolute(root));
+    assert_eq!(property(row, "absolute_path"), expected);
 }

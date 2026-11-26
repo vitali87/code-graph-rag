@@ -414,8 +414,12 @@ class StructureProcessor:
         )
 
     def _file_row_or_none(self, file_path: Path) -> ContainedRow | None:
-        # A path not under the root has none; its own processing raises.
+        # No row for a path not under the root, nor for one whose folder
+        # cannot be resolved (a loop of links raises before 3.13): settling
+        # happens after the run's old subtrees are deleted, outside the
+        # per-file handler, so it must not raise. The file's own processing
+        # raises as it always has, where that handler logs it.
         try:
             return self.file_row(file_path, file_path.name)
-        except ValueError:
+        except (ValueError, RuntimeError, OSError):
             return None

@@ -40,9 +40,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import cache
-from pathlib import Path, PurePath
+from pathlib import Path, PurePath, PurePosixPath
 from typing import NamedTuple, Protocol
 
 from loguru import logger
@@ -319,6 +320,7 @@ class Engine(Protocol):
         markers: Iterable[str],
         exclude: Iterable[str] | None = None,
         unignore: Iterable[str] | None = None,
+        case_table: Sequence[tuple[str, str]] | None = None,
     ) -> RawStructure: ...
 
     def file_rows(
@@ -328,7 +330,16 @@ class Engine(Protocol):
         elements: Sequence[tuple[str, str | None]],
         paths: Sequence[Path],
         dot_suffix: bool,
+        loop_raises: bool = False,
+        case_table: Sequence[tuple[str, str]] | None = None,
     ) -> list[RawRow | None]: ...
+
+    @staticmethod
+    def folder_order(
+        root: Path,
+        keys: Sequence[str],
+        case_table: Sequence[tuple[str, str]] | None = None,
+    ) -> list[str]: ...
 
 
 class IgnoreRules(Protocol):
@@ -929,6 +940,34 @@ def changes_for_run(
 _DOT_SUFFIX: bool = (
     PurePath(cs.FRAME_TRAILING_DOT_NAME).suffix == cs.FRAME_TRAILING_DOT_SUFFIX
 )
+# Whether this Python's `Path.resolve()` raises on a loop of links, as it
+# did before 3.13 whatever `strict` said, so that the frame's File rows
+# leave out the file Python's cannot place either.
+_LOOP_RAISES: bool = sys.version_info < cs.FRAME_RESOLVE_LOOP_RAISES_BEFORE
+
+
+def python_case_table() -> list[tuple[str, str]]:
+    """`str.lower`'s table: each character it changes, and what to.
+
+    This Python's own, which follows the Unicode version it was built with:
+    the frame lowers names by it where paths compare without case, since
+    Rust's Unicode is newer and lowers letters Python's does not.
+    """
+    return [
+        (char, lowered)
+        for char in map(chr, range(sys.maxunicode + 1))
+        if (lowered := char.lower()) != char
+    ]
+
+
+@cache
+def _case_table() -> list[tuple[str, str]] | None:
+    """The table the frame compares names by where this Python's paths
+    compare them without case (Windows), made on first use; None where they
+    compare them exactly."""
+    if isinstance(PurePath(), PurePosixPath):
+        return None
+    return python_case_table()
 
 
 def _asks_structure(check: PlanCheck | None) -> bool:
@@ -972,7 +1011,7 @@ def frame_structure(
     if made is None or not hasattr(made, cs.EG_RUST_STRUCTURE):
         return None
     elements, rows = made.structure(
-        repo_path, project_name, sorted(markers), exclude, unignore
+        repo_path, project_name, sorted(markers), exclude, unignore, _case_table()
     )
     return Structure(elements=tuple(elements), rows=tuple(_row(row) for row in rows))
 
@@ -984,15 +1023,37 @@ def frame_file_rows(
     paths: Sequence[Path],
 ) -> tuple[ContainedRow | None, ...] | None:
     """The frame's File row of each of `paths`, under the structure map
-    `elements`, None for a path it cannot place under the root; None when
-    the extension is from before it."""
+    `elements`, None for a path it cannot place under the root or whose
+    folder this Python cannot resolve; None when the extension is from
+    before it."""
     made = engine()
     if made is None or not hasattr(made, cs.EG_RUST_FILE_ROWS):
         return None
     rows = made.file_rows(
-        repo_path, project_name, list(elements), list(paths), _DOT_SUFFIX
+        repo_path,
+        project_name,
+        list(elements),
+        list(paths),
+        _DOT_SUFFIX,
+        _LOOP_RAISES,
+        _case_table(),
     )
     return tuple(None if row is None else _row(row) for row in rows)
+
+
+def frame_folder_order(
+    root: Path,
+    keys: Sequence[str],
+    case_table: Sequence[tuple[str, str]] | None,
+) -> list[str] | None:
+    """`keys`, folders' paths from `root` (`.` for the root itself), in the
+    order the frame's structure writes them: compared by `case_table` as
+    paths that ignore case compare (Windows), and exactly without one. None
+    when the extension is from before it."""
+    made = engine()
+    if made is None or not hasattr(made, cs.EG_RUST_FOLDER_ORDER):
+        return None
+    return made.folder_order(root, list(keys), case_table)
 
 
 def _identifier_text(identifier: NodeIdentifier) -> str:
@@ -1115,14 +1176,20 @@ def file_rows_for_run(
     check = CHECK
     if not _asks_structure(check):
         return python
-    frame = frame_file_rows(repo_path, project_name, elements, paths)
-    if frame is None:
-        return python
+    try:
+        frame = frame_file_rows(repo_path, project_name, elements, paths)
+    except ValueError as error:
+        frame = None
+        difference = _raised(error)
+    else:
+        if frame is None:
+            return python
+        difference = file_rows_difference(paths, python, frame)
     return _settled(
         repo_path,
         python,
         frame,
-        file_rows_difference(paths, python, frame),
+        difference,
         None if check is None else check.structure_differs,
         ls.ENGINE_FRAME_FILE_ROWS_DIFFER,
     )
