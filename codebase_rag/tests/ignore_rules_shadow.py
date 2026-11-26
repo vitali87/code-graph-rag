@@ -6,7 +6,8 @@ were imported, so each call also asks the frame's `IgnoreRules` the same
 question with the same exclude and unignore sets. The Python answer is the
 one returned (or the exception raised), so the tests run as they always do;
 a Rust answer that differs, or a raise on one side only, fails the test that
-made the call. `test_engine_ignore_rules.py` runs the existing ignore tests
+made the call, in its fixtures too, and the run (`shadows.py`).
+`test_engine_ignore_rules.py` runs the existing ignore tests
 under it (docs/reports/PHASE2_FRAME.md, section 13, step 4).
 
 `should_skip_path` keeps its containment check in Python: it reads the file
@@ -22,22 +23,24 @@ from __future__ import annotations
 import functools
 import inspect
 import sys
-from collections.abc import Callable, Generator, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
 import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import engine_frame
+from codebase_rag.tests.shadows import SHOWN, ShadowFailures
 from codebase_rag.utils import path_utils
 
 SUMMARY = (
     "ignore-rules shadow: {compared} decisions compared, {differed} differed,"
     " {skipped} made with patched constants"
 )
-_SHOWN = 20
+FAILED = "the Rust ignore rules answered differently:\n"
 
 _differences: list[str] = []
+_FAILURES = ShadowFailures("ignore_rules_shadow", _differences, FAILED)
 # Decisions compared, and decisions made while the constants were patched.
 _compared = [0]
 _skipped = [0]
@@ -209,17 +212,8 @@ def _install() -> None:
 _install()
 
 
-@pytest.hookimpl(wrapper=True)
-def pytest_runtest_call(item: pytest.Item) -> Generator[None, object, object]:
-    before = len(_differences)
-    result = yield
-    found = _differences[before:]
-    if found:
-        pytest.fail(
-            "the Rust ignore rules answered differently:\n" + "\n".join(found[:_SHOWN]),
-            pytrace=False,
-        )
-    return result
+def pytest_configure(config: pytest.Config) -> None:
+    config.pluginmanager.register(_FAILURES, _FAILURES.name)
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
@@ -228,12 +222,5 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
             compared=_compared[0], differed=len(_differences), skipped=_skipped[0]
         )
     )
-    for difference in _differences[:_SHOWN]:
+    for difference in _differences[:SHOWN]:
         terminalreporter.write_line(difference)
-
-
-@pytest.hookimpl(trylast=True)
-def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    # A difference outside a test's call (in a fixture) fails the run too.
-    if _differences and session.exitstatus == pytest.ExitCode.OK:
-        session.exitstatus = pytest.ExitCode.TESTS_FAILED

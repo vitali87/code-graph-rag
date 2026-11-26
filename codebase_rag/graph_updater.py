@@ -8209,11 +8209,10 @@ class GraphUpdater:
         eligible_files = self._collect_eligible_files()
         # The single target as the frame takes it, before a vanished one
         # empties the list below: the frame decides that on its own.
-        frame_single = (
-            None
-            if self._single_file is None
-            else (self._single_file, eligible_files[0][1] if eligible_files else None)
-        )
+        frame_single: tuple[Path, str | None] | None = None
+        if self._single_file is not None:
+            target_key = eligible_files[0][1] if eligible_files else None
+            frame_single = (self._single_file, target_key)
 
         flux_stems = self._prepare_flux_stems(eligible_files, old_hashes, is_full_build)
         preexisting_paths = self._preexisting_paths_for_run(force, baseline)

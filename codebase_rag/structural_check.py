@@ -40,7 +40,7 @@ from .services import QueryingIngestorProtocol
 from .structural_delta import StructuralDelta, normalise_paths, observe
 from .sync_guard import run_owner
 from .types_defs import LanguageQueries, PropertyDict, ReingestReport
-from .utils.path_utils import derive_project_name, should_skip_path
+from .utils.path_utils import derive_project_name, is_utf8_name, should_skip_path
 
 _GIT_DELETED = "D"
 
@@ -91,6 +91,7 @@ def changed_since(repo_root: Path, base: str) -> tuple[list[str], list[str]]:
             cwd=repo_root,
             capture_output=True,
             encoding=cs.ENCODING_UTF8,
+            errors=cs.DECODE_ERRORS_SURROGATEESCAPE,
             check=True,
         ).stdout
         untracked = subprocess.run(
@@ -98,6 +99,7 @@ def changed_since(repo_root: Path, base: str) -> tuple[list[str], list[str]]:
             cwd=repo_root,
             capture_output=True,
             encoding=cs.ENCODING_UTF8,
+            errors=cs.DECODE_ERRORS_SURROGATEESCAPE,
             check=True,
         ).stdout
     except (OSError, subprocess.CalledProcessError) as error:
@@ -453,8 +455,9 @@ def run_check(
         # would skip are not the edit (issue #3264). Skipped before anything
         # resolves them, so an interpreter symlink leaving the repository
         # cannot abort the check, and before the snapshots, whose path
-        # filters scale with the list.
-        return not should_skip_path(
+        # filters scale with the list. A name that is not valid UTF-8 the
+        # sync leaves out as well, since the graph cannot store it (#3722).
+        return is_utf8_name(rel) and not should_skip_path(
             repo_root / rel,
             repo_root,
             exclude_paths=exclude_paths,

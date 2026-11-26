@@ -442,6 +442,21 @@ def is_regular_file(path: str | os.PathLike[str]) -> bool:
     return os.path.isfile(path)
 
 
+def is_enterable_dir(path: str | os.PathLike[str]) -> bool:
+    """Whether the walk would list this directory and reach what is in it.
+
+    `os.walk` indexes a directory's contents only when it may both read
+    (list) and search (reach the entries of) it, and passes over one it may
+    not without a word, so nothing inside such a directory reaches the
+    graph. A reader that maps names to directories on its own, such as
+    source-root discovery, asks this to agree with the walk: an import
+    resolved into a folder cgr may not enter names nothing the graph holds
+    (issues #3748, #3750). Never raises. Root, and Windows, where the mode
+    bits do not bind, read every directory as enterable.
+    """
+    return os.path.isdir(path) and os.access(path, os.R_OK | os.X_OK)
+
+
 def is_utf8_name(name: str) -> bool:
     """Whether a name from a repository walk can be stored as text.
 

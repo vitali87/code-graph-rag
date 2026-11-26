@@ -14,7 +14,8 @@ Loaded as a plugin (`-p codebase_rag.tests.change_shadow`):
   `_save_dir_mtimes` with the frame's text for the same folder times.
 
 Python's answer is the one used, so the tests run as they always do; a
-difference fails the test that made the call. `test_engine_change_detection.py`
+difference fails the test that made the call, in its fixtures too, and the
+run (`shadows.py`). `test_engine_change_detection.py`
 runs the existing incremental-sync tests under it
 (docs/reports/PHASE2_FRAME.md, section 13, step 6). Under xdist each worker
 counts its own share, so with `CGR_CHANGE_SHADOW_DIR` set each process also
@@ -23,7 +24,9 @@ to add up.
 
 Not compared: a run, a reading or a writing while a test patches what
 Python's change detection decides with or reads the files by, or the
-functions this plugin wraps, which it then cannot reach.
+functions this plugin wraps, which it then cannot reach; nor a reading or a
+writing while a test has put its own check in place of the session's, or
+none (`engine_frame.CHECK`): that test decides whether the frame is asked.
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ import json
 import os
 import sys
 import tempfile
-from collections.abc import Callable, Generator
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -42,6 +45,7 @@ from codebase_rag import engine_frame
 from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import DirMtimesCache, FileHashCache
 from codebase_rag.tests.engine_modes import CHANGE_SHADOW_DIR_ENV, FramePlanCheck
+from codebase_rag.tests.shadows import SHOWN, ShadowFailures
 
 SUMMARY = (
     "change shadow: {changes} change detections, {readings} state readings and "
@@ -55,9 +59,10 @@ REPORT_FILE = "{worker}.json"
 WORKER_ENV = "PYTEST_XDIST_WORKER"
 CONTROLLER = "controller"
 DIFFERENCES_KEY = "differences"
-_SHOWN = 20
+FAILED = "the frame's change detection or state files differ from Python's:\n"
 
 _differences: list[str] = []
+_FAILURES = ShadowFailures("change_shadow", _differences, FAILED)
 _counts = {"changes": 0, "readings": 0, "writings": 0, "skipped": 0}
 _LOAD_HASHES = gu._load_hash_cache
 _LOAD_MTIMES = gu._load_dir_mtimes
@@ -105,8 +110,12 @@ _PUBLISH_CALLS = _publish_calls()
 
 def _compared(original: Callable[..., object], name: str) -> bool:
     """Whether a call can be compared: its function unpatched, and the
-    session's check able to compare a run now."""
-    if getattr(gu, name) is not original or not FramePlanCheck.compares_changes(_CHECK):
+    session's check in place and able to compare a run now."""
+    if (
+        getattr(gu, name) is not original
+        or engine_frame.CHECK is not _CHECK
+        or not FramePlanCheck.compares_changes(_CHECK)
+    ):
         _counts["skipped"] += 1
         return False
     return True
@@ -166,6 +175,8 @@ def _shadow_publish(
         _counts["writings"] += 1
         python = os.stat(cache_path)
         python_bytes = cache_path.read_bytes()
+        # Reading the cache moved its atime, which the test may check.
+        os.utime(cache_path, ns=(python.st_atime_ns, python.st_mtime_ns))
         with tempfile.TemporaryDirectory(prefix=SCRATCH_PREFIX) as scratch:
             mirror = Path(scratch) / cache_path.name
             _engine().publish_hash_cache(mirror, list(hashes.items()), observed_at)
@@ -234,17 +245,8 @@ for _module in list(sys.modules.values()):
                 _namespace[_name] = _shadow
 
 
-@pytest.hookimpl(wrapper=True)
-def pytest_runtest_call(item: pytest.Item) -> Generator[None, object, object]:
-    before = len(_differences)
-    result = yield
-    if found := _differences[before:]:
-        pytest.fail(
-            "the frame's change detection or state files differ from Python's:\n"
-            + "\n".join(found[:_SHOWN]),
-            pytrace=False,
-        )
-    return result
+def pytest_configure(config: pytest.Config) -> None:
+    config.pluginmanager.register(_FAILURES, _FAILURES.name)
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
@@ -257,15 +259,11 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
             skipped=_counts["skipped"],
         )
     )
-    for difference in _differences[:_SHOWN]:
+    for difference in _differences[:SHOWN]:
         terminalreporter.write_line(difference)
 
 
-@pytest.hookimpl(trylast=True)
-def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    # A difference outside a test's call (in a fixture) fails the run too.
-    if _differences and session.exitstatus == pytest.ExitCode.OK:
-        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+def pytest_sessionfinish(session: pytest.Session) -> None:
     if report_dir := os.environ.get(CHANGE_SHADOW_DIR_ENV):
         worker = os.environ.get(WORKER_ENV, CONTROLLER)
         (Path(report_dir) / REPORT_FILE.format(worker=worker)).write_text(
