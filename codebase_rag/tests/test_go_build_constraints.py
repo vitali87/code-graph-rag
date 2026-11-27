@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import importlib
+import pkgutil
 import random
-import time
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
+from codebase_rag.parsers import go as go_package
+from codebase_rag.parsers.go import builds as go_builds
 from codebase_rag.parsers.go import interfaces as go_ifaces
 from codebase_rag.parsers.go.builds import (
     ALWAYS,
@@ -23,6 +27,7 @@ from codebase_rag.parsers.go.builds import (
     name_constraint,
     negate,
 )
+from codebase_rag.tests.work_counter import LineCounter, lines_executed_in
 
 
 @pytest.mark.parametrize(
@@ -367,15 +372,48 @@ def test_the_memo_gives_what_the_walk_without_it_gives_on_a_chain(seed: int) -> 
         assert found == expected, interface
 
 
-def _cpu_seconds() -> float:
-    # CPU time, not wall clock, for the bounds below: each catches a walk
-    # gone quadratic, and a busy `pytest -n auto` runner deschedules this
-    # process for seconds without the walk doing any more work (a walk of
-    # a few tenths of a second read 5.04 s on main's coverage run). This
-    # thread's alone: process_time also counts the threads earlier tests
-    # left running in the worker, and read 5.7 s for a walk of 0.25 s
-    # (#3758). As in test_rust_attr_run_scan_perf.py (#1473).
-    return time.thread_time()
+# Every module of the Go package: a walk moved from one to another is
+# still counted.
+_GO_MODULES = (
+    go_package,
+    *(
+        importlib.import_module(f"{go_package.__name__}.{info.name}")
+        for info in pkgutil.iter_modules(go_package.__path__)
+    ),
+)
+
+
+@contextmanager
+def _go_lines() -> Generator[LineCounter]:
+    # The bounds below each catch a walk gone quadratic. They count the
+    # lines the call runs in the Go package rather than time it: on the
+    # coverage run the wall clock, the process's CPU time (#3758) and the
+    # test thread's own (#3798) each read 5 s for a walk of a few tenths
+    # of a second that did no more work. `_decide` keeps its answers
+    # across calls: cleared, the count is the same whatever earlier tests
+    # in the worker decided.
+    go_builds._decide.cache_clear()
+    with lines_executed_in(*_GO_MODULES) as work:
+        yield work
+
+
+# Lines per link or step, about three times what each call runs today on
+# Python 3.12 and 3.13, which count a little differently: 144 per link of
+# the chain's walk, 187 per merge, 167 per capped step, 64 per redeclared
+# link and 202 per interface of the cascade. A walk gone quadratic runs
+# hundreds of times as many.
+_CHAIN_WALK_LINES = 450
+_MERGE_LINES = 600
+_CAPPED_STEP_LINES = 550
+_REDECLARATION_LINES = 200
+_CASCADE_LINES = 650
+
+
+def _assert_linear(work: LineCounter, size: int, per_unit: int) -> None:
+    # A line per unit at least, or the counter missed the walk.
+    assert size <= work.lines < per_unit * size, (
+        f"{work.lines} lines for {size}, linear is under {per_unit * size}"
+    )
 
 
 @pytest.mark.parametrize("tail", ["known", "unresolved"])
@@ -393,9 +431,9 @@ def test_a_chain_far_past_the_recursion_limit_is_walked(tail: str) -> None:
     }
     if tail == "unresolved":
         embeds[f"I{links - 1}"] = None
-    started = _cpu_seconds()
-    full = go_ifaces.full_method_sets(own, embeds, {})
-    assert _cpu_seconds() - started < 10
+    with _go_lines() as work:
+        full = go_ifaces.full_method_sets(own, embeds, {})
+    _assert_linear(work, links, _CHAIN_WALK_LINES)
     top = full.sets["I0"]
     if tail == "unresolved":
         assert top is None
@@ -410,10 +448,11 @@ def test_merged_builds_along_a_chain_stay_small() -> None:
     # interface inherits through a chain of such embeds doubled per link.
     linux = name_constraint("x_linux.go")
     builds = header_constraint("//go:build cgo\n")
-    started = _cpu_seconds()
-    for _ in range(5000):
-        builds = any_of((all_of((builds, linux)), all_of((builds, negate(linux)))))
-    assert _cpu_seconds() - started < 5
+    links = 5000
+    with _go_lines() as work:
+        for _ in range(links):
+            builds = any_of((all_of((builds, linux)), all_of((builds, negate(linux)))))
+    _assert_linear(work, links, _MERGE_LINES)
     assert builds == header_constraint("//go:build cgo\n")
 
 
@@ -421,13 +460,14 @@ def test_a_constraint_past_the_size_or_depth_cap_is_unknown() -> None:
     # An expression nested deeper than the decision's walk and Python's
     # hashing recurse through is unknown, and decided as such, at once.
     nested = header_constraint("//go:build t0\n")
-    started = _cpu_seconds()
-    for k in range(1, 5000):
-        tag = header_constraint(f"//go:build t{k % 7}\n")
-        nested = any_of(
-            (all_of((nested, tag)), header_constraint(f"//go:build u{k}\n"))
-        )
-    assert _cpu_seconds() - started < 5
+    steps = 5000
+    with _go_lines() as work:
+        for k in range(1, steps):
+            tag = header_constraint(f"//go:build t{k % 7}\n")
+            nested = any_of(
+                (all_of((nested, tag)), header_constraint(f"//go:build u{k}\n"))
+            )
+    _assert_linear(work, steps, _CAPPED_STEP_LINES)
     assert nested == UNKNOWN
     assert decide((nested,)) is None
 
@@ -475,9 +515,9 @@ def test_a_chain_of_redeclarations_links_each_link_once(declaring: str) -> None:
         if declaring == "every" or k in (0, links - 1)
     }
     bases = {f"I{k}": [f"I{k + 1}"] for k in range(links - 1)}
-    started = _cpu_seconds()
-    found = _links(own, bases)
-    assert _cpu_seconds() - started < 5
+    with _go_lines() as work:
+        found = _links(own, bases)
+    _assert_linear(work, links, _REDECLARATION_LINES)
     if declaring == "every":
         assert found == {(f"I{k}.M", f"I{k + 1}.M") for k in range(links - 1)}
     else:
@@ -577,6 +617,6 @@ def test_a_cascade_of_gathered_declarations_is_joined_in_linear_work(
     assert work[2000][1] == (2000 - 1 if builds == "one" else 2000 - 2)
     assert work[2000][0] <= 3 * max(work[1000][0], 1)
     own, bases = _cascade(4000)
-    started = _cpu_seconds()
-    _links(own, bases, files)
-    assert _cpu_seconds() - started < 5
+    with _go_lines() as lines:
+        _links(own, bases, files)
+    _assert_linear(lines, 4000, _CASCADE_LINES)
