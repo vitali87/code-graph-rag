@@ -1,12 +1,16 @@
 """Crash-safe build lock shared by the semantic frontends (issue #1227).
 
-The Go and C# frontends serialise their one tool build across parallel
+The Go, C# and Java frontends serialise their one tool build across parallel
 workers. A mkdir lock needs staleness heuristics (and those heuristics race:
 a waiter that classified a lock stale can delete a lock another waiter
 already reclaimed), so the lock is an OS-level file lock instead: flock on
 POSIX, msvcrt.locking on Windows. The kernel releases either one when the
 holding process dies, however it dies, so an abandoned lock cannot exist and
 nothing ever needs reclaiming.
+
+Only a lock another process holds is waited for. One that cannot be created
+(no permission, a read-only file system, a path component that is a file)
+stays that way for every retry, so it fails at once (issue #3794).
 """
 
 import os
@@ -17,6 +21,9 @@ import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
+from loguru import logger
+
+from .. import logs as ls
 from ..constants import ENCODING_UTF8
 
 if sys.platform == "win32":
@@ -107,10 +114,21 @@ def _clear_stale_legacy_lock_dir(lock: Path) -> None:
 
 
 def _open_lock_file(lock: Path) -> int | None:
+    """A descriptor on the lock file, made with its folder when missing, or
+    None while a pre-#1227 lock directory holds the path. Any other OSError
+    is raised: the lock cannot be created there, and no holder frees it."""
+    lock.parent.mkdir(parents=True, exist_ok=True)
     try:
         return os.open(lock, os.O_RDWR | os.O_CREAT, 0o644)
     except OSError:
-        return None
+        # The legacy directory refuses the open (EISDIR on POSIX, EACCES on
+        # Windows) only until its holder is gone, so it is waited for.
+        if lock.is_dir():
+            return None
+    # Not a directory now, though it may have been one at the open, which
+    # its holder has just removed: the second open succeeds then, and raises
+    # the error that holds for every retry otherwise.
+    return os.open(lock, os.O_RDWR | os.O_CREAT, 0o644)
 
 
 def acquire_build_lock(
@@ -122,21 +140,30 @@ def acquire_build_lock(
     """Take the build lock, polling until it frees or the artifact appears.
 
     Returns the held lock (caller must release_build_lock), or None when
-    another worker already produced a fresh artifact, the tries ran out, or
-    the lock file cannot be opened at all.
+    another worker already produced a fresh artifact, and, after one
+    warning, when the lock cannot be created or the tries ran out.
     """
     fd: int | None = None
     try:
         for _ in range(tries):
             if fd is None:
                 _clear_stale_legacy_lock_dir(lock)
-                fd = _open_lock_file(lock)
+                try:
+                    fd = _open_lock_file(lock)
+                except OSError as error:
+                    logger.warning(ls.FRONTEND_BUILD_LOCK_UNUSABLE.format(error=error))
+                    return None
             if fd is not None and _try_lock(fd):
                 handle, fd = BuildLock(fd), None
                 return handle
             time.sleep(poll_seconds)
             if artifact_fresh():
                 return None
+        logger.warning(
+            ls.FRONTEND_BUILD_LOCK_TIMED_OUT.format(
+                lock=lock, seconds=tries * poll_seconds
+            )
+        )
         return None
     finally:
         if fd is not None:
@@ -185,7 +212,6 @@ def build_cached_artifact(
     """
     if artifact_fresh():
         return artifact
-    cache.mkdir(parents=True, exist_ok=True)
     handle = acquire_build_lock(cache / lock_name, artifact_fresh, tries, poll_seconds)
     if handle is None:
         return artifact if artifact_fresh() else None

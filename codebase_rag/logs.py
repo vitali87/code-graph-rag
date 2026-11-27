@@ -69,6 +69,14 @@ CPP_FRONTEND_HYBRID_PENDING = (
 )
 CPP_FRONTEND_MACRO_CALLS = "Resolved {count} hybrid macro CALLS edge(s)"
 CPP_FRONTEND_EXPANSION_CALLS = "Resolved {count} hybrid expansion CALLS edge(s)"
+# The build lock the Go, C# and Java frontends share (parsers/build_lock.py).
+FRONTEND_BUILD_LOCK_UNUSABLE = (
+    "Frontend tool's build lock cannot be created ({error}); using tree-sitter"
+)
+FRONTEND_BUILD_LOCK_TIMED_OUT = (
+    "Frontend tool's build lock {lock} is still held by another process after "
+    "{seconds:g}s; using tree-sitter"
+)
 CSHARP_FRONTEND_RUNNING = "--- C# Roslyn frontend: {path} ---"
 CSHARP_FRONTEND_UNAVAILABLE = (
     "C# Roslyn frontend enabled but dotnet is unavailable; using tree-sitter"
