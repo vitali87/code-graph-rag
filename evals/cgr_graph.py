@@ -895,6 +895,28 @@ class _StatefulIngestor:
                     rows.append(row)
         return rows
 
+    def _graph_importer_rows(self, params: PropertyDict) -> list[ResultRow]:
+        """One hop of an importer walk: the IMPORTS edges from a project
+        Module into a Module in `$qns`, each row naming that one as `to_qn`
+        (the re-export walk, #2573; the C/C++ includer walk, #3802)."""
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        qns = params.get(cs.KEY_QNS)
+        imports = cs.RelationshipType.IMPORTS.value
+        rows: list[ResultRow] = []
+        for qn in qns if isinstance(qns, list) else []:
+            for edge in self._in.get((_MODULE_LABEL, _str(qn)), ()):
+                source = (edge[0], edge[1])
+                if (
+                    edge[2] != imports
+                    or source[0] != _MODULE_LABEL
+                    or not self._in_project(source, prefix)
+                ):
+                    continue
+                row = self._graph_edge_row(edge, self._GRAPH_IMPORT_KEYS, source)
+                row[cs.KEY_TO_QN] = _result(qn)
+                rows.append(row)
+        return rows
+
     def _project_root_rows(self, params: PropertyDict) -> list[ResultRow]:
         """The Project node's stored root, as `source_root_for` reads it."""
         name = _str(params.get(cs.KEY_PROJECT_NAME))
@@ -1557,6 +1579,8 @@ class _StatefulIngestor:
                 | cq.CYPHER_GRAPH_CALLEES_OF
             ):
                 return self._graph_rows(query, params or {})
+            case cq.CYPHER_GRAPH_IMPORTERS_OF:
+                return self._graph_importer_rows(params or {})
             case cs.CYPHER_SAME_NAMED_CSHARP_TYPES:
                 return self._same_named_csharp_type_rows(params or {})
             case cq.CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN:

@@ -18,7 +18,11 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    force_mtime_after_cache,
+    get_relationships,
+)
 from evals.cgr_graph import _StatefulIngestor
 
 _CSTATIC = {
@@ -312,11 +316,15 @@ def test_a_header_a_same_named_include_displaced_still_reaches(
     assert ("main.main", "b.util.second") in calls, calls
 
 
-def _sync(root: Path, store: _StatefulIngestor, force: bool) -> set[tuple[str, str]]:
+def _updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
     parsers, queries = load_parsers()
-    GraphUpdater(ingestor=store, repo_path=root, parsers=parsers, queries=queries).run(
-        force=force
+    return GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
     )
+
+
+def _sync(root: Path, store: _StatefulIngestor, force: bool) -> set[tuple[str, str]]:
+    _updater(root, store).run(force=force)
     return {
         (_short(src), _short(dst))
         for _, src, rel, _, dst in store.edges
@@ -399,6 +407,141 @@ def test_an_incremental_sync_of_a_header_keeps_its_includers_statics(
     _write(root, {edited: _INCLUDER[edited] + "\n"})
     after = _sync(root, store, force=False)
     assert after == fresh, (after, fresh)
+
+
+# util.h is compiled into main.c two includes up, through mid.h, so its
+# `wrap()` reaches main.c's `static helper()` and the `static inline early()`
+# main.c includes first. Nothing calls `wrap()`: a sync of util.h re-parses
+# mid.h, which includes it, and leaves main.c to the graph (issue #3802).
+# lone.c includes neither, and a sync of util.h has no reason to read it.
+_TWO_UP = {
+    "early.h": "static inline int early(void) { return 2; }\n",
+    "main.c": (
+        "static int helper(void) { return 1; }\n"
+        '#include "early.h"\n#include "mid.h"\n'
+        "int main(void) { return 0; }\n"
+    ),
+    "mid.h": '#include "util.h"\n',
+    "util.h": "static inline int wrap(void) { return helper() + early(); }\n",
+    "lone.c": '#include "lone.h"\nint lone(void) { return 0; }\n',
+    "lone.h": "int lone(void);\n",
+}
+_THREE_UP = {
+    "main.c": (
+        "static int helper(void) { return 1; }\n"
+        '#include "top.h"\nint main(void) { return 0; }\n'
+    ),
+    "top.h": '#include "mid.h"\n',
+    "mid.h": '#include "util.h"\n',
+    "util.h": "static inline int wrap(void) { return helper(); }\n",
+}
+# Two translation units compile util.h, each with a `static helper()` of its
+# own: a fresh index binds the call to a.c's, and a sync that found b.c alone
+# would bind it to b.c's.
+_TWO_UNITS = {
+    "a.c": (
+        "static int helper(void) { return 1; }\n"
+        '#include "mid.h"\nint a(void) { return 0; }\n'
+    ),
+    "b.c": (
+        "static int helper(void) { return 2; }\n"
+        '#include "mid.h"\nint b(void) { return 0; }\n'
+    ),
+    "mid.h": '#include "util.h"\n',
+    "util.h": "static inline int wrap(void) { return helper(); }\n",
+}
+_ADDED = "int added(void) { return 3; }\n"
+
+_Graph = tuple[frozenset[tuple[str, str]], frozenset[tuple[str, ...]]]
+
+
+def _graph(store: _StatefulIngestor) -> _Graph:
+    # Every edge at its site, with its resolution: a call that kept its
+    # target but lost its certainty differs too.
+    nodes = frozenset((label, str(uid)) for label, uid in store.nodes)
+    edges = frozenset(
+        (
+            *(str(part) for part in edge),
+            str(store.props_for(edge).get(cs.KEY_RESOLUTION)),
+        )
+        for edge in store.keyed_edges
+    )
+    return nodes, edges
+
+
+def _sync_util_h(
+    root: Path, files: dict[str, str], updater: str
+) -> tuple[GraphUpdater, _StatefulIngestor]:
+    """Index `files`, add a function to util.h and sync it on `updater`,
+    whose graph must then be a fresh index's."""
+    _write(root, files)
+    store = _StatefulIngestor()
+    first = _updater(root, store)
+    first.run(force=True)
+    _write(root, {"util.h": files["util.h"] + _ADDED})
+    force_mtime_after_cache(root, root / "util.h")
+    match updater:
+        case "reused":
+            synced = first
+            synced.run()
+        case "new":
+            synced = _updater(root, store)
+            synced.run()
+        case _:
+            synced = _updater(root, store)
+            synced.reingest([root / "util.h"])
+    clean = _StatefulIngestor()
+    _updater(root, clean).run(force=True)
+    assert _graph(store) == _graph(clean)
+    return synced, store
+
+
+@pytest.mark.parametrize("updater", ["new", "reused", "reingest"])
+@pytest.mark.parametrize(
+    ("files", "edges"),
+    [
+        (_TWO_UP, {("util.wrap", "main.helper"), ("util.wrap", "early.early")}),
+        (_THREE_UP, {("util.wrap", "main.helper")}),
+        (_TWO_UNITS, {("util.wrap", "a.helper")}),
+    ],
+    ids=["two-up", "three-up", "two-units"],
+)
+def test_a_sync_of_a_header_finds_every_unit_that_compiles_it(
+    tmp_path: Path, files: dict[str, str], edges: set[tuple[str, str]], updater: str
+) -> None:
+    # The includers above the re-parsed headers are unchanged, so a new
+    # updater holds none of their includes, yet they decide what util.h's
+    # calls may reach: its graph must be a fresh index's.
+    if "c" not in load_parsers()[0]:
+        pytest.skip("c parser not available")
+    _, store = _sync_util_h(tmp_path / "repo", files, updater)
+    calls = {
+        (_short(src), _short(dst))
+        for _, src, rel, _, dst in store.edges
+        if rel == cs.RelationshipType.CALLS.value
+    }
+    assert edges <= calls, calls
+
+
+@pytest.mark.parametrize(
+    ("files", "read"),
+    [
+        (_TWO_UP, {"util", "mid", "main", "early"}),
+        (_TWO_UNITS, {"util", "mid", "a", "b"}),
+    ],
+    ids=["two-up", "two-units"],
+)
+def test_a_sync_of_a_header_reads_the_units_that_compile_it_and_no_other(
+    tmp_path: Path, files: dict[str, str], read: set[str]
+) -> None:
+    # util.h and mid.h are re-parsed; the files that compile them, and what
+    # those include, are read back. lone.c and lone.h lead to neither, so a
+    # new updater never opens them.
+    if "c" not in load_parsers()[0]:
+        pytest.skip("c parser not available")
+    synced, _ = _sync_util_h(tmp_path / "repo", files, "new")
+    held = {_short(qn) for qn in synced.factory.import_processor.import_mapping}
+    assert held == read, held
 
 
 # a.cpp declares module `foo`, which binds the name `foo` to foo.cpp's module

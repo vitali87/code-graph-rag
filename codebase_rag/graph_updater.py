@@ -175,6 +175,7 @@ from .types_defs import (
     ResultRow,
     ResultValue,
     SimpleNameLookup,
+    StemSiblingModules,
 )
 from .utils import path_utils, qn_markers
 from .utils.dependencies import has_semantic_dependencies
@@ -1270,6 +1271,28 @@ def _js_entry_modules(
         for name in (target, target.rpartition(cs.SEPARATOR_DOT)[0])
         if (module_qn := js_ts_module_qn(name, module_paths)) is not None
     ]
+
+
+def _is_c_family(module_qn: str, module_paths: Mapping[str, Path]) -> bool:
+    path = module_paths.get(module_qn)
+    return (
+        path is not None
+        and get_language_for_extension(path.suffix) in cs.C_FAMILY_LANGUAGES
+    )
+
+
+def _captured_includers(rows: Iterable[ResultRow]) -> dict[str, set[str]]:
+    """{module: the modules whose captured IMPORTS edge ends in it}."""
+    includers: dict[str, set[str]] = {}
+    for row in rows:
+        if (
+            row.get(cs.KEY_REL) == cs.RelationshipType.IMPORTS.value
+            and row.get(cs.KEY_CALLER_LABEL) == cs.NodeLabel.MODULE.value
+            and isinstance(caller := row.get(cs.KEY_CALLER_QN), str)
+            and isinstance(target := row.get(cs.KEY_TARGET_QN), str)
+        ):
+            includers.setdefault(target, set()).add(caller)
+    return includers
 
 
 def _project_root_for_single_file(target: Path) -> Path:
@@ -2764,15 +2787,18 @@ class GraphUpdater:
             if key not in reparsed_keys and self._is_dependency_file(path.name, path):
                 self.factory.definition_processor.process_dependencies(path)
 
-    def _resolve_deferred_definitions(self, rehydrate: bool) -> dict[str, str]:
+    def _resolve_deferred_definitions(
+        self, rehydrate: bool, carried: Sequence[ResultRow]
+    ) -> dict[str, str]:
         """Every deferred definition-level resolution that must follow Pass 2.
 
         Shared by run() and reingest() (issue #1524): a scoped re-ingest
         deletes a file's Module subtree like an incremental run does, so the
         C/C++ macro, containment, forward-declaration, inheritance and
         module-implementation relationships it held have to be rebuilt by
-        the same stages, or they vanish until a full update. Returns the
-        module qn -> path map the IMPORTS flush verifies against.
+        the same stages, or they vanish until a full update. `carried` are
+        the inbound edges captured before that delete, not yet restored.
+        Returns the module qn -> path map the IMPORTS flush verifies against.
         """
         # First: every module of the run is named now, and everything below
         # (inheritance, Pass 3) resolves through the import map.
@@ -2802,7 +2828,7 @@ class GraphUpdater:
         self._restore_unparsed_rust_impl_self_paths()
         # After rehydration, which tells a re-export from a definition, and
         # before every stage below that resolves through the import maps.
-        self._restore_reached_import_state()
+        self._restore_reached_import_state(carried)
 
         # After rehydration: an incremental run re-parses the `.cpp` holding
         # an out-of-class method while its class stays in an unchanged
@@ -2917,7 +2943,7 @@ class GraphUpdater:
             logger.info(ls.TYPE_EDGES_EMITTED, count=typed)
         return known_module_paths
 
-    def _restore_reached_import_state(self) -> None:
+    def _restore_reached_import_state(self, carried: Sequence[ResultRow]) -> None:
         """Parse the imports of the unchanged modules re-parsed files reach.
 
         An incremental run parses only the changed files, yet resolving them
@@ -2934,15 +2960,118 @@ class GraphUpdater:
         module's map, and that can lead to yet another re-export. A module no
         re-parsed file reaches is never opened, and a module whose imports
         this updater already holds is not parsed again.
+
+        A C/C++ header is reached the other way too: the files that include
+        it, directly or through other headers, decide which `static`
+        functions its calls may bind, so their maps are restored first and
+        the walk then follows them on to what they include (issue #3802).
         """
         mapping = self.factory.import_processor.import_mapping
         module_paths = self.factory.definition_processor.module_qn_to_file_path
         if all(module_qn in mapping for module_qn in module_paths):
             # A full build or a reused updater: every map is already held.
             return
-        restored = self._restore_import_closure(module_paths)
+        restored = self._restore_c_includer_imports(module_paths, carried)
+        restored += self._restore_import_closure(module_paths)
         if restored:
             logger.info(ls.IMPORT_STATE_RESTORED, count=restored)
+
+    def _restore_c_includer_imports(
+        self, module_paths: Mapping[str, Path], carried: Sequence[ResultRow]
+    ) -> int:
+        """Restore the imports of every unchanged C/C++ file that includes a
+        held one, directly or through other headers.
+
+        A header is compiled inside each file that includes it: util.h's
+        `wrap()` may call the `static helper()` of main.c two includes up,
+        and the resolver finds main.c by reading every held map
+        (`_c_includers`). A new updater held only the re-parsed files' maps,
+        and those of the direct includers it re-parsed as dependents, so
+        main.c was never found and the edge a fresh index writes was lost.
+
+        The walk climbs one include at a time. The graph's IMPORTS edges say
+        which files to read, one query per step; an unchanged file's edge
+        into a re-parsed one went with its target's subtree and comes from
+        `carried`, the inbound edges captured before that delete. The edges
+        alone are not what the resolver reads: libclang writes them for files
+        whose imports Pass 2 never parses, which a fresh index does not count
+        as includers, and each includer's own includes (main.c's earlier
+        `#include "early.h"`) decide what it compiles. So the maps are parsed
+        from source, as Pass 2 parses them and only where it would, and the
+        closure walk after this follows each one on. Returns how many modules
+        had their imports restored.
+        """
+        mapping = self.factory.import_processor.import_mapping
+        frontier = sorted(qn for qn in mapping if _is_c_family(qn, module_paths))
+        if not frontier:
+            return 0
+        includers = _captured_includers(carried)
+        walked = set(frontier)
+        siblings: StemSiblingModules | None = None
+        restored = 0
+        while frontier:
+            reached = {
+                *self._graph_importers(frontier),
+                *(qn for target in frontier for qn in includers.get(target, ())),
+            }
+            frontier = []
+            # Every held C/C++ module started the walk, so what is left to
+            # reach is unheld.
+            for holder in sorted(reached - walked):
+                walked.add(holder)
+                if not _is_c_family(holder, module_paths):
+                    continue
+                if siblings is None:
+                    siblings = self.factory.import_processor.stem_sibling_modules(
+                        module_paths
+                    )
+                if not self._restore_repointed_imports(holder, module_paths, siblings):
+                    continue
+                restored += 1
+                frontier.append(holder)
+        return restored
+
+    def _graph_importers(self, module_qns: list[str]) -> set[str]:
+        """The project's modules whose IMPORTS edges end in `module_qns`;
+        none when the graph cannot be read, as before #3802."""
+        if not isinstance(self.ingestor, QueryProtocol):
+            return set()
+        try:
+            rows = self.ingestor.fetch_all(
+                cq.CYPHER_GRAPH_IMPORTERS_OF,
+                {
+                    cs.KEY_QNS: module_qns,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            logger.warning(ls.C_INCLUDERS_UNREAD)
+            return set()
+        return {
+            qn for row in rows if isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
+        }
+
+    def _restore_repointed_imports(
+        self,
+        module_qn: str,
+        module_paths: Mapping[str, Path],
+        siblings: StemSiblingModules,
+    ) -> bool:
+        """Restore one unchanged module's imports, re-pointed at its own
+        language's stem siblings; False when Pass 2 would not parse them.
+
+        A restored map names a shared stem as written (`proj.shim.Widget`),
+        while the module carries its suffix (`proj.shim.py`, issue #2586).
+        The re-parsed maps were re-pointed before the walks; a restored one
+        must be too before its targets are looked up, or the suffixed module
+        is never found and never restored.
+        """
+        if not self._restore_module_imports(module_qn, module_paths[module_qn]):
+            return False
+        self.factory.import_processor.point_module_imports_at_own_language_siblings(
+            module_qn, module_paths, siblings
+        )
+        return True
 
     def _restore_import_closure(self, module_paths: Mapping[str, Path]) -> int:
         """Walk out from every held map, restoring each unheld module reached.
@@ -2977,18 +3106,11 @@ class GraphUpdater:
                     continue
                 walked.add(holder)
                 if holder not in mapping:
-                    if not self._restore_module_imports(holder, module_paths[holder]):
+                    if not self._restore_repointed_imports(
+                        holder, module_paths, siblings
+                    ):
                         continue
                     restored += 1
-                    # A restored map names a shared stem as written
-                    # (`proj.shim.Widget`), while the module carries its
-                    # suffix (`proj.shim.py`, issue #2586). The re-parsed
-                    # maps were re-pointed before this walk; a restored one
-                    # must be too before its targets are looked up, or the
-                    # suffixed module is never found and never restored.
-                    import_processor.point_module_imports_at_own_language_siblings(
-                        holder, module_paths, siblings
-                    )
                 pending.append(holder)
         return restored
 
@@ -3395,7 +3517,9 @@ class GraphUpdater:
             # unaffected.
             self._prune_stale_seeded_module_qns()
 
-            known_module_paths = self._resolve_deferred_definitions(rehydrate=not force)
+            known_module_paths = self._resolve_deferred_definitions(
+                rehydrate=not force, carried=self._pending_inbound_edges
+            )
             self._write_project_index()
         finally:
             # After the deferred stages, as `_reingest_resolve` does, so an
@@ -10867,7 +10991,9 @@ class GraphUpdater:
         # inheritance, Rust inline-mod arbitration): the deleted subtrees
         # held those relationships too. The registry is already live or was
         # hydrated above, so no registry read-back here.
-        known_module_paths = self._resolve_deferred_definitions(rehydrate=False)
+        known_module_paths = self._resolve_deferred_definitions(
+            rehydrate=False, carried=captured
+        )
         # A fresh updater read the implementer pairs back BEFORE the delete,
         # so a class the edit stopped implementing still counted as the sole
         # implementer and the re-parsed caller kept its edge (#2403 review).
