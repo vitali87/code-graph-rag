@@ -52,7 +52,11 @@ from codebase_rag.tests.conftest import (
 )
 from codebase_rag.tests.engine_modes import CHANGE_SHADOW_DIR_ENV
 from codebase_rag.tests.shadows import child_env
-from codebase_rag.tests.test_symlink_policy import _junction, needs_junctions
+from codebase_rag.tests.test_symlink_policy import (
+    _junction,
+    _loops_repo,
+    needs_junctions,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TESTS = Path(__file__).resolve().parent
@@ -712,6 +716,21 @@ class TestInSync:
         _write(repo, "pkg/d.py", "D = 4\n")
 
         self._case(repo, False)
+
+    @needs_junctions
+    def test_junctions_that_loop_are_left_out_of_the_listing_as_of_the_walk(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _loops_repo(tmp_path / "repo")
+        _sync(repo)
+        self._case(repo, True)
+        # Each listing decides now, the loops' folders among them.
+        for rel in (".", "A", "A/J", "B", "B/K", "F"):
+            folder = repo / rel
+            moved = os.stat(folder).st_mtime_ns + 10**9
+            os.utime(folder, ns=(moved, moved))
+
+        self._case(repo, True)
 
     def test_a_cache_mtime_in_the_future_counts_as_zero(self, tmp_path: Path) -> None:
         repo = _repo(tmp_path)

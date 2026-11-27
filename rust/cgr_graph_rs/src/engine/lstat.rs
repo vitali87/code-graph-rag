@@ -13,15 +13,20 @@
 //! as Rust and CPython agree on every other entry.
 //!
 //! The walks (the file walk, the structure pass and the in-sync listing)
-//! judge a listed entry one step further, as `is_outside_junction` in
+//! judge a listed entry one step further, as `is_junction_left_out` in
 //! `codebase_rag/utils/path_utils.py` does: a junction naming a folder
 //! outside the repository is left out as a link, so nothing beyond the root
-//! is indexed through one, and one naming a folder inside is entered. It is
-//! judged by its target as the reparse point records it, so a dangling one
-//! by where it points, and one whose target cannot be read is a link.
+//! is indexed through one, and so is one naming a folder the walk entered
+//! on its way down to it (its own, the root, or one reached through other
+//! junctions, each by its real path), which would be entered again at every
+//! level. Any other junction is entered. It is judged by its target as the
+//! reparse point records it, so a dangling one by where it points, and one
+//! whose target cannot be read is a link.
 
 use std::fs::{self, DirEntry, FileType};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use super::state::resolve;
 
 #[cfg(test)]
 mod tests;
@@ -43,12 +48,12 @@ impl Kind {
         Kind::judged(kind, path, None)
     }
 
-    /// `of`, with a junction judged by its target against the resolved
-    /// `root` when one is given.
+    /// `of`, with a junction judged by its target against `root` when one
+    /// is given.
     fn judged<P: AsRef<Path>>(
         kind: FileType,
         path: impl FnOnce() -> P,
-        root: Option<&Path>,
+        root: Option<&WalkRoot>,
     ) -> Kind {
         if kind.is_symlink() {
             symlink_kind(kind, path, root)
@@ -62,10 +67,31 @@ impl Kind {
     }
 }
 
-/// The kind of an entry a walk of the repository at the resolved `root`
-/// lists: a junction naming a folder outside it is a link. `None` when its
-/// type cannot be read.
-pub(super) fn walk_kind(entry: &DirEntry, root: &Path) -> Option<Kind> {
+/// The repository a walk judges its entries against: its root as the walk
+/// was given it, which the path of every folder it lists starts with, and
+/// resolved.
+pub(super) struct WalkRoot {
+    #[cfg_attr(not(windows), allow(dead_code))]
+    given: PathBuf,
+    resolved: PathBuf,
+}
+
+impl WalkRoot {
+    pub(super) fn new(root: &Path) -> WalkRoot {
+        WalkRoot {
+            given: root.to_path_buf(),
+            resolved: resolve(root),
+        }
+    }
+
+    pub(super) fn resolved(&self) -> &Path {
+        &self.resolved
+    }
+}
+
+/// The kind of an entry a walk of the repository at `root` lists: a
+/// junction it leaves out is a link. `None` when its type cannot be read.
+pub(super) fn walk_kind(entry: &DirEntry, root: &WalkRoot) -> Option<Kind> {
     let kind = entry.file_type().ok()?;
     Some(Kind::judged(kind, || entry.path(), Some(root)))
 }
@@ -77,7 +103,7 @@ pub(super) fn lstat_kind(path: &Path) -> Option<Kind> {
 }
 
 #[cfg(not(windows))]
-fn symlink_kind<P>(_kind: FileType, _path: impl FnOnce() -> P, _root: Option<&Path>) -> Kind {
+fn symlink_kind<P>(_kind: FileType, _path: impl FnOnce() -> P, _root: Option<&WalkRoot>) -> Kind {
     Kind::Link
 }
 
@@ -89,7 +115,7 @@ fn symlink_kind<P>(_kind: FileType, _path: impl FnOnce() -> P, _root: Option<&Pa
 fn symlink_kind<P: AsRef<Path>>(
     kind: FileType,
     path: impl FnOnce() -> P,
-    root: Option<&Path>,
+    root: Option<&WalkRoot>,
 ) -> Kind {
     use std::os::windows::fs::FileTypeExt;
 
@@ -97,7 +123,7 @@ fn symlink_kind<P: AsRef<Path>>(
     let path = path.as_ref();
     match windows::attributes_and_tag(path) {
         Some((attributes, tag)) => match root {
-            Some(root) => walk_windows_kind(attributes, tag, || junction_inside(path, root)),
+            Some(root) => walk_windows_kind(attributes, tag, || junction_entered(path, root)),
             None => windows_kind(attributes, tag),
         },
         None if kind.is_symlink_dir() => Kind::Folder,
@@ -105,19 +131,44 @@ fn symlink_kind<P: AsRef<Path>>(
     }
 }
 
-/// Whether the junction at `path` names a folder inside the resolved
-/// `root`: its target, without the verbatim prefix where a drive or share
-/// follows it, taken from the junction's folder and resolved as
-/// `Path.resolve()` resolves it. `None` when the target cannot be read.
+/// Whether a walk of `root` enters the junction at `path`: its target,
+/// without the verbatim prefix where a drive or share follows it, taken
+/// from the junction's folder and resolved as `Path.resolve()` resolves it,
+/// is inside the root and none of the folders on the way down to it.
+/// `None` when the target cannot be read.
 #[cfg(windows)]
-fn junction_inside(path: &Path, root: &Path) -> Option<bool> {
+fn junction_entered(path: &Path, root: &WalkRoot) -> Option<bool> {
     let target = fs::read_link(path).ok()?;
     let spelled = match target.to_str() {
-        Some(text) => std::path::PathBuf::from(without_verbatim_prefix(text).as_ref()),
+        Some(text) => PathBuf::from(without_verbatim_prefix(text).as_ref()),
         None => target,
     };
-    let absolute = path.parent().unwrap_or(Path::new("")).join(spelled);
-    Some(super::state::resolve(&absolute).starts_with(root))
+    let folder = path.parent().unwrap_or(Path::new(""));
+    let resolved = resolve(&folder.join(spelled));
+    let way_down: Vec<String> = way_down(folder, &root.given)
+        .iter()
+        .map(|entered| resolve(entered).to_string_lossy().into_owned())
+        .collect();
+    Some(!junction_left_out(
+        &resolved.to_string_lossy(),
+        way_down.iter().map(String::as_str),
+        &root.resolved.to_string_lossy(),
+    ))
+}
+
+/// `_way_down`: the folders a walk of `root` entered to reach `folder`, the
+/// root first and `folder` last.
+#[cfg(windows)]
+fn way_down(folder: &Path, root: &Path) -> Vec<PathBuf> {
+    let Ok(below) = folder.strip_prefix(root) else {
+        return vec![folder.to_path_buf()];
+    };
+    let mut way = vec![root.to_path_buf()];
+    for part in below.components() {
+        let next = way[way.len() - 1].join(part);
+        way.push(next);
+    }
+    way
 }
 
 /// winnt.h's values, which the decisions below are tested with everywhere.
@@ -139,6 +190,12 @@ const VERBATIM_UNC_PREFIX: &str = r"\\?\UNC\";
 const UNC_PREFIX: &str = r"\\";
 #[cfg(any(windows, test))]
 const DRIVE_SEPARATOR: char = ':';
+#[cfg(any(windows, test))]
+const BACKSLASH: char = '\\';
+#[cfg(any(windows, test))]
+const BACKSLASH_STR: &str = "\\";
+#[cfg(any(windows, test))]
+const SLASH: char = '/';
 
 /// How CPython types a Windows entry from its attributes and reparse tag: a
 /// link only when it is a reparse point tagged `IO_REPARSE_TAG_SYMLINK`, and
@@ -157,20 +214,51 @@ fn windows_kind(attributes: u32, reparse_tag: u32) -> Kind {
 
 /// `windows_kind` for an entry a walk lists: a junction (`os.path.isjunction`,
 /// a reparse point tagged `IO_REPARSE_TAG_MOUNT_POINT`) is a folder only
-/// when `inside` says its target is inside the root, and a link when it is
-/// outside or cannot be read.
+/// when `entered` says the walk enters it, and a link when it does not or
+/// its target cannot be read.
 #[cfg(any(windows, test))]
 fn walk_windows_kind(
     attributes: u32,
     reparse_tag: u32,
-    inside: impl FnOnce() -> Option<bool>,
+    entered: impl FnOnce() -> Option<bool>,
 ) -> Kind {
     let junction =
         attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 && reparse_tag == IO_REPARSE_TAG_MOUNT_POINT;
     match windows_kind(attributes, reparse_tag) {
-        Kind::Folder if junction && inside() != Some(true) => Kind::Link,
+        Kind::Folder if junction && entered() != Some(true) => Kind::Link,
         kind => kind,
     }
+}
+
+/// `junction_left_out`: whether a junction whose resolved target is
+/// `target` is left out, as it is outside the resolved `root` or the same
+/// folder as one of `way_down`, the real paths of the folders entered to
+/// reach it. Each is compared as `PureWindowsPath` compares it: without the
+/// verbatim prefix where a drive or share follows it, `/` read as `\`, and
+/// without case.
+#[cfg(any(windows, test))]
+fn junction_left_out<'a>(
+    target: &str,
+    way_down: impl IntoIterator<Item = &'a str>,
+    root: &str,
+) -> bool {
+    let target = comparable(target);
+    let root = comparable(root);
+    let within = target == root
+        || target
+            .strip_prefix(root.as_str())
+            .is_some_and(|rest| root.ends_with(BACKSLASH) || rest.starts_with(BACKSLASH));
+    !within
+        || way_down
+            .into_iter()
+            .any(|entered| comparable(entered) == target)
+}
+
+#[cfg(any(windows, test))]
+fn comparable(path: &str) -> String {
+    without_verbatim_prefix(path)
+        .replace(SLASH, BACKSLASH_STR)
+        .to_lowercase()
 }
 
 /// `without_verbatim_prefix`: a junction's target without the `\\?\` prefix

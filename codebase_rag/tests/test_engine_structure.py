@@ -42,6 +42,7 @@ from codebase_rag.tests.shadows import child_env
 from codebase_rag.tests.test_symlink_policy import (
     _junction,
     _link,
+    _loops_repo,
     _make_undecodable,
     _write,
     needs_junctions,
@@ -536,6 +537,16 @@ class TestRules:
         found = _same_structure(pairs, checked, repo)
 
         assert _keys(found) == [".", "alias", "alias/inner", "real", "real/inner"]
+
+    @needs_junctions
+    def test_a_junction_naming_a_folder_on_its_way_down_is_left_out(
+        self, tmp_path: Path, pairs: list[Pair], checked: _Recorded
+    ) -> None:
+        repo = _loops_repo(tmp_path / "repo")
+
+        found = _same_structure(pairs, checked, repo)
+
+        assert _keys(found) == [".", "A", "A/J", "B", "B/K", "F"]
 
     @needs_junctions
     def test_a_directory_symlink_beside_a_junction_is_still_left_out(

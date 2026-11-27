@@ -14,8 +14,8 @@
 //!   not UTF-8. Links are never followed; the root is, when it is one. A
 //!   link is what Python calls one (`lstat`): on Windows a junction is none,
 //!   so the walk enters one naming a folder inside the root, and leaves out
-//!   as a link one naming a folder outside it, as `is_outside_junction`
-//!   does.
+//!   as a link one naming a folder outside it or one it entered on its way
+//!   down, as `is_junction_left_out` does (`lstat`).
 //! - **Files**: cgr's own state files are dropped at any depth, then
 //!   `should_skip_rel_file` decides; a file it keeps is left out, and
 //!   reported, when it is a link, when its name is not UTF-8, or when it is
@@ -48,8 +48,8 @@ use std::mem;
 use std::path::{Path, PathBuf, MAIN_SEPARATOR_STR};
 
 use super::ignore::{string_from_os_str, IgnoreRules, PatternError};
-use super::lstat::{walk_kind, Kind};
-use super::state::{python_mtime, resolve};
+use super::lstat::{walk_kind, Kind, WalkRoot};
+use super::state::python_mtime;
 use super::Engine;
 
 #[cfg(test)]
@@ -134,12 +134,12 @@ impl Engine {
 
     /// The plan without its hashes.
     pub fn walk(&self, root: &OsStr, rules: &IgnoreRules) -> Result<FilePlan, PatternError> {
-        let resolved_root = resolve(Path::new(root));
+        let walk_root = WalkRoot::new(Path::new(root));
         let mut nodes = vec![Node::root(root)];
         let mut level = vec![0];
         while !level.is_empty() {
             let visits: Vec<Visit> =
-                self.map_ordered(&level, |&id| visit(rules, &nodes[id], &resolved_root));
+                self.map_ordered(&level, |&id| visit(rules, &nodes[id], &walk_root));
             let mut next = Vec::new();
             for (&id, mut visit) in level.iter().zip(visits) {
                 if let Visit::Listed(listed) = &mut visit {
@@ -257,11 +257,11 @@ impl Entry {
     }
 }
 
-fn visit(rules: &IgnoreRules, node: &Node, resolved_root: &Path) -> Visit {
+fn visit(rules: &IgnoreRules, node: &Node, root: &WalkRoot) -> Visit {
     let mtime = fs::metadata(&node.dirpath)
         .ok()
         .map(|metadata| python_mtime(&metadata));
-    let Some(entries) = list(&node.dirpath, resolved_root) else {
+    let Some(entries) = list(&node.dirpath, root) else {
         return Visit::Unlisted;
     };
     match judge(rules, node, entries) {
@@ -274,9 +274,9 @@ fn visit(rules: &IgnoreRules, node: &Node, resolved_root: &Path) -> Visit {
 }
 
 /// The folder's entries in the order the system lists them, judged as a
-/// walk of the repository at the resolved `root` judges them, or `None` when
-/// it cannot be listed to the end.
-pub(super) fn list(dirpath: &OsStr, root: &Path) -> Option<Vec<Entry>> {
+/// walk of the repository at `root` judges them, or `None` when it cannot
+/// be listed to the end.
+pub(super) fn list(dirpath: &OsStr, root: &WalkRoot) -> Option<Vec<Entry>> {
     let mut entries = Vec::new();
     for entry in fs::read_dir(dirpath).ok()? {
         let entry = entry.ok()?;

@@ -37,6 +37,7 @@ from codebase_rag.tests.shadows import child_env
 from codebase_rag.tests.test_symlink_policy import (
     _junction,
     _link,
+    _loops_repo,
     _make_undecodable,
     _write,
     needs_fifo,
@@ -420,6 +421,25 @@ class TestJunctions:
         # One whose folder inside is gone is a folder that cannot be listed.
         assert _keys(plan) == [cs.ROOT_DIR_KEY, "alias", "real"]
         assert sorted(plan.symlinks) == ["dangling", "elsewhere"]
+
+    def test_a_junction_naming_a_folder_on_its_way_down_is_left_out_as_a_link(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _loops_repo(tmp_path / "repo")
+
+        plan = _same_plan(repo)
+
+        # A/J and B/K are entered once each; under each, the other's
+        # junction names a folder already entered.
+        assert _rel_paths(plan) == [
+            "A/a.py",
+            "A/J/b.py",
+            "B/b.py",
+            "B/K/a.py",
+            "F/x.py",
+        ]
+        assert _keys(plan) == [cs.ROOT_DIR_KEY, "A", "A/J", "B", "B/K", "F"]
+        assert sorted(plan.symlinks) == ["A/J/K", "B/K/J", "F/J1", "F/J2", "top"]
 
     def test_nothing_outside_is_indexed_and_no_module_is_left_without_a_parent(
         self, tmp_path: Path

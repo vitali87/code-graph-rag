@@ -4,7 +4,7 @@
 //! and its neighbours hold the walk, the structure pass and the in-sync
 //! check to Python's on real junctions, on Windows.
 
-use super::{walk_windows_kind, windows_kind, without_verbatim_prefix, Kind};
+use super::{junction_left_out, walk_windows_kind, windows_kind, without_verbatim_prefix, Kind};
 
 const FILE_ATTRIBUTE_READONLY: u32 = 0x1;
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
@@ -152,6 +152,56 @@ fn a_target_s_verbatim_prefix_goes_where_a_drive_or_share_follows() {
     }
 }
 
+#[test]
+fn a_target_is_compared_with_the_root_without_prefix_or_case() {
+    // (target, root, left out), as `test_symlink_policy.py` holds Python's.
+    let cases = [
+        (r"C:\repo\real", r"C:\repo", false),
+        (r"\\?\C:\repo\real", r"C:\repo", false),
+        (r"C:\repo\real", r"\\?\C:\repo", false),
+        (r"\\?\C:\repo\real", r"\\?\C:\repo", false),
+        (r"c:\REPO\Real", r"\\?\C:\repo", false),
+        (r"\\?\UNC\host\share\repo\x", r"\\host\share\repo", false),
+        (r"C:\outside", r"C:\repo", true),
+        (r"\\?\C:\outside", r"C:\repo", true),
+        (r"C:\outside", r"\\?\C:\repo", true),
+        (r"C:\repository", r"C:\repo", true),
+    ];
+    for (target, root, left_out) in cases {
+        assert_eq!(
+            junction_left_out(target, [root], root),
+            left_out,
+            "{target} in {root}"
+        );
+    }
+}
+
+#[test]
+fn a_target_already_on_the_walk_s_way_down_is_a_loop() {
+    // (target, the real path of each folder entered below the root, from
+    // it, left out); A/J names B, so a junction under it naming A closes a
+    // cycle.
+    let cases: [(&str, &[&str], bool); 7] = [
+        (r"C:\repo\F", &["F"], true),
+        (r"C:\repo", &["F", r"F\G"], true),
+        (r"C:\repo\F", &["F", r"F\G"], true),
+        (r"\\?\c:\REPO\f", &["F"], true),
+        (r"C:\repo\A", &["A", "B"], true),
+        (r"C:\repo\F\H", &["F", r"F\G"], false),
+        (r"C:\repo\F\G\H", &["F", r"F\G"], false),
+    ];
+    let root = r"C:\repo";
+    for (target, below, left_out) in cases {
+        let mut way: Vec<String> = vec![root.to_owned()];
+        way.extend(below.iter().map(|part| format!(r"{root}\{part}")));
+        assert_eq!(
+            junction_left_out(target, way.iter().map(String::as_str), root),
+            left_out,
+            "{target} below {below:?}"
+        );
+    }
+}
+
 #[cfg(unix)]
 mod on_posix {
     use std::ffi::CString;
@@ -160,7 +210,7 @@ mod on_posix {
     use std::os::unix::fs::symlink;
 
     use super::super::super::tests::Scratch;
-    use super::super::{lstat_kind, walk_kind, Kind};
+    use super::super::{lstat_kind, walk_kind, Kind, WalkRoot};
 
     #[test]
     fn the_kind_is_the_one_rust_reads() {
@@ -188,7 +238,7 @@ mod on_posix {
             .unwrap()
             .map(|entry| {
                 let entry = entry.unwrap();
-                (entry.file_name(), walk_kind(&entry, root))
+                (entry.file_name(), walk_kind(&entry, &WalkRoot::new(root)))
             })
             .collect();
         listed.sort_by(|a, b| a.0.cmp(&b.0));

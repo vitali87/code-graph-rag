@@ -201,9 +201,11 @@ copies it rule for rule.
    followed; the root is followed when it is itself a link. A link is what
    Python calls one: on Windows only a reparse point tagged as a symbolic
    link. A junction naming a folder inside the root is a folder, entered;
-   one naming a folder outside it, by its target as `os.readlink` reads it
-   (a dangling one too), is left out and reported as a link, so nothing
-   beyond `--repo-path` is indexed through one (#3740).
+   one naming a folder outside it, or one the walk entered on its way down
+   to it (by real path, so a cycle through other junctions too), is left out
+   and reported as a link, judged by its target as `os.readlink` reads it (a
+   dangling one too): nothing beyond `--repo-path` is indexed through one,
+   and none is entered again at every level (#3740).
 6. **Files**, in order: compiled and temporary suffixes are skipped; a
    matching exclude skips; files inside version-control directories not
    kept are skipped; `.min.js` and `.min.css` are skipped unless an unignore
@@ -244,9 +246,7 @@ detection (#3210), `.h` files are C++ (#2696), no detection of generated
 files (#3213). Three more are copied and recorded for the same decision
 later: a `.env` file and a submodule's `.git` file get File nodes, a bare `!`
 line walks every built-in directory, and a Windows junction naming a folder
-inside the root is walked, one to an ancestor again at each level until
-Windows refuses the path, which both walks then skip as a folder they cannot
-list (#3740).
+inside the root, and on no walk's way down to it, is walked (#3740).
 
 ## 6. Change detection: the file half
 
