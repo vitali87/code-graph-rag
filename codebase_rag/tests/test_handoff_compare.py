@@ -355,8 +355,9 @@ class TestTheGoTypeChecker:
     def test_a_module_left_out_or_none_to_analyse_is_refused(
         self, tmp_path: Path, record: handoff.GoTypesRun, refusal: str
     ) -> None:
+        recorded = _record(tmp_path, record)
         with pytest.raises(SystemExit) as exited:
-            handoff._type_checked(GO_REPO, "go=rust", _record(tmp_path, record))
+            handoff._type_checked(GO_REPO, "go=rust", recorded)
 
         assert str(exited.value) == refusal
 
