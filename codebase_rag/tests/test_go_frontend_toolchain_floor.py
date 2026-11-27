@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable, Sequence
@@ -21,6 +23,7 @@ import yaml
 from loguru import logger
 
 from codebase_rag import constants as cs
+from codebase_rag import logs as ls
 from codebase_rag.config import settings
 from codebase_rag.parsers import build_lock
 from codebase_rag.parsers.go_frontend import frontend as fe
@@ -38,6 +41,10 @@ SUPPORTED_FLOOR = (1, 27, 2)
 # Bounds every wait in the two-worker tests, so a regression fails them
 # instead of hanging the run.
 _RACE_TIMEOUT_S = 30.0
+# Kept before a test replaces `subprocess.run`, so a fake `go` can still
+# start a real process and have `subprocess` decode its output exactly as the
+# frontend asks it to, on every platform.
+_REAL_RUN = subprocess.run
 
 
 def _directive(name: str) -> str | None:
@@ -82,6 +89,26 @@ class _FakeGo:
             )
         self.runs += 1
         return subprocess.CompletedProcess(cmd, 0, stdout='{"calls": []}\n', stderr="")
+
+
+class _PrintingFakeGo(_FakeGo):
+    """A `go` whose build fails printing `stderr`, which need not be UTF-8,
+    from a real process."""
+
+    def __init__(self, stderr: bytes) -> None:
+        super().__init__("go1.27.2", build_ok=False)
+        self.stderr = stderr
+
+    def __call__(
+        self, cmd: Sequence[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if len(cmd) > 1 and cmd[1] == "build":
+            self.builds += 1
+            script = (
+                f"import sys; sys.stderr.buffer.write({self.stderr!r}); sys.exit(1)"
+            )
+            return _REAL_RUN([sys.executable, "-c", script], **kwargs)
+        return super().__call__(cmd, **kwargs)
 
 
 class _GatedFakeGo(_FakeGo):
@@ -331,6 +358,71 @@ def test_a_timed_out_build_is_retried_on_the_next_sync(
 
     assert fake.builds == 2
     assert warnings == []
+
+
+def test_a_failed_build_that_prints_bytes_that_are_not_utf8_is_a_failed_build(
+    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
+) -> None:
+    # The strict decode of the build's output raised out of the build step
+    # and ended the index (#3792). The output is only ever shown, so it is
+    # shown with the byte escaped, and the build is remembered as failed.
+    fake = _PrintingFakeGo(b"go: cannot write /srv/caf\xe9/out: read-only\n")
+
+    facts, warnings = _run(monkeypatch, go_repo, fake)
+    _again, later = _run(monkeypatch, go_repo, fake)
+
+    assert not facts.call_sites
+    assert len(warnings) == 1
+    assert "/srv/caf\\xe9/out: read-only" in warnings[0]
+    assert fake.builds == 1
+    assert len(later) == 1
+    assert "go1.27.2" in later[0]
+
+
+def test_a_cgr_home_that_cannot_be_written_falls_back_with_one_warning(
+    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
+) -> None:
+    # A file where the cache folder must go: the helper's cache cannot be
+    # made, and the OSError ended the index (#3792).
+    cgr_home.write_text("", encoding=cs.ENCODING_UTF8)
+    fake = _FakeGo("go1.27.2", build_ok=True)
+
+    facts, warnings = _run(monkeypatch, go_repo, fake)
+
+    assert not facts.call_sites
+    assert fake.builds == 0
+    assert fake.runs == 0
+    assert len(warnings) == 1
+    assert cgr_home.name in warnings[0]
+
+
+def test_a_go_that_cannot_start_falls_back_with_one_warning(
+    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path, tmp_path: Path
+) -> None:
+    # A `go` on PATH that is no program, as a broken shim is: the build's
+    # OSError ended the index (#3792). It says nothing about whether the
+    # helper builds and costs nothing to retry, so it is not remembered.
+    go = tmp_path / "bin" / "go"
+    go.parent.mkdir()
+    go.write_bytes(b"\x00\x01 not a program\n")
+    go.chmod(go.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setattr(fe.shutil, "which", lambda _name: str(go))
+    warnings: list[str] = []
+    sink = logger.add(warnings.append, level="WARNING", format="{message}")
+    try:
+        first = fe.run_go_frontend(go_repo)
+        second = fe.run_go_frontend(go_repo)
+    finally:
+        logger.remove(sink)
+
+    assert not first.call_sites
+    assert not second.call_sites
+    # Windows names no file in the error it gives for a program it cannot
+    # start, so only the warning's own text is checked.
+    failed = ls.GO_FRONTEND_BUILD_FAILED.partition("{")[0]
+    assert len(warnings) == 2
+    assert all(w.startswith(failed) for w in warnings)
+    assert not list(cgr_home.rglob(fe._BUILD_FAILED_MARKER))
 
 
 def test_a_failure_older_than_the_ttl_is_rebuilt(

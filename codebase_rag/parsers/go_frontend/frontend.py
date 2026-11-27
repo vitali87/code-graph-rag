@@ -211,7 +211,10 @@ def _newest_source_mtime() -> float:
 
 def _compile_tool(go: str, src: Path, out: Path) -> bool | None:
     """True when the helper built, False when `go build` failed, and None when
-    it timed out, which says nothing about whether the helper builds."""
+    it timed out, which says nothing about whether the helper builds.
+
+    An OSError, from a cache that cannot be written or a `go` that cannot
+    start, is left to `_build_tool`, which reports it."""
     # Build from a copy in the writable cache, never the bundled source dir,
     # which is read-only under a pip install (the build writes nothing there,
     # but a shared GOCACHE/module fetch wants a writable working tree).
@@ -226,6 +229,10 @@ def _compile_tool(go: str, src: Path, out: Path) -> bool | None:
             capture_output=True,
             text=True,
             encoding=cs.ENCODING_UTF8,
+            # The output is only shown, never parsed, and the exit status
+            # decides, so a byte that is not UTF-8 is shown as `\xff`. A
+            # strict decode raised out of the build and ended the index (#3792).
+            errors=cs.DECODE_ERRORS_BACKSLASHREPLACE,
             check=False,
             timeout=_BUILD_TIMEOUT,
             env=_host_build_env(),
@@ -393,10 +400,6 @@ def _build_tool(go: str) -> Path | None:
     version manager can put an older Go there after a newer one built it, so
     a cached build must not let a Go below the floor run (PR #3410 review).
     """
-    cache = _cache_dir()
-    src = cache / "src"
-    out = cache / "out"
-    binary = out / _BINARY_NAME
     version = _toolchain_version(go)
     if (required := _too_old(version)) is not None:
         logger.warning(
@@ -405,6 +408,25 @@ def _build_tool(go: str) -> Path | None:
             )
         )
         return None
+    try:
+        return _cached_tool(go, version)
+    except OSError as error:
+        # A CGR_HOME that cannot be written, or a `go` that cannot start, is
+        # a failed build, and the error ended the index (#3792). It is not
+        # remembered, as a timeout is not: such a cache cannot hold the
+        # marker, and a `go` that cannot start says nothing about whether
+        # the helper builds, and costs nothing to try again.
+        logger.warning(ls.GO_FRONTEND_BUILD_FAILED.format(stderr=error))
+        return None
+
+
+def _cached_tool(go: str, version: str | None) -> Path | None:
+    """The helper from the cache, built there first when it is stale, or
+    None after one warning."""
+    cache = _cache_dir()
+    src = cache / "src"
+    out = cache / "out"
+    binary = out / _BINARY_NAME
     if artifact_fresh(binary, _newest_source_mtime):
         return binary
     marker = cache / _BUILD_FAILED_MARKER
@@ -468,7 +490,10 @@ def _parse_payload(
         return None
     try:
         payload = json.loads(lines[-1])
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
+        # Besides JSONDecodeError, an integer longer than Python's int-string
+        # limit is a ValueError, and nesting past the recursion limit a
+        # RecursionError; either ended the index (#3792).
         logger.error(ls.GO_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
         return None
     if not isinstance(payload, dict):
@@ -513,9 +538,11 @@ def _parse_payload(
                 for fact in payload.get("compared", [])
             ),
         )
-    except (KeyError, TypeError, ValueError, AttributeError):
+    except (KeyError, TypeError, ValueError, OverflowError, AttributeError):
         # A malformed fact entry (missing key, non-int position, non-object
         # row) must degrade to tree-sitter, never abort the whole index run.
+        # `json.loads` reads `Infinity` as a float, which int() refuses with
+        # an OverflowError (#3792).
         logger.error(ls.GO_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
         return None
     if (
@@ -907,6 +934,10 @@ def _run_tool_once(
             capture_output=True,
             text=True,
             encoding=cs.ENCODING_UTF8,
+            # Read in full whatever the bytes, for `_is_utf8` to judge: a
+            # strict decode raised out of the run and ended the index, and
+            # on Windows its reader thread dropped the stream instead (#3792).
+            errors=cs.DECODE_ERRORS_SURROGATEESCAPE,
             check=False,
             timeout=_RUN_TIMEOUT,
             env=env,
@@ -922,7 +953,24 @@ def _run_tool_once(
             ls.GO_FRONTEND_RUN_FAILED.format(error=f"exit {proc.returncode}")
         )
         return None
+    if not _is_utf8(proc.stdout, proc.stderr):
+        # Read leniently, a byte in a file name would become U+FFFD and the
+        # facts on it would join nothing, unseen: a failed run instead.
+        logger.warning(ls.GO_FRONTEND_RUN_NOT_UTF8)
+        return None
     return _parse_payload(proc.stdout, proc.stderr, in_repo_modules)
+
+
+def _is_utf8(*outputs: str | None) -> bool:
+    """Whether output read with surrogateescape was all UTF-8. The handler
+    reads every other byte as a lone surrogate, which no UTF-8 decode gives
+    and which encoding to UTF-8 refuses."""
+    try:
+        for output in outputs:
+            (output or "").encode(cs.ENCODING_UTF8)
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def run_go_frontend(
