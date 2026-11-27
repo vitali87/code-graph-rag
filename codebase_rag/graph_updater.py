@@ -185,6 +185,7 @@ from .utils.path_utils import (
     cached_file_identity_posix,
     cached_relative_path,
     cached_resolve_posix,
+    is_outside_junction,
     is_special_file_entry,
     is_utf8_name,
     normalize_project_name,
@@ -1445,7 +1446,7 @@ def _entry_flag(probe: Callable[[], bool]) -> bool:
         return False
 
 
-def _scan_dir_children(dir_path_str: str) -> tuple[set[str], set[str]]:
+def _scan_dir_children(dir_path_str: str, repo_path: Path) -> tuple[set[str], set[str]]:
     files: set[str] = set()
     dirs: set[str] = set()
     with os.scandir(dir_path_str) as it:
@@ -1454,11 +1455,16 @@ def _scan_dir_children(dir_path_str: str) -> tuple[set[str], set[str]]:
             # The walk follows no link, file or directory (issue #2451), so
             # neither may the listing compared against its cache: a file link
             # here would read as a new file and refuse the fast path forever.
-            # The same goes for a name the walk cannot store (issue #3722)
-            # and for a pipe, socket or device (issue #3721).
+            # The same goes for a junction the walk leaves out as one (issue
+            # #3740), for a name the walk cannot store (issue #3722) and for
+            # a pipe, socket or device (issue #3721).
             if (
                 name in cs.CGR_STATE_FILENAMES
                 or _entry_flag(entry.is_symlink)
+                or (
+                    _entry_flag(entry.is_junction)
+                    and is_outside_junction(entry.path, repo_path)
+                )
                 or not is_utf8_name(name)
             ):
                 continue
@@ -7615,7 +7621,7 @@ class GraphUpdater:
             (dk for dk in old_dir_mtimes if dk != cs.ROOT_DIR_KEY), prefix
         )
         try:
-            actual_files, actual_dirs = _scan_dir_children(dir_path_str)
+            actual_files, actual_dirs = _scan_dir_children(dir_path_str, self.repo_path)
         except OSError:
             return None, dir_key
 

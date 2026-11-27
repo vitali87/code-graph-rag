@@ -408,8 +408,55 @@ def is_symlink_entry(path: str | os.PathLike[str]) -> bool:
     already declined to enter linked directories. `os.path.islink` judges the
     entry itself and answers False on any error, and a dangling link or a
     cycle is a link like any other.
+
+    A Windows directory junction is no link to `os.path.islink`, so the walk
+    enters one; `is_outside_junction` leaves out, as a link, one that names a
+    folder outside the repository.
     """
     return os.path.islink(path)
+
+
+def is_outside_junction(path: str | os.PathLike[str], repo_path: Path) -> bool:
+    """Whether a repository walk leaves this entry out as a junction naming a
+    folder outside the repository, reporting it as it reports a link.
+
+    `os.walk` enters a Windows directory junction, so the walk indexed what
+    one named wherever it pointed, while the structure pass leaves out a
+    folder that resolves outside the root: those files became modules with
+    no parent (issue #3740). Content beyond `--repo-path` is never indexed
+    through a link (issue #2451), nor through a junction. One is judged by
+    its target as `os.readlink` reads it, so a dangling one is judged by
+    where it points, and one whose target cannot be read is left out. A
+    junction to a folder inside the root is entered, as before. Always False
+    off Windows, where `os.path.isjunction` is.
+    """
+    if not os.path.isjunction(path):
+        return False
+    try:
+        target = os.readlink(path)
+        absolute = Path(os.path.dirname(path), without_verbatim_prefix(target))
+        return not absolute.resolve().is_relative_to(repo_path.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return True
+
+
+def without_verbatim_prefix(path: str) -> str:
+    """`path` without the `\\\\?\\` prefix `os.readlink` gives a junction's target,
+    where a drive or a share follows it.
+
+    `Path.resolve()` keeps a prefix it is given, so a target spelled with
+    one would never compare as inside the root. Any other path keeps it: a
+    volume's name after it is no path on a drive.
+    """
+    if path.startswith(cs.WINDOWS_VERBATIM_UNC_PREFIX):
+        return cs.WINDOWS_UNC_PREFIX + path[len(cs.WINDOWS_VERBATIM_UNC_PREFIX) :]
+    rest = path[len(cs.WINDOWS_VERBATIM_PREFIX) :]
+    if (
+        path.startswith(cs.WINDOWS_VERBATIM_PREFIX)
+        and rest[1:2] == cs.WINDOWS_DRIVE_SEPARATOR
+    ):
+        return rest
+    return path
 
 
 def is_special_file_entry(path: str | os.PathLike[str]) -> bool:
@@ -968,6 +1015,23 @@ def _skipped_link(
     return True
 
 
+def _skipped_dir_link(
+    dirpath: str,
+    name: str,
+    rel_path_str: str,
+    on_symlink: Callable[[str], None] | None,
+    repo_path: Path,
+) -> bool:
+    """Whether the walk leaves this folder out as a link or as a junction
+    naming one outside the repository, reporting it if so."""
+    path = os.path.join(dirpath, name)
+    if not (is_symlink_entry(path) or is_outside_junction(path, repo_path)):
+        return False
+    if on_symlink is not None:
+        on_symlink(rel_path_str)
+    return True
+
+
 def _skipped_name(
     name: str, rel_path_str: str, on_undecodable: Callable[[str], None] | None
 ) -> bool:
@@ -1018,9 +1082,10 @@ def walk_eligible_files(
     ``on_dir`` receives ``(dir_key, dirpath)`` per visited directory, for the
     indexer's mtime bookkeeping; it must not mutate the walk.
 
-    A symbolic link is never walked (`is_symlink_entry`), and ``on_symlink``
-    receives the repo-relative path of each one the ignore rules would
-    otherwise have let through, file or directory. The same goes for a pipe,
+    A symbolic link is never walked (`is_symlink_entry`), nor a Windows
+    junction naming a folder outside the repository (`is_outside_junction`),
+    and ``on_symlink`` receives the repo-relative path of each one the ignore
+    rules would otherwise have let through, file or directory. The same goes for a pipe,
     socket or device (`is_special_file_entry`, reported to ``on_special``)
     and for a file or directory whose name is not valid UTF-8
     (`is_utf8_name`, reported to ``on_undecodable``): only regular files the
@@ -1040,7 +1105,9 @@ def walk_eligible_files(
             d
             for d in dirnames
             if should_keep_dir(d, dir_prefix, exclude_paths, unignore_paths)
-            and not _skipped_link(dirpath, d, f"{dir_prefix}{d}", on_symlink)
+            and not _skipped_dir_link(
+                dirpath, d, f"{dir_prefix}{d}", on_symlink, repo_path
+            )
             and not _skipped_name(d, f"{dir_prefix}{d}", on_undecodable)
         )
         for fname in sorted(filenames):

@@ -154,12 +154,13 @@ REPORT_SHARED = "In the {scope}-scoped fixture {argname!r}, which this test uses
 # The functions in `utils/path_utils.py` and `os` Python's walk decides with.
 WALK_PREDICATES = (
     "is_symlink_entry",
+    "is_outside_junction",
     "is_special_file_entry",
     "is_utf8_name",
     "should_keep_dir",
     "should_skip_rel_file",
 )
-WALK_SYSTEM_CALLS = ("walk", "scandir", "lstat", "stat")
+WALK_SYSTEM_CALLS = ("walk", "scandir", "lstat", "stat", "readlink")
 FRAME_REPORT_HEADING = (
     "The frame's file plan differs from Python's on {repo}: {python} lines only "
     "in Python's, {rust} only in the frame's"
@@ -221,6 +222,7 @@ CHANGE_PATH_METHODS = (
 STRUCTURE_FUNCTIONS = (
     "should_skip_path",
     "is_symlink_entry",
+    "is_outside_junction",
     "is_utf8_name",
     "cached_relative_path",
     "cached_resolve_posix",
@@ -529,6 +531,7 @@ def _walk_functions() -> tuple[Callable[..., object], ...]:
         *(getattr(path_utils, name) for name in WALK_PREDICATES),
         *(getattr(os, name) for name in WALK_SYSTEM_CALLS),
         os.path.islink,
+        os.path.isjunction,
         builtins.open,
         Path.read_bytes,
     )
