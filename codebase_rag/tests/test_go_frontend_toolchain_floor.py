@@ -512,6 +512,89 @@ def test_changed_helper_sources_retry_a_remembered_failure(
     assert fake.builds == 2
 
 
+@pytest.mark.parametrize(
+    ("name", "failed_under", "now"),
+    [
+        ("GOPROXY", "off", "https://proxy.golang.org"),
+        ("GOFLAGS", "-mod=vendor", "-mod=mod"),
+        ("GOWORK", "/elsewhere/go.work", None),
+        ("GOMODCACHE", None, "/warm/cache"),
+    ],
+)
+def test_a_changed_go_setting_retries_a_remembered_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    go_repo: Path,
+    cgr_home: Path,
+    name: str,
+    failed_under: str | None,
+    now: str | None,
+) -> None:
+    # A failure the environment caused, such as no module proxy with an
+    # empty module cache, clears when that setting does, while Go and the
+    # helper stay as they were: holding it an hour longer kept go/types
+    # facts off for no reason (issue #3806).
+    _set_env(monkeypatch, name, failed_under)
+    fake = _FakeGo("go1.27.2", build_ok=False)
+    _run(monkeypatch, go_repo, fake)
+    _set_env(monkeypatch, name, now)
+    fake.build_ok = True
+
+    _facts, warnings = _run(monkeypatch, go_repo, fake)
+
+    assert fake.builds == 2
+    assert warnings == []
+
+
+@pytest.mark.parametrize(
+    ("name", "failed_under", "now"),
+    [
+        ("GOFLAGS", "-modfile=alt.mod", "-modfile=other.mod"),
+        ("GOFLAGS", "-mod=mod -modfile=alt.mod", "-mod=mod"),
+        ("GOOS", "linux", "windows"),
+        ("CGR_UNRELATED", None, "1"),
+    ],
+)
+def test_a_change_the_build_never_sees_keeps_a_remembered_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    go_repo: Path,
+    cgr_home: Path,
+    name: str,
+    failed_under: str | None,
+    now: str | None,
+) -> None:
+    # The build drops -modfile, GOOS and GOARCH, and reads no variable
+    # outside Go's own, so a change to them alone repeats the same build.
+    _set_env(monkeypatch, name, failed_under)
+    fake = _FakeGo("go1.27.2", build_ok=False)
+    _run(monkeypatch, go_repo, fake)
+    _set_env(monkeypatch, name, now)
+
+    _facts, warnings = _run(monkeypatch, go_repo, fake)
+
+    assert fake.builds == 1
+    assert len(warnings) == 1
+
+
+def test_the_marker_holds_no_go_setting_in_the_clear(
+    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
+) -> None:
+    # The marker sits in a cache every repository shares, and a GOPROXY can
+    # carry a token.
+    secret = "https://user:s3cr3t-token@proxy.example.com"
+    monkeypatch.setenv("GOPROXY", secret)
+    _run(monkeypatch, go_repo, _FakeGo("go1.27.2", build_ok=False))
+
+    [marker] = cgr_home.rglob(fe._BUILD_FAILED_MARKER)
+    assert "s3cr3t-token" not in marker.read_text(encoding=cs.ENCODING_UTF8)
+
+
+def _set_env(monkeypatch: pytest.MonkeyPatch, name: str, value: str | None) -> None:
+    if value is None:
+        monkeypatch.delenv(name, raising=False)
+    else:
+        monkeypatch.setenv(name, value)
+
+
 def test_a_new_enough_go_builds_the_helper(
     monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
 ) -> None:

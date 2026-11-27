@@ -9,6 +9,7 @@ its source folder, took the flag as meant for the helper's module (#3806).
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -108,6 +109,25 @@ def test_a_module_whose_modfile_is_named_gets_the_type_checkers_graph(
     assert with_modfile == renamed != _graph(repo)
 
 
+@pytest.mark.parametrize("goflags", _MODFILE_GOFLAGS)
+def test_a_cold_helper_cache_builds_the_helper_under_a_modfile(
+    tmp_path: Path, go_env: pytest.MonkeyPatch, goflags: str
+) -> None:
+    # The build runs in the helper's own folder, where a relative -modfile
+    # names no file, and an absolute one names the indexed module's.
+    _needs_go_type_checker()
+    repo = _module_with_alt_mod(tmp_path)
+    cold = tmp_path / "cold-cgr-home"
+    go_env.setattr(settings, "CGR_HOME", cold)
+    go_env.setenv(cs.GO_ENV_GOFLAGS, goflags.format(repo=repo))
+
+    binary = fe._build_tool(str(shutil.which("go")))
+
+    assert binary is not None
+    assert binary.is_relative_to(cold)
+    assert not list(cold.rglob(fe._BUILD_FAILED_MARKER))
+
+
 @pytest.mark.usefixtures("one_go_helper_per_session")
 @pytest.mark.parametrize(
     "goflags", ["-tags=cgrtag -modfile=alt.mod", "-modfile=alt.mod '-tags=cgrtag'"]
@@ -171,3 +191,24 @@ def test_the_helper_is_handed_the_modfile_apart_from_its_goflags(
     assert [(env[cs.GO_ENV_GOFLAGS], env[fe._MODFILE_ENV]) for env in envs] == [
         (handed, modfile)
     ]
+
+
+@pytest.mark.parametrize(
+    ("goflags", "handed"), [(goflags, handed) for goflags, handed, _ in _HANDED]
+)
+def test_the_helper_is_built_without_the_modfile(
+    monkeypatch: pytest.MonkeyPatch, goflags: str, handed: str
+) -> None:
+    # The -modfile names the indexed module's file, never the helper's.
+    monkeypatch.setenv(cs.GO_ENV_GOFLAGS, goflags)
+
+    assert fe._host_build_env()[cs.GO_ENV_GOFLAGS] == handed
+
+
+def test_an_unset_goflags_stays_unset_for_the_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A blank here would hide the GOFLAGS Go keeps in its settings file.
+    monkeypatch.delenv(cs.GO_ENV_GOFLAGS, raising=False)
+
+    assert cs.GO_ENV_GOFLAGS not in fe._host_build_env()

@@ -9,6 +9,7 @@
 # leave the facts empty, so indexing stays pure tree-sitter.
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -124,13 +125,17 @@ _BUILD_LOCK = ".build-lock"
 _CACHE_DIR_PREFIX = "go_gotypes"
 _UNKNOWN_FLOOR = "unknown"
 # Written when a build fails, as JSON holding the `go env GOVERSION` it failed
-# with and when it failed: a failed build is not retried every sync, only once
-# Go or the helper's sources change or GO_FRONTEND_BUILD_FAILURE_TTL_S passes
-# (issue #2395). The time is stored in the file, not read from its mtime, which
+# with, a digest of the Go settings it failed under, and when it failed: a
+# failed build is not retried every sync, only once Go, those settings or the
+# helper's sources change or GO_FRONTEND_BUILD_FAILURE_TTL_S passes (issues
+# #2395, #3806). The time is stored in the file, not read from its mtime, which
 # copying or restoring the cache can reset (PR #2417 review).
 _BUILD_FAILED_MARKER = ".build-failed"
 _MARKER_GO_VERSION = "go_version"
+_MARKER_GO_SETTINGS = "go_settings"
 _MARKER_FAILED_AT = "failed_at"
+# Go takes its own settings from the variables whose names start with this.
+_GO_SETTING_PREFIX = "GO"
 _SECONDS_PER_MINUTE = 60
 _GO_MOD = "go.mod"
 _GO_DIRECTIVE = re.compile(r"^go\s+(\d+(?:\.\d+)*)\s*$", re.MULTILINE)
@@ -265,14 +270,39 @@ def _compile_tool(go: str, src: Path, out: Path) -> bool | None:
 
 
 def _host_build_env() -> dict[str, str]:
-    """The environment the helper is built in: the host's GOOS and GOARCH.
+    """The environment the helper is built in: the host's GOOS and GOARCH,
+    and no -modfile.
 
     A GOOS or GOARCH set for the analysis (`GOOS=windows cgr ...` on Linux)
     picks the build go/types reads, and the helper's run honours it; built
     under it, the helper was a Windows binary this host cannot run, and the
-    index fell back to tree-sitter (#3360 review)."""
-    env = {key: value for key, value in os.environ.items() if key not in _TARGET_ENV}
+    index fell back to tree-sitter (#3360 review). A -modfile names the
+    indexed module's file, never the helper's: the build, in the helper's
+    folder, failed to open a relative one, or took an absolute one for the
+    helper's own module (issue #3806)."""
+    env = {
+        key: value
+        for key, value in _without_modfile(os.environ).items()
+        if key not in _TARGET_ENV
+    }
     return {**env, **_GO_ENV}
+
+
+def _go_settings(env: Mapping[str, str]) -> str:
+    """A digest of the Go settings in `env`: every variable whose name
+    starts with GO, sorted by name. A failed build is remembered against
+    it, so a change to one, such as a GOPROXY or GOFLAGS that caused the
+    failure, builds again (issue #3806). A digest, since the marker sits in
+    a cache every repository shares and a GOPROXY can carry a token."""
+    found = sorted(
+        (name, value)
+        for name, value in env.items()
+        if name.startswith(_GO_SETTING_PREFIX)
+    )
+    text = "".join(f"{name}={value}\0" for name, value in found)
+    return hashlib.sha256(
+        text.encode(cs.ENCODING_UTF8, cs.DECODE_ERRORS_BACKSLASHREPLACE)
+    ).hexdigest()
 
 
 def _dotted(version: tuple[int, ...]) -> str:
@@ -322,16 +352,26 @@ def _too_old(version: str | None) -> tuple[int, ...] | None:
     return required if found < required else None
 
 
-def _failed_at(marker: Path, version: str | None) -> float | None:
-    """When the build failed with this Go, or None without a readable marker
-    for it."""
+class _BuildInputs(NamedTuple):
+    """What a failed build is remembered against besides the helper's
+    sources: the Go that ran it and the digest of its Go settings."""
+
+    go_version: str | None
+    go_settings: str
+
+
+def _failed_at(marker: Path, inputs: _BuildInputs) -> float | None:
+    """When the build failed with this Go and these settings, or None
+    without a readable marker for them."""
     try:
         payload = json.loads(marker.read_text(encoding=cs.ENCODING_UTF8))
     except (OSError, ValueError):
         return None
     if not isinstance(payload, dict):
         return None
-    if payload.get(_MARKER_GO_VERSION) != (version or ""):
+    if payload.get(_MARKER_GO_VERSION) != (inputs.go_version or ""):
+        return None
+    if payload.get(_MARKER_GO_SETTINGS) != inputs.go_settings:
         return None
     failed_at = payload.get(_MARKER_FAILED_AT)
     # bool is an int subclass, but a `true` in the marker holds no time.
@@ -340,10 +380,10 @@ def _failed_at(marker: Path, version: str | None) -> float | None:
     return float(failed_at)
 
 
-def _failure_retry_in(marker: Path, version: str | None) -> float | None:
-    """Seconds until a remembered failure with this Go is retried, or None to
-    build now."""
-    failed_at = _failed_at(marker, version)
+def _failure_retry_in(marker: Path, inputs: _BuildInputs) -> float | None:
+    """Seconds until a remembered failure with this Go and these settings
+    is retried, or None to build now."""
+    failed_at = _failed_at(marker, inputs)
     try:
         if failed_at is None or failed_at < _newest_source_mtime():
             return None
@@ -357,22 +397,28 @@ def _failure_retry_in(marker: Path, version: str | None) -> float | None:
     return cs.GO_FRONTEND_BUILD_FAILURE_TTL_S - age
 
 
-def _remember_failure(marker: Path, version: str | None) -> None:
+def _remember_failure(marker: Path, inputs: _BuildInputs) -> None:
     marker.write_text(
-        json.dumps({_MARKER_GO_VERSION: version or "", _MARKER_FAILED_AT: time.time()}),
+        json.dumps(
+            {
+                _MARKER_GO_VERSION: inputs.go_version or "",
+                _MARKER_GO_SETTINGS: inputs.go_settings,
+                _MARKER_FAILED_AT: time.time(),
+            }
+        ),
         encoding=cs.ENCODING_UTF8,
     )
 
 
-def _skip_for_recent_failure(marker: Path, version: str | None) -> bool:
-    """True, after one warning, while a failed build with this Go is
-    remembered and not yet due for a retry."""
-    retry_in = _failure_retry_in(marker, version)
+def _skip_for_recent_failure(marker: Path, inputs: _BuildInputs) -> bool:
+    """True, after one warning, while a failed build with this Go and these
+    settings is remembered and not yet due for a retry."""
+    retry_in = _failure_retry_in(marker, inputs)
     if retry_in is None:
         return False
     logger.warning(
         ls.GO_FRONTEND_BUILD_FAILED_EARLIER.format(
-            version=version,
+            version=inputs.go_version,
             minutes=math.ceil(retry_in / _SECONDS_PER_MINUTE),
             marker=marker,
         )
@@ -381,7 +427,7 @@ def _skip_for_recent_failure(marker: Path, version: str | None) -> bool:
 
 
 def _compile_and_remember(
-    go: str, src: Path, out: Path, marker: Path, version: str | None
+    go: str, src: Path, out: Path, marker: Path, inputs: _BuildInputs
 ) -> bool:
     # Runs under the build lock. A worker that passed `_build_tool`'s marker
     # check while another worker's build held the lock checks again here:
@@ -389,14 +435,14 @@ def _compile_and_remember(
     # anyway would cost every queued sync one more failing build (PR #2417
     # review). A build that succeeded meanwhile never gets here, because
     # build_cached_artifact rechecks the binary's freshness under the lock.
-    if _skip_for_recent_failure(marker, version):
+    if _skip_for_recent_failure(marker, inputs):
         return False
     built = _compile_tool(go, src, out)
     try:
         if built:
             marker.unlink(missing_ok=True)
         elif built is False:
-            _remember_failure(marker, version)
+            _remember_failure(marker, inputs)
     except OSError:
         pass
     return bool(built)
@@ -421,7 +467,7 @@ def _build_tool(go: str) -> Path | None:
         )
         return None
     try:
-        return _cached_tool(go, version)
+        return _cached_tool(go, _BuildInputs(version, _go_settings(_host_build_env())))
     except OSError as error:
         # A CGR_HOME that cannot be written, or a `go` that cannot start, is
         # a failed build, and the error ended the index (#3792). It is not
@@ -432,7 +478,7 @@ def _build_tool(go: str) -> Path | None:
         return None
 
 
-def _cached_tool(go: str, version: str | None) -> Path | None:
+def _cached_tool(go: str, inputs: _BuildInputs) -> Path | None:
     """The helper from the cache, built there first when it is stale, or
     None after one warning."""
     cache = _cache_dir()
@@ -444,13 +490,13 @@ def _cached_tool(go: str, version: str | None) -> Path | None:
     marker = cache / _BUILD_FAILED_MARKER
     # The fast path: a remembered failure skips the lock, and any wait on it,
     # entirely. `_compile_and_remember` checks again once the lock is held.
-    if _skip_for_recent_failure(marker, version):
+    if _skip_for_recent_failure(marker, inputs):
         return None
     return build_cached_artifact(
         cache,
         binary,
         lambda: artifact_fresh(binary, _newest_source_mtime),
-        lambda: _compile_and_remember(go, src, out, marker, version),
+        lambda: _compile_and_remember(go, src, out, marker, inputs),
         _BUILD_LOCK,
         _LOCK_TRIES,
         _LOCK_POLL_SECONDS,
@@ -817,9 +863,9 @@ def _modfile_flag() -> str:
 
 def _without_modfile(env: Mapping[str, str]) -> dict[str, str]:
     """`env` with every -modfile taken out of its GOFLAGS, for the helper's
-    run.
+    build, which has no use for it (issue #3806), and for its run.
 
-    Its loads take the file as a build flag instead (issue #3805):
+    The run's loads take the file as a build flag instead (issue #3805):
     go/packages asks Go its version with GO111MODULE=off, and without the
     build flags, before it loads, and Go refuses -modfile outside module
     mode, so the inherited flag failed every run. As a build flag it still
