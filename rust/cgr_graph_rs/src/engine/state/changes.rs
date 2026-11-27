@@ -34,7 +34,7 @@ use super::super::ignore::{IgnoreRules, PatternError};
 use super::super::lstat::Kind;
 use super::super::{md5_file, Engine};
 use super::{
-    child_path, last_changed, now, python_mtime, read_dir_mtimes, read_hash_cache,
+    child_path, last_changed, now, python_mtime, read_dir_mtimes, read_hash_cache, resolve,
     trustworthy_cache_mtime, Entries, UNREADABLE,
 };
 
@@ -86,6 +86,7 @@ fn dirs_unchanged(
     dirs: &Entries<f64>,
     rules: &IgnoreRules,
 ) -> Result<bool, PatternError> {
+    let resolved_root = resolve(Path::new(repo));
     for (key, &cached) in dirs.iter() {
         let path = if key == ROOT_DIR_KEY {
             PathBuf::from(repo)
@@ -98,7 +99,7 @@ fn dirs_unchanged(
         if python_mtime(&metadata) == cached {
             continue;
         }
-        if dir_changed(&path, key, old, dirs, rules)? {
+        if dir_changed(&path, key, old, dirs, rules, &resolved_root)? {
             return Ok(false);
         }
     }
@@ -114,6 +115,7 @@ fn dir_changed(
     old: &Entries<String>,
     dirs: &Entries<f64>,
     rules: &IgnoreRules,
+    resolved_root: &Path,
 ) -> Result<bool, PatternError> {
     let prefix = if key == ROOT_DIR_KEY {
         String::new()
@@ -122,7 +124,7 @@ fn dir_changed(
     };
     let expected_files = direct_children(old.keys(), &prefix);
     let expected_dirs = direct_children(dirs.keys().filter(|k| *k != ROOT_DIR_KEY), &prefix);
-    let Some((files, subdirs)) = scan_dir_children(path) else {
+    let Some((files, subdirs)) = scan_dir_children(path, resolved_root) else {
         return Ok(true);
     };
     let parts: Vec<&str> = if key == ROOT_DIR_KEY {
@@ -165,10 +167,13 @@ fn direct_children<'a>(keys: impl Iterator<Item = &'a str>, prefix: &str) -> Has
 /// could keep them, its entries judged as the walk's listing judges them,
 /// leaving out cgr's state files, links, names that are not UTF-8, and
 /// pipes, sockets and devices; `None` when it cannot be listed to the end.
-fn scan_dir_children(path: &Path) -> Option<(HashSet<String>, HashSet<String>)> {
+fn scan_dir_children(
+    path: &Path,
+    resolved_root: &Path,
+) -> Option<(HashSet<String>, HashSet<String>)> {
     let mut files = HashSet::new();
     let mut dirs = HashSet::new();
-    for entry in list(path.as_os_str())? {
+    for entry in list(path.as_os_str(), resolved_root)? {
         if entry.is_link() {
             continue;
         }

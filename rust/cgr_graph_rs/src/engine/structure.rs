@@ -291,7 +291,7 @@ fn subfolders(
     folder: &Folder,
     resolved_root: &Path,
 ) -> Result<Vec<Folder>, PatternError> {
-    let Some(entries) = list(&folder.path) else {
+    let Some(entries) = list(&folder.path, resolved_root) else {
         return Ok(Vec::new());
     };
     let mut kept = Vec::new();

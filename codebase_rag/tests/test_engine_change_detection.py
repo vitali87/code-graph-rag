@@ -692,11 +692,15 @@ class TestInSync:
         repo = _repo(tmp_path)
         outside = tmp_path / "outside"
         _write(outside, "o.py", "O = 1\n")
-        # No links to Python, so walked and listed as folders (issue #3740).
+        # One naming a folder inside is walked and listed as a folder, one
+        # naming a folder outside left out as a link (issue #3740).
         _junction(repo / "alias", repo / "pkg")
         # Not "out": that name is skipped as build output wherever it is.
         _junction(repo / "elsewhere", outside)
         _sync(repo)
+        cached = json.loads(_cache(repo).read_text(encoding=cs.ENCODING_UTF8))
+        assert "alias/b.py" in cached
+        assert not any(key.startswith("elsewhere/") for key in cached)
         self._case(repo, True)
         # The root's time moved with nothing indexable changed, so its
         # listing decides, junctions and all.

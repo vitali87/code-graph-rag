@@ -4,7 +4,7 @@
 //! and its neighbours hold the walk, the structure pass and the in-sync
 //! check to Python's on real junctions, on Windows.
 
-use super::{windows_kind, Kind};
+use super::{walk_windows_kind, windows_kind, without_verbatim_prefix, Kind};
 
 const FILE_ATTRIBUTE_READONLY: u32 = 0x1;
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
@@ -104,6 +104,54 @@ fn plain_files_and_folders_keep_their_kind() {
     assert_eq!(windows_kind(FILE_ATTRIBUTE_DIRECTORY, 0), Kind::Folder);
 }
 
+#[test]
+fn a_walk_enters_a_junction_only_when_it_names_a_folder_inside_the_root() {
+    let junction = reparse(FILE_ATTRIBUTE_DIRECTORY);
+    let at = |inside| walk_windows_kind(junction, IO_REPARSE_TAG_MOUNT_POINT, || inside);
+
+    assert_eq!(at(Some(true)), Kind::Folder);
+    assert_eq!(at(Some(false)), Kind::Link);
+    // A target that cannot be read is left out, as Python leaves it.
+    assert_eq!(at(None), Kind::Link);
+}
+
+#[test]
+fn a_walk_asks_where_only_a_junction_points() {
+    let never = || -> Option<bool> { panic!("asked where a non-junction points") };
+    let folder = reparse(FILE_ATTRIBUTE_DIRECTORY);
+
+    assert_eq!(
+        walk_windows_kind(folder, IO_REPARSE_TAG_SYMLINK, never),
+        Kind::Link
+    );
+    assert_eq!(
+        walk_windows_kind(folder, IO_REPARSE_TAG_LX_SYMLINK, never),
+        Kind::Folder
+    );
+    assert_eq!(
+        walk_windows_kind(FILE_ATTRIBUTE_DIRECTORY, IO_REPARSE_TAG_MOUNT_POINT, never),
+        Kind::Folder
+    );
+    assert_eq!(
+        walk_windows_kind(FILE_ATTRIBUTE_ARCHIVE, 0, never),
+        Kind::File
+    );
+}
+
+#[test]
+fn a_target_s_verbatim_prefix_goes_where_a_drive_or_share_follows() {
+    let cases = [
+        (r"\\?\C:\repo\x", r"C:\repo\x"),
+        (r"\\?\UNC\host\share\x", r"\\host\share\x"),
+        (r"\\?\Volume{0}\x", r"\\?\Volume{0}\x"),
+        (r"C:\repo\x", r"C:\repo\x"),
+        ("/repo/x", "/repo/x"),
+    ];
+    for (target, spelled) in cases {
+        assert_eq!(without_verbatim_prefix(target), spelled, "{target}");
+    }
+}
+
 #[cfg(unix)]
 mod on_posix {
     use std::ffi::CString;
@@ -112,7 +160,7 @@ mod on_posix {
     use std::os::unix::fs::symlink;
 
     use super::super::super::tests::Scratch;
-    use super::super::{entry_kind, lstat_kind, Kind};
+    use super::super::{lstat_kind, walk_kind, Kind};
 
     #[test]
     fn the_kind_is_the_one_rust_reads() {
@@ -140,7 +188,7 @@ mod on_posix {
             .unwrap()
             .map(|entry| {
                 let entry = entry.unwrap();
-                (entry.file_name(), entry_kind(&entry))
+                (entry.file_name(), walk_kind(&entry, root))
             })
             .collect();
         listed.sort_by(|a, b| a.0.cmp(&b.0));

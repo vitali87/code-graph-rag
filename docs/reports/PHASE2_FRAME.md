@@ -200,7 +200,10 @@ copies it rule for rule.
    `src/bin` or when an unignore could match inside. Links are never
    followed; the root is followed when it is itself a link. A link is what
    Python calls one: on Windows only a reparse point tagged as a symbolic
-   link, so a junction is a folder, entered wherever it points (#3740).
+   link. A junction naming a folder inside the root is a folder, entered;
+   one naming a folder outside it, by its target as `os.readlink` reads it
+   (a dangling one too), is left out and reported as a link, so nothing
+   beyond `--repo-path` is indexed through one (#3740).
 6. **Files**, in order: compiled and temporary suffixes are skipped; a
    matching exclude skips; files inside version-control directories not
    kept are skipped; `.min.js` and `.min.css` are skipped unless an unignore
@@ -240,9 +243,10 @@ change for after the rewrite: only the root `.gitignore` is read (#2454),
 detection (#3210), `.h` files are C++ (#2696), no detection of generated
 files (#3213). Three more are copied and recorded for the same decision
 later: a `.env` file and a submodule's `.git` file get File nodes, a bare `!`
-line walks every built-in directory, and a Windows junction is walked, one to
-an ancestor again at each level until Windows refuses the path, which both
-walks then skip as a folder they cannot list (#3740).
+line walks every built-in directory, and a Windows junction naming a folder
+inside the root is walked, one to an ancestor again at each level until
+Windows refuses the path, which both walks then skip as a folder they cannot
+list (#3740).
 
 ## 6. Change detection: the file half
 

@@ -519,16 +519,19 @@ class TestRules:
         assert _keys(found) == [".", "real", "real/inner"]
 
     @needs_junctions
-    def test_a_junction_is_a_folder_unless_it_resolves_outside_the_root(
+    def test_a_junction_is_a_folder_only_when_it_names_one_inside_the_root(
         self, tmp_path: Path, pairs: list[Pair], checked: _Recorded
     ) -> None:
         repo = _tree(tmp_path / "repo", ["real/inner/__init__.py"])
         outside = _tree(tmp_path / "outside", ["pkg/__init__.py"])
-        # No link to Python, so entered (issue #3740), and left out only by
-        # the check that a folder resolves inside the root.
+        gone = _tree(tmp_path / "gone", [])
+        # Entered when it names a folder inside the root, and left out as a
+        # link otherwise, judged by where it points (issue #3740).
         _junction(repo / "alias", repo / "real")
         # Not "out": that name is skipped as build output wherever it is.
         _junction(repo / "elsewhere", outside)
+        _junction(repo / "dangling", gone)
+        gone.rmdir()
 
         found = _same_structure(pairs, checked, repo)
 
