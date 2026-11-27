@@ -34,7 +34,7 @@ so a difference names the stage at which the two part.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Set
 from pathlib import Path
 
 from . import constants as cs
@@ -123,13 +123,21 @@ def module_line(module_qn: str, path: str, language: str | None) -> str:
 
 
 def _go_lines(
-    repo_path: Path, modules: Mapping[str, Path], go: GoProjectIndex
+    repo_path: Path,
+    modules: Mapping[str, Path],
+    definitions: Set[str],
+    go: GoProjectIndex,
 ) -> list[str]:
     """The lines of Go's own tables, one per entry, each pair once for each
     side that paired it, and a build constraint for each Go file that has
-    one."""
-    # Of the modules the index holds only: a reused updater keeps a deleted
-    # file's clause, though its module has left the index with the file.
+    one.
+
+    Of the modules and definitions the index holds only. Python's tables
+    keep what a deleted file declared on a reused updater (the watcher's, the
+    MCP server's): its clause, its methods and interfaces, under the qns the
+    file gave them, though those left the index with the file. A fresh index
+    holds none of it, and the Rust engine re-reads every Go file each run.
+    """
     lines = [
         _line(cs.HandoffKind.GO_PACKAGE, module_qn, {cs.HANDOFF_KEY_CLAUSE: clause})
         for module_qn, clause in go.packages.items()
@@ -149,6 +157,7 @@ def _go_lines(
             },
         )
         for method_qn, spec in go.methods.items()
+        if method_qn in definitions
     )
     lines.extend(
         _line(
@@ -161,6 +170,7 @@ def _go_lines(
             },
         )
         for interface_qn, decl in go.interfaces.items()
+        if interface_qn in definitions
     )
     sources = (
         (cs.GoPairSource.PROVEN, go.proven),
@@ -184,6 +194,7 @@ def _go_lines(
     lines.extend(
         _line(cs.HandoffKind.GO_RETURN_TYPE, qn, {cs.HANDOFF_KEY_TYPE: return_type})
         for qn, return_type in go.return_types.items()
+        if qn in definitions
     )
     go_files = {
         cached_relative_path(path, repo_path).as_posix()
@@ -213,9 +224,10 @@ def write_project_index(directory: Path, repo_path: Path, index: ProjectIndex) -
         )
         for module_qn, path in index.modules.items()
     ]
+    definitions = dict(index.definitions)
     lines.extend(
         _line(cs.HandoffKind.DEFINITION, qn, {cs.HANDOFF_KEY_LABEL: label})
-        for qn, label in index.definitions
+        for qn, label in definitions.items()
     )
     for name, qns in index.simple_names.items():
         if found := sorted(qns):
@@ -226,5 +238,5 @@ def write_project_index(directory: Path, repo_path: Path, index: ProjectIndex) -
     for class_qn, parents in index.parents.items():
         if parents:
             lines.append(_line(cs.HandoffKind.INHERITS, class_qn, [*parents]))
-    lines.extend(_go_lines(repo_path, index.modules, index.go))
+    lines.extend(_go_lines(repo_path, index.modules, definitions.keys(), index.go))
     _write(directory, cs.HandoffFile.INDEX, sorted(lines))

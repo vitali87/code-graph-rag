@@ -113,25 +113,33 @@ def _embedded_graph(path: Path) -> Iterator[MemgraphIngestor]:
         yield ingestor
 
 
+def _updater(repo: Path, ingestor: MemgraphIngestor, scratch: Path) -> GraphUpdater:
+    parsers, queries = load_parsers()
+    return GraphUpdater(
+        ingestor=ingestor,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        project_name=_PROJECT,
+        skip_embeddings=True,
+        state_dir=scratch / "state",
+        handoff_dir=scratch / "handoffs",
+    )
+
+
+def _written(scratch: Path) -> list[str]:
+    """The lines of the `index.txt` a run wrote under `scratch`."""
+    data = (scratch / "handoffs" / _INDEX).read_bytes()
+    assert data.endswith(b"\n")
+    return data.decode("utf-8").split("\n")[:-1]
+
+
 def _index(files: dict[str, str], tmp_path: Path) -> list[str]:
     """`files` indexed afresh: the lines of the `index.txt` the run wrote."""
     repo = _write(tmp_path / "repo", files)
-    handoffs = tmp_path / "handoffs"
-    parsers, queries = load_parsers()
     with _embedded_graph(tmp_path / "graph.sqlite") as ingestor:
-        GraphUpdater(
-            ingestor=ingestor,
-            repo_path=repo,
-            parsers=parsers,
-            queries=queries,
-            project_name=_PROJECT,
-            skip_embeddings=True,
-            state_dir=tmp_path / "state",
-            handoff_dir=handoffs,
-        ).run()
-    data = (handoffs / _INDEX).read_bytes()
-    assert data.endswith(b"\n")
-    return data.decode("utf-8").split("\n")[:-1]
+        _updater(repo, ingestor, tmp_path).run()
+    return _written(tmp_path)
 
 
 def _go_lines(lines: list[str]) -> list[str]:
@@ -260,6 +268,39 @@ class TestTheGoSections:
 
         assert lines[0] == "# cgr handoff index.txt 2"
         assert _go_lines(lines) == []
+
+
+class TestAfterADeletion:
+    # A reused updater, as the watcher and the MCP server keep one, after a
+    # Go file is deleted: its definitions leave the index with it, so Go's
+    # sections are a fresh index's of what is left. (The `imports` line of a
+    # deleted module stays in Python's map on such an updater too, a section
+    # every language fills and one this does not change.)
+    @pytest.mark.parametrize(
+        ("files", "deleted"),
+        [
+            (INTERFACE_WITH_EMBEDS, "shapes/cube.go"),
+            (INTERFACE_WITH_EMBEDS, "shapes/shape.go"),
+            (PACKAGE_ACROSS_FILES, "store/methods.go"),
+            (PACKAGE_ACROSS_FILES, "store/item.go"),
+            (BUILD_VARIANTS, "sys/wall_linux.go"),
+        ],
+    )
+    def test_the_hand_off_is_a_fresh_index_s(
+        self, files: dict[str, str], deleted: str, tmp_path: Path
+    ) -> None:
+        repo = _write(tmp_path / "repo", files)
+        reused = tmp_path / "reused"
+        with _embedded_graph(tmp_path / "reused.sqlite") as ingestor:
+            updater = _updater(repo, ingestor, reused)
+            updater.run()
+            (repo / deleted).unlink()
+            updater.run()
+        fresh = tmp_path / "fresh"
+        with _embedded_graph(tmp_path / "fresh.sqlite") as ingestor:
+            _updater(repo, ingestor, fresh).run()
+
+        assert _go_lines(_written(reused)) == _go_lines(_written(fresh))
 
 
 # Constraints as `//go:build` lines write them, each with its canonical text:
