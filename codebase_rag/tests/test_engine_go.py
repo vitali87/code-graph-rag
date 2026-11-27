@@ -14,6 +14,7 @@ must change at the same input.
 from __future__ import annotations
 
 import ast
+import importlib
 import random
 from collections.abc import Iterable, Iterator
 from functools import cache
@@ -21,7 +22,6 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
-import tree_sitter_go
 from tree_sitter import Language, Parser
 
 from codebase_rag import constants as cs
@@ -46,6 +46,19 @@ from codebase_rag.tests.go_engine_corpus import (
     whitespace_heads,
 )
 from codebase_rag.types_defs import DescribedNode
+
+# Python's Go grammar, which only the treesitter-full extra installs.
+GO_GRAMMAR_PACKAGE = "tree_sitter_go"
+
+
+def _go_parser() -> Parser | None:
+    """A parser on Python's Go grammar, or None on the base install."""
+    try:
+        grammar = importlib.import_module(GO_GRAMMAR_PACKAGE)
+    except ImportError:
+        return None
+    return Parser(Language(grammar.language()))
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TESTS = Path(__file__).resolve().parent
@@ -306,12 +319,14 @@ def _python_parse(parser: Parser, path: Path) -> list[DescribedNode] | None:
 @pytest.fixture(scope="module")
 def python(corpus: Corpus) -> PythonAnswers:
     builds = GoBuilds(corpus.root)
-    parser = Parser(Language(tree_sitter_go.language()))
+    # The base install has no Go grammar package: only the parse comparison
+    # needs one, and it skips there; the rest compare Python's text readers.
+    parser = _go_parser()
     return PythonAnswers(
         [_as_raw(builds.constraint(path)) for path in corpus.rel_paths],
         [_decision(builds, group) for group in corpus.groups],
         [read_package_clause(path) for path in corpus.clause_paths],
-        [_python_parse(parser, path) for path in corpus.sources],
+        [_python_parse(parser, path) for path in corpus.sources] if parser else [],
     )
 
 
@@ -375,6 +390,7 @@ def test_each_package_clause_is_pythons(
 def test_each_go_file_parses_as_py_tree_sitter_parses_it(
     corpus: Corpus, python: PythonAnswers, engine: engine_frame.Engine
 ) -> None:
+    pytest.importorskip(GO_GRAMMAR_PACKAGE)
     rust = engine.go_parse(corpus.sources)
 
     _assert_same(corpus.sources, python.parses, rust, at_least=300)
@@ -457,7 +473,7 @@ def test_every_go_node_kind_and_field_python_reads_is_the_engines() -> None:
             and isinstance(node.value, ast.Name)
             and node.value.id == "cs"
         )
-    go = Language(tree_sitter_go.language())
+    go = Language(pytest.importorskip(GO_GRAMMAR_PACKAGE).language())
     kinds, tokens, fields = set(), set(), set()
     for name in names:
         for value in _strings(getattr(cs, name, None)):
@@ -469,7 +485,9 @@ def test_every_go_node_kind_and_field_python_reads_is_the_engines() -> None:
                 fields.add(value)
     engine_type = type(engine_frame.new_engine(1))
 
-    assert len(kinds) > 60 and tokens and len(fields) > 15
+    assert len(kinds) > 60
+    assert tokens
+    assert len(fields) > 15
     assert kinds <= set(getattr(engine_type, "GO_NODE_KINDS"))
     assert tokens <= set(getattr(engine_type, "GO_TOKENS"))
     assert fields <= set(getattr(engine_type, "GO_FIELDS"))
