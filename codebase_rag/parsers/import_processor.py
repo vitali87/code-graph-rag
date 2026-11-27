@@ -4,10 +4,11 @@ import re
 import threading
 import tomllib
 from collections.abc import Iterator, Mapping, Sequence
+from copy import deepcopy
 from enum import Enum, auto
 from functools import lru_cache
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Self
 
 from loguru import logger
 from tree_sitter import Language, Node, Parser
@@ -2867,6 +2868,20 @@ class ImportProcessor:
             save_persistent_cache()
         except Exception:  # noqa: S110 - a destructor must not raise
             pass
+
+    def detached_copy(self) -> Self:
+        """A copy whose import state can grow without this one's changing.
+
+        It reads the same function registry and standard-library lookups as
+        this processor, and has no ingestor, so nothing it parses reaches the
+        graph.
+        """
+        shared = {
+            id(self.function_registry): self.function_registry,
+            id(self.stdlib_extractor): self.stdlib_extractor,
+            id(self.ingestor): None,
+        }
+        return deepcopy(self, shared)
 
     @staticmethod
     def flush_stdlib_cache() -> None:
