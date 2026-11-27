@@ -27,7 +27,7 @@ rayon = "1.12"
 # gitignore regexes. Already in the build through tree-sitter, with the
 # same features, so this adds no crate.
 regex = "1.12"
-rusqlite = { version = "0.41", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 sha2 = "0.11"
 # The tree walks (src/trees) read the trees py-tree-sitter built, so this
 # runtime must lay out and walk a tree exactly as the one compiled into the
