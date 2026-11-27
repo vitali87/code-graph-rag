@@ -15,7 +15,7 @@ from ..utils.path_utils import (
     cached_file_identity_posix,
     cached_relative_path,
     cached_resolve_posix,
-    is_outside_junction,
+    is_junction_left_out,
     is_symlink_entry,
     is_utf8_name,
     should_skip_path,
@@ -143,12 +143,13 @@ class StructureProcessor:
                 # A linked directory is not walked (issue #2451), so it gets no
                 # container either: an in-repo one was an empty Package whose
                 # absolute path was its target's. Nor is a junction naming a
-                # folder outside the root, which the walk leaves out as a link
-                # (issue #3740), nor one whose name is not valid UTF-8 (issue
-                # #3722): the graph cannot store its path.
+                # folder outside the root or on the way down to it, which the
+                # walk leaves out as a link (issue #3740), nor one whose name
+                # is not valid UTF-8 (issue #3722): the graph cannot store its
+                # path.
                 if (
                     is_symlink_entry(path)
-                    or is_outside_junction(path, self.repo_path)
+                    or is_junction_left_out(path, self.repo_path)
                     or not is_utf8_name(name)
                     or should_skip_path(
                         path,

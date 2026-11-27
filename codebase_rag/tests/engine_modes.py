@@ -154,7 +154,7 @@ REPORT_SHARED = "In the {scope}-scoped fixture {argname!r}, which this test uses
 # The functions in `utils/path_utils.py` and `os` Python's walk decides with.
 WALK_PREDICATES = (
     "is_symlink_entry",
-    "is_outside_junction",
+    "is_junction_left_out",
     "is_special_file_entry",
     "is_utf8_name",
     "should_keep_dir",
@@ -222,7 +222,7 @@ CHANGE_PATH_METHODS = (
 STRUCTURE_FUNCTIONS = (
     "should_skip_path",
     "is_symlink_entry",
-    "is_outside_junction",
+    "is_junction_left_out",
     "is_utf8_name",
     "cached_relative_path",
     "cached_resolve_posix",

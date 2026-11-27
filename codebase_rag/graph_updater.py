@@ -185,7 +185,7 @@ from .utils.path_utils import (
     cached_file_identity_posix,
     cached_relative_path,
     cached_resolve_posix,
-    is_outside_junction,
+    is_junction_left_out,
     is_special_file_entry,
     is_utf8_name,
     normalize_project_name,
@@ -1463,7 +1463,7 @@ def _scan_dir_children(dir_path_str: str, repo_path: Path) -> tuple[set[str], se
                 or _entry_flag(entry.is_symlink)
                 or (
                     _entry_flag(entry.is_junction)
-                    and is_outside_junction(entry.path, repo_path)
+                    and is_junction_left_out(entry.path, repo_path)
                 )
                 or not is_utf8_name(name)
             ):

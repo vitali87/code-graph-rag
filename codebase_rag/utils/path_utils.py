@@ -410,34 +410,77 @@ def is_symlink_entry(path: str | os.PathLike[str]) -> bool:
     cycle is a link like any other.
 
     A Windows directory junction is no link to `os.path.islink`, so the walk
-    enters one; `is_outside_junction` leaves out, as a link, one that names a
-    folder outside the repository.
+    enters one; `is_junction_left_out` leaves out, as a link, one that names
+    a folder outside the repository or one the walk entered on its way to it.
     """
     return os.path.islink(path)
 
 
-def is_outside_junction(path: str | os.PathLike[str], repo_path: Path) -> bool:
-    """Whether a repository walk leaves this entry out as a junction naming a
-    folder outside the repository, reporting it as it reports a link.
+def is_junction_left_out(path: str | os.PathLike[str], repo_path: Path) -> bool:
+    """Whether a repository walk leaves this entry out as a junction, reporting
+    it as it reports a link: one naming a folder outside the repository, or
+    one naming a folder the walk entered on its way to the junction.
 
     `os.walk` enters a Windows directory junction, so the walk indexed what
     one named wherever it pointed, while the structure pass leaves out a
     folder that resolves outside the root: those files became modules with
     no parent (issue #3740). Content beyond `--repo-path` is never indexed
-    through a link (issue #2451), nor through a junction. One is judged by
-    its target as `os.readlink` reads it, so a dangling one is judged by
-    where it points, and one whose target cannot be read is left out. A
-    junction to a folder inside the root is entered, as before. Always False
-    off Windows, where `os.path.isjunction` is.
+    through a link (issue #2451), nor through a junction. And one naming its
+    own folder or an ancestor was entered again at every level until the
+    path grew too long, two of them doubling the walk each time. The way
+    down is the root and each folder below it to the junction's own, each
+    by its real path, so a cycle through other junctions is a loop too.
+
+    A junction is judged by its target as `os.readlink` reads it, so a
+    dangling one by where it points, and one whose target cannot be read is
+    left out. Any other junction is entered, as before. Always False off
+    Windows, where `os.path.isjunction` is.
     """
     if not os.path.isjunction(path):
         return False
     try:
         target = os.readlink(path)
-        absolute = Path(os.path.dirname(path), without_verbatim_prefix(target))
-        return not absolute.resolve().is_relative_to(repo_path.resolve())
+        folder = Path(os.path.dirname(path))
+        resolved = Path(folder, without_verbatim_prefix(target)).resolve()
+        way_down = [entered.resolve() for entered in _way_down(folder, repo_path)]
+        return junction_left_out(resolved, way_down, repo_path.resolve())
     except (OSError, RuntimeError, ValueError):
         return True
+
+
+def junction_left_out(
+    target: PurePath, way_down: Iterable[PurePath], root: PurePath
+) -> bool:
+    """Whether a junction whose resolved target is `target` is left out: it
+    is outside the resolved `root`, or the same folder as one of `way_down`,
+    the real paths of the folders entered to reach it.
+
+    Each path is compared without the `\\\\?\\` prefix where a drive or share
+    follows it and as its flavour compares (without case on Windows):
+    `Path.resolve()` keeps a prefix it is given, so a root spelled with one
+    held no target spelled without it.
+    """
+    spelled = _comparable(target)
+    return not spelled.is_relative_to(_comparable(root)) or any(
+        spelled == _comparable(entered) for entered in way_down
+    )
+
+
+def _comparable(path: PurePath) -> PurePath:
+    return type(path)(without_verbatim_prefix(str(path)))
+
+
+def _way_down(folder: Path, repo_path: Path) -> list[Path]:
+    """The folders a walk of `repo_path` entered to reach `folder`: the root,
+    each folder below it, `folder` last."""
+    try:
+        parts = folder.relative_to(repo_path).parts
+    except ValueError:
+        return [folder]
+    way_down = [repo_path]
+    for part in parts:
+        way_down.append(way_down[-1] / part)
+    return way_down
 
 
 def without_verbatim_prefix(path: str) -> str:
@@ -1023,9 +1066,10 @@ def _skipped_dir_link(
     repo_path: Path,
 ) -> bool:
     """Whether the walk leaves this folder out as a link or as a junction
-    naming one outside the repository, reporting it if so."""
+    naming one outside the repository or on its way down, reporting it if
+    so."""
     path = os.path.join(dirpath, name)
-    if not (is_symlink_entry(path) or is_outside_junction(path, repo_path)):
+    if not (is_symlink_entry(path) or is_junction_left_out(path, repo_path)):
         return False
     if on_symlink is not None:
         on_symlink(rel_path_str)
@@ -1083,7 +1127,8 @@ def walk_eligible_files(
     indexer's mtime bookkeeping; it must not mutate the walk.
 
     A symbolic link is never walked (`is_symlink_entry`), nor a Windows
-    junction naming a folder outside the repository (`is_outside_junction`),
+    junction naming a folder outside the repository or one the walk entered
+    on its way to it (`is_junction_left_out`),
     and ``on_symlink`` receives the repo-relative path of each one the ignore
     rules would otherwise have let through, file or directory. The same goes for a pipe,
     socket or device (`is_special_file_entry`, reported to ``on_special``)
