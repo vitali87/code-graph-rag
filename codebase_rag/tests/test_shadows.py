@@ -16,8 +16,10 @@ from codebase_rag.tests.shadows import child_env
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLANTED = "a difference made in a fixture"
 # pytest's closing line: each outcome's count, then the time taken.
-SUMMARY = re.compile(r"^=*\s*((?:\d+ \w+(?:, )?)+) in [\d.]+s\b", re.MULTILINE)
-OUTCOME = re.compile(r"(\d+) (\w+)")
+SUMMARY = re.compile(
+    r"^=*\s*(\d+ [a-z]+(?:, \d+ [a-z]+)*) in \d+(?:\.\d+)?s\b", re.MULTILINE
+)
+OUTCOME = re.compile(r"(\d+) ([a-z]+)")
 PLURALS = {"errors": "error", "warnings": "warning"}
 # A fixture records a difference as a shadow does, before its test's call.
 PLANTING = """
