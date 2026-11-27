@@ -1384,7 +1384,8 @@ CYPHER_ALL_MODULE_QNS = (
     "MATCH (n) WHERE (n:Module OR n:ModuleInterface) "
     "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
-    "n.go_package AS go_package, n.php_namespace AS php_namespace"
+    "n.go_package AS go_package, n.php_namespace AS php_namespace, "
+    "n.path AS path"
 )
 
 # Inbound reference edges (from unchanged files) into symbols defined in one
