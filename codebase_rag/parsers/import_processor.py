@@ -2395,7 +2395,9 @@ class ImportProcessor:
         self._cpp_module_qn_map: dict[str, str] | None = None
         self._cpp_qn_to_rel: dict[str, str] = {}
         # File module -> its nested-scope map keys; read unguarded on the
-        # re-ingest path, which never runs the per-run cache resets.
+        # re-ingest path, which never runs the per-run cache resets. A parse
+        # record, not a layout cache: the per-run resets keep it, so a file
+        # deleted in a later run still names the keys it wrote (#3787).
         self._julia_scope_map_keys: dict[str, set[str]] = {}
         # IMPORTS edges held back until every file is parsed, so internal
         # targets verify against the full module registry (issue #652).
@@ -2897,7 +2899,15 @@ class ImportProcessor:
         self.csharp_static_imports.pop(module_qn, None)
         self.csharp_global_static_imports.pop(module_qn, None)
         self.java_static_imports.pop(module_qn, None)
-        self._julia_scope_map_keys.pop(module_qn, None)
+        # A nested `module` keys its bindings under its own qn, which the parse
+        # recorded here; they go with the record, or a re-parse that drops the
+        # nested module, or the file's deletion, left its map behind. Exactly
+        # the recorded keys, never a prefix sweep, and not one that is a file
+        # module's own qn (`a/A.jl` beside `a.jl`'s `module A`): that map is
+        # the other file's parse output.
+        for key in self._julia_scope_map_keys.pop(module_qn, ()):
+            if key not in self.module_qn_to_file_path:
+                self.import_mapping.pop(key, None)
         # Cleared with the mapping it shadows: these entries ADD edges, so a
         # stale one would resurrect an include the edited file has removed
         # (issue #1758).
@@ -7406,7 +7416,6 @@ class ImportProcessor:
         self._julia_file_stems = None
         self._julia_declared = None
         self._julia_scope_declared = None
-        self._julia_scope_map_keys = {}
 
     def reset_dart_path_caches(self) -> None:
         # Same contract as reset_rust_path_caches: a pubspec added, removed

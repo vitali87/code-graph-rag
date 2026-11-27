@@ -842,6 +842,9 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     # API the re-export walk follows: a re-parse must not keep a stale one.
     processor.js_export_bindings = {"m": {"Svc": JsExport("m.svc.Svc", local=False)}}
     processor._julia_scope_map_keys = {"m": {"m.Inner"}}
+    # The nested module's bindings go with the record (issue #3787).
+    processor.import_mapping["m.Inner"] = {"q": "m.lib"}
+    processor.module_qn_to_file_path = {}
     processor._js_side_effect_imports = {}
 
     processor._clear_module_import_state("m")
@@ -855,6 +858,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     assert processor.dart_exposed_libraries.get("m") is None
     assert processor.dart_bare_imports.get("m") is None
     assert processor._julia_scope_map_keys.get("m") is None
+    assert "m.Inner" not in processor.import_mapping
     assert processor._cpp_include_targets == {("other", "other.foo")}
     # The control: the mapping it sits beside is emptied, not dropped, so
     # this is the documented reset rather than a wholesale delete.
