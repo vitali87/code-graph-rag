@@ -635,14 +635,13 @@ _MODFILE_FLAGS = [
 ]
 
 # Go's own load of a module, as go/packages runs it for the helper, in the
-# helper's place. Under -modfile the helper fails before it loads anything:
-# go/packages first asks `go list` for the Go version in GOPATH mode, which
-# refuses the flag. A Go driver that runs `go list` itself, as the Rust port
-# is to, loads through the file, and so does this (issue #3797).
+# helper's place, with the overlay and the module file the helper is handed:
+# the helper's GOFLAGS holds no -modfile (issue #3805). A Go driver that runs
+# `go list` itself, as the Rust port is to, loads the same way (issue #3797).
 _GO_LIST_HELPER = (
     "#!/bin/sh\n"
     'cd "$1" && go list -deps -test ${CGR_GO_OVERLAY:+"-overlay=$CGR_GO_OVERLAY"} '
-    './... >/dev/null && echo "{}"\n'
+    '${CGR_GO_MODFILE:+"-modfile=$CGR_GO_MODFILE"} ./... >/dev/null && echo "{}"\n'
 )
 
 

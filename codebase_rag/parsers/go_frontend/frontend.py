@@ -140,6 +140,10 @@ _GO_VERSION = re.compile(r"^go(\d+(?:\.\d+)*)$")
 # Go refuses a GOFLAGS it cannot split, and a run under it loads nothing, so
 # only one Go accepts has to be read exactly.
 _GOFLAGS_FIELD = re.compile(r"""[ \t\n\r]*(?:'([^']*)'|"([^"]*)"|([^ \t\n\r]+))""")
+# A GOFLAGS that held only -modfile, kept set once the flag is out: Go reads
+# GOFLAGS from its own settings file when the variable is empty, and splits a
+# blank into no flags.
+_NO_GOFLAGS = " "
 _VERSION_PROBE_TIMEOUT = 30
 # Same mkdir-lock discipline as the C# frontend: build the binary ONCE, then
 # parallel workers run it read-only and never race a shared build output.
@@ -165,6 +169,9 @@ _TARGET_ENV = frozenset({"GOOS", "GOARCH"})
 _OVERLAY_ENV = "CGR_GO_OVERLAY"
 _OVERLAY_FILE = "overlay.json"
 _OVERLAY_REPLACE = "Replace"
+# The module file a -modfile in GOFLAGS names, which the helper's loads take
+# as a build flag, out of the GOFLAGS it inherits (issue #3805).
+_MODFILE_ENV = "CGR_GO_MODFILE"
 
 
 def go_frontend_available() -> bool:
@@ -768,6 +775,34 @@ def _mentions(path: Path, word: str) -> bool:
         return False
 
 
+class _SplitGoFlags(NamedTuple):
+    """A GOFLAGS with its -modfile taken out."""
+
+    # The module file the last -modfile names, or empty for go.mod.
+    modfile: str
+    # The GOFLAGS with each -modfile field, and the blanks before it, cut
+    # out, and every other byte kept.
+    rest: str
+
+
+def _split_modfile(goflags: str) -> _SplitGoFlags:
+    """`goflags` split as Go splits GOFLAGS, with each -modfile field taken
+    out, and the module file the last one names."""
+    modfile = ""
+    kept: list[str] = []
+    start = 0
+    for field in _GOFLAGS_FIELD.finditer(goflags):
+        name, given, value = "".join(field.groups("")).partition(
+            cs.GO_FLAG_VALUE_SEPARATOR
+        )
+        if given and name in cs.GO_FLAG_MODFILE:
+            modfile = value
+            kept.append(goflags[start : field.start()])
+            start = field.end()
+    kept.append(goflags[start:])
+    return _SplitGoFlags(modfile, "".join(kept))
+
+
 def _modfile_flag() -> str:
     """The module file the -modfile in the helper's GOFLAGS names, as Go
     reads the flag, or empty for the module's go.mod (issue #3797).
@@ -777,14 +812,25 @@ def _modfile_flag() -> str:
     `go env GOMOD` cannot answer in its place: `go env` takes no -modfile,
     and names the go.mod all the same.
     """
-    modfile = ""
-    for field in _GOFLAGS_FIELD.finditer(os.environ.get(cs.GO_ENV_GOFLAGS, "")):
-        name, given, value = "".join(field.groups("")).partition(
-            cs.GO_FLAG_VALUE_SEPARATOR
-        )
-        if given and name in cs.GO_FLAG_MODFILE:
-            modfile = value
-    return modfile
+    return _split_modfile(os.environ.get(cs.GO_ENV_GOFLAGS, "")).modfile
+
+
+def _without_modfile(env: Mapping[str, str]) -> dict[str, str]:
+    """`env` with every -modfile taken out of its GOFLAGS, for the helper's
+    run.
+
+    Its loads take the file as a build flag instead (issue #3805):
+    go/packages asks Go its version with GO111MODULE=off, and without the
+    build flags, before it loads, and Go refuses -modfile outside module
+    mode, so the inherited flag failed every run. As a build flag it still
+    reaches every load, run from the module's folder as before. A GOFLAGS
+    with nothing else stays set, as a blank.
+    """
+    goflags = env.get(cs.GO_ENV_GOFLAGS, "")
+    rest = _split_modfile(goflags).rest
+    if rest == goflags:
+        return dict(env)
+    return {**env, cs.GO_ENV_GOFLAGS: rest or _NO_GOFLAGS}
 
 
 def _local_replace_targets(go: str, module: str, modfile: str = "") -> list[str]:
@@ -955,9 +1001,10 @@ def _run_tool_once(
     that module was never analysed at all (issue #1462).
     """
     env = {
-        **os.environ,
+        **_without_modfile(os.environ),
         **_GO_ENV,
         "CGR_IGNORE_DIRS": ",".join(sorted(ignored_dirs)),
+        _MODFILE_ENV: _modfile_flag(),
     }
     if overlay is not None:
         env[_OVERLAY_ENV] = str(overlay)

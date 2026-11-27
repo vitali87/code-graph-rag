@@ -25,8 +25,9 @@
 // type-check cleanly; a missing toolchain, no go.mod, a load error, an
 // ill-typed package or an empty result all leave cgr on pure tree-sitter.
 //
-// Run: gotypes <repo-root>   (honours CGR_IGNORE_DIRS, comma-separated, and
-// CGR_GO_OVERLAY, a `go build -overlay` file)
+// Run: gotypes <repo-root>   (honours CGR_IGNORE_DIRS, comma-separated,
+// CGR_GO_OVERLAY, a `go build -overlay` file, and CGR_GO_MODFILE, a
+// `go build -modfile` file)
 //
 // The module asks for the oldest Go the helper builds with (issue #2395), and
 // below go 1.23 the default GODEBUG resolves `type A = B` to B's Named type,
@@ -194,7 +195,15 @@ func main() {
 	// build constraints, and opening a pipe blocks until something writes to
 	// it (issue #3736).
 	if overlay := os.Getenv("CGR_GO_OVERLAY"); overlay != "" {
-		cfg.BuildFlags = []string{"-overlay=" + overlay}
+		cfg.BuildFlags = append(cfg.BuildFlags, "-overlay="+overlay)
+	}
+	// The module file a -modfile in cgr's GOFLAGS names, which cgr takes out
+	// of the GOFLAGS this run inherits (issue #3805). go/packages asks Go its
+	// version with GO111MODULE=off before it loads, and Go refuses -modfile
+	// outside module mode; that query drops the build flags, and every load
+	// gets them, run from the module's folder as GOFLAGS would be.
+	if modfile := os.Getenv("CGR_GO_MODFILE"); modfile != "" {
+		cfg.BuildFlags = append(cfg.BuildFlags, "-modfile="+modfile)
 	}
 	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
