@@ -879,8 +879,8 @@ jobs:
       && github.event.pull_request.head.repo.full_name == github.repository
     # The polling loop below does the waiting (it holds out for as long as
     # SonarCloud Analysis is queued or running); this cap only bounds a hang,
-    # and covers that job's 70 min cap, a late start and the publish window.
-    timeout-minutes: 110
+    # and covers that job's 90 min cap, a late start and the publish window.
+    timeout-minutes: 130
     permissions:
       # checks: read backs the check-runs API call that detects a failed
       # SonarCloud Analysis job, so the gate fails fast instead of waiting
