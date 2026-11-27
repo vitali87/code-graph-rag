@@ -13,6 +13,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -622,36 +623,38 @@ def _special_entries(root: str, limit: int | None = None) -> tuple[list[str], bo
                         return found, False
                     if entry.is_dir(follow_symlinks=False):
                         pending.append(entry.path)
-                    elif not entry.is_file(follow_symlinks=False) and (
-                        is_special_file_entry(entry.path)
-                        or (
-                            is_symlink_entry(entry.path)
-                            and is_special_file_entry(os.path.realpath(entry.path))
-                        )
-                    ):
+                    elif _is_special(entry):
                         found.append(entry.path)
         except OSError:
             continue
     return found, True
 
 
-def _local_replace_targets(go: str, gomod: Path) -> list[str]:
-    """The folder each local `replace` of `gomod` names, spelled as there.
+def _is_special(entry: os.DirEntry[str]) -> bool:
+    """Whether a listed entry that is no folder is a pipe, socket or device,
+    or a link to one. One the listing shows to be a regular file costs no
+    `stat`."""
+    if entry.is_file(follow_symlinks=False):
+        return False
+    path = entry.path
+    return is_special_file_entry(path) or (
+        is_symlink_entry(path) and is_special_file_entry(os.path.realpath(path))
+    )
 
-    Read by `go mod edit -json`, Go's own parser, so a quoted path or a
-    `replace ( ... )` block reads as the loads read it. A go.mod that does
-    not mention `replace` costs no `go` run.
-    """
-    if not is_regular_file(gomod):
-        return []
-    try:
-        if cs.GO_KEYWORD_REPLACE not in gomod.read_text(encoding=cs.ENCODING_UTF8):
-            return []
-    except (OSError, ValueError):
-        return []
+
+# One entry of what `go mod edit -json` prints: a `Replace` entry's `Old`
+# and `New` modules.
+_EditEntry = dict[str, str | dict[str, str]]
+_EditView = dict[str, list[_EditEntry]]
+
+
+def _go_output(go: str, args: list[str]) -> str | None:
+    """What `go` prints for `args`, or None after a debug line when it
+    fails."""
+    command = [go, *args]
     try:
         proc = subprocess.run(
-            [go, *cs.GO_MOD_EDIT_JSON_ARGS, str(gomod)],
+            command,
             capture_output=True,
             text=True,
             encoding=cs.ENCODING_UTF8,
@@ -661,30 +664,79 @@ def _local_replace_targets(go: str, gomod: Path) -> list[str]:
             env={**os.environ, **_GO_ENV},
         )
     except (subprocess.SubprocessError, OSError) as error:
-        logger.debug(ls.GO_FRONTEND_REPLACES_UNREAD.format(gomod=gomod, error=error))
-        return []
+        logger.debug(
+            ls.GO_FRONTEND_QUERY_FAILED.format(command=shlex.join(command), error=error)
+        )
+        return None
     if proc.returncode != 0:
         logger.debug(
-            ls.GO_FRONTEND_REPLACES_UNREAD.format(
-                gomod=gomod, error=proc.stderr.strip()
+            ls.GO_FRONTEND_QUERY_FAILED.format(
+                command=shlex.join(command), error=proc.stderr.strip()
             )
         )
-        return []
+        return None
+    return proc.stdout
+
+
+def _edit_view(go: str, args: tuple[str, ...], file: Path) -> _EditView:
+    """`file` as `go mod edit -json` prints it, or empty when it cannot be
+    read."""
+    if not is_regular_file(file):
+        return {}
+    output = _go_output(go, [*args, str(file)])
     try:
-        payload = json.loads(proc.stdout)
+        view = json.loads(output) if output is not None else {}
     except ValueError:
+        return {}
+    return view if isinstance(view, dict) else {}
+
+
+def _entries(view: _EditView, key: str) -> list[_EditEntry]:
+    found = view.get(key)
+    if not isinstance(found, list):
         return []
-    replaces = payload.get(cs.GO_MOD_JSON_REPLACE) if isinstance(payload, dict) else []
-    targets: list[str] = []
-    for replace in replaces if isinstance(replaces, list) else []:
-        new = replace.get(cs.GO_MOD_JSON_NEW) if isinstance(replace, dict) else None
-        # A target with a version is a module Go fetches, not a folder.
-        if not isinstance(new, dict) or new.get(cs.GO_MOD_JSON_VERSION):
-            continue
-        path = new.get(cs.GO_MOD_JSON_PATH)
-        if isinstance(path, str) and path:
-            targets.append(path)
-    return targets
+    return [entry for entry in found if isinstance(entry, dict)]
+
+
+def _local_replace_paths(view: _EditView) -> list[str]:
+    """The folder each `replace` in `view` names. A target that carries a
+    version is a module Go fetches, not a folder."""
+    paths: list[str] = []
+    for entry in _entries(view, cs.GO_MOD_JSON_REPLACE):
+        new = entry.get(cs.GO_MOD_JSON_NEW)
+        if isinstance(new, dict) and not new.get(cs.GO_MOD_JSON_VERSION):
+            paths.append(new.get(cs.GO_MOD_JSON_PATH, ""))
+    return [path for path in paths if isinstance(path, str) and path]
+
+
+def _joined(folder: str, paths: list[str]) -> list[str]:
+    """`paths` resolved against `folder` as Go resolves them: joined and
+    cleaned by their spelling, not through the links on the way."""
+    return [os.path.normpath(os.path.join(folder, path)) for path in paths]
+
+
+def _mentions(path: Path, word: str) -> bool:
+    try:
+        return is_regular_file(path) and word in path.read_text(
+            encoding=cs.ENCODING_UTF8
+        )
+    except (OSError, ValueError):
+        return False
+
+
+def _local_replace_targets(go: str, module: str) -> list[str]:
+    """The folder each local `replace` in the go.mod of `module` names,
+    joined to `module`.
+
+    Read by `go mod edit -json`, Go's own parser, so a quoted path or a
+    `replace ( ... )` block reads as the loads read it. A go.mod that does
+    not mention `replace` costs no `go` run.
+    """
+    gomod = Path(module) / cs.DEP_FILE_GOMOD
+    if not _mentions(gomod, cs.GO_KEYWORD_REPLACE):
+        return []
+    view = _edit_view(go, cs.GO_MOD_EDIT_JSON_ARGS, gomod)
+    return _joined(module, _local_replace_paths(view))
 
 
 def _listed_with_repository(repo: str, target: str) -> bool:
@@ -705,6 +757,17 @@ def _listed_with_repository(repo: str, target: str) -> bool:
     return True
 
 
+def _bounded_special_entries(folder: str) -> list[str]:
+    entries, complete = _special_entries(folder, cs.GO_REPLACE_TARGET_MAX_ENTRIES)
+    if not complete:
+        logger.warning(
+            ls.GO_FRONTEND_REPLACE_LISTING_CUT.format(
+                target=folder, limit=cs.GO_REPLACE_TARGET_MAX_ENTRIES
+            )
+        )
+    return entries
+
+
 def _replace_special_files(go: str, repo_path: Path, anchors: list[Path]) -> list[str]:
     """The pipes, sockets and devices a local `replace` has Go open under a
     spelling the repository's own listing never gives (issue #3744).
@@ -719,25 +782,15 @@ def _replace_special_files(go: str, repo_path: Path, anchors: list[Path]) -> lis
     bounded; links below it are not followed, as in the repository's.
     """
     repo = os.path.abspath(repo_path)
+    targets = [
+        target
+        for anchor in anchors
+        for target in _local_replace_targets(go, os.path.abspath(anchor))
+    ]
     found: list[str] = []
-    listed: set[str] = set()
-    for anchor in anchors:
-        base = os.path.abspath(anchor)
-        for target in _local_replace_targets(go, Path(base) / cs.DEP_FILE_GOMOD):
-            spelled = os.path.normpath(os.path.join(base, target))
-            if spelled in listed or _listed_with_repository(repo, spelled):
-                continue
-            listed.add(spelled)
-            entries, complete = _special_entries(
-                spelled, cs.GO_REPLACE_TARGET_MAX_ENTRIES
-            )
-            if not complete:
-                logger.warning(
-                    ls.GO_FRONTEND_REPLACE_LISTING_CUT.format(
-                        target=spelled, limit=cs.GO_REPLACE_TARGET_MAX_ENTRIES
-                    )
-                )
-            found.extend(entries)
+    for target in dict.fromkeys(targets):
+        if not _listed_with_repository(repo, target):
+            found.extend(_bounded_special_entries(target))
     return found
 
 
