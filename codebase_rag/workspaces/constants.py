@@ -4,10 +4,16 @@ WORKSPACE_EXTENSION = ".toml"
 # must not carry a path separator or a leading dot: either would let `..`,
 # `a/b` or an empty name point the file outside that directory (issue #2663).
 WORKSPACE_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+# Common filesystems cap each file name component at 255 bytes; subtracting the
+# `.toml` extension keeps `<name>.toml` within that limit (issue #3686).
+MAX_WORKSPACE_NAME_LENGTH = 255 - len(WORKSPACE_EXTENSION)
 
 ERR_WORKSPACE_INVALID_NAME = (
     "Invalid workspace name '{name}': use letters, digits, '.', '_' and '-', "
     "starting with a letter or digit."
+)
+ERR_WORKSPACE_NAME_TOO_LONG = (
+    "Invalid workspace name (length {length}): must be at most {max_length} characters."
 )
 ERR_WORKSPACE_NOT_FOUND = "Workspace '{name}' not found at {path}."
 ERR_WORKSPACE_ALREADY_EXISTS = "Workspace '{name}' already exists at {path}."

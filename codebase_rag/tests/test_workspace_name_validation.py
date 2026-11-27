@@ -3,11 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from codebase_rag.cli import app
 from codebase_rag.mcp.server import get_workspace
 from codebase_rag.workspaces import (
+    WorkspaceConfig,
     WorkspaceError,
     add_repo,
     create_workspace,
@@ -16,6 +18,7 @@ from codebase_rag.workspaces import (
     load_workspace,
     workspaces_dir,
 )
+from codebase_rag.workspaces.constants import MAX_WORKSPACE_NAME_LENGTH
 
 runner = CliRunner()
 
@@ -162,3 +165,71 @@ class TestOrdinaryNamesStillWork:
         result = runner.invoke(app, ["workspace", "delete", "team.backend"])
         assert result.exit_code == 0, result.output
         assert "Deleted workspace 'team.backend'" in result.output
+
+
+class TestWorkspaceNameLengthLimit:
+    def test_max_length_name_succeeds(self) -> None:
+        max_name = "A" * MAX_WORKSPACE_NAME_LENGTH
+        result = runner.invoke(app, ["workspace", "create", max_name])
+        assert result.exit_code == 0, result.output
+        assert load_workspace(max_name).name == max_name
+        result = runner.invoke(app, ["workspace", "delete", max_name])
+        assert result.exit_code == 0, result.output
+
+    @pytest.mark.parametrize(
+        "over_long",
+        ["A" * (MAX_WORKSPACE_NAME_LENGTH + 1), "A" * 300],
+    )
+    def test_over_long_name_is_refused_without_os_error(
+        self, tmp_path: Path, over_long: str
+    ) -> None:
+        # Ensure the workspaces directory exists so stat() probes would reach
+        # ENAMETOOLONG if validation missed the length bound (issue #3686).
+        create_workspace("demo")
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        for args in (
+            ["workspace", "create", over_long],
+            ["workspace", "show", over_long],
+            ["workspace", "add-repo", over_long, str(repo)],
+            ["workspace", "remove-repo", over_long, str(repo)],
+            ["workspace", "delete", over_long],
+            [
+                "start",
+                "--repo-path",
+                str(repo),
+                "--workspace",
+                over_long,
+                "--ask-agent",
+                "hi",
+                "--no-sync",
+            ],
+        ):
+            result = runner.invoke(app, args)
+            assert result.exit_code == 1, (args, result.output)
+            assert INVALID_NAME in result.output, (args, result.output)
+            assert "File name too long" not in result.output
+            assert "Traceback" not in result.output
+
+        with pytest.raises(ValueError, match=INVALID_NAME):
+            get_workspace(over_long)
+
+    def test_model_and_hand_edited_toml_refuse_over_long_name(
+        self, tmp_path: Path
+    ) -> None:
+        over_long = "A" * (MAX_WORKSPACE_NAME_LENGTH + 1)
+        with pytest.raises(ValidationError):
+            WorkspaceConfig(name=over_long)
+
+        workspaces_dir().mkdir(parents=True)
+        (workspaces_dir() / "good.toml").write_text(
+            f'[workspace]\nname = "{over_long}"\nrepos = []\n'
+        )
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        with pytest.raises(WorkspaceError):
+            load_workspace("good")
+        with pytest.raises(WorkspaceError):
+            add_repo("good", str(repo))
