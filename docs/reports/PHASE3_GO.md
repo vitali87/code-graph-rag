@@ -483,12 +483,13 @@ and phase 5 removes it. Each language that moves in phase 4 reuses it.
   `both` does; the job installs Go for it. Nothing is recorded for the
   type checker's path: both sides run live, so a new Go release that
   changes what `go/types` answers changes both alike.
-- **A second pinned repository**, `spf13/afero` at
-  `d2bffea700c045694727c3172ad6521da4e218b0`: 65 Go files in three modules
-  (two with local `replace` directives back to the root), 17 interfaces,
-  embeds of `io` interfaces, many implementations of one interface, seven
-  files with `//go:build` lines. It covers what uuid does not. It is
-  recorded on Python, graph and answers, before any Go code moves.
+- **A second pinned repository**, `spf13/afero` at its v1.15.0 release
+  (`399bb34ad9fd8a252ad1d8bfaef96279b66dc774`): 59 Go files in three
+  modules (two with local `replace` directives back to the root), 17
+  interfaces, embeds of `io` interfaces, many implementations of one
+  interface, four files with `//go:build` lines. It covers what uuid does
+  not. It is recorded on Python, graph and answers, before any Go code
+  moves (#3782).
 - **A nightly job**, not required for merging, runs `both` over the test
   files that hold Go, with Go forced on Rust, from the first step that
   emits a Go graph (step 7), and posts the number of differing tests and
@@ -936,7 +937,7 @@ moved earlier or alone.
 Open questions, each with a recommendation:
 
 1. **Is afero the right second repository?** It adds interfaces, embeds,
-   build constraints and three modules for 65 files. *Recommendation:*
+   build constraints and three modules for 59 files. *Recommendation:*
    yes; add `gin-gonic/gin` (99 files) only if the reference-graphs job has
    time to spare, for size.
 2. **Should the default move wait for #3766?** *Recommendation:* yes (gate
