@@ -1,0 +1,1854 @@
+$ cgr -q dead-code --project afero --no-public-roots --format json
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "name": "DirExists",
+    "qualified_name": "afero.afero.Afero.DirExists",
+    "path": "util.go",
+    "start_line": 249,
+    "end_line": 251
+  },
+  {
+    "label": "Method",
+    "name": "Exists",
+    "qualified_name": "afero.afero.Afero.Exists",
+    "path": "util.go",
+    "start_line": 306,
+    "end_line": 308
+  },
+  {
+    "label": "Method",
+    "name": "FileContainsAnyBytes",
+    "qualified_name": "afero.afero.Afero.FileContainsAnyBytes",
+    "path": "util.go",
+    "start_line": 183,
+    "end_line": 185
+  },
+  {
+    "label": "Method",
+    "name": "FileContainsBytes",
+    "qualified_name": "afero.afero.Afero.FileContainsBytes",
+    "path": "util.go",
+    "start_line": 168,
+    "end_line": 170
+  },
+  {
+    "label": "Method",
+    "name": "GetTempDir",
+    "qualified_name": "afero.afero.Afero.GetTempDir",
+    "path": "util.go",
+    "start_line": 98,
+    "end_line": 100
+  },
+  {
+    "label": "Method",
+    "name": "IsEmpty",
+    "qualified_name": "afero.afero.Afero.IsEmpty",
+    "path": "util.go",
+    "start_line": 278,
+    "end_line": 280
+  },
+  {
+    "label": "Method",
+    "name": "ReadDir",
+    "qualified_name": "afero.afero.Afero.ReadDir",
+    "path": "ioutil.go",
+    "start_line": 39,
+    "end_line": 41
+  },
+  {
+    "label": "Method",
+    "name": "SafeWriteReader",
+    "qualified_name": "afero.afero.Afero.SafeWriteReader",
+    "path": "util.go",
+    "start_line": 65,
+    "end_line": 67
+  },
+  {
+    "label": "Method",
+    "name": "TempDir",
+    "qualified_name": "afero.afero.Afero.TempDir",
+    "path": "ioutil.go",
+    "start_line": 216,
+    "end_line": 218
+  },
+  {
+    "label": "Method",
+    "name": "Walk",
+    "qualified_name": "afero.afero.Afero.Walk",
+    "path": "path.go",
+    "start_line": 96,
+    "end_line": 98
+  },
+  {
+    "label": "Method",
+    "name": "WriteReader",
+    "qualified_name": "afero.afero.Afero.WriteReader",
+    "path": "util.go",
+    "start_line": 37,
+    "end_line": 39
+  },
+  {
+    "label": "Method",
+    "name": "Sync",
+    "qualified_name": "afero.afero.File.Sync",
+    "path": "afero.go",
+    "start_line": 49,
+    "end_line": 49
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.afero.Fs.Name",
+    "path": "afero.go",
+    "start_line": 92,
+    "end_line": 92
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.basepath.BasePathFile.Name",
+    "path": "basepath.go",
+    "start_line": 35,
+    "end_line": 38
+  },
+  {
+    "label": "Method",
+    "name": "ReadDir",
+    "qualified_name": "afero.basepath.BasePathFile.ReadDir",
+    "path": "basepath.go",
+    "start_line": 40,
+    "end_line": 45
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.basepath.BasePathFs.Name",
+    "path": "basepath.go",
+    "start_line": 104,
+    "end_line": 106
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs.Name",
+    "path": "cacheOnReadFs.go",
+    "start_line": 290,
+    "end_line": 292
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.copyOnWriteFs.CopyOnWriteFs.Name",
+    "path": "copyOnWriteFs.go",
+    "start_line": 314,
+    "end_line": 316
+  },
+  {
+    "label": "Method",
+    "name": "Truncate",
+    "qualified_name": "afero.gcsfs.file.GcsFile.Truncate",
+    "path": "gcsfs/file.go",
+    "start_line": 297,
+    "end_line": 305
+  },
+  {
+    "label": "Method",
+    "name": "Len",
+    "qualified_name": "afero.gcsfs.file_info.ByName.Len",
+    "path": "gcsfs/file_info.go",
+    "start_line": 136,
+    "end_line": 136
+  },
+  {
+    "label": "Method",
+    "name": "Less",
+    "qualified_name": "afero.gcsfs.file_info.ByName.Less",
+    "path": "gcsfs/file_info.go",
+    "start_line": 143,
+    "end_line": 143
+  },
+  {
+    "label": "Method",
+    "name": "Swap",
+    "qualified_name": "afero.gcsfs.file_info.ByName.Swap",
+    "path": "gcsfs/file_info.go",
+    "start_line": 137,
+    "end_line": 142
+  },
+  {
+    "label": "Method",
+    "name": "Sys",
+    "qualified_name": "afero.gcsfs.file_info.FileInfo.Sys",
+    "path": "gcsfs/file_info.go",
+    "start_line": 130,
+    "end_line": 132
+  },
+  {
+    "label": "Method",
+    "name": "Truncate",
+    "qualified_name": "afero.gcsfs.file_resource.gcsFileResource.Truncate",
+    "path": "gcsfs/file_resource.go",
+    "start_line": 233,
+    "end_line": 271
+  },
+  {
+    "label": "Function",
+    "name": "min",
+    "qualified_name": "afero.gcsfs.file_resource.min",
+    "path": "gcsfs/file_resource.go",
+    "start_line": 226,
+    "end_line": 231
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.gcsfs.gcs.GcsFs.Name",
+    "path": "gcsfs/gcs.go",
+    "start_line": 84,
+    "end_line": 86
+  },
+  {
+    "label": "Function",
+    "name": "NewGcsFS",
+    "qualified_name": "afero.gcsfs.gcs.NewGcsFS",
+    "path": "gcsfs/gcs.go",
+    "start_line": 38,
+    "end_line": 48
+  },
+  {
+    "label": "Function",
+    "name": "NewGcsFSFromClient",
+    "qualified_name": "afero.gcsfs.gcs.NewGcsFSFromClient",
+    "path": "gcsfs/gcs.go",
+    "start_line": 65,
+    "end_line": 69
+  },
+  {
+    "label": "Function",
+    "name": "NewGcsFSFromClientWithSeparator",
+    "qualified_name": "afero.gcsfs.gcs.NewGcsFSFromClientWithSeparator",
+    "path": "gcsfs/gcs.go",
+    "start_line": 72,
+    "end_line": 80
+  },
+  {
+    "label": "Function",
+    "name": "NewGcsFSWithSeparator",
+    "qualified_name": "afero.gcsfs.gcs.NewGcsFSWithSeparator",
+    "path": "gcsfs/gcs.go",
+    "start_line": 51,
+    "end_line": 62
+  },
+  {
+    "label": "Method",
+    "name": "Objects",
+    "qualified_name": "afero.gcsfs.gcs_mocks.bucketMock.Objects",
+    "path": "gcsfs/gcs_mocks.go",
+    "start_line": 61,
+    "end_line": 63
+  },
+  {
+    "label": "Method",
+    "name": "Bucket",
+    "qualified_name": "afero.gcsfs.gcs_mocks.clientMock.Bucket",
+    "path": "gcsfs/gcs_mocks.go",
+    "start_line": 41,
+    "end_line": 43
+  },
+  {
+    "label": "Method",
+    "name": "Attrs",
+    "qualified_name": "afero.gcsfs.gcs_mocks.objectMock.Attrs",
+    "path": "gcsfs/gcs_mocks.go",
+    "start_line": 115,
+    "end_line": 144
+  },
+  {
+    "label": "Method",
+    "name": "NewRangeReader",
+    "qualified_name": "afero.gcsfs.gcs_mocks.objectMock.NewRangeReader",
+    "path": "gcsfs/gcs_mocks.go",
+    "start_line": 76,
+    "end_line": 106
+  },
+  {
+    "label": "Method",
+    "name": "Close",
+    "qualified_name": "afero.gcsfs.gcs_mocks.readerMock.Close",
+    "path": "gcsfs/gcs_mocks.go",
+    "start_line": 214,
+    "end_line": 216
+  },
+  {
+    "label": "Method",
+    "name": "Read",
+    "qualified_name": "afero.gcsfs.gcs_mocks.readerMock.Read",
+    "path": "gcsfs/gcs_mocks.go",
+    "start_line": 206,
+    "end_line": 212
+  },
+  {
+    "label": "Method",
+    "name": "Close",
+    "qualified_name": "afero.gcsfs.gcs_mocks.writerMock.Close",
+    "path": "gcsfs/gcs_mocks.go",
+    "start_line": 170,
+    "end_line": 192
+  },
+  {
+    "label": "Method",
+    "name": "Write",
+    "qualified_name": "afero.gcsfs.gcs_mocks.writerMock.Write",
+    "path": "gcsfs/gcs_mocks.go",
+    "start_line": 155,
+    "end_line": 168
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.aclHandle.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 51,
+    "end_line": 51
+  },
+  {
+    "label": "Method",
+    "name": "ACL",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.bucketHandle.ACL",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 77,
+    "end_line": 79
+  },
+  {
+    "label": "Method",
+    "name": "DefaultObjectACL",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.bucketHandle.DefaultObjectACL",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 73,
+    "end_line": 75
+  },
+  {
+    "label": "Method",
+    "name": "If",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.bucketHandle.If",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 65,
+    "end_line": 67
+  },
+  {
+    "label": "Method",
+    "name": "Object",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.bucketHandle.Object",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 61,
+    "end_line": 63
+  },
+  {
+    "label": "Method",
+    "name": "Objects",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.bucketHandle.Objects",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 69,
+    "end_line": 71
+  },
+  {
+    "label": "Method",
+    "name": "UserProject",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.bucketHandle.UserProject",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 81,
+    "end_line": 83
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.bucketHandle.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 43,
+    "end_line": 43
+  },
+  {
+    "label": "Method",
+    "name": "SetPrefix",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.bucketIterator.SetPrefix",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 85,
+    "end_line": 87
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.bucketIterator.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 45,
+    "end_line": 45
+  },
+  {
+    "label": "Method",
+    "name": "Bucket",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.client.Bucket",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 53,
+    "end_line": 55
+  },
+  {
+    "label": "Method",
+    "name": "Buckets",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.client.Buckets",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 57,
+    "end_line": 59
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.client.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 42,
+    "end_line": 42
+  },
+  {
+    "label": "Method",
+    "name": "ObjectAttrs",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.composer.ObjectAttrs",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 174,
+    "end_line": 176
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.composer.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 50,
+    "end_line": 50
+  },
+  {
+    "label": "Method",
+    "name": "ObjectAttrs",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.copier.ObjectAttrs",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 158,
+    "end_line": 160
+  },
+  {
+    "label": "Method",
+    "name": "SetDestinationKMSKeyName",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.copier.SetDestinationKMSKeyName",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 170,
+    "end_line": 172
+  },
+  {
+    "label": "Method",
+    "name": "SetProgressFunc",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.copier.SetProgressFunc",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 166,
+    "end_line": 168
+  },
+  {
+    "label": "Method",
+    "name": "SetRewriteToken",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.copier.SetRewriteToken",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 162,
+    "end_line": 164
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.copier.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 49,
+    "end_line": 49
+  },
+  {
+    "label": "Method",
+    "name": "ACL",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.objectHandle.ACL",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 89,
+    "end_line": 91
+  },
+  {
+    "label": "Method",
+    "name": "ComposerFrom",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.objectHandle.ComposerFrom",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 133,
+    "end_line": 139
+  },
+  {
+    "label": "Method",
+    "name": "Generation",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.objectHandle.Generation",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 93,
+    "end_line": 95
+  },
+  {
+    "label": "Method",
+    "name": "If",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.objectHandle.If",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 97,
+    "end_line": 99
+  },
+  {
+    "label": "Method",
+    "name": "Key",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.objectHandle.Key",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 101,
+    "end_line": 103
+  },
+  {
+    "label": "Method",
+    "name": "NewRangeReader",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.objectHandle.NewRangeReader",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 117,
+    "end_line": 123
+  },
+  {
+    "label": "Method",
+    "name": "NewWriter",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.objectHandle.NewWriter",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 125,
+    "end_line": 127
+  },
+  {
+    "label": "Method",
+    "name": "ReadCompressed",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.objectHandle.ReadCompressed",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 105,
+    "end_line": 107
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.objectHandle.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 44,
+    "end_line": 44
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.objectIterator.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 46,
+    "end_line": 46
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.reader.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 48,
+    "end_line": 48
+  },
+  {
+    "label": "Method",
+    "name": "ObjectAttrs",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.writer.ObjectAttrs",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 141,
+    "end_line": 143
+  },
+  {
+    "label": "Method",
+    "name": "SetCRC32C",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.writer.SetCRC32C",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 153,
+    "end_line": 156
+  },
+  {
+    "label": "Method",
+    "name": "SetChunkSize",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.writer.SetChunkSize",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 145,
+    "end_line": 147
+  },
+  {
+    "label": "Method",
+    "name": "SetProgressFunc",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.writer.SetProgressFunc",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 149,
+    "end_line": 151
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.adapters.writer.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/adapters.go",
+    "start_line": 47,
+    "end_line": 47
+  },
+  {
+    "label": "Method",
+    "name": "Delete",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ACLHandle.Delete",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 87,
+    "end_line": 87
+  },
+  {
+    "label": "Method",
+    "name": "List",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ACLHandle.List",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 89,
+    "end_line": 89
+  },
+  {
+    "label": "Method",
+    "name": "Set",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ACLHandle.Set",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 88,
+    "end_line": 88
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ACLHandle.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 91,
+    "end_line": 91
+  },
+  {
+    "label": "Method",
+    "name": "ACL",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketHandle.ACL",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 60,
+    "end_line": 60
+  },
+  {
+    "label": "Method",
+    "name": "AddNotification",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketHandle.AddNotification",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 64,
+    "end_line": 64
+  },
+  {
+    "label": "Method",
+    "name": "Create",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketHandle.Create",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 52,
+    "end_line": 52
+  },
+  {
+    "label": "Method",
+    "name": "DefaultObjectACL",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketHandle.DefaultObjectACL",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 54,
+    "end_line": 54
+  },
+  {
+    "label": "Method",
+    "name": "Delete",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketHandle.Delete",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 53,
+    "end_line": 53
+  },
+  {
+    "label": "Method",
+    "name": "DeleteNotification",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketHandle.DeleteNotification",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 65,
+    "end_line": 65
+  },
+  {
+    "label": "Method",
+    "name": "If",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketHandle.If",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 58,
+    "end_line": 58
+  },
+  {
+    "label": "Method",
+    "name": "LockRetentionPolicy",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketHandle.LockRetentionPolicy",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 66,
+    "end_line": 66
+  },
+  {
+    "label": "Method",
+    "name": "Notifications",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketHandle.Notifications",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 63,
+    "end_line": 63
+  },
+  {
+    "label": "Method",
+    "name": "Objects",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketHandle.Objects",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 59,
+    "end_line": 59
+  },
+  {
+    "label": "Method",
+    "name": "Update",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketHandle.Update",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 57,
+    "end_line": 57
+  },
+  {
+    "label": "Method",
+    "name": "UserProject",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketHandle.UserProject",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 62,
+    "end_line": 62
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketHandle.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 68,
+    "end_line": 68
+  },
+  {
+    "label": "Method",
+    "name": "Next",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketIterator.Next",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 80,
+    "end_line": 80
+  },
+  {
+    "label": "Method",
+    "name": "PageInfo",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketIterator.PageInfo",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 81,
+    "end_line": 81
+  },
+  {
+    "label": "Method",
+    "name": "SetPrefix",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketIterator.SetPrefix",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 79,
+    "end_line": 79
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.BucketIterator.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 83,
+    "end_line": 83
+  },
+  {
+    "label": "Method",
+    "name": "Buckets",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Client.Buckets",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 27,
+    "end_line": 27
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Client.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 30,
+    "end_line": 30
+  },
+  {
+    "label": "Method",
+    "name": "ObjectAttrs",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Composer.ObjectAttrs",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 128,
+    "end_line": 128
+  },
+  {
+    "label": "Method",
+    "name": "Run",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Composer.Run",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 129,
+    "end_line": 129
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Composer.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 131,
+    "end_line": 131
+  },
+  {
+    "label": "Method",
+    "name": "ObjectAttrs",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Copier.ObjectAttrs",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 118,
+    "end_line": 118
+  },
+  {
+    "label": "Method",
+    "name": "Run",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Copier.Run",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 122,
+    "end_line": 122
+  },
+  {
+    "label": "Method",
+    "name": "SetDestinationKMSKeyName",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Copier.SetDestinationKMSKeyName",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 121,
+    "end_line": 121
+  },
+  {
+    "label": "Method",
+    "name": "SetProgressFunc",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Copier.SetProgressFunc",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 120,
+    "end_line": 120
+  },
+  {
+    "label": "Method",
+    "name": "SetRewriteToken",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Copier.SetRewriteToken",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 119,
+    "end_line": 119
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Copier.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 124,
+    "end_line": 124
+  },
+  {
+    "label": "Method",
+    "name": "ACL",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ObjectHandle.ACL",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 34,
+    "end_line": 34
+  },
+  {
+    "label": "Method",
+    "name": "ComposerFrom",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ObjectHandle.ComposerFrom",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 46,
+    "end_line": 46
+  },
+  {
+    "label": "Method",
+    "name": "CopierFrom",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ObjectHandle.CopierFrom",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 45,
+    "end_line": 45
+  },
+  {
+    "label": "Method",
+    "name": "Generation",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ObjectHandle.Generation",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 35,
+    "end_line": 35
+  },
+  {
+    "label": "Method",
+    "name": "If",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ObjectHandle.If",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 36,
+    "end_line": 36
+  },
+  {
+    "label": "Method",
+    "name": "Key",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ObjectHandle.Key",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 37,
+    "end_line": 37
+  },
+  {
+    "label": "Method",
+    "name": "ReadCompressed",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ObjectHandle.ReadCompressed",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 38,
+    "end_line": 38
+  },
+  {
+    "label": "Method",
+    "name": "Update",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ObjectHandle.Update",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 40,
+    "end_line": 40
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ObjectHandle.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 48,
+    "end_line": 48
+  },
+  {
+    "label": "Method",
+    "name": "PageInfo",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ObjectIterator.PageInfo",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 73,
+    "end_line": 73
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.ObjectIterator.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 75,
+    "end_line": 75
+  },
+  {
+    "label": "Method",
+    "name": "CacheControl",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Reader.CacheControl",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 100,
+    "end_line": 100
+  },
+  {
+    "label": "Method",
+    "name": "ContentEncoding",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Reader.ContentEncoding",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 99,
+    "end_line": 99
+  },
+  {
+    "label": "Method",
+    "name": "ContentType",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Reader.ContentType",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 98,
+    "end_line": 98
+  },
+  {
+    "label": "Method",
+    "name": "Remain",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Reader.Remain",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 97,
+    "end_line": 97
+  },
+  {
+    "label": "Method",
+    "name": "Size",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Reader.Size",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 96,
+    "end_line": 96
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Reader.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 102,
+    "end_line": 102
+  },
+  {
+    "label": "Method",
+    "name": "Attrs",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Writer.Attrs",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 112,
+    "end_line": 112
+  },
+  {
+    "label": "Method",
+    "name": "CloseWithError",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Writer.CloseWithError",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 111,
+    "end_line": 111
+  },
+  {
+    "label": "Method",
+    "name": "ObjectAttrs",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Writer.ObjectAttrs",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 107,
+    "end_line": 107
+  },
+  {
+    "label": "Method",
+    "name": "SetCRC32C",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Writer.SetCRC32C",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 110,
+    "end_line": 110
+  },
+  {
+    "label": "Method",
+    "name": "SetChunkSize",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Writer.SetChunkSize",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 108,
+    "end_line": 108
+  },
+  {
+    "label": "Method",
+    "name": "SetProgressFunc",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Writer.SetProgressFunc",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 109,
+    "end_line": 109
+  },
+  {
+    "label": "Method",
+    "name": "embedToIncludeNewMethods",
+    "qualified_name": "afero.gcsfs.internal.stiface.interfaces.Writer.embedToIncludeNewMethods",
+    "path": "gcsfs/internal/stiface/interfaces.go",
+    "start_line": 114,
+    "end_line": 114
+  },
+  {
+    "label": "Method",
+    "name": "Dir",
+    "qualified_name": "afero.httpFs.HttpFs.Dir",
+    "path": "httpFs.go",
+    "start_line": 56,
+    "end_line": 58
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.httpFs.HttpFs.Name",
+    "path": "httpFs.go",
+    "start_line": 60,
+    "end_line": 60
+  },
+  {
+    "label": "Function",
+    "name": "NewHttpFs",
+    "qualified_name": "afero.httpFs.NewHttpFs",
+    "path": "httpFs.go",
+    "start_line": 52,
+    "end_line": 54
+  },
+  {
+    "label": "Method",
+    "name": "Open",
+    "qualified_name": "afero.httpFs.httpDir.Open",
+    "path": "httpFs.go",
+    "start_line": 31,
+    "end_line": 46
+  },
+  {
+    "label": "Method",
+    "name": "Info",
+    "qualified_name": "afero.internal.common.adapters.FileInfoDirEntry.Info",
+    "path": "internal/common/adapters.go",
+    "start_line": 27,
+    "end_line": 27
+  },
+  {
+    "label": "Method",
+    "name": "Glob",
+    "qualified_name": "afero.iofs.IOFS.Glob",
+    "path": "iofs.go",
+    "start_line": 56,
+    "end_line": 70
+  },
+  {
+    "label": "Method",
+    "name": "Open",
+    "qualified_name": "afero.iofs.IOFS.Open",
+    "path": "iofs.go",
+    "start_line": 35,
+    "end_line": 54
+  },
+  {
+    "label": "Method",
+    "name": "ReadFile",
+    "qualified_name": "afero.iofs.IOFS.ReadFile",
+    "path": "iofs.go",
+    "start_line": 103,
+    "end_line": 116
+  },
+  {
+    "label": "Method",
+    "name": "Sub",
+    "qualified_name": "afero.iofs.IOFS.Sub",
+    "path": "iofs.go",
+    "start_line": 118,
+    "end_line": 118
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.iofs.fromIOFSFile.Name",
+    "path": "iofs.go",
+    "start_line": 247,
+    "end_line": 247
+  },
+  {
+    "label": "Method",
+    "name": "Readdirnames",
+    "qualified_name": "afero.iofs.fromIOFSFile.Readdirnames",
+    "path": "iofs.go",
+    "start_line": 271,
+    "end_line": 288
+  },
+  {
+    "label": "Method",
+    "name": "Sync",
+    "qualified_name": "afero.iofs.fromIOFSFile.Sync",
+    "path": "iofs.go",
+    "start_line": 290,
+    "end_line": 290
+  },
+  {
+    "label": "Method",
+    "name": "Truncate",
+    "qualified_name": "afero.iofs.fromIOFSFile.Truncate",
+    "path": "iofs.go",
+    "start_line": 292,
+    "end_line": 294
+  },
+  {
+    "label": "Method",
+    "name": "WriteString",
+    "qualified_name": "afero.iofs.fromIOFSFile.WriteString",
+    "path": "iofs.go",
+    "start_line": 296,
+    "end_line": 298
+  },
+  {
+    "label": "Method",
+    "name": "ReadDir",
+    "qualified_name": "afero.iofs.readDirFile.ReadDir",
+    "path": "iofs.go",
+    "start_line": 139,
+    "end_line": 151
+  },
+  {
+    "label": "Method",
+    "name": "Len",
+    "qualified_name": "afero.ioutil.byName.Len",
+    "path": "ioutil.go",
+    "start_line": 33,
+    "end_line": 33
+  },
+  {
+    "label": "Method",
+    "name": "Less",
+    "qualified_name": "afero.ioutil.byName.Less",
+    "path": "ioutil.go",
+    "start_line": 34,
+    "end_line": 34
+  },
+  {
+    "label": "Method",
+    "name": "Swap",
+    "qualified_name": "afero.ioutil.byName.Swap",
+    "path": "ioutil.go",
+    "start_line": 35,
+    "end_line": 35
+  },
+  {
+    "label": "Method",
+    "name": "Files",
+    "qualified_name": "afero.mem.dir.Dir.Files",
+    "path": "mem/dir.go",
+    "start_line": 19,
+    "end_line": 19
+  },
+  {
+    "label": "Method",
+    "name": "Len",
+    "qualified_name": "afero.mem.dir.Dir.Len",
+    "path": "mem/dir.go",
+    "start_line": 17,
+    "end_line": 17
+  },
+  {
+    "label": "Method",
+    "name": "Names",
+    "qualified_name": "afero.mem.dir.Dir.Names",
+    "path": "mem/dir.go",
+    "start_line": 18,
+    "end_line": 18
+  },
+  {
+    "label": "Method",
+    "name": "Files",
+    "qualified_name": "afero.mem.dirmap.DirMap.Files",
+    "path": "mem/dirmap.go",
+    "start_line": 23,
+    "end_line": 29
+  },
+  {
+    "label": "Method",
+    "name": "Len",
+    "qualified_name": "afero.mem.dirmap.DirMap.Len",
+    "path": "mem/dirmap.go",
+    "start_line": 20,
+    "end_line": 20
+  },
+  {
+    "label": "Method",
+    "name": "Names",
+    "qualified_name": "afero.mem.dirmap.DirMap.Names",
+    "path": "mem/dirmap.go",
+    "start_line": 38,
+    "end_line": 43
+  },
+  {
+    "label": "Method",
+    "name": "Len",
+    "qualified_name": "afero.mem.dirmap.filesSorter.Len",
+    "path": "mem/dirmap.go",
+    "start_line": 34,
+    "end_line": 34
+  },
+  {
+    "label": "Method",
+    "name": "Less",
+    "qualified_name": "afero.mem.dirmap.filesSorter.Less",
+    "path": "mem/dirmap.go",
+    "start_line": 36,
+    "end_line": 36
+  },
+  {
+    "label": "Method",
+    "name": "Swap",
+    "qualified_name": "afero.mem.dirmap.filesSorter.Swap",
+    "path": "mem/dirmap.go",
+    "start_line": 35,
+    "end_line": 35
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.mem.file.File.Name",
+    "path": "mem/file.go",
+    "start_line": 139,
+    "end_line": 141
+  },
+  {
+    "label": "Method",
+    "name": "Open",
+    "qualified_name": "afero.mem.file.File.Open",
+    "path": "mem/file.go",
+    "start_line": 120,
+    "end_line": 127
+  },
+  {
+    "label": "Method",
+    "name": "ReadDir",
+    "qualified_name": "afero.mem.file.File.ReadDir",
+    "path": "mem/file.go",
+    "start_line": 196,
+    "end_line": 206
+  },
+  {
+    "label": "Method",
+    "name": "Readdir",
+    "qualified_name": "afero.mem.file.File.Readdir",
+    "path": "mem/file.go",
+    "start_line": 151,
+    "end_line": 184
+  },
+  {
+    "label": "Method",
+    "name": "Readdirnames",
+    "qualified_name": "afero.mem.file.File.Readdirnames",
+    "path": "mem/file.go",
+    "start_line": 186,
+    "end_line": 193
+  },
+  {
+    "label": "Method",
+    "name": "Stat",
+    "qualified_name": "afero.mem.file.File.Stat",
+    "path": "mem/file.go",
+    "start_line": 143,
+    "end_line": 145
+  },
+  {
+    "label": "Method",
+    "name": "Sync",
+    "qualified_name": "afero.mem.file.File.Sync",
+    "path": "mem/file.go",
+    "start_line": 147,
+    "end_line": 149
+  },
+  {
+    "label": "Method",
+    "name": "Truncate",
+    "qualified_name": "afero.mem.file.File.Truncate",
+    "path": "mem/file.go",
+    "start_line": 238,
+    "end_line": 262
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.mem.file.FileInfo.Name",
+    "path": "mem/file.go",
+    "start_line": 332,
+    "end_line": 337
+  },
+  {
+    "label": "Method",
+    "name": "Sys",
+    "qualified_name": "afero.mem.file.FileInfo.Sys",
+    "path": "mem/file.go",
+    "start_line": 356,
+    "end_line": 356
+  },
+  {
+    "label": "Method",
+    "name": "List",
+    "qualified_name": "afero.memmap.MemMapFs.List",
+    "path": "memmap.go",
+    "start_line": 458,
+    "end_line": 463
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.os.OsFs.Name",
+    "path": "os.go",
+    "start_line": 34,
+    "end_line": 34
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.readonlyfs.ReadOnlyFs.Name",
+    "path": "readonlyfs.go",
+    "start_line": 35,
+    "end_line": 37
+  },
+  {
+    "label": "Method",
+    "name": "ReadDir",
+    "qualified_name": "afero.readonlyfs.ReadOnlyFs.ReadDir",
+    "path": "readonlyfs.go",
+    "start_line": 19,
+    "end_line": 21
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.regexpfs.RegexpFile.Name",
+    "path": "regexpfs.go",
+    "start_line": 180,
+    "end_line": 182
+  },
+  {
+    "label": "Method",
+    "name": "ReadAt",
+    "qualified_name": "afero.regexpfs.RegexpFile.ReadAt",
+    "path": "regexpfs.go",
+    "start_line": 164,
+    "end_line": 166
+  },
+  {
+    "label": "Method",
+    "name": "Readdir",
+    "qualified_name": "afero.regexpfs.RegexpFile.Readdir",
+    "path": "regexpfs.go",
+    "start_line": 184,
+    "end_line": 196
+  },
+  {
+    "label": "Method",
+    "name": "Readdirnames",
+    "qualified_name": "afero.regexpfs.RegexpFile.Readdirnames",
+    "path": "regexpfs.go",
+    "start_line": 198,
+    "end_line": 207
+  },
+  {
+    "label": "Method",
+    "name": "Seek",
+    "qualified_name": "afero.regexpfs.RegexpFile.Seek",
+    "path": "regexpfs.go",
+    "start_line": 168,
+    "end_line": 170
+  },
+  {
+    "label": "Method",
+    "name": "Stat",
+    "qualified_name": "afero.regexpfs.RegexpFile.Stat",
+    "path": "regexpfs.go",
+    "start_line": 209,
+    "end_line": 211
+  },
+  {
+    "label": "Method",
+    "name": "Sync",
+    "qualified_name": "afero.regexpfs.RegexpFile.Sync",
+    "path": "regexpfs.go",
+    "start_line": 213,
+    "end_line": 215
+  },
+  {
+    "label": "Method",
+    "name": "Truncate",
+    "qualified_name": "afero.regexpfs.RegexpFile.Truncate",
+    "path": "regexpfs.go",
+    "start_line": 217,
+    "end_line": 219
+  },
+  {
+    "label": "Method",
+    "name": "Write",
+    "qualified_name": "afero.regexpfs.RegexpFile.Write",
+    "path": "regexpfs.go",
+    "start_line": 172,
+    "end_line": 174
+  },
+  {
+    "label": "Method",
+    "name": "WriteAt",
+    "qualified_name": "afero.regexpfs.RegexpFile.WriteAt",
+    "path": "regexpfs.go",
+    "start_line": 176,
+    "end_line": 178
+  },
+  {
+    "label": "Method",
+    "name": "WriteString",
+    "qualified_name": "afero.regexpfs.RegexpFile.WriteString",
+    "path": "regexpfs.go",
+    "start_line": 221,
+    "end_line": 223
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.regexpfs.RegexpFs.Name",
+    "path": "regexpfs.go",
+    "start_line": 69,
+    "end_line": 71
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.sftpfs.file.File.Name",
+    "path": "sftpfs/file.go",
+    "start_line": 47,
+    "end_line": 49
+  },
+  {
+    "label": "Method",
+    "name": "ReadAt",
+    "qualified_name": "afero.sftpfs.file.File.ReadAt",
+    "path": "sftpfs/file.go",
+    "start_line": 67,
+    "end_line": 69
+  },
+  {
+    "label": "Method",
+    "name": "Readdir",
+    "qualified_name": "afero.sftpfs.file.File.Readdir",
+    "path": "sftpfs/file.go",
+    "start_line": 71,
+    "end_line": 82
+  },
+  {
+    "label": "Method",
+    "name": "Readdirnames",
+    "qualified_name": "afero.sftpfs.file.File.Readdirnames",
+    "path": "sftpfs/file.go",
+    "start_line": 84,
+    "end_line": 93
+  },
+  {
+    "label": "Method",
+    "name": "Seek",
+    "qualified_name": "afero.sftpfs.file.File.Seek",
+    "path": "sftpfs/file.go",
+    "start_line": 95,
+    "end_line": 97
+  },
+  {
+    "label": "Method",
+    "name": "Stat",
+    "qualified_name": "afero.sftpfs.file.File.Stat",
+    "path": "sftpfs/file.go",
+    "start_line": 51,
+    "end_line": 53
+  },
+  {
+    "label": "Method",
+    "name": "Sync",
+    "qualified_name": "afero.sftpfs.file.File.Sync",
+    "path": "sftpfs/file.go",
+    "start_line": 55,
+    "end_line": 57
+  },
+  {
+    "label": "Method",
+    "name": "Truncate",
+    "qualified_name": "afero.sftpfs.file.File.Truncate",
+    "path": "sftpfs/file.go",
+    "start_line": 59,
+    "end_line": 61
+  },
+  {
+    "label": "Method",
+    "name": "WriteAt",
+    "qualified_name": "afero.sftpfs.file.File.WriteAt",
+    "path": "sftpfs/file.go",
+    "start_line": 104,
+    "end_line": 106
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.sftpfs.sftp.Fs.Name",
+    "path": "sftpfs/sftp.go",
+    "start_line": 37,
+    "end_line": 37
+  },
+  {
+    "label": "Method",
+    "name": "Sync",
+    "qualified_name": "afero.tarfs.file.File.Sync",
+    "path": "tarfs/file.go",
+    "start_line": 140,
+    "end_line": 140
+  },
+  {
+    "label": "Method",
+    "name": "Truncate",
+    "qualified_name": "afero.tarfs.file.File.Truncate",
+    "path": "tarfs/file.go",
+    "start_line": 142,
+    "end_line": 142
+  },
+  {
+    "label": "Method",
+    "name": "Write",
+    "qualified_name": "afero.tarfs.file.File.Write",
+    "path": "tarfs/file.go",
+    "start_line": 70,
+    "end_line": 70
+  },
+  {
+    "label": "Method",
+    "name": "WriteAt",
+    "qualified_name": "afero.tarfs.file.File.WriteAt",
+    "path": "tarfs/file.go",
+    "start_line": 72,
+    "end_line": 72
+  },
+  {
+    "label": "Method",
+    "name": "WriteString",
+    "qualified_name": "afero.tarfs.file.File.WriteString",
+    "path": "tarfs/file.go",
+    "start_line": 144,
+    "end_line": 144
+  },
+  {
+    "label": "Method",
+    "name": "Close",
+    "qualified_name": "afero.unionFile.UnionFile.Close",
+    "path": "unionFile.go",
+    "start_line": 31,
+    "end_line": 42
+  },
+  {
+    "label": "Method",
+    "name": "Read",
+    "qualified_name": "afero.unionFile.UnionFile.Read",
+    "path": "unionFile.go",
+    "start_line": 44,
+    "end_line": 62
+  },
+  {
+    "label": "Method",
+    "name": "ReadAt",
+    "qualified_name": "afero.unionFile.UnionFile.ReadAt",
+    "path": "unionFile.go",
+    "start_line": 64,
+    "end_line": 76
+  },
+  {
+    "label": "Method",
+    "name": "Readdir",
+    "qualified_name": "afero.unionFile.UnionFile.Readdir",
+    "path": "unionFile.go",
+    "start_line": 160,
+    "end_line": 205
+  },
+  {
+    "label": "Method",
+    "name": "Readdirnames",
+    "qualified_name": "afero.unionFile.UnionFile.Readdirnames",
+    "path": "unionFile.go",
+    "start_line": 207,
+    "end_line": 217
+  },
+  {
+    "label": "Method",
+    "name": "Seek",
+    "qualified_name": "afero.unionFile.UnionFile.Seek",
+    "path": "unionFile.go",
+    "start_line": 78,
+    "end_line": 90
+  },
+  {
+    "label": "Method",
+    "name": "Stat",
+    "qualified_name": "afero.unionFile.UnionFile.Stat",
+    "path": "unionFile.go",
+    "start_line": 219,
+    "end_line": 227
+  },
+  {
+    "label": "Method",
+    "name": "Sync",
+    "qualified_name": "afero.unionFile.UnionFile.Sync",
+    "path": "unionFile.go",
+    "start_line": 229,
+    "end_line": 241
+  },
+  {
+    "label": "Method",
+    "name": "Truncate",
+    "qualified_name": "afero.unionFile.UnionFile.Truncate",
+    "path": "unionFile.go",
+    "start_line": 243,
+    "end_line": 255
+  },
+  {
+    "label": "Method",
+    "name": "Write",
+    "qualified_name": "afero.unionFile.UnionFile.Write",
+    "path": "unionFile.go",
+    "start_line": 92,
+    "end_line": 105
+  },
+  {
+    "label": "Method",
+    "name": "WriteAt",
+    "qualified_name": "afero.unionFile.UnionFile.WriteAt",
+    "path": "unionFile.go",
+    "start_line": 107,
+    "end_line": 119
+  },
+  {
+    "label": "Method",
+    "name": "WriteString",
+    "qualified_name": "afero.unionFile.UnionFile.WriteString",
+    "path": "unionFile.go",
+    "start_line": 257,
+    "end_line": 269
+  },
+  {
+    "label": "Function",
+    "name": "copyFile",
+    "qualified_name": "afero.unionFile.copyFile",
+    "path": "unionFile.go",
+    "start_line": 271,
+    "end_line": 311
+  },
+  {
+    "label": "Function",
+    "name": "copyFileToLayer",
+    "qualified_name": "afero.unionFile.copyFileToLayer",
+    "path": "unionFile.go",
+    "start_line": 323,
+    "end_line": 331
+  },
+  {
+    "label": "Function",
+    "name": "copyToLayer",
+    "qualified_name": "afero.unionFile.copyToLayer",
+    "path": "unionFile.go",
+    "start_line": 313,
+    "end_line": 321
+  },
+  {
+    "label": "Function",
+    "name": "FileContainsAnyBytes",
+    "qualified_name": "afero.util.FileContainsAnyBytes",
+    "path": "util.go",
+    "start_line": 188,
+    "end_line": 196
+  },
+  {
+    "label": "Function",
+    "name": "FileContainsBytes",
+    "qualified_name": "afero.util.FileContainsBytes",
+    "path": "util.go",
+    "start_line": 173,
+    "end_line": 181
+  },
+  {
+    "label": "Function",
+    "name": "NeuterAccents",
+    "qualified_name": "afero.util.NeuterAccents",
+    "path": "util.go",
+    "start_line": 161,
+    "end_line": 166
+  },
+  {
+    "label": "Method",
+    "name": "Close",
+    "qualified_name": "afero.zipfs.file.File.Close",
+    "path": "zipfs/file.go",
+    "start_line": 44,
+    "end_line": 53
+  },
+  {
+    "label": "Method",
+    "name": "Readdir",
+    "qualified_name": "afero.zipfs.file.File.Readdir",
+    "path": "zipfs/file.go",
+    "start_line": 126,
+    "end_line": 138
+  },
+  {
+    "label": "Method",
+    "name": "Readdirnames",
+    "qualified_name": "afero.zipfs.file.File.Readdirnames",
+    "path": "zipfs/file.go",
+    "start_line": 140,
+    "end_line": 152
+  },
+  {
+    "label": "Method",
+    "name": "Seek",
+    "qualified_name": "afero.zipfs.file.File.Seek",
+    "path": "zipfs/file.go",
+    "start_line": 80,
+    "end_line": 101
+  },
+  {
+    "label": "Method",
+    "name": "Sync",
+    "qualified_name": "afero.zipfs.file.File.Sync",
+    "path": "zipfs/file.go",
+    "start_line": 161,
+    "end_line": 161
+  },
+  {
+    "label": "Method",
+    "name": "Truncate",
+    "qualified_name": "afero.zipfs.file.File.Truncate",
+    "path": "zipfs/file.go",
+    "start_line": 163,
+    "end_line": 163
+  },
+  {
+    "label": "Method",
+    "name": "Write",
+    "qualified_name": "afero.zipfs.file.File.Write",
+    "path": "zipfs/file.go",
+    "start_line": 103,
+    "end_line": 103
+  },
+  {
+    "label": "Method",
+    "name": "WriteAt",
+    "qualified_name": "afero.zipfs.file.File.WriteAt",
+    "path": "zipfs/file.go",
+    "start_line": 105,
+    "end_line": 105
+  },
+  {
+    "label": "Method",
+    "name": "WriteString",
+    "qualified_name": "afero.zipfs.file.File.WriteString",
+    "path": "zipfs/file.go",
+    "start_line": 165,
+    "end_line": 165
+  },
+  {
+    "label": "Method",
+    "name": "getDirEntries",
+    "qualified_name": "afero.zipfs.file.File.getDirEntries",
+    "path": "zipfs/file.go",
+    "start_line": 114,
+    "end_line": 124
+  },
+  {
+    "label": "Method",
+    "name": "IsDir",
+    "qualified_name": "afero.zipfs.fs.pseudoRoot.IsDir",
+    "path": "zipfs/fs.go",
+    "start_line": 89,
+    "end_line": 89
+  },
+  {
+    "label": "Method",
+    "name": "ModTime",
+    "qualified_name": "afero.zipfs.fs.pseudoRoot.ModTime",
+    "path": "zipfs/fs.go",
+    "start_line": 88,
+    "end_line": 88
+  },
+  {
+    "label": "Method",
+    "name": "Mode",
+    "qualified_name": "afero.zipfs.fs.pseudoRoot.Mode",
+    "path": "zipfs/fs.go",
+    "start_line": 87,
+    "end_line": 87
+  },
+  {
+    "label": "Method",
+    "name": "Name",
+    "qualified_name": "afero.zipfs.fs.pseudoRoot.Name",
+    "path": "zipfs/fs.go",
+    "start_line": 85,
+    "end_line": 85
+  },
+  {
+    "label": "Method",
+    "name": "Sys",
+    "qualified_name": "afero.zipfs.fs.pseudoRoot.Sys",
+    "path": "zipfs/fs.go",
+    "start_line": 90,
+    "end_line": 90
+  }
+]
+--- stderr

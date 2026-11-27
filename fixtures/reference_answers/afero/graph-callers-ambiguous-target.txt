@@ -1,0 +1,5 @@
+$ cgr -q graph callers Open --project afero
+status: 5
+--- stdout
+--- stderr
+'Open' names 18 definitions: afero.afero.Fs.Open, afero.basepath.BasePathFs.Open, afero.cacheOnReadFs.CacheOnReadFs.Open, afero.copyOnWriteFs.CopyOnWriteFs.Open, afero.gcsfs.fs.Fs.Open, afero.gcsfs.gcs.GcsFs.Open, afero.httpFs.HttpFs.Open, afero.httpFs.httpDir.Open, afero.iofs.FromIOFS.Open, afero.iofs.IOFS.Open and 8 more ('cgr graph resolve' lists them all). Pass one of their qualified names.

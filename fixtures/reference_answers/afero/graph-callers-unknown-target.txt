@@ -1,0 +1,5 @@
+$ cgr -q graph callers afero.util.no_such_function --project afero
+status: 4
+--- stdout
+--- stderr
+'afero.util.no_such_function' is not in the graph. 'cgr graph resolve NAME' lists the qualified names a name matches.
