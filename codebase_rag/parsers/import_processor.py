@@ -2947,6 +2947,47 @@ class ImportProcessor:
         self.dart_exposed_libraries.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
+    def _clear_module_side_tables(self, module_qn: str) -> None:
+        """Drop the rest of what a previous parse of this module recorded.
+
+        Kept apart from `_clear_module_import_state`, which `parse_imports`
+        calls first, for the cognitive complexity limit (S3776). Both run
+        before a re-parse writes the module again, and both before a deleted
+        module's keys go (`drop_module_import_state`), so a table added to
+        either is dropped with a deleted module too.
+        """
+        # A watch-mode re-parse must not carry references the edited file no
+        # longer makes (issue #1347).
+        self._inferred_module_imports.pop(module_qn, None)
+        # A re-parsed module that no longer directly exports one function
+        # must not leave the stale whole-module alias mapping behind.
+        self.commonjs_direct_exports.pop(module_qn, None)
+        self.esm_default_exports.pop(module_qn, None)
+        # Reset per-module PHP use-function state too, so a re-index that drops a
+        # `use function` import does not leave a stale exemption behind.
+        self.php_function_imports.pop(module_qn, None)
+        self.php_const_imports.pop(module_qn, None)
+        # A re-index that removes or edits the `namespace` declaration must not
+        # leave the old namespace bound to this module.
+        self.php_module_namespaces.pop(module_qn, None)
+        # The class index is filled as classes are ingested, which is after
+        # this clear. Drop the previous parse of this module first or a
+        # renamed class keeps answering `App\\Old::m`.
+        self.drop_php_classes_for_module(module_qn)
+        self.js_ts_bare_imports.pop(module_qn, None)
+        self.js_ts_package_imports.pop(module_qn, None)
+        # A re-parse that drops a fallback import must not leave the binding
+        # it removed standing beside the one that remains.
+        self.python_import_rebinds.pop(module_qn, None)
+        self.python_module_all.pop(module_qn, None)
+        self.python_binding_order.pop(module_qn, None)
+        # A re-parse re-derives these from the current source, so the previous
+        # run's specifiers must not survive: an import the edit removed, or one
+        # whose target now exists, would otherwise keep nominating this file
+        # for ever (issue #1714).
+        self.unresolved_specifiers.pop(module_qn, None)
+        self.unresolved_references.pop(module_qn, None)
+
     def declares_cpp_module(self, module_qn: str, target: str) -> bool:
         """Whether the file's binding to `target` is its own `module X;`
         declaration alone, which includes nothing: a global module fragment's
@@ -3128,9 +3169,7 @@ class ImportProcessor:
         lang_config = queries[language]["config"]
 
         self._clear_module_import_state(module_qn)
-        # A watch-mode re-parse must not carry references the edited file no
-        # longer makes (issue #1347).
-        self._inferred_module_imports.pop(module_qn, None)
+        self._clear_module_side_tables(module_qn)
         if language == cs.SupportedLanguage.CSHARP:
             self._csharp_module_namespaces[module_qn] = self._collect_csharp_namespaces(
                 root_node
@@ -3140,38 +3179,10 @@ class ImportProcessor:
             )
         elif language == cs.SupportedLanguage.SCALA:
             self._scala_scans[module_qn] = scan_scala_packages(root_node)
-        # A re-parsed module that no longer directly exports one function
-        # must not leave the stale whole-module alias mapping behind.
-        self.commonjs_direct_exports.pop(module_qn, None)
-        self.esm_default_exports.pop(module_qn, None)
-        # Reset per-module PHP use-function state too, so a re-index that drops a
-        # `use function` import does not leave a stale exemption behind.
-        self.php_function_imports.pop(module_qn, None)
-        self.php_const_imports.pop(module_qn, None)
-        # A re-index that removes or edits the `namespace` declaration must not
-        # leave the old namespace bound to this module.
-        self.php_module_namespaces.pop(module_qn, None)
-        # The class index is filled as classes are ingested, which is after
-        # this clear. Drop the previous parse of this module first or a
-        # renamed class keeps answering `App\\Old::m`.
-        self.drop_php_classes_for_module(module_qn)
-        self.js_ts_bare_imports.pop(module_qn, None)
-        self.js_ts_package_imports.pop(module_qn, None)
-        # A re-parse that drops a fallback import must not leave the binding
-        # it removed standing beside the one that remains.
-        self.python_import_rebinds.pop(module_qn, None)
-        self.python_module_all.pop(module_qn, None)
-        self.python_binding_order.pop(module_qn, None)
-        if language == cs.SupportedLanguage.PYTHON and (
+        elif language == cs.SupportedLanguage.PYTHON and (
             (exported := _python_dunder_all(root_node)) is not None
         ):
             self.python_module_all[module_qn] = exported
-        # A re-parse re-derives these from the current source, so the previous
-        # run's specifiers must not survive: an import the edit removed, or one
-        # whose target now exists, would otherwise keep nominating this file
-        # for ever (issue #1714).
-        self.unresolved_specifiers.pop(module_qn, None)
-        self.unresolved_references.pop(module_qn, None)
 
         try:
             if pre_captures is not None:
@@ -3404,23 +3415,41 @@ class ImportProcessor:
                 mentions.add(text)
         return frozenset(type_positions | (mentions - declared))
 
-    def drop_cpp_module_import_state(self, module_qn: str) -> None:
-        """Retract a deleted C/C++ module without leaving an empty import mapping."""
-        self._clear_module_import_state(module_qn)
-        self.import_mapping.pop(module_qn, None)
-        self._cpp_module_qn_map = None
-        self._cpp_qn_to_rel.clear()
+    def drop_module_import_state(self, module_qn: str) -> None:
+        """Retract a deleted module's import state, its keys with it.
 
-    def drop_csharp_module_import_state(self, module_qn: str) -> None:
-        # A deleted C# file must stop declaring its namespaces, contributing
-        # identifier evidence, and queueing its using entries, or the requeue
-        # would rebuild edges a clean rebuild of the same tree never emits.
+        A re-parse empties these and writes them again. A deleted module is
+        never parsed again, so whatever its last parse wrote stayed for the
+        rest of a reused updater's life (the watcher's, the MCP server's):
+        its import map, which the project index writes as an `imports` line
+        that a fresh index of the same tree, or the Rust engine reading every
+        file again, does not have, and its import sites, its PHP classes and
+        its Scala package scan with it (issue #3787).
+        """
+        self._clear_module_import_state(module_qn)
+        self._clear_module_side_tables(module_qn)
+        self.import_mapping.pop(module_qn, None)
+        # The file's own scope key keeps what an inline module of another file
+        # wrote under it (`_retract_import_sites`), and goes when nothing does.
+        if not self._import_sites.get(module_qn):
+            self._import_sites.pop(module_qn, None)
+        self.conditional_imports.pop(module_qn, None)
+        self._python_displaced_eager_imports.pop(module_qn, None)
+        # A deleted C# file must stop declaring its namespaces and contributing
+        # identifier evidence, or the requeue would rebuild edges a clean
+        # rebuild of the same tree never emits (issue #1347).
         self._csharp_module_namespaces.pop(module_qn, None)
         self._csharp_module_identifiers.pop(module_qn, None)
-        self._inferred_module_imports.pop(module_qn, None)
-        self.import_mapping.pop(module_qn, None)
-        self.csharp_static_imports.pop(module_qn, None)
-        self.csharp_global_static_imports.pop(module_qn, None)
+        self._scala_scans.pop(module_qn, None)
+        self._scala_resolved_edges = {
+            pair for pair in self._scala_resolved_edges if pair[0] != module_qn
+        }
+
+    def drop_cpp_module_import_state(self, module_qn: str) -> None:
+        """Retract a deleted C/C++ module and the include maps built over it."""
+        self.drop_module_import_state(module_qn)
+        self._cpp_module_qn_map = None
+        self._cpp_qn_to_rel.clear()
 
     def requeue_csharp_import_edges(self) -> None:
         """Re-queue every parsed C# module's using entries for a fresh flush.

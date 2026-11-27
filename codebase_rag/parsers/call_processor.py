@@ -155,6 +155,7 @@ class _FileCallableFlow:
         "factory_calls",
         "invocations",
         "passed",
+        "param_callers",
     )
 
     def __init__(self) -> None:
@@ -168,6 +169,9 @@ class _FileCallableFlow:
         # function invokes that parameter: where a callback it receives runs.
         self.invocations: dict[tuple[str, str], tuple[PropertyDict, ...]] = {}
         self.passed: list[_PassedCallback] = []
+        # The callers whose parameter list this file's walk recorded in the
+        # processor's shared table, which a deleted file must leave.
+        self.param_callers: set[str] = set()
 
 
 class _RefEmitScope(NamedTuple):
@@ -6741,6 +6745,7 @@ class CallProcessor:
             # closures it returns, so a later `x = factory(); x(cb)` alias call can
             # flow cb into the returned closure regardless of source language.
             self._flow_param_names[caller_qn] = ordered_params
+            self._flow_bucket.param_callers.add(caller_qn)
             caller_params = frozenset(ordered_params)
             self._record_param_invocations(caller_node, caller_qn, language)
             self._collect_returned_callables(
@@ -14726,7 +14731,13 @@ class CallProcessor:
     def forget_callable_flow(self, file_path: Path) -> None:
         # A deleted file is never re-walked, so nothing else replaces its
         # records; left in place they keep emitting its call sites' edges.
-        self._callable_flow.pop(file_path, None)
+        # Its callers' parameter lists go with them: a re-walk overwrites
+        # each, but nothing removes one, so a deleted file's stayed for the
+        # updater's life, read for any record still naming its callers
+        # (issue #3787).
+        flow = self._callable_flow.pop(file_path, None)
+        for qn in flow.param_callers if flow is not None else ():
+            self._flow_param_names.pop(qn, None)
 
     def reset_callable_flow(self) -> None:
         # For a pass that re-walks every file: records of a file deleted
