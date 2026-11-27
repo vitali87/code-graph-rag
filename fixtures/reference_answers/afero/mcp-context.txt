@@ -1,0 +1,179 @@
+> tools/call context {"budget_tokens": 1500, "target": "afero.ioutil.ReadFile"}
+isError: false
+--- text
+{
+  "target": "afero.ioutil.ReadFile",
+  "resolved": "afero.ioutil.ReadFile",
+  "budget_tokens": 1500,
+  "used_tokens": 1472,
+  "pieces": [
+    {
+      "qualified_name": "afero.ioutil.ReadFile",
+      "file": "ioutil.go",
+      "span": [
+        65,
+        87
+      ],
+      "why_included": "target",
+      "source": "func ReadFile(fs Fs, filename string) ([]byte, error) {\n\tf, err := fs.Open(filename)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tdefer f.Close()\n\t// It's a good but not certain bet that FileInfo will tell us exactly how much to\n\t// read, so let's try it but be prepared for the answer to be wrong.\n\tvar n int64\n\n\tif fi, err := f.Stat(); err == nil {\n\t\t// Don't preallocate a huge buffer, just in case.\n\t\tif size := fi.Size(); size < 1e9 {\n\t\t\tn = size\n\t\t}\n\t}\n\t// As initial capacity for readAll, use n + a little extra in case Size is zero,\n\t// and to avoid another allocation after Read has filled the buffer.  The readAll\n\t// call will read into its allocated internal buffer cheaply.  If the size was\n\t// wrong, we'll either waste some space off the end or reallocate as needed, but\n\t// in the overwhelmingly common case we'll get it just right.\n\treturn readAll(f, n+bytes.MinRead)\n}",
+      "tokens": 328
+    },
+    {
+      "qualified_name": "afero.afero.File.Stat",
+      "file": "afero.go",
+      "span": [
+        48,
+        48
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "Stat() (os.FileInfo, error)",
+      "tokens": 78
+    },
+    {
+      "qualified_name": "afero.afero.Fs.Open",
+      "file": "afero.go",
+      "span": [
+        71,
+        71
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "Open(name string) (File, error)",
+      "tokens": 79
+    },
+    {
+      "qualified_name": "afero.basepath.BasePathFs.Open",
+      "file": "basepath.go",
+      "span": [
+        150,
+        150
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "func (b *BasePathFs) Open(name string) (f File, err error) {",
+      "tokens": 90
+    },
+    {
+      "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs.Open",
+      "file": "cacheOnReadFs.go",
+      "span": [
+        238,
+        238
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "func (u *CacheOnReadFs) Open(name string) (File, error) {",
+      "tokens": 94
+    },
+    {
+      "qualified_name": "afero.composite_test.TestUnionCacheExpire",
+      "file": "composite_test.go",
+      "span": [
+        363,
+        363
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "data, _ := ReadFile(ufs, \"/data/file.txt\")",
+      "tokens": 88
+    },
+    {
+      "qualified_name": "afero.composite_test.TestUnionCacheWrite",
+      "file": "composite_test.go",
+      "span": [
+        333,
+        333
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "baseData, _ := ReadFile(base, \"/data/file.txt\")",
+      "tokens": 87
+    },
+    {
+      "qualified_name": "afero.composite_test.TestUnionCacheWrite",
+      "file": "composite_test.go",
+      "span": [
+        334,
+        334
+      ],
+      "why_included": "direct caller: the call line",
+      "source": "layerData, _ := ReadFile(layer, \"/data/file.txt\")",
+      "tokens": 87
+    },
+    {
+      "qualified_name": "afero.copyOnWriteFs.CopyOnWriteFs.Open",
+      "file": "copyOnWriteFs.go",
+      "span": [
+        258,
+        258
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "func (u *CopyOnWriteFs) Open(name string) (File, error) {",
+      "tokens": 94
+    },
+    {
+      "qualified_name": "afero.gcsfs.file_info.FileInfo.Size",
+      "file": "gcsfs/file_info.go",
+      "span": [
+        111,
+        111
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "func (fi *FileInfo) Size() int64 {",
+      "tokens": 86
+    },
+    {
+      "qualified_name": "afero.gcsfs.fs.Fs.Open",
+      "file": "gcsfs/fs.go",
+      "span": [
+        224,
+        224
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "func (fs *Fs) Open(name string) (*GcsFile, error) {",
+      "tokens": 91
+    },
+    {
+      "qualified_name": "afero.gcsfs.gcs.GcsFs.Open",
+      "file": "gcsfs/gcs.go",
+      "span": [
+        100,
+        100
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "func (fs *GcsFs) Open(name string) (afero.File, error) {",
+      "tokens": 97
+    },
+    {
+      "qualified_name": "afero.httpFs.HttpFs.Open",
+      "file": "httpFs.go",
+      "span": [
+        86,
+        86
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "func (h HttpFs) Open(name string) (http.File, error) {",
+      "tokens": 86
+    },
+    {
+      "qualified_name": "afero.iofs.FromIOFS.Open",
+      "file": "iofs.go",
+      "span": [
+        175,
+        175
+      ],
+      "why_included": "direct callee: its signature",
+      "source": "func (f FromIOFS) Open(name string) (File, error) {",
+      "tokens": 87
+    }
+  ],
+  "omitted": [
+    "afero.ioutil.readAll (direct callee: its signature)",
+    "afero.memmap.MemMapFs.Open (direct callee: its signature)",
+    "afero.memmap_test.TestMultipleOpenFiles (direct caller: the call line)",
+    "afero.os.OsFs.Open (direct callee: its signature)",
+    "afero.readonlyfs.ReadOnlyFs.Open (direct callee: its signature)",
+    "afero.regexpfs.RegexpFile.Close (direct callee: its signature)",
+    "afero.regexpfs.RegexpFs.Open (direct callee: its signature)",
+    "afero.sftpfs.sftp.Fs.Open (direct callee: its signature)",
+    "afero.sftpfs.sftp_test.RunSftpServer (direct caller: the call line)",
+    "afero.tarfs.fs.Fs.Open (direct callee: its signature)"
+  ],
+  "omitted_count": 20,
+  "truncated": false
+}

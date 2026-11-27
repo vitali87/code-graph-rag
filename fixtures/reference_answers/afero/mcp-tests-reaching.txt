@@ -1,0 +1,47 @@
+> tools/call tests_reaching {"qualified_name": "afero.match.Glob"}
+isError: false
+--- text
+[
+  {
+    "label": "Function",
+    "qualified_name": "afero.gcsfs.gcs_test.TestGcsGlob",
+    "path": "gcsfs/gcs_test.go",
+    "depth": 1,
+    "through": "afero.match.Glob"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "afero.match_test.TestGlob",
+    "path": "match_test.go",
+    "depth": 1,
+    "through": "afero.match.Glob"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "afero.match_test.TestGlobError",
+    "path": "match_test.go",
+    "depth": 1,
+    "through": "afero.match.Glob"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "afero.match_test.TestGlobSymlink",
+    "path": "match_test.go",
+    "depth": 1,
+    "through": "afero.match.Glob"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "afero.tarfs.tarfs_test.TestGlob",
+    "path": "tarfs/tarfs_test.go",
+    "depth": 1,
+    "through": "afero.match.Glob"
+  },
+  {
+    "label": "Function",
+    "qualified_name": "afero.zipfs.zipfs_test.TestZipFS",
+    "path": "zipfs/zipfs_test.go",
+    "depth": 1,
+    "through": "afero.match.Glob"
+  }
+]

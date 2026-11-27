@@ -1,0 +1,131 @@
+> tools/call resolve {"target": "Open"}
+isError: false
+--- text
+[
+  {
+    "label": "Method",
+    "qualified_name": "afero.afero.Fs.Open",
+    "path": "afero.go",
+    "start_line": 71,
+    "end_line": 71
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.basepath.BasePathFs.Open",
+    "path": "basepath.go",
+    "start_line": 150,
+    "end_line": 159
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs.Open",
+    "path": "cacheOnReadFs.go",
+    "start_line": 238,
+    "end_line": 280
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.copyOnWriteFs.CopyOnWriteFs.Open",
+    "path": "copyOnWriteFs.go",
+    "start_line": 258,
+    "end_line": 301
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.gcsfs.fs.Fs.Open",
+    "path": "gcsfs/fs.go",
+    "start_line": 224,
+    "end_line": 226
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.gcsfs.gcs.GcsFs.Open",
+    "path": "gcsfs/gcs.go",
+    "start_line": 100,
+    "end_line": 102
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.httpFs.HttpFs.Open",
+    "path": "httpFs.go",
+    "start_line": 86,
+    "end_line": 94
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.httpFs.httpDir.Open",
+    "path": "httpFs.go",
+    "start_line": 31,
+    "end_line": 46
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.iofs.FromIOFS.Open",
+    "path": "iofs.go",
+    "start_line": 175,
+    "end_line": 182
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.iofs.IOFS.Open",
+    "path": "iofs.go",
+    "start_line": 35,
+    "end_line": 54
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.mem.file.File.Open",
+    "path": "mem/file.go",
+    "start_line": 120,
+    "end_line": 127
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.memmap.MemMapFs.Open",
+    "path": "memmap.go",
+    "start_line": 204,
+    "end_line": 210
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.os.OsFs.Open",
+    "path": "os.go",
+    "start_line": 54,
+    "end_line": 62
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.readonlyfs.ReadOnlyFs.Open",
+    "path": "readonlyfs.go",
+    "start_line": 82,
+    "end_line": 84
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.regexpfs.RegexpFs.Open",
+    "path": "regexpfs.go",
+    "start_line": 124,
+    "end_line": 139
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.sftpfs.sftp.Fs.Open",
+    "path": "sftpfs/sftp.go",
+    "start_line": 94,
+    "end_line": 96
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.tarfs.fs.Fs.Open",
+    "path": "tarfs/fs.go",
+    "start_line": 83,
+    "end_line": 97
+  },
+  {
+    "label": "Method",
+    "qualified_name": "afero.zipfs.fs.Fs.Open",
+    "path": "zipfs/fs.go",
+    "start_line": 55,
+    "end_line": 68
+  }
+]

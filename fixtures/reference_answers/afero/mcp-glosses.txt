@@ -1,0 +1,14 @@
+> tools/call glosses {"target": "afero.match.Glob"}
+isError: false
+--- text
+{
+  "target": {
+    "label": "Function",
+    "qualified_name": "afero.match.Glob",
+    "path": "match.go",
+    "start_line": 34,
+    "end_line": 69
+  },
+  "annotating": [],
+  "mentioning": []
+}

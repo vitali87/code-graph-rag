@@ -1,0 +1,90 @@
+$ cgr -q graph implementors afero.afero.Fs --project afero
+status: 0
+--- stdout
+[
+  {
+    "label": "Class",
+    "path": "basepath.go",
+    "qualified_name": "afero.basepath.BasePathFs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "cacheOnReadFs.go",
+    "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "copyOnWriteFs.go",
+    "qualified_name": "afero.copyOnWriteFs.CopyOnWriteFs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "gcsfs/fs.go",
+    "qualified_name": "afero.gcsfs.fs.Fs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "gcsfs/gcs.go",
+    "qualified_name": "afero.gcsfs.gcs.GcsFs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "httpFs.go",
+    "qualified_name": "afero.httpFs.HttpFs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "iofs.go",
+    "qualified_name": "afero.iofs.FromIOFS",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "memmap.go",
+    "qualified_name": "afero.memmap.MemMapFs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "os.go",
+    "qualified_name": "afero.os.OsFs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "readonlyfs.go",
+    "qualified_name": "afero.readonlyfs.ReadOnlyFs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "regexpfs.go",
+    "qualified_name": "afero.regexpfs.RegexpFs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "sftpfs/sftp.go",
+    "qualified_name": "afero.sftpfs.sftp.Fs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "tarfs/fs.go",
+    "qualified_name": "afero.tarfs.fs.Fs",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "path": "zipfs/fs.go",
+    "qualified_name": "afero.zipfs.fs.Fs",
+    "relationship": "IMPLEMENTS"
+  }
+]
+--- stderr

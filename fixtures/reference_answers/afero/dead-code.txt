@@ -1,0 +1,33 @@
+$ cgr -q dead-code --project afero
+status: 0
+--- stdout
+                                                         Dead Code Candidates (afero)                                                          
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+┃ Kind     ┃ Qualified Name                                                                  ┃ Path                                 ┃   Lines ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+│ Method   │ afero.gcsfs.internal.stiface.adapters.aclHandle.embedToIncludeNewMethods        │ gcsfs/internal/stiface/adapters.go   │   51-51 │
+│ Method   │ afero.gcsfs.internal.stiface.adapters.bucketHandle.embedToIncludeNewMethods     │ gcsfs/internal/stiface/adapters.go   │   43-43 │
+│ Method   │ afero.gcsfs.internal.stiface.adapters.bucketIterator.embedToIncludeNewMethods   │ gcsfs/internal/stiface/adapters.go   │   45-45 │
+│ Method   │ afero.gcsfs.internal.stiface.adapters.client.embedToIncludeNewMethods           │ gcsfs/internal/stiface/adapters.go   │   42-42 │
+│ Method   │ afero.gcsfs.internal.stiface.adapters.composer.embedToIncludeNewMethods         │ gcsfs/internal/stiface/adapters.go   │   50-50 │
+│ Method   │ afero.gcsfs.internal.stiface.adapters.copier.embedToIncludeNewMethods           │ gcsfs/internal/stiface/adapters.go   │   49-49 │
+│ Method   │ afero.gcsfs.internal.stiface.adapters.objectHandle.embedToIncludeNewMethods     │ gcsfs/internal/stiface/adapters.go   │   44-44 │
+│ Method   │ afero.gcsfs.internal.stiface.adapters.objectIterator.embedToIncludeNewMethods   │ gcsfs/internal/stiface/adapters.go   │   46-46 │
+│ Method   │ afero.gcsfs.internal.stiface.adapters.reader.embedToIncludeNewMethods           │ gcsfs/internal/stiface/adapters.go   │   48-48 │
+│ Method   │ afero.gcsfs.internal.stiface.adapters.writer.embedToIncludeNewMethods           │ gcsfs/internal/stiface/adapters.go   │   47-47 │
+│ Method   │ afero.gcsfs.internal.stiface.interfaces.ACLHandle.embedToIncludeNewMethods      │ gcsfs/internal/stiface/interfaces.go │   91-91 │
+│ Method   │ afero.gcsfs.internal.stiface.interfaces.BucketHandle.embedToIncludeNewMethods   │ gcsfs/internal/stiface/interfaces.go │   68-68 │
+│ Method   │ afero.gcsfs.internal.stiface.interfaces.BucketIterator.embedToIncludeNewMethods │ gcsfs/internal/stiface/interfaces.go │   83-83 │
+│ Method   │ afero.gcsfs.internal.stiface.interfaces.Client.embedToIncludeNewMethods         │ gcsfs/internal/stiface/interfaces.go │   30-30 │
+│ Method   │ afero.gcsfs.internal.stiface.interfaces.Composer.embedToIncludeNewMethods       │ gcsfs/internal/stiface/interfaces.go │ 131-131 │
+│ Method   │ afero.gcsfs.internal.stiface.interfaces.Copier.embedToIncludeNewMethods         │ gcsfs/internal/stiface/interfaces.go │ 124-124 │
+│ Method   │ afero.gcsfs.internal.stiface.interfaces.ObjectHandle.embedToIncludeNewMethods   │ gcsfs/internal/stiface/interfaces.go │   48-48 │
+│ Method   │ afero.gcsfs.internal.stiface.interfaces.ObjectIterator.embedToIncludeNewMethods │ gcsfs/internal/stiface/interfaces.go │   75-75 │
+│ Method   │ afero.gcsfs.internal.stiface.interfaces.Reader.embedToIncludeNewMethods         │ gcsfs/internal/stiface/interfaces.go │ 102-102 │
+│ Method   │ afero.gcsfs.internal.stiface.interfaces.Writer.embedToIncludeNewMethods         │ gcsfs/internal/stiface/interfaces.go │ 114-114 │
+│ Function │ afero.unionFile.copyFile                                                        │ unionFile.go                         │ 271-311 │
+│ Function │ afero.unionFile.copyFileToLayer                                                 │ unionFile.go                         │ 323-331 │
+│ Function │ afero.unionFile.copyToLayer                                                     │ unionFile.go                         │ 313-321 │
+└──────────┴─────────────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────┴─────────┘
+23 candidate(s) for review.
+--- stderr
