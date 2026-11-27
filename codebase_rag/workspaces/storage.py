@@ -23,6 +23,12 @@ def workspaces_dir(home: Path | None = None) -> Path:
 
 
 def validate_workspace_name(name: str) -> str:
+    if len(name) > cs.WORKSPACE_NAME_MAX_LENGTH:
+        raise WorkspaceError(
+            cs.ERR_WORKSPACE_NAME_TOO_LONG.format(
+                length=len(name), max_length=cs.WORKSPACE_NAME_MAX_LENGTH
+            )
+        )
     if re.fullmatch(cs.WORKSPACE_NAME_PATTERN, name) is None:
         raise WorkspaceError(cs.ERR_WORKSPACE_INVALID_NAME.format(name=name))
     return name
