@@ -17,8 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codebase_rag.mcp.tools import MCPToolsRegistry
-
-THREAD_WAIT_S = 5.0
+from codebase_rag.tests.time_bounds import HANDOFF_TIMEOUT_S
 
 
 @pytest.fixture
@@ -38,13 +37,13 @@ class _Gate:
 
     def __call__(self) -> str:
         self.started.set()
-        self.release.wait(THREAD_WAIT_S)
+        self.release.wait(HANDOFF_TIMEOUT_S)
         self.finished.set()
         return "indexed"
 
 
 async def _cancel_once_running(task: asyncio.Task[str], gate: _Gate) -> None:
-    await asyncio.to_thread(gate.started.wait, THREAD_WAIT_S)
+    await asyncio.to_thread(gate.started.wait, HANDOFF_TIMEOUT_S)
     task.cancel()
     # Let the cancellation unwind as far as it will.
     for _ in range(5):
