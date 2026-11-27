@@ -200,6 +200,12 @@ GO_WORK_SEARCH = frozenset({"", "auto"})
 # Go spells its working folder as PWD does when PWD names that folder, and
 # the helper's loads set PWD, so a query run for them sets it too.
 GO_ENV_PWD = "PWD"
+# A -modfile in GOFLAGS has the loads read that module file in place of the
+# module's go.mod (issue #3797). Go takes a flag there only as `-name=value`
+# or `--name=value`, and the last one given wins.
+GO_ENV_GOFLAGS = "GOFLAGS"
+GO_FLAG_MODFILE = frozenset({"-modfile", "--modfile"})
+GO_FLAG_VALUE_SEPARATOR = "="
 # A `replace` can name any folder, `/` or a home directory included, so the
 # listing of one for the pipes, sockets and devices Go would open there stops
 # after this many entries.

@@ -39,6 +39,7 @@ from loguru import logger
 from watchdog.events import FileCreatedEvent, FileDeletedEvent, FileModifiedEvent
 
 from codebase_rag import constants as cs
+from codebase_rag import logs as ls
 from codebase_rag.capture import resolve_capture
 from codebase_rag.checkout_state import state_file
 from codebase_rag.config import settings
@@ -605,6 +606,65 @@ def _workspace_layout(root: Path, layout: str) -> tuple[Path, Path]:
     return repo, pipe
 
 
+def _modfile_layout(root: Path, modfile: str = "alt.mod") -> tuple[Path, Path]:
+    """The repository and the pipe Go reaches through `modfile`, a module
+    file at that path from the repository whose `replace` sends
+    `example.com/lib` to `../lib` outside it. Its go.mod replaces nothing."""
+    repo = root / "repo"
+    pipe = _lib_with_pipe(root / "lib")
+    _replacing_module(repo, "../lib")
+    replacing = (repo / "go.mod").read_text(encoding="utf-8")
+    _write(repo / modfile, replacing)
+    _write(repo / "go.mod", "module example.com/app\n\ngo 1.21\n")
+    return repo, pipe
+
+
+# GOFLAGS naming the module file Go uses in place of go.mod (issue #3797),
+# by its path from the repository: Go reads a relative one from the folder
+# the loads run in, the module's, and a `replace` in it from the module's
+# folder wherever the file is. A field holding a blank is quoted whole, and
+# the last -modfile wins.
+_MODFILE_FLAGS = [
+    ("alt.mod", "-modfile=alt.mod"),
+    ("alt.mod", "-mod=mod --modfile=alt.mod"),
+    ("alt b.mod", "'-modfile=alt b.mod'"),
+    ("alt b.mod", '-mod=mod\t"-modfile=alt b.mod" '),
+    ("alt.mod", "-modfile=other.mod -modfile=alt.mod"),
+    ("../alt.mod", "-modfile=../alt.mod"),
+    ("../elsewhere/deep/alt.mod", "-modfile={root}/elsewhere/deep/alt.mod"),
+]
+
+# Go's own load of a module, as go/packages runs it for the helper, in the
+# helper's place. Under -modfile the helper fails before it loads anything:
+# go/packages first asks `go list` for the Go version in GOPATH mode, which
+# refuses the flag. A Go driver that runs `go list` itself, as the Rust port
+# is to, loads through the file, and so does this (issue #3797).
+_GO_LIST_HELPER = (
+    "#!/bin/sh\n"
+    'cd "$1" && go list -deps -test ${CGR_GO_OVERLAY:+"-overlay=$CGR_GO_OVERLAY"} '
+    './... >/dev/null && echo "{}"\n'
+)
+
+
+def _go_list_helper(folder: Path) -> Path:
+    helper = _write(folder / _FAKE_GO_HELPER, _GO_LIST_HELPER)
+    helper.chmod(0o755)
+    return helper
+
+
+def _graph_lines(store: _StatefulIngestor) -> list[str]:
+    """Each node and edge `store` holds with its properties, one JSON line
+    apiece, leaving out only when the sync ended."""
+    nodes = [
+        [label, uid, {k: v for k, v in props.items() if k != cs.KEY_LAST_SYNCED_AT}]
+        for (label, uid), props in store.nodes.items()
+    ]
+    edges = [[edge, store.props_for(edge)] for edge in store.keyed_edges]
+    return sorted(
+        json.dumps(entry, sort_keys=True, default=str) for entry in nodes + edges
+    )
+
+
 _FAKE_GO_HELPER = "gotypes"
 
 
@@ -1021,6 +1081,82 @@ class TestSpecialFiles:
         assert len(run.overlays[0]) <= 1
         warnings = [text for level, text in records if level == "WARNING"]
         assert any(str(tmp_path / "lib") in text for text in warnings)
+
+    def test_a_go_load_never_opens_a_pipe_the_modfile_reaches(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        records: list[tuple[str, str]],
+    ) -> None:
+        # With -modfile in GOFLAGS a load takes its `replace` from that file
+        # and never reads go.mod's (issue #3797).
+        _needs_go()
+        monkeypatch.delenv("GOWORK", raising=False)
+        monkeypatch.setenv("GOFLAGS", "-modfile=alt.mod")
+        monkeypatch.setattr(settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+        helper = _go_list_helper(tmp_path / "helper")
+        monkeypatch.setattr(go_frontend, "_build_tool", lambda _go: helper)
+        repo, pipe = _modfile_layout(tmp_path)
+        with_pipe = _StatefulIngestor()
+
+        _run_within_deadline(_stateful_updater(repo, with_pipe), pipe, force=True)
+
+        degraded = ls.GO_FRONTEND_ANCHOR_DEGRADED.format(anchor=repo)
+        assert degraded not in {text for _level, text in records}
+        pipe.unlink()
+        without_pipe = _StatefulIngestor()
+        _stateful_updater(repo, without_pipe).run(force=True)
+        assert _graph_lines(with_pipe) == _graph_lines(without_pipe)
+
+    @pytest.mark.parametrize(("modfile", "goflags"), _MODFILE_FLAGS)
+    def test_the_go_type_checker_is_told_to_leave_out_a_pipe_the_modfile_reaches(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        modfile: str,
+        goflags: str,
+    ) -> None:
+        _needs_go()
+        monkeypatch.delenv("GOWORK", raising=False)
+        monkeypatch.setenv("GOFLAGS", goflags.format(root=tmp_path))
+        repo, pipe = _modfile_layout(tmp_path, modfile)
+
+        run = _overlays_handed(repo, monkeypatch)
+
+        assert run.overlays == [{str(pipe): ""}]
+
+    @pytest.mark.parametrize("goflags", ["", "-mod=mod", "-modfile=alt.mod -modfile="])
+    def test_a_module_file_goflags_does_not_name_is_not_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goflags: str
+    ) -> None:
+        # Negative: an empty -modfile, the last here, is go.mod.
+        _needs_go()
+        monkeypatch.delenv("GOWORK", raising=False)
+        monkeypatch.setenv("GOFLAGS", goflags)
+        repo, _pipe = _modfile_layout(tmp_path)
+
+        run = _overlays_handed(repo, monkeypatch)
+
+        assert run.overlays == [{}]
+        assert run.commands == []
+
+    def test_in_a_workspace_go_refuses_the_modfile_before_it_opens_a_pipe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Go will not load a workspace with -modfile set, so the load fails
+        # without reading a package and the workspace adds nothing.
+        _needs_go()
+        monkeypatch.delenv("GOWORK", raising=False)
+        monkeypatch.setenv("GOFLAGS", "-modfile=alt.mod")
+        helper = _go_list_helper(tmp_path / "helper")
+        monkeypatch.setattr(go_frontend, "_build_tool", lambda _go: helper)
+        repo, pipe = _workspace_layout(tmp_path, "replace")
+        shutil.copy(repo / "go.mod", repo / "alt.mod")
+
+        facts = _go_facts_within_deadline(repo, pipe)
+
+        assert facts.degraded_modules == (".",)
+        assert _overlays_handed(repo, monkeypatch).overlays == [{}]
 
     def test_a_pipe_among_the_rust_sources_is_never_read(
         self, tmp_path: Path, mock_ingestor: MagicMock

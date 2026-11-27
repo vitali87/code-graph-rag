@@ -135,6 +135,11 @@ _SECONDS_PER_MINUTE = 60
 _GO_MOD = "go.mod"
 _GO_DIRECTIVE = re.compile(r"^go\s+(\d+(?:\.\d+)*)\s*$", re.MULTILINE)
 _GO_VERSION = re.compile(r"^go(\d+(?:\.\d+)*)$")
+# A field of GOFLAGS as Go splits it: one that opens with a quote runs to the
+# next same quote, with nothing unescaped, and any other to the next blank.
+# Go refuses a GOFLAGS it cannot split, and a run under it loads nothing, so
+# only one Go accepts has to be read exactly.
+_GOFLAGS_FIELD = re.compile(r"""[ \t\n\r]*(?:'([^']*)'|"([^"]*)"|([^ \t\n\r]+))""")
 _VERSION_PROBE_TIMEOUT = 30
 # Same mkdir-lock discipline as the C# frontend: build the binary ONCE, then
 # parallel workers run it read-only and never race a shared build output.
@@ -763,15 +768,37 @@ def _mentions(path: Path, word: str) -> bool:
         return False
 
 
-def _local_replace_targets(go: str, module: str) -> list[str]:
-    """The folder each local `replace` in the go.mod of `module` names,
+def _modfile_flag() -> str:
+    """The module file the -modfile in the helper's GOFLAGS names, as Go
+    reads the flag, or empty for the module's go.mod (issue #3797).
+
+    GOFLAGS is read from the environment the helper runs in, as GOWORK is,
+    so one kept in Go's own settings file by `go env -w` is not looked for.
+    `go env GOMOD` cannot answer in its place: `go env` takes no -modfile,
+    and names the go.mod all the same.
+    """
+    modfile = ""
+    for field in _GOFLAGS_FIELD.finditer(os.environ.get(cs.GO_ENV_GOFLAGS, "")):
+        name, given, value = "".join(field.groups("")).partition(
+            cs.GO_FLAG_VALUE_SEPARATOR
+        )
+        if given and name in cs.GO_FLAG_MODFILE:
+            modfile = value
+    return modfile
+
+
+def _local_replace_targets(go: str, module: str, modfile: str = "") -> list[str]:
+    """The folder each local `replace` in the module file of `module` names,
     joined to `module`.
 
-    Read by `go mod edit -json`, Go's own parser, so a quoted path or a
-    `replace ( ... )` block reads as the loads read it. A go.mod that does
+    That file is `modfile`, a -modfile path, which Go opens from the folder
+    the loads run in, `module`; without one it is the module's go.mod. Go
+    joins a relative `replace` to the module's folder whichever file holds
+    it. Read by `go mod edit -json`, Go's own parser, so a quoted path or a
+    `replace ( ... )` block reads as the loads read it. A file that does
     not mention `replace` costs no `go` run.
     """
-    gomod = Path(module) / cs.DEP_FILE_GOMOD
+    gomod = Path(module) / (modfile or cs.DEP_FILE_GOMOD)
     if not _mentions(gomod, cs.GO_KEYWORD_REPLACE):
         return []
     view = _edit_view(go, cs.GO_MOD_EDIT_JSON_ARGS, gomod)
@@ -819,20 +846,26 @@ def _loaded_folders(go: str, anchors: list[Path]) -> list[str]:
     """Each folder a local `replace` or the active workspace has the
     helper's loads read, spelled as Go spells it.
 
-    Go applies the `replace` of each main module: the anchor's go.mod, and
-    in a workspace the go.mod of each module it uses and the go.work's own.
-    It loads the workspace's modules too, wherever they are. A go.work can
+    Go applies the `replace` of each main module: the anchor's go.mod, or
+    the module file a -modfile in GOFLAGS names in its place, and in a
+    workspace the go.mod of each module it uses and the go.work's own. It
+    loads the workspace's modules too, wherever they are. A go.work can
     sit above the repository or be named by GOWORK, so each anchor's is
-    asked for (PR #3777 review); each is read once.
+    asked for (PR #3777 review); each is read once. Go refuses -modfile in
+    a workspace before it loads a package, so a workspace then sends the
+    loads nowhere (issue #3797).
     """
     modules = [os.path.abspath(anchor) for anchor in anchors]
-    workfiles = {
-        workfile: None
-        for module in modules
-        if (workfile := _active_workfile(go, module)) is not None
-    }
+    active = {module: _active_workfile(go, module) for module in modules}
+    if modfile := _modfile_flag():
+        return [
+            folder
+            for module, workfile in active.items()
+            if workfile is None
+            for folder in _local_replace_targets(go, module, modfile)
+        ]
     folders: list[str] = []
-    for workfile in workfiles:
+    for workfile in dict.fromkeys(filter(None, active.values())):
         used, replaced = _workspace_folders(go, workfile)
         modules.extend(used)
         folders.extend(used + replaced)
