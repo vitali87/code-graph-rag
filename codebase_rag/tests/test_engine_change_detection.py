@@ -694,7 +694,8 @@ class TestInSync:
         _write(outside, "o.py", "O = 1\n")
         # No links to Python, so walked and listed as folders (issue #3740).
         _junction(repo / "alias", repo / "pkg")
-        _junction(repo / "out", outside)
+        # Not "out": that name is skipped as build output wherever it is.
+        _junction(repo / "elsewhere", outside)
         _sync(repo)
         self._case(repo, True)
         # The root's time moved with nothing indexable changed, so its

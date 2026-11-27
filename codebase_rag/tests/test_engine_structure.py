@@ -527,7 +527,8 @@ class TestRules:
         # No link to Python, so entered (issue #3740), and left out only by
         # the check that a folder resolves inside the root.
         _junction(repo / "alias", repo / "real")
-        _junction(repo / "out", outside)
+        # Not "out": that name is skipped as build output wherever it is.
+        _junction(repo / "elsewhere", outside)
 
         found = _same_structure(pairs, checked, repo)
 

@@ -393,7 +393,8 @@ class TestJunctions:
         gone = tmp_path / "gone"
         gone.mkdir()
         _junction(repo / "alias", repo / "real")
-        _junction(repo / "out", outside)
+        # Not "out": that name is skipped as build output wherever it is.
+        _junction(repo / "elsewhere", outside)
         _junction(repo / "dangling", gone)
         gone.rmdir()
 
@@ -402,11 +403,11 @@ class TestJunctions:
         assert _rel_paths(plan) == [
             "b.py",
             "alias/a.py",
-            "out/secret.py",
+            "elsewhere/secret.py",
             "real/a.py",
         ]
         # A dangling one is a folder too, which cannot be listed.
-        assert _keys(plan) == [cs.ROOT_DIR_KEY, "alias", "out", "real"]
+        assert _keys(plan) == [cs.ROOT_DIR_KEY, "alias", "elsewhere", "real"]
         assert plan.symlinks == ()
 
     def test_a_directory_symlink_beside_a_junction_is_still_a_link(
