@@ -334,6 +334,20 @@ class TestTheConstraintText:
         assert canonical_text(constraint) == text
         assert header_constraint(_go_build(text)) == constraint
 
+    @pytest.mark.parametrize(("pairs", "reads_back"), [(166, True), (167, False)])
+    def test_it_reads_back_only_within_the_reader_s_limits(
+        self, pairs: int, reads_back: bool
+    ) -> None:
+        # `a0 && b0 || ...` is 4 tokens a pair; its text groups each pair, 6
+        # tokens a pair, so from 167 pairs on it passes the reader's 1,000.
+        expression = " || ".join(f"a{i} && b{i}" for i in range(pairs))
+        constraint = header_constraint(_go_build(expression))
+        assert constraint != UNKNOWN
+
+        again = header_constraint(_go_build(canonical_text(constraint)))
+
+        assert again == (constraint if reads_back else UNKNOWN)
+
     def test_a_file_name_reads_as_its_build(self) -> None:
         assert canonical_text(name_constraint("x/poll_linux_arm64.go")) == (
             "linux && arm64"

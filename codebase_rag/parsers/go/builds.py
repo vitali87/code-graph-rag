@@ -244,8 +244,14 @@ _not = negate
 def canonical_text(expr: Expr) -> str:
     """`expr` written out, the same for the same constraint: its operands in
     the order it holds them, each compound one of a compound in parentheses.
-    Read back as a `//go:build` line, the text is `expr` again; the three
-    constraints that grammar cannot spell get words of their own."""
+    The three constraints the `//go:build` grammar cannot spell get words of
+    their own.
+
+    Read back as a `//go:build` line, the text is `expr` again only while it
+    stays within what the reader reads, `_MAX_TOKENS` tokens nested at most
+    `_MAX_DEPTH` deep: the parentheses add tokens, so a constraint read from
+    a line near the limit, or built past it through a chain of embeds, can
+    write a text that reads back as UNKNOWN."""
     if expr == ALWAYS:
         return _TEXT_ALWAYS
     if expr == NEVER:
