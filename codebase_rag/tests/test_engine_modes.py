@@ -703,10 +703,10 @@ def test_a_planted_difference_is_reported_as_exactly_its_lines(
     assert len(differences) == 3
     assert fnmatch.fnmatch(differences[0], PLANTED_EDGE)
     assert differences[1:] == list(PLANTED_NODE)
-    for artefact in ("files", "index"):
+    for artefact, version in (("files", 1), ("index", 2)):
         assert (test_dir / f"{artefact}.diff").read_bytes() == b""
         python = (test_dir / "python" / f"{artefact}.txt").read_bytes()
-        assert python.startswith(f"# cgr handoff {artefact}.txt 1\n".encode())
+        assert python.startswith(f"# cgr handoff {artefact}.txt {version}\n".encode())
         assert (test_dir / "rust" / f"{artefact}.txt").read_bytes() == python
 
 

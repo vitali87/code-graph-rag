@@ -40,6 +40,8 @@ if TYPE_CHECKING:
     from tree_sitter import Language, Node, Parser, Query
 
     from .models import LanguageSpec
+    from .parsers.go.builds import Expr, GoBuilds
+    from .parsers.go.interfaces import GoInterfaceDecl, GoMethodSpec
 
 type LanguageLoader = Callable[[], Language] | None
 
@@ -888,16 +890,36 @@ class PlannedFile(NamedTuple):
     md5: str | None
 
 
+class GoProjectIndex(NamedTuple):
+    """Go's own tables, as the definition processor keeps them once the
+    interface link has run (docs/reports/PHASE3_GO.md, section 6): each
+    module's package clause, each method's signature, each interface's
+    embeds, the (interface, implementer) pairs go/types proved and those
+    matched by name, the builds each pair holds in, each free function's
+    first result, and each file's build constraint."""
+
+    packages: Mapping[str, str]
+    methods: Mapping[str, GoMethodSpec]
+    interfaces: Mapping[str, GoInterfaceDecl]
+    proven: Iterable[tuple[str, str]]
+    guessed: Iterable[tuple[str, str]]
+    pair_builds: Mapping[tuple[str, str], Expr]
+    return_types: Mapping[str, str]
+    builds: GoBuilds
+
+
 class ProjectIndex(NamedTuple):
     """What the project index hand-off reads once the deferred definitions are
     resolved: the module paths, the definition registry and its simple names,
-    the import maps and each class's parents, as the indexer keeps them."""
+    the import maps and each class's parents, as the indexer keeps them, and
+    Go's own tables."""
 
     modules: Mapping[str, Path]
     definitions: Iterable[tuple[str, NodeType]]
     simple_names: Mapping[str, Iterable[str]]
     imports: Mapping[str, Mapping[str, str]]
     parents: Mapping[str, Sequence[str]]
+    go: GoProjectIndex
 
 
 class AgentLoopUI(NamedTuple):

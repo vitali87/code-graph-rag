@@ -710,6 +710,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # For the engine comparison below, which runs the Go type checker; the
+      # runner image's Go is older than the floor in gotypes/go.mod. Every
+      # other check indexes Go with tree-sitter alone, whatever is on PATH.
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ">=1.27.2"
+          cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
+
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
         run: |
@@ -764,6 +773,15 @@ jobs:
       - name: Check the hand-off files
         if: ${{ !cancelled() }}
         run: uv run --no-sync python -m scripts.handoff check --runs 2
+
+      # The two engine selections each index every pinned repository whose
+      # language they part on, with the Go type checker on, and the file
+      # plans, project indexes and graphs must be the same
+      # (docs/reports/PHASE3_GO.md, section 6). Both sides run live, so
+      # nothing of the type checker's path is recorded.
+      - name: Compare the Python and Rust engines
+        if: ${{ !cancelled() }}
+        run: uv run --no-sync python -m scripts.handoff compare --engines python,go=rust
 
       # Every CGR_INDEX_ENGINE value must index the pinned repositories to
       # the same graphs (docs/reports/PHASE1_SEAMS.md, exit criteria). The

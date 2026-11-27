@@ -107,6 +107,11 @@ INDEX_ENGINE_FAMILY_SPLIT = (
     "{family} take one engine together, as they resolve each other's imports "
     "and includes; this value gives them {asked}."
 )
+# A preview names whole families only (docs/reports/PHASE3_GO.md, section 10).
+INDEX_ENGINE_PREVIEW_SPLIT = (
+    "{family} take one engine together, as they resolve each other's imports "
+    "and includes; this preview names only {asked}."
+)
 CONFIG = "{role} configuration error: {error}"
 EMPTY_PROJECT_SCOPE = (
     "The assistant has no project to work on: an empty project scope would "

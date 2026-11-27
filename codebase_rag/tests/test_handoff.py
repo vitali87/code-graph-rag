@@ -39,12 +39,14 @@ from codebase_rag.tests.test_graph_updater_index_engine import (
     _calls,
     _write,
 )
+from codebase_rag.tests.test_handoff_go_sections import GO_SECTION_FIXTURES
 from codebase_rag.tests.test_symlink_policy import _make_undecodable
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PROJECT = "demo"
 _FILES = "files.txt"
 _INDEX = "index.txt"
+_VERSIONS = {_FILES: 1, _INDEX: 2}
 # A deadline for the indexing subprocess, not a performance assertion.
 _SUBPROCESS_TIMEOUT_SECONDS = 300
 
@@ -500,8 +502,10 @@ class TestTheProjectIndex:
         # Every line sorted. A module with no imports and a type with no
         # parents hold no fact, so they have no `imports` or `inherits` line;
         # Go's embedded struct is not a parent, its embedded interface is.
+        # Go's own tables beside them (test_handoff_go_sections.py reads
+        # them in detail): no file here has a build constraint.
         assert _lines(handoffs / _INDEX) == [
-            "# cgr handoff index.txt 1",
+            "# cgr handoff index.txt 2",
             'definition\tdemo.geo.shape.Named\t{"label":"Interface"}',
             'definition\tdemo.geo.shape.Named.Name\t{"label":"Method"}',
             'definition\tdemo.geo.shape.Shape\t{"label":"Interface"}',
@@ -513,6 +517,28 @@ class TestTheProjectIndex:
             'definition\tdemo.main.describe\t{"label":"Function"}',
             'definition\tdemo.main.main\t{"label":"Function"}',
             'definition\tdemo.zeta.zeta\t{"label":"Function"}',
+            'go_implements\tdemo.geo.square.Square\t{"builds":"<always>",'
+            '"interface":"demo.geo.shape.Named","source":"guessed"}',
+            'go_implements\tdemo.geo.square.Square\t{"builds":"<always>",'
+            '"interface":"demo.geo.shape.Shape","source":"guessed"}',
+            'go_interface\tdemo.geo.shape.Named\t{"embeds":["Shape"],'
+            '"file":"geo/shape.go","package":"geo:geo"}',
+            'go_interface\tdemo.geo.shape.Shape\t{"embeds":[],'
+            '"file":"geo/shape.go","package":"geo:geo"}',
+            'go_method\tdemo.geo.shape.Named.Name\t{"file":"geo/shape.go",'
+            '"package":"geo:geo","params":[],"results":["string"]}',
+            'go_method\tdemo.geo.shape.Shape.Area\t{"file":"geo/shape.go",'
+            '"package":"geo:geo","params":[],"results":["float64"]}',
+            'go_method\tdemo.geo.square.Square.Area\t{"file":"geo/square.go",'
+            '"package":"geo:geo","params":[],"results":["float64"]}',
+            'go_method\tdemo.geo.square.Square.Name\t{"file":"geo/square.go",'
+            '"package":"geo:geo","params":[],"results":["string"]}',
+            'go_package\tdemo.geo.shape\t{"clause":"geo"}',
+            'go_package\tdemo.geo.square\t{"clause":"geo"}',
+            'go_package\tdemo.main\t{"clause":"main"}',
+            'go_package\tdemo.zeta\t{"clause":"main"}',
+            'go_return_type\tdemo.main.describe\t{"type":"float64"}',
+            'go_return_type\tdemo.zeta.zeta\t{"type":"int"}',
             'imports\tdemo.main\t{"geo":"demo.geo"}',
             'inherits\tdemo.geo.shape.Named\t["demo.geo.shape.Shape"]',
             'module\tdemo.geo.shape\t{"language":"go","path":"geo/shape.go"}',
@@ -549,7 +575,9 @@ class TestTheFormat:
         assert "grüße".encode() in data
         assert b"\\u" not in data
         header, *lines = _lines(handoffs / name)
-        assert header == f"# cgr handoff {name} 1"
+        # The project index at 2 since it holds Go's sections, the file plan
+        # at 1 still.
+        assert header == f"# cgr handoff {name} {_VERSIONS[name]}"
         assert lines
         for line in lines:
             _kind, _key, value = line.split("\t")
@@ -559,6 +587,7 @@ class TestTheFormat:
 def test_the_same_bytes_at_another_path_under_another_seed(tmp_path: Path) -> None:
     fixtures = {str(language): files for language, files in LANGUAGE_FIXTURES.items()}
     fixtures |= {"go_module": GO_FIXTURE, "unicode": UNICODE_FIXTURE}
+    fixtures |= GO_SECTION_FIXTURES
     first, second = tmp_path / "first", tmp_path / "second" / "elsewhere"
     for root in (first, second):
         for name, files in fixtures.items():
@@ -591,8 +620,12 @@ def test_the_same_bytes_at_another_path_under_another_seed(tmp_path: Path) -> No
             here = (first / "handoffs" / name / file).read_bytes()
             there = (second / "handoffs" / name / file).read_bytes()
             assert here == there, (name, file)
-        # Not two empty files: every fixture's files become modules.
-        assert b"\nmodule\t" in (first / "handoffs" / name / _INDEX).read_bytes()
+        # Not two empty files: every fixture's files become modules, and
+        # Go's fill Go's own sections.
+        index = (first / "handoffs" / name / _INDEX).read_bytes()
+        assert b"\nmodule\t" in index
+        if name in GO_SECTION_FIXTURES:
+            assert b"\ngo_method\t" in index, name
 
 
 class TestWithoutADirectory:

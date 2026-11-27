@@ -2,8 +2,18 @@
 
 Phase 1 of the Rust rewrite (docs/reports/PHASE1_SEAMS.md, section 1). The
 value is parsed into an `IndexEngineSelection`, refused at start-up when it is
-invalid, and resolved to the engine each language runs on. This build cannot
-index any language on Rust, so every selection resolves to Python everywhere.
+invalid, and resolved to the engine each language runs on. This build lists
+no language the Rust engine indexes, so every selection resolves to Python
+everywhere, unless a preview names one.
+
+A preview (`PREVIEW`, docs/reports/PHASE3_GO.md, section 10) runs a language
+on the Rust engine while its port is under way, before the build lists it:
+a selection asking for it on Rust then gets it there. It is a module flag,
+not a setting, as `engine_frame.ENABLED` is: the test plugin's
+`--engine-preview` and the scripts' `--preview` set it, in their own process
+only, so nothing a user or a gating cell runs ever reaches it. While the
+engine holds none of a previewed language's analysis, Python's passes still
+index its files, and a preview compares Python with itself.
 """
 
 from __future__ import annotations
@@ -27,14 +37,19 @@ _UNIT_OF = {language: unit for unit in cs.INDEX_ENGINE_DEFAULTS for language in 
 # watcher and the MCP server resolve the setting again for every updater.
 _warned: set[cs.SupportedLanguage] = set()
 
+# The languages a preview runs on the Rust engine: none unless a test session
+# or a script asks (`parse_preview`). Whole families only.
+PREVIEW: frozenset[cs.SupportedLanguage] = frozenset()
+
 
 def rust_engine_languages() -> frozenset[cs.SupportedLanguage]:
-    """The languages this build can index on Rust: none yet.
+    """The languages this build can index on Rust: those a preview names.
 
-    From phase 2 this reads the list the engine crate publishes, which names
-    whole families only.
+    Once a language's port is done this also reads the list the engine crate
+    publishes (docs/reports/PHASE3_GO.md, section 10), which names whole
+    families only.
     """
-    return frozenset()
+    return PREVIEW
 
 
 def _engine(name: str) -> cs.IndexEngine:
@@ -112,6 +127,31 @@ def parse_index_engine(spec: str) -> IndexEngineSelection:
     return selection
 
 
+def parse_preview(spec: str) -> frozenset[cs.SupportedLanguage]:
+    """The languages a preview value names, read in any case and split as
+    `CGR_INDEX_ENGINE`'s tokens are. Raises ValueError for a name that is no
+    language, or for part of a family, which takes one engine together."""
+    languages = frozenset(_language(name) for name in split_spec(spec.lower()))
+    for unit in cs.INDEX_ENGINE_DEFAULTS:
+        if languages & unit and not unit <= languages:
+            raise ValueError(
+                ex.INDEX_ENGINE_PREVIEW_SPLIT.format(
+                    family=cs.SEPARATOR_COMMA_SPACE.join(sorted(unit)),
+                    asked=cs.SEPARATOR_COMMA_SPACE.join(sorted(languages & unit)),
+                )
+            )
+    return languages
+
+
+def preview_error(spec: str) -> str | None:
+    """Why `parse_preview` refuses `spec`, or None when it reads."""
+    try:
+        parse_preview(spec)
+    except ValueError as error:
+        return str(error)
+    return None
+
+
 def index_engine_error(spec: str) -> str | None:
     """Why `parse_index_engine` refuses `spec`, or None when it reads: for
     a caller that reports the refusal itself, such as a test marker."""
@@ -134,6 +174,22 @@ def default_index_engine() -> IndexEngineSelection:
     return parse_index_engine(settings.INDEX_ENGINE)
 
 
+def asked_index_engines(
+    selection: IndexEngineSelection,
+) -> dict[cs.SupportedLanguage, cs.IndexEngine]:
+    """The engine `selection` asks for each language, `auto` read as this
+    release's default, whether or not this build can run it there."""
+    engines: dict[cs.SupportedLanguage, cs.IndexEngine] = {}
+    for language in cs.SupportedLanguage:
+        asked = selection.languages.get(language, selection.default)
+        engines[language] = (
+            cs.INDEX_ENGINE_DEFAULTS[_UNIT_OF[language]]
+            if asked == cs.IndexEngine.AUTO
+            else asked
+        )
+    return engines
+
+
 def resolve_index_engines(
     selection: IndexEngineSelection,
 ) -> dict[cs.SupportedLanguage, cs.IndexEngine]:
@@ -147,22 +203,16 @@ def resolve_index_engines(
     available = rust_engine_languages()
     engines: dict[cs.SupportedLanguage, cs.IndexEngine] = {}
     by_default: list[cs.SupportedLanguage] = []
-    for language in cs.SupportedLanguage:
-        named = selection.languages.get(language)
-        asked = selection.default if named is None else named
-        engine = (
-            cs.INDEX_ENGINE_DEFAULTS[_UNIT_OF[language]]
-            if asked == cs.IndexEngine.AUTO
-            else asked
-        )
-        if engine == cs.IndexEngine.RUST and language not in available:
-            engine = cs.IndexEngine.PYTHON
-            if named != cs.IndexEngine.RUST:
-                by_default.append(language)
-            elif language not in _warned:
-                _warned.add(language)
-                logger.warning(ls.INDEX_ENGINE_NOT_ON_RUST.format(language=language))
-        engines[language] = engine
+    for language, asked in asked_index_engines(selection).items():
+        engines[language] = asked
+        if asked != cs.IndexEngine.RUST or language in available:
+            continue
+        engines[language] = cs.IndexEngine.PYTHON
+        if selection.languages.get(language) != cs.IndexEngine.RUST:
+            by_default.append(language)
+        elif language not in _warned:
+            _warned.add(language)
+            logger.warning(ls.INDEX_ENGINE_NOT_ON_RUST.format(language=language))
     if by_default:
         logger.debug(
             ls.INDEX_ENGINE_DEFAULT_NOT_ON_RUST.format(
