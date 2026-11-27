@@ -52,6 +52,7 @@ from codebase_rag.tests.conftest import (
 )
 from codebase_rag.tests.engine_modes import CHANGE_SHADOW_DIR_ENV
 from codebase_rag.tests.shadows import child_env
+from codebase_rag.tests.test_symlink_policy import _junction, needs_junctions
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TESTS = Path(__file__).resolve().parent
@@ -681,6 +682,29 @@ class TestInSync:
         target.symlink_to(moved)
         # The folder's time as recorded, so the file's own check decides.
         os.utime(repo, ns=(recorded, recorded))
+
+        self._case(repo, False)
+
+    @needs_junctions
+    def test_folders_holding_junctions_are_listed_as_python_lists_them(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _repo(tmp_path)
+        outside = tmp_path / "outside"
+        _write(outside, "o.py", "O = 1\n")
+        # No links to Python, so walked and listed as folders (issue #3740).
+        _junction(repo / "alias", repo / "pkg")
+        _junction(repo / "out", outside)
+        _sync(repo)
+        self._case(repo, True)
+        # The root's time moved with nothing indexable changed, so its
+        # listing decides, junctions and all.
+        moved = os.stat(repo).st_mtime_ns + 10**9
+        os.utime(repo, ns=(moved, moved))
+        self._case(repo, True)
+
+        # Seen through the junction too.
+        _write(repo, "pkg/d.py", "D = 4\n")
 
         self._case(repo, False)
 

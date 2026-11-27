@@ -29,8 +29,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::super::discover::{ROOT_DIR_KEY, STATE_FILENAMES};
+use super::super::discover::{list, ROOT_DIR_KEY, STATE_FILENAMES};
 use super::super::ignore::{IgnoreRules, PatternError};
+use super::super::lstat::Kind;
 use super::super::{md5_file, Engine};
 use super::{
     child_path, last_changed, now, python_mtime, read_dir_mtimes, read_hash_cache,
@@ -121,7 +122,7 @@ fn dir_changed(
     };
     let expected_files = direct_children(old.keys(), &prefix);
     let expected_dirs = direct_children(dirs.keys().filter(|k| *k != ROOT_DIR_KEY), &prefix);
-    let Ok((files, subdirs)) = scan_dir_children(path) else {
+    let Some((files, subdirs)) = scan_dir_children(path) else {
         return Ok(true);
     };
     let parts: Vec<&str> = if key == ROOT_DIR_KEY {
@@ -161,36 +162,30 @@ fn direct_children<'a>(keys: impl Iterator<Item = &'a str>, prefix: &str) -> Has
 }
 
 /// `_scan_dir_children`: the folder's files and subfolders as the walk
-/// could keep them, leaving out cgr's state files, links, names that are
-/// not UTF-8, and pipes, sockets and devices.
-fn scan_dir_children(path: &Path) -> io::Result<(HashSet<String>, HashSet<String>)> {
+/// could keep them, its entries judged as the walk's listing judges them,
+/// leaving out cgr's state files, links, names that are not UTF-8, and
+/// pipes, sockets and devices; `None` when it cannot be listed to the end.
+fn scan_dir_children(path: &Path) -> Option<(HashSet<String>, HashSet<String>)> {
     let mut files = HashSet::new();
     let mut dirs = HashSet::new();
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let Ok(name) = entry.file_name().into_string() else {
-            continue;
-        };
-        let kind = entry.file_type().ok();
-        if STATE_FILENAMES.contains(&name.as_str()) || kind.is_some_and(|k| k.is_symlink()) {
+    for entry in list(path.as_os_str())? {
+        if entry.is_link() {
             continue;
         }
-        if kind.is_some_and(|k| k.is_dir()) {
+        let (is_dir, is_special) = (entry.is_dir, entry.is_special());
+        let Ok(name) = entry.name.into_string() else {
+            continue;
+        };
+        if STATE_FILENAMES.contains(&name.as_str()) {
+            continue;
+        }
+        if is_dir {
             dirs.insert(name);
-        } else if !is_special(&entry.path()) {
+        } else if !is_special {
             files.insert(name);
         }
     }
-    Ok((files, dirs))
-}
-
-/// `is_special_file_entry`: no regular file, folder or link, by `lstat`;
-/// an entry `lstat` cannot read is not special.
-fn is_special(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|metadata| {
-        let kind = metadata.file_type();
-        !(kind.is_file() || kind.is_dir() || kind.is_symlink())
-    })
+    Some((files, dirs))
 }
 
 /// `_cached_file_unchanged`.
@@ -201,7 +196,7 @@ fn cached_file_unchanged(path: &Path, hash: &str, cache_mtime: f64) -> bool {
     let Ok(metadata) = fs::symlink_metadata(path) else {
         return false;
     };
-    if !metadata.file_type().is_file() {
+    if Kind::of(metadata.file_type(), || path) != Kind::File {
         return false;
     }
     if last_changed(&metadata) <= cache_mtime {
@@ -485,7 +480,7 @@ fn target_vanished(path: &Path, single: Option<&Path>) -> bool {
 fn vanished(path: &Path) -> bool {
     match fs::symlink_metadata(path) {
         Err(error) => is_gone(&error),
-        Ok(metadata) if metadata.file_type().is_symlink() => {
+        Ok(metadata) if Kind::of(metadata.file_type(), || path) == Kind::Link => {
             fs::metadata(path).is_err_and(|error| is_gone(&error))
         }
         Ok(_) => false,

@@ -31,10 +31,12 @@ from codebase_rag.config import load_ignore_patterns
 from codebase_rag.tests.conftest import _MockIngestor, create_and_run_updater
 from codebase_rag.tests.shadows import child_env
 from codebase_rag.tests.test_symlink_policy import (
+    _junction,
     _link,
     _make_undecodable,
     _write,
     needs_fifo,
+    needs_junctions,
 )
 from codebase_rag.utils.path_utils import readable_name
 
@@ -376,6 +378,48 @@ class TestLinks:
 
         assert _rel_paths(plan) == ["a.py", "pkg/b.py"]
         assert plan.dirs[1].dirpath == f"{root}{os.sep}pkg"
+
+
+@needs_junctions
+class TestJunctions:
+    """A junction is no link to Python, so its walk enters one wherever it
+    points; Rust's `is_symlink` holds for it (issue #3740)."""
+
+    def test_a_junction_is_a_folder_the_walk_enters_wherever_it_points(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _tree(tmp_path / "repo", ["b.py", "real/a.py"])
+        outside = _tree(tmp_path / "outside", ["secret.py"])
+        gone = tmp_path / "gone"
+        gone.mkdir()
+        _junction(repo / "alias", repo / "real")
+        _junction(repo / "out", outside)
+        _junction(repo / "dangling", gone)
+        gone.rmdir()
+
+        plan = _same_plan(repo)
+
+        assert _rel_paths(plan) == [
+            "b.py",
+            "alias/a.py",
+            "out/secret.py",
+            "real/a.py",
+        ]
+        # A dangling one is a folder too, which cannot be listed.
+        assert _keys(plan) == [cs.ROOT_DIR_KEY, "alias", "out", "real"]
+        assert plan.symlinks == ()
+
+    def test_a_directory_symlink_beside_a_junction_is_still_a_link(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _tree(tmp_path / "repo", ["real/a.py"])
+        _junction(repo / "alias", repo / "real")
+        _link(repo / "dir_link", "real", directory=True)
+
+        plan = _same_plan(repo)
+
+        assert _rel_paths(plan) == ["alias/a.py", "real/a.py"]
+        assert plan.symlinks == ("dir_link",)
 
 
 @needs_fifo

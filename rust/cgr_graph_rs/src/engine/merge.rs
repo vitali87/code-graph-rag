@@ -48,6 +48,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::ignore::{IgnoreRules, PatternError};
+use super::lstat::{lstat_kind, Kind};
 use super::state::resolve;
 use super::structure::suffix;
 use super::Engine;
@@ -465,7 +466,7 @@ impl Namer<'_> {
     fn indexed(&self, rel_path: &str) -> Result<bool, PatternError> {
         let path: PathBuf = self.inputs.root.join(rel_path);
         let is_file = fs::metadata(&path).is_ok_and(|metadata| metadata.is_file());
-        let is_link = fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_symlink());
+        let is_link = lstat_kind(&path) == Some(Kind::Link);
         if !is_file || is_link || !resolve(&path).starts_with(self.resolved_root) {
             return Ok(false);
         }

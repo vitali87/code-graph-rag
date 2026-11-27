@@ -39,7 +39,13 @@ from codebase_rag.parsers.structure_processor import StructureProcessor
 from codebase_rag.tests.conftest import _MockIngestor, create_and_run_updater
 from codebase_rag.tests.engine_modes import STRUCTURE_SHADOW_DIR_ENV
 from codebase_rag.tests.shadows import child_env
-from codebase_rag.tests.test_symlink_policy import _link, _make_undecodable, _write
+from codebase_rag.tests.test_symlink_policy import (
+    _junction,
+    _link,
+    _make_undecodable,
+    _write,
+    needs_junctions,
+)
 from codebase_rag.utils.path_utils import cached_resolve_posix
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -511,6 +517,33 @@ class TestRules:
         found = _same_structure(pairs, checked, repo)
 
         assert _keys(found) == [".", "real", "real/inner"]
+
+    @needs_junctions
+    def test_a_junction_is_a_folder_unless_it_resolves_outside_the_root(
+        self, tmp_path: Path, pairs: list[Pair], checked: _Recorded
+    ) -> None:
+        repo = _tree(tmp_path / "repo", ["real/inner/__init__.py"])
+        outside = _tree(tmp_path / "outside", ["pkg/__init__.py"])
+        # No link to Python, so entered (issue #3740), and left out only by
+        # the check that a folder resolves inside the root.
+        _junction(repo / "alias", repo / "real")
+        _junction(repo / "out", outside)
+
+        found = _same_structure(pairs, checked, repo)
+
+        assert _keys(found) == [".", "alias", "alias/inner", "real", "real/inner"]
+
+    @needs_junctions
+    def test_a_directory_symlink_beside_a_junction_is_still_left_out(
+        self, tmp_path: Path, pairs: list[Pair], checked: _Recorded
+    ) -> None:
+        repo = _tree(tmp_path / "repo", ["real/inner/__init__.py"])
+        _junction(repo / "alias", repo / "real")
+        _link(repo / "dir_link", "real", directory=True)
+
+        found = _same_structure(pairs, checked, repo)
+
+        assert _keys(found) == [".", "alias", "alias/inner", "real", "real/inner"]
 
     def test_a_folder_whose_name_is_not_utf8_is_left_out(
         self, tmp_path: Path, pairs: list[Pair], checked: _Recorded

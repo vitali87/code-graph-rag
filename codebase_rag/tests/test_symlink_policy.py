@@ -94,6 +94,23 @@ def _link(link: Path, target: str, *, directory: bool = False) -> None:
         pytest.skip("symlinks need privileges on this host")
 
 
+needs_junctions = pytest.mark.skipif(
+    sys.platform != "win32", reason="directory junctions are Windows'"
+)
+
+
+def _junction(junction: Path, target: Path) -> None:
+    """A directory junction at `junction` naming the folder `target`, which
+    must exist.
+
+    Windows only, and unlike a symlink it needs no privilege. Python's walk
+    does not count one as a link, so it enters it (issue #3740).
+    """
+    import _winapi
+
+    _winapi.CreateJunction(str(target), str(junction))
+
+
 def _write(path: Path, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")

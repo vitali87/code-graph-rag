@@ -93,3 +93,13 @@ def test_a_crate_without_a_repository_looks_only_in_its_own_package(
 
     with pytest.raises(SystemExit, match="lonely 1.0.0: no MIT file"):
         _text(crate, [crate, sibling], found)
+
+
+def test_a_crate_naming_its_file_in_lower_case_keeps_it(tmp_path: Path) -> None:
+    # windows-sys and windows-link, from microsoft/windows-rs, ship
+    # `license-mit` and `license-apache-2.0` (issue #3740).
+    own = _package(tmp_path, "windows-sys", "license-mit")
+    crate = grl.Crate("windows-sys", "0.61.2", "MIT OR Apache-2.0")
+    found = {("windows-sys", "0.61.2"): grl.Source(own, None)}
+
+    assert _text(crate, [crate], found) == _MIT

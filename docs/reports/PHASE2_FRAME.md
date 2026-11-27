@@ -198,7 +198,9 @@ copies it rule for rule.
    `.svn` are kept only when an unignore spells a path through them;
    built-in directory names (`constants/languages.py`) are kept only for
    `src/bin` or when an unignore could match inside. Links are never
-   followed; the root is followed when it is itself a link.
+   followed; the root is followed when it is itself a link. A link is what
+   Python calls one: on Windows only a reparse point tagged as a symbolic
+   link, so a junction is a folder, entered wherever it points (#3740).
 6. **Files**, in order: compiled and temporary suffixes are skipped; a
    matching exclude skips; files inside version-control directories not
    kept are skipped; `.min.js` and `.min.css` are skipped unless an unignore
@@ -236,9 +238,11 @@ Kept as they are, because users see them and changing them is a behaviour
 change for after the rewrite: only the root `.gitignore` is read (#2454),
 `.gitignore` excludes beat the generated-source rescue (#3129), no shebang
 detection (#3210), `.h` files are C++ (#2696), no detection of generated
-files (#3213). Two more are copied and recorded for the same decision later:
-a `.env` file and a submodule's `.git` file get File nodes, and a bare `!`
-line walks every built-in directory.
+files (#3213). Three more are copied and recorded for the same decision
+later: a `.env` file and a submodule's `.git` file get File nodes, a bare `!`
+line walks every built-in directory, and a Windows junction is walked, one to
+an ancestor again at each level until Windows refuses the path, which both
+walks then skip as a folder they cannot list (#3740).
 
 ## 6. Change detection: the file half
 
