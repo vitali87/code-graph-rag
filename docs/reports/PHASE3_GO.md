@@ -696,10 +696,15 @@ No new gating job:
   forced on Rust over the test files that hold Go and the pinned
   repositories, and posts the count of differing tests and lines. It is not
   required for merging; step 10 removes it, when the gating cells take over.
-- **Toolchain Tests** gains `evals/go_build_variants.py` with a small case
-  count, from step 7: it is the only oracle for build variants and
-  interfaces against `go/types` per build, and Go is already installed
-  there.
+- **Toolchain Tests** gains the three Go evaluations from step 7, when the
+  engine first writes Go's whole graph, each comparing Rust with Python:
+  `evals/go_l1.py` (structure against `go/ast`), `evals/go_retrieval.py`
+  (cross-file call localisation against `go/ast`) and
+  `evals/go_build_variants.py` with a small case count (the only oracle for
+  build variants and interfaces against `go/types` per build). Go is
+  already installed there. Gate 5 runs them at full size when the default
+  moves; from step 7 every pull request runs them, so no step between can
+  lose what they measure.
 - **Fuzzing.** Three cargo-fuzz targets join the seven in
   `rust/cgr_graph_rs/fuzz/fuzz_targets/` and the Rust job's budget:
   `go_extract` (any bytes as a Go file: no panic, the same summary on one
@@ -786,7 +791,7 @@ one patch release each, from 0.1.18.
    - Adds: type inference, resolution, the call rows, IMPORTS and
      unresolved references, the rows replayed at their stage points: the
      engine writes Go's whole graph. The nightly preview job; the
-     `go_extract` fuzz target; `go_build_variants.py` in Toolchain Tests.
+     `go_extract` fuzz target; the three Go evaluations in Toolchain Tests.
    - Tests: uuid's and afero's graphs and answers on the preview equal the
      recorded ones; the nightly count is posted in the pull request.
 8. **Incremental runs and the watcher.**
