@@ -27,7 +27,11 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
-from ...utils.path_utils import is_special_file_entry, is_symlink_entry
+from ...utils.path_utils import (
+    is_regular_file,
+    is_special_file_entry,
+    is_symlink_entry,
+)
 from ..build_lock import artifact_fresh, build_cached_artifact, newest_source_mtime
 from ..frontend_mode import resolve_frontend_mode
 from ..go.module_paths import discover_go_module_paths
@@ -597,12 +601,25 @@ def _special_files(repo_path: Path) -> list[str]:
     or a folder costs a `stat`. The paths are absolute, as Go reads an
     overlay's relative ones from the folder each load runs in.
     """
+    found, _complete = _special_entries(os.path.abspath(repo_path))
+    return sorted(found)
+
+
+def _special_entries(root: str, limit: int | None = None) -> tuple[list[str], bool]:
+    """The pipes, sockets and devices under `root`, and links to one, each
+    spelled from `root`, and whether the listing ended before `limit`
+    entries. Links are never followed, so no listing loops; a folder that
+    cannot be listed is passed over."""
     found: list[str] = []
-    pending = [os.path.abspath(repo_path)]
+    seen = 0
+    pending = [root]
     while pending:
         try:
             with os.scandir(pending.pop()) as entries:
                 for entry in entries:
+                    seen += 1
+                    if limit is not None and seen > limit:
+                        return found, False
                     if entry.is_dir(follow_symlinks=False):
                         pending.append(entry.path)
                     elif not entry.is_file(follow_symlinks=False) and (
@@ -615,7 +632,113 @@ def _special_files(repo_path: Path) -> list[str]:
                         found.append(entry.path)
         except OSError:
             continue
-    return sorted(found)
+    return found, True
+
+
+def _local_replace_targets(go: str, gomod: Path) -> list[str]:
+    """The folder each local `replace` of `gomod` names, spelled as there.
+
+    Read by `go mod edit -json`, Go's own parser, so a quoted path or a
+    `replace ( ... )` block reads as the loads read it. A go.mod that does
+    not mention `replace` costs no `go` run.
+    """
+    if not is_regular_file(gomod):
+        return []
+    try:
+        if cs.GO_KEYWORD_REPLACE not in gomod.read_text(encoding=cs.ENCODING_UTF8):
+            return []
+    except (OSError, ValueError):
+        return []
+    try:
+        proc = subprocess.run(
+            [go, *cs.GO_MOD_EDIT_JSON_ARGS, str(gomod)],
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            errors="replace",
+            check=False,
+            timeout=cs.GO_MOD_EDIT_TIMEOUT_S,
+            env={**os.environ, **_GO_ENV},
+        )
+    except (subprocess.SubprocessError, OSError) as error:
+        logger.debug(ls.GO_FRONTEND_REPLACES_UNREAD.format(gomod=gomod, error=error))
+        return []
+    if proc.returncode != 0:
+        logger.debug(
+            ls.GO_FRONTEND_REPLACES_UNREAD.format(
+                gomod=gomod, error=proc.stderr.strip()
+            )
+        )
+        return []
+    try:
+        payload = json.loads(proc.stdout)
+    except ValueError:
+        return []
+    replaces = payload.get(cs.GO_MOD_JSON_REPLACE) if isinstance(payload, dict) else []
+    targets: list[str] = []
+    for replace in replaces if isinstance(replaces, list) else []:
+        new = replace.get(cs.GO_MOD_JSON_NEW) if isinstance(replace, dict) else None
+        # A target with a version is a module Go fetches, not a folder.
+        if not isinstance(new, dict) or new.get(cs.GO_MOD_JSON_VERSION):
+            continue
+        path = new.get(cs.GO_MOD_JSON_PATH)
+        if isinstance(path, str) and path:
+            targets.append(path)
+    return targets
+
+
+def _listed_with_repository(repo: str, target: str) -> bool:
+    """Whether the repository's own listing already spells each entry of
+    `target` as Go opens it: true of a folder inside it that no link leads
+    to on the way down."""
+    try:
+        if os.path.commonpath([repo, target]) != repo:
+            return False
+    except ValueError:
+        # Paths on different drives share no folder.
+        return False
+    current = repo
+    for part in Path(os.path.relpath(target, repo)).parts:
+        current = os.path.join(current, part)
+        if is_symlink_entry(current):
+            return False
+    return True
+
+
+def _replace_special_files(go: str, repo_path: Path, anchors: list[Path]) -> list[str]:
+    """The pipes, sockets and devices a local `replace` has Go open under a
+    spelling the repository's own listing never gives (issue #3744).
+
+    A load reads a replaced module from the folder its `replace` names,
+    joined to the go.mod's folder, and an overlay matches paths by spelling.
+    A target outside the repository is never listed, and one a link leads to
+    is listed by its real path, if at all. Each such target is listed from
+    the spelling Go joins, so every entry found is spelled as Go opens it.
+    Only a main module's `replace` applies, so the anchors' go.mod files
+    are the ones read. A target can be any folder, so its listing is
+    bounded; links below it are not followed, as in the repository's.
+    """
+    repo = os.path.abspath(repo_path)
+    found: list[str] = []
+    listed: set[str] = set()
+    for anchor in anchors:
+        base = os.path.abspath(anchor)
+        for target in _local_replace_targets(go, Path(base) / cs.DEP_FILE_GOMOD):
+            spelled = os.path.normpath(os.path.join(base, target))
+            if spelled in listed or _listed_with_repository(repo, spelled):
+                continue
+            listed.add(spelled)
+            entries, complete = _special_entries(
+                spelled, cs.GO_REPLACE_TARGET_MAX_ENTRIES
+            )
+            if not complete:
+                logger.warning(
+                    ls.GO_FRONTEND_REPLACE_LISTING_CUT.format(
+                        target=spelled, limit=cs.GO_REPLACE_TARGET_MAX_ENTRIES
+                    )
+                )
+            found.extend(entries)
+    return found
 
 
 @contextmanager
@@ -699,7 +822,11 @@ def run_go_frontend(
     checked: set[str] = set()
     compared: set[tuple[str, int, int]] = set()
     in_repo_modules = _in_repo_modules(repo_path)
-    with _overlay_without(_special_files(repo_path)) as overlay:
+    special = {
+        *_special_files(repo_path),
+        *_replace_special_files(go, repo_path, anchors),
+    }
+    with _overlay_without(sorted(special)) as overlay:
         for anchor in anchors:
             prefix = (
                 "" if anchor == repo_path else anchor.relative_to(repo_path).as_posix()

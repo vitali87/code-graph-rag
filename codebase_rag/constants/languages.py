@@ -173,6 +173,22 @@ class GoFrontend(StrEnum):
 # an hour (PR #2417 review).
 GO_FRONTEND_BUILD_FAILURE_TTL_S = 60 * 60
 
+# The go/types helper's loads read a replaced module's source from the folder
+# a local `replace` names (issue #3744). `go mod edit -json` prints a go.mod
+# as Go's own parser reads it, quoted paths and `replace ( ... )` blocks
+# included, and a target that carries a version is a module path, not a
+# folder. It reads one file and fetches nothing, so it is bounded tightly.
+GO_MOD_EDIT_JSON_ARGS = ("mod", "edit", "-json")
+GO_MOD_EDIT_TIMEOUT_S = 30
+GO_MOD_JSON_REPLACE = "Replace"
+GO_MOD_JSON_NEW = "New"
+GO_MOD_JSON_PATH = "Path"
+GO_MOD_JSON_VERSION = "Version"
+# A `replace` can name any folder, `/` or a home directory included, so the
+# listing of one for the pipes, sockets and devices Go would open there stops
+# after this many entries.
+GO_REPLACE_TARGET_MAX_ENTRIES = 100_000
+
 
 # JS/TS import specifier schemes naming genuinely external code (node
 # builtins, registries, URLs). Any OTHER scheme (`ext:` deno aliases,

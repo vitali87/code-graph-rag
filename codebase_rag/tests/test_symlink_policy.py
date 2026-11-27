@@ -25,6 +25,7 @@ import contextlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import threading
 from collections.abc import Callable, Generator
@@ -513,6 +514,88 @@ def _go_facts_within_deadline(repo: Path, pipe: Path) -> GoSemanticFacts:
     return facts[0]
 
 
+def _replacing_module(folder: Path, target: str) -> None:
+    """A Go module at `folder` that calls `example.com/lib`, which its
+    `replace` points at `target`, spelled as a go.mod spells it."""
+    _write(
+        folder / "go.mod",
+        "module example.com/app\n\ngo 1.21\n\n"
+        "require example.com/lib v0.0.0\n\n"
+        f"replace example.com/lib => {target}\n",
+    )
+    _write(
+        folder / "main.go",
+        'package main\n\nimport "example.com/lib"\n\nfunc main() {\n\tlib.F()\n}\n',
+    )
+
+
+def _lib_with_pipe(folder: Path) -> Path:
+    """Module `example.com/lib` at `folder`, holding a named pipe `zz.go`."""
+    _write(folder / "go.mod", "module example.com/lib\n\ngo 1.21\n")
+    _write(folder / "lib.go", "package lib\n\nfunc F() {}\n")
+    pipe = folder / "zz.go"
+    os.mkfifo(pipe)
+    return pipe
+
+
+# Where a `replace` sends Go: a folder outside the repository, named by a
+# relative or an absolute path, or reached through a link outside the
+# repository or inside it (issue #3744).
+_REPLACE_LAYOUTS = ["outside", "absolute", "outside-link", "inside-link"]
+
+
+def _replace_layout(root: Path, layout: str) -> tuple[Path, Path, Path, str]:
+    """The repository, the pipe, the spelling Go opens the pipe by, and the
+    module that holds the `replace`, for one of `_REPLACE_LAYOUTS`."""
+    repo = root / "repo"
+    if layout == "inside-link":
+        pipe = _lib_with_pipe(repo / "lib")
+        _link(repo / "alias", "lib", directory=True)
+        _replacing_module(repo / "app", "../alias")
+        return repo, pipe, repo / "alias" / "zz.go", "app"
+    pipe = _lib_with_pipe(root / "lib")
+    if layout == "outside-link":
+        _link(root / "alias", "lib", directory=True)
+        _replacing_module(repo, "../alias")
+        return repo, pipe, root / "alias" / "zz.go", "."
+    _replacing_module(repo, str(root / "lib") if layout == "absolute" else "../lib")
+    return repo, pipe, pipe, "."
+
+
+_FAKE_GO_HELPER = "gotypes"
+
+
+def _overlays_handed(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[GoSemanticFacts, list[dict[str, str]]]:
+    """The facts of a run over `repo` and what each helper run's overlay
+    leaves out. Only the helper is faked: `go` itself runs."""
+    real_run = subprocess.run
+    handed: list[dict[str, str]] = []
+
+    def _run(
+        cmd: list[str], env: dict[str, str], **kwargs: bool | int | str
+    ) -> CompletedProcess[str]:
+        if cmd[0] != _FAKE_GO_HELPER:
+            return real_run(cmd, env=env, **kwargs)
+        overlay = env.get(go_frontend._OVERLAY_ENV)
+        handed.append(
+            {}
+            if overlay is None
+            else json.loads(Path(overlay).read_text(encoding="utf-8"))["Replace"]
+        )
+        return CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(go_frontend, "_build_tool", lambda _go: Path(_FAKE_GO_HELPER))
+    monkeypatch.setattr(go_frontend.subprocess, "run", _run)
+    return run_go_frontend(repo), handed
+
+
+def _needs_go() -> None:
+    if shutil.which("go") is None:
+        pytest.skip("go toolchain not available")
+
+
 def _emitted_paths(mock_ingestor: MagicMock) -> set[str]:
     return {
         str(node_call.args[1][cs.KEY_PATH])
@@ -771,6 +854,71 @@ class TestSpecialFiles:
                 }
             }
         ]
+
+    @pytest.mark.usefixtures("one_go_helper_per_session")
+    @pytest.mark.parametrize("layout", _REPLACE_LAYOUTS)
+    def test_the_go_type_checker_never_opens_a_pipe_a_replace_reaches(
+        self, tmp_path: Path, layout: str
+    ) -> None:
+        # A local `replace` has Go load the target's packages from the folder
+        # it names, by that spelling, which the repository's own listing
+        # never reaches outside it or through a link (issue #3744).
+        _needs_go_type_checker()
+        repo, pipe, _opened, module = _replace_layout(tmp_path, layout)
+
+        facts = _go_facts_within_deadline(repo, pipe)
+
+        assert facts.degraded_modules == ()
+        assert module in facts.analysed_modules
+
+    @pytest.mark.parametrize("layout", _REPLACE_LAYOUTS)
+    def test_the_go_type_checker_is_told_to_leave_out_a_pipe_a_replace_reaches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layout: str
+    ) -> None:
+        # The overlay matches by spelling, so the pipe is left out as the
+        # `replace` path joined with its place in the target; one inside the
+        # repository keeps its own spelling as well.
+        _needs_go()
+        repo, pipe, opened, _module = _replace_layout(tmp_path, layout)
+        expected = {str(opened)} | ({str(pipe)} if pipe.is_relative_to(repo) else set())
+
+        _facts, handed = _overlays_handed(repo, monkeypatch)
+
+        assert handed
+        assert all(overlay == dict.fromkeys(expected, "") for overlay in handed)
+
+    @pytest.mark.parametrize("target", ["example.com/other v1.0.0", "../missing"])
+    def test_a_replace_by_module_path_or_to_no_folder_adds_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
+    ) -> None:
+        _needs_go()
+        repo = tmp_path / "repo"
+        _replacing_module(repo, target)
+        os.mkfifo(repo / "zz.go")
+
+        facts, handed = _overlays_handed(repo, monkeypatch)
+
+        assert handed == [{str(repo / "zz.go"): ""}]
+        assert facts.analysed_modules == (".",)
+
+    def test_the_listing_of_a_replace_target_is_bounded(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        records: list[tuple[str, str]],
+    ) -> None:
+        # A `replace` can name any folder, `/` included.
+        _needs_go()
+        repo, _pipe, _opened, _module = _replace_layout(tmp_path, "outside")
+        monkeypatch.setattr(cs, "GO_REPLACE_TARGET_MAX_ENTRIES", 1)
+
+        facts, handed = _overlays_handed(repo, monkeypatch)
+
+        assert facts.analysed_modules == (".",)
+        assert len(handed) == 1
+        assert len(handed[0]) <= 1
+        warnings = [text for level, text in records if level == "WARNING"]
+        assert any(str(tmp_path / "lib") in text for text in warnings)
 
     def test_a_pipe_among_the_rust_sources_is_never_read(
         self, tmp_path: Path, mock_ingestor: MagicMock
