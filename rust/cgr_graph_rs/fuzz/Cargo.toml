@@ -79,3 +79,10 @@ path = "fuzz_targets/state_files.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "go_build_constraint"
+path = "fuzz_targets/go_build_constraint.rs"
+test = false
+doc = false
+bench = false
