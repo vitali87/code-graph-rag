@@ -727,6 +727,7 @@ class TestStalenessWarning:
         settled.run()
         assert settled._reparsed_file_keys == set()
 
+    @pytest.mark.usefixtures("no_engine_preview")
     def test_selections_that_resolve_alike_reparse_nothing(
         self, py_project: Path, mock_ingestor: MagicMock, warnings_sink: list[str]
     ) -> None:
@@ -943,6 +944,7 @@ class TestIndexEngineIsParserIdentity:
     # selection are hashed under. Unhashed, a language moving to Rust kept
     # the Python engine's graph on the in-sync fast path (issue #3725).
 
+    @pytest.mark.usefixtures("no_engine_preview")
     def test_selections_that_resolve_alike_share_a_fingerprint(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

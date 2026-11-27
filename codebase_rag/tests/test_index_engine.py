@@ -261,6 +261,8 @@ class TestTheFamilyRule:
             assert unit <= available or not unit & available
 
 
+# What this build resolves without a preview, whatever the session previews.
+@pytest.mark.usefixtures("no_engine_preview")
 class TestTheResolution:
     def test_no_language_runs_on_rust_in_this_build(self) -> None:
         assert rust_engine_languages() == frozenset()

@@ -12,6 +12,8 @@ still index its files, so the graph is the same.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -47,6 +49,16 @@ _WARNED = (
 )
 
 
+# A fresh interpreter's preview and the languages its build lists.
+_DEFAULTS = (
+    "from codebase_rag import index_engine\n"
+    "print(len(index_engine.PREVIEW), len(index_engine.rust_engine_languages()))\n"
+)
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+# A deadline for the child process, not a performance assertion.
+_CHILD_TIMEOUT_SECONDS = 120
+
+
 @pytest.fixture
 def go_previewed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(index_engine, "PREVIEW", frozenset({L.GO}))
@@ -68,7 +80,23 @@ def warnings(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
 
 class TestThePreview:
     def test_none_unless_asked(self) -> None:
-        assert index_engine.PREVIEW == frozenset()
+        # In a process of its own: a session with `--engine-preview` has set
+        # one in this.
+        result = subprocess.run(
+            [sys.executable, "-c", _DEFAULTS],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            timeout=_CHILD_TIMEOUT_SECONDS,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr[-4000:]
+        assert result.stdout.split() == ["0", "0"]
+
+    @pytest.mark.usefixtures("no_engine_preview")
+    def test_without_one_the_build_lists_nothing(self) -> None:
         assert rust_engine_languages() == frozenset()
 
     def test_it_is_what_the_build_lists(self, go_previewed: None) -> None:
@@ -87,6 +115,7 @@ class TestThePreview:
         assert default == dict.fromkeys(L, E.PYTHON)
         assert warnings == []
 
+    @pytest.mark.usefixtures("no_engine_preview")
     def test_without_it_go_on_rust_is_warned_about_and_runs_on_python(
         self, warnings: list[str]
     ) -> None:
@@ -157,7 +186,7 @@ class TestWhatASelectionAsksFor:
         assert list(asked) == list(L)
 
 
-def _index(repo: Path, tmp_path: Path, spec: str) -> tuple[GraphUpdater, list]:
+def _index(repo: Path, state: Path, spec: str) -> tuple[GraphUpdater, list]:
     parsers, queries = load_parsers()
     ingestor = _MockIngestor()
     updater = GraphUpdater(
@@ -166,13 +195,14 @@ def _index(repo: Path, tmp_path: Path, spec: str) -> tuple[GraphUpdater, list]:
         parsers=parsers,
         queries=queries,
         skip_embeddings=True,
-        state_dir=tmp_path / f"state-{spec}-{sorted(index_engine.PREVIEW)}",
+        state_dir=state,
         index_engine=parse_index_engine(spec),
     )
     updater.run()
     return updater, _calls(ingestor)
 
 
+@pytest.mark.usefixtures("no_engine_preview")
 class TestAnIndexOnThePreview:
     def test_go_is_on_rust_and_indexed_as_python_indexes_it(
         self,
@@ -182,10 +212,12 @@ class TestAnIndexOnThePreview:
     ) -> None:
         monkeypatch.setattr(settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
         repo = _write(tmp_path / "repo", LANGUAGE_FIXTURES[L.GO])
-        python, python_calls = _index(repo, tmp_path, "python")
+        python, python_calls = _index(repo, tmp_path / "state-python", "python")
         monkeypatch.setattr(index_engine, "PREVIEW", frozenset({L.GO}))
 
-        previewed, previewed_calls = _index(repo, tmp_path, "go=rust")
+        previewed, previewed_calls = _index(
+            repo, tmp_path / "state-go-previewed", "go=rust"
+        )
 
         assert python.rust_languages == frozenset()
         assert previewed.rust_languages == frozenset({L.GO})

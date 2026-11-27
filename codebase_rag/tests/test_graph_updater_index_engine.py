@@ -375,6 +375,7 @@ class TestTheSelection:
         assert updater.engines[L.GO] == E.RUST
         assert updater.rust_languages == frozenset({L.GO})
 
+    @pytest.mark.usefixtures("no_engine_preview")
     @pytest.mark.parametrize(
         "spec", ["auto", "python", "rust", "go=rust", "rust,c=python,cpp=python"]
     )
