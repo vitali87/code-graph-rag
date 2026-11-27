@@ -101,6 +101,12 @@ _CONSTRUCTIBLE_NODE_TYPES = frozenset(
 # An unqualified Go call names a package-level function: a method needs its
 # receiver.
 _GO_PACKAGE_FUNCTION_TYPES = frozenset({NodeType.FUNCTION})
+# Languages whose bare name never reaches a method through the caller's scope
+# chain, so the walk from a method into its type answers nothing there: Rust
+# (issue #1011) and Go (issue #3783).
+_BARE_NAME_NEVER_METHOD_LANGUAGES = frozenset(
+    {cs.SupportedLanguage.RUST, cs.SupportedLanguage.GO}
+)
 # A definition nested inside one of these is scoped to that body, so the
 # simple-name fallback prefers candidates that are not (issue #945).
 _SCOPING_PARENT_TYPES = frozenset({NodeType.FUNCTION, NodeType.METHOD})
@@ -1530,13 +1536,15 @@ class CallResolver:
     ) -> bool:
         # A bare Rust path NEVER names a method: inherent methods are
         # reachable only via self./Self::/Type:: (rustc-verified; the bare
-        # spelling calls the module item, issue #1011). Other languages
-        # keep their scope-chain semantics, except that no bare name
-        # reaches a JS/TS object literal's function value (issue #2435).
+        # spelling calls the module item, issue #1011). Nor does a Go call
+        # with no selector: it names a local value or a package-level
+        # function, and a method needs `u.f()` (issue #3783). Other
+        # languages keep their scope-chain semantics, except that no bare
+        # name reaches a JS/TS object literal's function value (#2435).
         if self._only_object_members(qn):
             return False
         return (
-            language != cs.SupportedLanguage.RUST
+            language not in _BARE_NAME_NEVER_METHOD_LANGUAGES
             or self.function_registry[qn] != cs.NodeLabel.METHOD.value
         )
 
