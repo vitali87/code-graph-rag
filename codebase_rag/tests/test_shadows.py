@@ -3,6 +3,7 @@ made in a fixture and under xdist too (`shadows.py`)."""
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +15,12 @@ from codebase_rag.tests.shadows import child_env
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLANTED = "a difference made in a fixture"
+# pytest's closing line: each outcome's count, then the time taken.
+SUMMARY = re.compile(
+    r"^=*\s*(\d+ [a-z]+(?:, \d+ [a-z]+)*) in \d+(?:\.\d+)?s\b", re.MULTILINE
+)
+OUTCOME = re.compile(r"(\d+) ([a-z]+)")
+PLURALS = {"errors": "error", "warnings": "warning"}
 # A fixture records a difference as a shadow does, before its test's call.
 PLANTING = """
 import importlib
@@ -72,6 +79,11 @@ def test_a_difference_made_in_a_fixture_fails_its_test_and_the_run(
             # Windows makes of each one listed (`samefile_nofollow`).
             "--rootdir",
             str(tmp_path),
+            # Its own temporary root: under the default, shared with this
+            # run's workers, pytest's sweep of old folders can meet one
+            # another process is removing, and adds a warning (#3773).
+            "--basetemp",
+            str(tmp_path / "basetemp"),
             str(tests),
         ],
         cwd=REPO_ROOT,
@@ -85,5 +97,17 @@ def test_a_difference_made_in_a_fixture_fails_its_test_and_the_run(
 
     output = result.stdout + result.stderr
     assert result.returncode == pytest.ExitCode.TESTS_FAILED, output[-4000:]
-    assert "1 passed, 1 error" in output, output[-4000:]
+    assert _outcomes(output) == {"passed": 1, "error": 1}, output[-4000:]
     assert PLANTED in output, output[-4000:]
+
+
+def _outcomes(output: str) -> dict[str, int]:
+    """Each outcome pytest's closing line counts, warnings left out: a
+    warning is no outcome, and one of the run's own can join the line."""
+    lines = SUMMARY.findall(output)
+    counts = {
+        PLURALS.get(word, word): int(count)
+        for count, word in OUTCOME.findall(lines[-1] if lines else "")
+    }
+    counts.pop("warning", None)
+    return counts
