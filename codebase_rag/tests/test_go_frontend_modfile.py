@@ -109,23 +109,66 @@ def test_a_module_whose_modfile_is_named_gets_the_type_checkers_graph(
     assert with_modfile == renamed != _graph(repo)
 
 
-@pytest.mark.parametrize("goflags", _MODFILE_GOFLAGS)
-def test_a_cold_helper_cache_builds_the_helper_under_a_modfile(
-    tmp_path: Path, go_env: pytest.MonkeyPatch, goflags: str
+# Settings meant for the indexed module, which the helper's build must not
+# read: a -modfile by its path from the module or an absolute one, vendoring,
+# and the user's go.work, named by GOWORK or found above the helper's cache.
+# Each with the GOFLAGS the build gets: -modcacherw alone is kept, so the
+# module cache the build fills stays deletable.
+_USER_MODULE_SETTINGS = [
+    pytest.param({cs.GO_ENV_GOFLAGS: "-modfile=alt.mod"}, " ", id="relative-modfile"),
+    pytest.param(
+        {cs.GO_ENV_GOFLAGS: "-modfile={repo}/alt.mod"}, " ", id="absolute-modfile"
+    ),
+    pytest.param({cs.GO_ENV_GOFLAGS: "-mod=vendor"}, " ", id="vendor"),
+    pytest.param(
+        {cs.GO_ENV_GOFLAGS: "-mod=vendor -modcacherw"},
+        "-modcacherw",
+        id="vendor-modcacherw",
+    ),
+    pytest.param({cs.GO_ENV_GOWORK: "{root}/ws/go.work"}, " ", id="named-go-work"),
+    pytest.param({}, " ", id="go-work-above-the-cache"),
+]
+
+
+@pytest.mark.parametrize(("user_settings", "build_goflags"), _USER_MODULE_SETTINGS)
+def test_a_cold_helper_cache_builds_the_helper_under_user_module_settings(
+    tmp_path: Path,
+    go_env: pytest.MonkeyPatch,
+    user_settings: dict[str, str],
+    build_goflags: str,
 ) -> None:
     # The build runs in the helper's own folder, where a relative -modfile
-    # names no file, and an absolute one names the indexed module's.
+    # names no file, an absolute one names the indexed module's, there is no
+    # vendor folder, and no go.work of the user's uses the helper's module.
     _needs_go_type_checker()
     repo = _module_with_alt_mod(tmp_path)
+    _write(tmp_path / "ws" / "go.work", "go 1.21\n\nuse ../repo\n")
+    if not user_settings:
+        _write(tmp_path / "go.work", "go 1.21\n\nuse ./repo\n")
     cold = tmp_path / "cold-cgr-home"
     go_env.setattr(settings, "CGR_HOME", cold)
-    go_env.setenv(cs.GO_ENV_GOFLAGS, goflags.format(repo=repo))
+    for name, value in user_settings.items():
+        go_env.setenv(name, value.format(repo=repo, root=tmp_path))
+    real_run = subprocess.run
+    builds: list[dict[str, str]] = []
+
+    def _run(
+        cmd: list[str], env: dict[str, str], **kwargs: bool | int | str | Path
+    ) -> subprocess.CompletedProcess[str]:
+        if cmd[1:2] == ["build"]:
+            builds.append(env)
+        return real_run(cmd, env=env, **kwargs)
+
+    go_env.setattr(fe.subprocess, "run", _run)
 
     binary = fe._build_tool(str(shutil.which("go")))
 
     assert binary is not None
     assert binary.is_relative_to(cold)
     assert not list(cold.rglob(fe._BUILD_FAILED_MARKER))
+    assert [
+        (env.get(cs.GO_ENV_GOFLAGS), env.get(cs.GO_ENV_GOWORK)) for env in builds
+    ] == [(build_goflags, cs.GO_WORK_OFF)]
 
 
 @pytest.mark.usefixtures("one_go_helper_per_session")
@@ -193,22 +236,59 @@ def test_the_helper_is_handed_the_modfile_apart_from_its_goflags(
     ]
 
 
-@pytest.mark.parametrize(
-    ("goflags", "handed"), [(goflags, handed) for goflags, handed, _ in _HANDED]
-)
-def test_the_helper_is_built_without_the_modfile(
-    monkeypatch: pytest.MonkeyPatch, goflags: str, handed: str
+def test_the_helpers_run_keeps_the_users_go_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The -modfile names the indexed module's file, never the helper's.
-    monkeypatch.setenv(cs.GO_ENV_GOFLAGS, goflags)
+    # Unlike the build, the run loads the user's module, in their workspace.
+    workfile = str(tmp_path / "go.work")
+    monkeypatch.setenv(cs.GO_ENV_GOWORK, workfile)
+    _write(tmp_path / "go.mod", "module example.com/app\n\ngo 1.21\n")
+    envs: list[dict[str, str]] = []
 
-    assert fe._host_build_env()[cs.GO_ENV_GOFLAGS] == handed
+    def _run(
+        cmd: list[str], env: dict[str, str], **_kwargs: bool | int | str
+    ) -> subprocess.CompletedProcess[str]:
+        if cmd[0] == "gotypes":
+            envs.append(env)
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(fe.shutil, "which", lambda _name: "go")
+    monkeypatch.setattr(fe, "_build_tool", lambda _go: Path("gotypes"))
+    monkeypatch.setattr(fe.subprocess, "run", _run)
+
+    run_go_frontend(tmp_path)
+
+    assert [env[cs.GO_ENV_GOWORK] for env in envs] == [workfile]
 
 
-def test_an_unset_goflags_stays_unset_for_the_build(
-    monkeypatch: pytest.MonkeyPatch,
+# GOFLAGS, and the GOFLAGS the helper is built with: -modcacherw alone, as
+# written, or a blank, which also keeps Go from reading GOFLAGS from its own
+# settings file. None is GOFLAGS unset.
+_BUILD_GOFLAGS = [
+    (None, " "),
+    ("", " "),
+    ("-modfile=alt.mod", " "),
+    ("-mod=vendor -tags=x", " "),
+    ("-mod=vendor -modcacherw", "-modcacherw"),
+    ("--modcacherw '-modfile=alt b.mod' -mod=mod", "--modcacherw"),
+    ("'-modcacherw=false'\t-modfile=alt.mod", "'-modcacherw=false'"),
+]
+
+
+@pytest.mark.parametrize(("goflags", "built_with"), _BUILD_GOFLAGS)
+def test_the_helper_is_built_outside_the_users_go_work_and_goflags(
+    monkeypatch: pytest.MonkeyPatch, goflags: str | None, built_with: str
 ) -> None:
-    # A blank here would hide the GOFLAGS Go keeps in its settings file.
-    monkeypatch.delenv(cs.GO_ENV_GOFLAGS, raising=False)
+    # Both name settings of the indexed module, never the helper's.
+    monkeypatch.setenv(cs.GO_ENV_GOWORK, "/elsewhere/go.work")
+    if goflags is None:
+        monkeypatch.delenv(cs.GO_ENV_GOFLAGS, raising=False)
+    else:
+        monkeypatch.setenv(cs.GO_ENV_GOFLAGS, goflags)
 
-    assert cs.GO_ENV_GOFLAGS not in fe._host_build_env()
+    env = fe._host_build_env()
+
+    assert (env[cs.GO_ENV_GOFLAGS], env[cs.GO_ENV_GOWORK]) == (
+        built_with,
+        cs.GO_WORK_OFF,
+    )

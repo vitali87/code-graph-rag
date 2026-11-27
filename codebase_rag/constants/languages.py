@@ -206,6 +206,10 @@ GO_ENV_PWD = "PWD"
 GO_ENV_GOFLAGS = "GOFLAGS"
 GO_FLAG_MODFILE = frozenset({"-modfile", "--modfile"})
 GO_FLAG_VALUE_SEPARATOR = "="
+# The one GOFLAGS flag the go/types helper's own build keeps (issue #3806):
+# it leaves the module cache the build fills writable, so a shared cache
+# stays deletable. Every other flag is meant for the indexed module.
+GO_FLAG_MODCACHERW = frozenset({"-modcacherw", "--modcacherw"})
 # A `replace` can name any folder, `/` or a home directory included, so the
 # listing of one for the pipes, sockets and devices Go would open there stops
 # after this many entries.

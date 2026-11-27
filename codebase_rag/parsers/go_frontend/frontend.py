@@ -144,10 +144,11 @@ _GO_VERSION = re.compile(r"^go(\d+(?:\.\d+)*)$")
 # next same quote, with nothing unescaped, and any other to the next blank.
 # Go refuses a GOFLAGS it cannot split, and a run under it loads nothing, so
 # only one Go accepts has to be read exactly.
+_GOFLAGS_BLANKS = " \t\n\r"
 _GOFLAGS_FIELD = re.compile(r"""[ \t\n\r]*(?:'([^']*)'|"([^"]*)"|([^ \t\n\r]+))""")
-# A GOFLAGS that held only -modfile, kept set once the flag is out: Go reads
-# GOFLAGS from its own settings file when the variable is empty, and splits a
-# blank into no flags.
+_GOFLAGS_JOIN = " "
+# A GOFLAGS with no flag left in it, kept set: Go reads GOFLAGS from its own
+# settings file when the variable is empty, and splits a blank into no flags.
 _NO_GOFLAGS = " "
 _VERSION_PROBE_TIMEOUT = 30
 # Same mkdir-lock discipline as the C# frontend: build the binary ONCE, then
@@ -271,29 +272,45 @@ def _compile_tool(go: str, src: Path, out: Path) -> bool | None:
 
 def _host_build_env() -> dict[str, str]:
     """The environment the helper is built in: the host's GOOS and GOARCH,
-    and no -modfile.
+    and none of the indexed module's settings.
 
     A GOOS or GOARCH set for the analysis (`GOOS=windows cgr ...` on Linux)
     picks the build go/types reads, and the helper's run honours it; built
     under it, the helper was a Windows binary this host cannot run, and the
-    index fell back to tree-sitter (#3360 review). A -modfile names the
-    indexed module's file, never the helper's: the build, in the helper's
-    folder, failed to open a relative one, or took an absolute one for the
-    helper's own module (issue #3806)."""
-    env = {
-        key: value
-        for key, value in _without_modfile(os.environ).items()
-        if key not in _TARGET_ENV
+    index fell back to tree-sitter (#3360 review). A go.work and the GOFLAGS
+    flags are meant for the indexed module too, never the helper's (issue
+    #3806): in the helper's folder the build failed to open a relative
+    -modfile, took an absolute one or the user's go.work as the helper's
+    own, or found no vendor folder for -mod=vendor. Both are set even when
+    unset, so Go does not read either from its own settings file.
+    """
+    env = {key: value for key, value in os.environ.items() if key not in _TARGET_ENV}
+    return {
+        **env,
+        **_GO_ENV,
+        cs.GO_ENV_GOFLAGS: _build_goflags(env.get(cs.GO_ENV_GOFLAGS, "")),
+        cs.GO_ENV_GOWORK: cs.GO_WORK_OFF,
     }
-    return {**env, **_GO_ENV}
+
+
+def _build_goflags(goflags: str) -> str:
+    """The fields of `goflags` the helper's build keeps, -modcacherw alone,
+    each as written, or a blank when there are none."""
+    kept = [
+        field.group(0).lstrip(_GOFLAGS_BLANKS)
+        for field in _GOFLAGS_FIELD.finditer(goflags)
+        if _field_parts(field)[0] in cs.GO_FLAG_MODCACHERW
+    ]
+    return _GOFLAGS_JOIN.join(kept) or _NO_GOFLAGS
 
 
 def _go_settings(env: Mapping[str, str]) -> str:
     """A digest of the Go settings in `env`: every variable whose name
     starts with GO, sorted by name. A failed build is remembered against
-    it, so a change to one, such as a GOPROXY or GOFLAGS that caused the
-    failure, builds again (issue #3806). A digest, since the marker sits in
-    a cache every repository shares and a GOPROXY can carry a token."""
+    it, so a change to one, such as a GOPROXY or GOMODCACHE that caused
+    the failure, builds again (issue #3806). A digest, since the marker
+    sits in a cache every repository shares and a GOPROXY can carry a
+    token."""
     found = sorted(
         (name, value)
         for name, value in env.items()
@@ -821,6 +838,12 @@ def _mentions(path: Path, word: str) -> bool:
         return False
 
 
+def _field_parts(field: re.Match[str]) -> tuple[str, str, str]:
+    """A GOFLAGS field as its flag name, `=` and value, the last two empty
+    for a flag given no value."""
+    return "".join(field.groups("")).partition(cs.GO_FLAG_VALUE_SEPARATOR)
+
+
 class _SplitGoFlags(NamedTuple):
     """A GOFLAGS with its -modfile taken out."""
 
@@ -838,9 +861,7 @@ def _split_modfile(goflags: str) -> _SplitGoFlags:
     kept: list[str] = []
     start = 0
     for field in _GOFLAGS_FIELD.finditer(goflags):
-        name, given, value = "".join(field.groups("")).partition(
-            cs.GO_FLAG_VALUE_SEPARATOR
-        )
+        name, given, value = _field_parts(field)
         if given and name in cs.GO_FLAG_MODFILE:
             modfile = value
             kept.append(goflags[start : field.start()])
@@ -863,9 +884,9 @@ def _modfile_flag() -> str:
 
 def _without_modfile(env: Mapping[str, str]) -> dict[str, str]:
     """`env` with every -modfile taken out of its GOFLAGS, for the helper's
-    build, which has no use for it (issue #3806), and for its run.
+    run, which keeps the rest of GOFLAGS and the user's GOWORK.
 
-    The run's loads take the file as a build flag instead (issue #3805):
+    Its loads take the file as a build flag instead (issue #3805):
     go/packages asks Go its version with GO111MODULE=off, and without the
     build flags, before it loads, and Go refuses -modfile outside module
     mode, so the inherited flag failed every run. As a build flag it still

@@ -516,9 +516,9 @@ def test_changed_helper_sources_retry_a_remembered_failure(
     ("name", "failed_under", "now"),
     [
         ("GOPROXY", "off", "https://proxy.golang.org"),
-        ("GOFLAGS", "-mod=vendor", "-mod=mod"),
-        ("GOWORK", "/elsewhere/go.work", None),
+        ("GOSUMDB", "sum.example.com", None),
         ("GOMODCACHE", None, "/warm/cache"),
+        ("GOFLAGS", "-mod=vendor", "-mod=vendor -modcacherw"),
     ],
 )
 def test_a_changed_go_setting_retries_a_remembered_failure(
@@ -549,7 +549,9 @@ def test_a_changed_go_setting_retries_a_remembered_failure(
     ("name", "failed_under", "now"),
     [
         ("GOFLAGS", "-modfile=alt.mod", "-modfile=other.mod"),
-        ("GOFLAGS", "-mod=mod -modfile=alt.mod", "-mod=mod"),
+        ("GOFLAGS", "-mod=vendor", "-mod=mod"),
+        ("GOFLAGS", None, "-tags=x"),
+        ("GOWORK", "/elsewhere/go.work", None),
         ("GOOS", "linux", "windows"),
         ("CGR_UNRELATED", None, "1"),
     ],
@@ -562,8 +564,9 @@ def test_a_change_the_build_never_sees_keeps_a_remembered_failure(
     failed_under: str | None,
     now: str | None,
 ) -> None:
-    # The build drops -modfile, GOOS and GOARCH, and reads no variable
-    # outside Go's own, so a change to them alone repeats the same build.
+    # The build is handed no GOFLAGS flag but -modcacherw, GOWORK=off, the
+    # host's GOOS and GOARCH, and reads no variable outside Go's own, so a
+    # change to those alone repeats the same build.
     _set_env(monkeypatch, name, failed_under)
     fake = _FakeGo("go1.27.2", build_ok=False)
     _run(monkeypatch, go_repo, fake)

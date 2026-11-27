@@ -128,7 +128,8 @@ GO_FRONTEND_TOOLCHAIN_TOO_OLD = (
 GO_FRONTEND_BUILD_FAILED_EARLIER = (
     "Go frontend tool failed to build with {version} on an earlier sync; using "
     "tree-sitter. It is retried in {minutes} min, or sooner when Go, a GO* "
-    "environment variable or the helper changes or {marker} is deleted"
+    "environment variable the build reads or the helper changes or {marker} "
+    "is deleted"
 )
 GO_FRONTEND_PARSE_FAILED = (
     "Go frontend produced no parseable JSON; using tree-sitter.\n"
