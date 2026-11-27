@@ -174,16 +174,32 @@ class GoFrontend(StrEnum):
 GO_FRONTEND_BUILD_FAILURE_TTL_S = 60 * 60
 
 # The go/types helper's loads read a replaced module's source from the folder
-# a local `replace` names (issue #3744). `go mod edit -json` prints a go.mod
-# as Go's own parser reads it, quoted paths and `replace ( ... )` blocks
-# included, and a target that carries a version is a module path, not a
-# folder. It reads one file and fetches nothing, so it is bounded tightly.
+# a local `replace` names (issue #3744), and in a workspace also every module
+# the go.work uses and the folders its own `replace` names. `go mod edit
+# -json` and `go work edit -json` print a file as Go's own parser reads it,
+# quoted paths and `replace ( ... )` blocks included, and a target that
+# carries a version is a module path, not a folder. `go env GOWORK`, run in
+# a module's folder, names the go.work its loads use: the one GOWORK names,
+# none when GOWORK is `off`, else the first one in a folder above. Each of
+# these reads a file or two and fetches nothing, so each is bounded tightly.
 GO_MOD_EDIT_JSON_ARGS = ("mod", "edit", "-json")
-GO_MOD_EDIT_TIMEOUT_S = 30
+GO_WORK_EDIT_JSON_ARGS = ("work", "edit", "-json")
+GO_ENV_GOWORK_ARGS = ("env", "GOWORK")
+GO_QUERY_TIMEOUT_S = 30
 GO_MOD_JSON_REPLACE = "Replace"
 GO_MOD_JSON_NEW = "New"
 GO_MOD_JSON_PATH = "Path"
 GO_MOD_JSON_VERSION = "Version"
+GO_WORK_JSON_USE = "Use"
+GO_WORK_JSON_DISK_PATH = "DiskPath"
+GO_WORK_FILE = "go.work"
+GO_ENV_GOWORK = "GOWORK"
+GO_WORK_OFF = "off"
+# The GOWORK values that have Go look for a go.work in the folders above.
+GO_WORK_SEARCH = frozenset({"", "auto"})
+# Go spells its working folder as PWD does when PWD names that folder, and
+# the helper's loads set PWD, so a query run for them sets it too.
+GO_ENV_PWD = "PWD"
 # A `replace` can name any folder, `/` or a home directory included, so the
 # listing of one for the pipes, sockets and devices Go would open there stops
 # after this many entries.
