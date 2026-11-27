@@ -163,19 +163,37 @@ jobs:
     # The whole -n auto suite outgrew one job: it reached 38-43 min on Windows
     # and 39 min on macOS with coverage, so the 45 min cap cancelled
     # healthy runs at 99% and turned main red with no test failing. Raising
-    # the cap only moves the cliff as the suite grows, so each cell runs half
+    # the cap only moves the cliff as the suite grows, so each cell runs part
     # of it (`--shard`, split by file in codebase_rag/tests/suite_shards.py);
-    # the cap stays to bound a hang.
+    # the cap stays to bound a hang. Windows and macOS run it in thirds: their
+    # halves reached 40-44 min against the cap once every index ran both
+    # engines (step 10 of docs/reports/PHASE2_FRAME.md), and a cancelled half
+    # turned healthy pull requests red. Ubuntu's halves take about 20 min.
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.12", "3.13"]
-        shard: ["1/2", "2/2"]
+        shard: ["1/2", "2/2", "1/3", "2/3", "3/3"]
+        exclude:
+          - os: ubuntu-latest
+            shard: "1/3"
+          - os: ubuntu-latest
+            shard: "2/3"
+          - os: ubuntu-latest
+            shard: "3/3"
+          - os: windows-latest
+            shard: "1/2"
+          - os: windows-latest
+            shard: "2/2"
+          - os: macos-latest
+            shard: "1/2"
+          - os: macos-latest
+            shard: "2/2"
         # The engine each cell indexes on (`--engine-mode`,
         # docs/reports/PHASE1_SEAMS.md, section 2). Each entry only adds the
-        # key to the cells it matches, so the matrix keeps its 12 cells: the
+        # key to the cells it matches, so the matrix keeps its 16 cells: the
         # 3.12 cells test the Python engine on every system, Windows and
         # macOS 3.13 the Rust engine, and Ubuntu 3.13, where the extra indexes
         # cost least, compares the two. While no language runs on Rust, `rust`
