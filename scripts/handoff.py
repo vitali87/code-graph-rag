@@ -32,8 +32,12 @@ once under each, with the Go type checker on, and compares the two runs'
 file plans in order and their project indexes and graphs as multisets, as
 the `both` cells do; it fails on any difference. A selection of several
 tokens separates them with `;`. The type checker's answers change with the
-Go release, so nothing of that path is recorded: both sides run live, and a
-Go repository is compared only with `go` on PATH.
+Go release, so nothing of that path is recorded: both sides run live. A Go
+repository is compared only with `go` on PATH, and only when the type checker
+analysed every one of its modules in both runs: a Go below the floor, a
+helper that fails to build or a run that crashes falls back to tree-sitter
+on both sides alike, which would compare without it, so the comparison fails
+instead, naming the modules and the runs' warnings.
 
 `--preview LANGUAGES` runs those languages on the Rust engine wherever the
 selection asks for it, before the build lists them (`index_engine.PREVIEW`),
@@ -59,9 +63,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 from codebase_rag import constants as cs
 from codebase_rag.canonical_graph import (
@@ -137,9 +141,32 @@ NO_GO = (
     "{repo}: comparing a Go repository runs the Go type checker, and there is "
     "no `go` on PATH"
 )
+# What a run with the Go type checker on writes of it beside its hand-offs:
+# the modules it should analyse and those it did, and what the run warned.
+GO_TYPES_FILE = "gotypes.json"
+GO_TYPES_ROOT = "."
+GO_TYPES_UNWRITTEN = "{repo}: the run under {engine} wrote no {file}"
+GO_TYPES_NO_MODULE = (
+    "{repo}: no go.mod for the Go type checker to analyse in the run under "
+    "{engine}, so the comparison would run without it"
+)
+GO_TYPES_NOT_RUN = (
+    "{repo}: the Go type checker did not analyse {modules} in the run under "
+    "{engine}, which fell back to tree-sitter; the run warned:"
+)
+GO_TYPES_WARNING = "    {warning}"
 
 # One run's hand-off files, by name, as the lines `read_handoff` reads.
 type Handoffs = dict[cs.HandoffFile, list[str]]
+
+
+class GoTypesRun(TypedDict):
+    """`GO_TYPES_FILE`: each Go module root the type checker should analyse
+    and those it did, `.` for the repository's own, and the run's warnings."""
+
+    modules: list[str]
+    analysed: list[str]
+    warnings: list[str]
 
 
 class IndexOptions(NamedTuple):
@@ -234,7 +261,7 @@ def index_in_process(
     from loguru import logger
 
     from codebase_rag import engine_frame, index_engine
-    from codebase_rag.config import load_ignore_patterns
+    from codebase_rag.config import load_ignore_patterns, settings
     from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
@@ -244,6 +271,10 @@ def index_in_process(
     # says reaches the caller only when it fails.
     logger.remove()
     logger.add(sys.stderr, level=RUN_LOG_LEVEL, backtrace=False)
+    warnings: list[str] = []
+    logger.add(
+        lambda message: warnings.append(message.record["message"]), level=RUN_LOG_LEVEL
+    )
     if preview is not None:
         index_engine.PREVIEW = index_engine.parse_preview(preview)
     ignore = load_ignore_patterns(repo_path)
@@ -260,7 +291,7 @@ def index_in_process(
         ) as ingestor,
     ):
         ingestor.ensure_constraints()
-        GraphUpdater(
+        updater = GraphUpdater(
             ingestor=ingestor,
             repo_path=repo_path,
             parsers=parsers,
@@ -272,14 +303,64 @@ def index_in_process(
             skip_embeddings=True,
             state_dir=Path(tmp) / SCRATCH_STATE,
             handoff_dir=out,
-        ).run(force=True)
+        )
+        updater.run(force=True)
         if graph:
             _write_export(ingestor, repo_path, out / GRAPH_FILE)
+    if settings.GO_FRONTEND == cs.GoFrontend.GOTYPES:
+        analysed = updater.factory.definition_processor.go_analysed_roots
+        _write_go_types(updater.repo_path, analysed, warnings, out / GO_TYPES_FILE)
     engine_frame.CHECK = None
     lines = [*frame.lines, *_reading_difference(repo_path, ignore)]
     if not frame.compared:
         lines.append(FRAME_NOT_COMPARED)
     (out / FRAME_FILE).write_bytes(cs.LINE_FEED.join(lines).encode(cs.ENCODING_UTF8))
+
+
+def _write_go_types(
+    repo_path: Path, analysed: Iterable[str], warnings: list[str], path: Path
+) -> None:
+    """What the type checker did in this run: its modules are the module
+    roots it runs once each, named as it names those it analysed."""
+    from codebase_rag.parsers.go import discover_go_module_paths
+
+    modules = {
+        GO_TYPES_ROOT
+        if anchor == repo_path
+        else anchor.relative_to(repo_path).as_posix()
+        for _, _, anchor in discover_go_module_paths(repo_path)
+    }
+    record = GoTypesRun(
+        modules=sorted(modules), analysed=sorted(analysed), warnings=warnings
+    )
+    path.write_text(json.dumps(record, ensure_ascii=False), encoding=cs.ENCODING_UTF8)
+
+
+def _type_checked(repo: ReferenceRepo, engine: str, out: Path) -> None:
+    """Fail unless the run under `engine` had the type checker analyse every
+    module of `repo`."""
+    path = out / GO_TYPES_FILE
+    if not path.is_file():
+        raise SystemExit(
+            GO_TYPES_UNWRITTEN.format(
+                repo=repo["name"], engine=engine, file=GO_TYPES_FILE
+            )
+        )
+    record: GoTypesRun = json.loads(path.read_text(encoding=cs.ENCODING_UTF8))
+    if not record["modules"]:
+        raise SystemExit(GO_TYPES_NO_MODULE.format(repo=repo["name"], engine=engine))
+    if missing := [
+        name for name in record["modules"] if name not in record["analysed"]
+    ]:
+        heading = GO_TYPES_NOT_RUN.format(
+            repo=repo["name"], engine=engine, modules=", ".join(missing)
+        )
+        warned = [
+            GO_TYPES_WARNING.format(warning=line)
+            for warning in record["warnings"]
+            for line in warning.splitlines()
+        ]
+        raise SystemExit(cs.LINE_FEED.join([heading, *warned]))
 
 
 def _write_export(ingestor: MemgraphIngestor, repo_path: Path, path: Path) -> None:
@@ -534,6 +615,8 @@ def compare_repo(
         out = work / repo["name"] / RUN_DIR.format(number=number)
         options = IndexOptions(engine, preview, go_types=True, graph=True)
         index_run(repo, checkout, None, out, options)
+        if repo["language"] == cs.SupportedLanguage.GO:
+            _type_checked(repo, engine, out)
         sides.append(_side(repo, out))
     first_name, second_name = engines
     lines = [
