@@ -2,14 +2,16 @@
 
 Phase 2 of the Rust rewrite moves the indexing work that does not depend on
 a language into the extension: finding the files, hashing them, telling what
-changed, the folder structure and the File nodes. It lands in steps behind
-`ENABLED`, which stays off until the last one. Until then the indexer uses
-Python's answers only, and tests hold each part to the Python code it
-replaces.
+changed, the folder structure and the File nodes. It landed in steps behind
+`ENABLED`, which the last one turned on. Python's walk, hashes and structure
+still run beside the frame's on every index, and the frame's answers are
+used only where the two agree, until phase 5 removes Python's. Tests hold
+each part to the Python code it replaces.
 
 The extension's `Engine` (rust/cgr_graph_rs/src/engine) runs its work on a
 thread pool of its own, with the interpreter lock released, and returns
-results in the order of its inputs whatever the number of threads. Its
+results in the order of its inputs whatever the number of threads; a batch
+too small to share runs on the calling thread instead. Its
 `IgnoreRules` (src/engine/ignore.rs) are the walk's ignore rules, a port of
 `utils/path_utils.py`'s matching and of pathspec's patterns.
 
@@ -41,6 +43,13 @@ file claims each module's bare name and which keep their extension
 (`modules_for_run`), compared with the module map the definition processor
 filled, as `index.txt`'s `module` lines. Python's map is the one every run
 goes on with until phase 3, so a difference is only told or warned of.
+
+The hooks a run reaches settle together (`one_run`, around
+`GraphUpdater.run`): with no check in place, the first difference, or
+anything the frame raises, a panic in the extension included, is named in
+the run's one warning, and the run goes on with Python's answers from that
+hook on, the frame no longer asked. A user's index is never worse than
+Python's alone would make it.
 """
 
 from __future__ import annotations
@@ -49,7 +58,8 @@ import hashlib
 import json
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from functools import cache
+from contextvars import ContextVar
+from functools import cache, wraps
 from pathlib import Path, PurePath, PurePosixPath
 from typing import NamedTuple, Protocol
 
@@ -67,9 +77,11 @@ from .utils.path_utils import (
     walk_eligible_files,
 )
 
-# Whether the indexer uses the frame. Off until phase 2's last step; the
+# Whether the indexer uses the frame, on since phase 2's last step. Not a
+# setting: Python's answers stand beside the frame's, and a run falls back to
+# them on any difference, so there is nothing for a user to turn off. The
 # parity tests compare the frame with the Python engine either way.
-ENABLED: bool = False
+ENABLED: bool = True
 
 
 class WalkedFile(NamedTuple):
@@ -447,6 +459,47 @@ class PlanCheck(Protocol):
 CHECK: PlanCheck | None = None
 
 
+class _Run:
+    """One run's standing with the frame: whether it has gone back to
+    Python's answers, which it does once its one warning is logged."""
+
+    __slots__ = ("on_python",)
+
+    def __init__(self) -> None:
+        self.on_python = False
+
+
+# The run in progress in this context (`one_run`); None outside one.
+_RUN: ContextVar[_Run | None] = ContextVar(cs.FRAME_RUN_CONTEXT, default=None)
+
+
+def one_run[**P, R](method: Callable[P, R]) -> Callable[P, R]:
+    """`method` as one run of the frame: every hook it reaches shares the
+    run's one warning and its fallback to Python's answers. A hook reached
+    outside a run is a run of its own."""
+
+    @wraps(method)
+    def scoped(*args: P.args, **kwargs: P.kwargs) -> R:
+        token = _RUN.set(_Run())
+        try:
+            return method(*args, **kwargs)
+        finally:
+            _RUN.reset(token)
+
+    return scoped
+
+
+def _this_run() -> _Run:
+    current = _RUN.get()
+    return _Run() if current is None else current
+
+
+def _asked_in_production() -> bool:
+    """With no check in place, whether a run asks the frame: while it is
+    on, until the run goes back to Python's answers."""
+    return ENABLED and not _this_run().on_python
+
+
 def new_engine(threads: int = 0) -> Engine | None:
     """An engine on `threads` worker threads (0: one per core), or None when
     the extension is from before the frame."""
@@ -603,30 +656,68 @@ def plan_lines(plan: FilePlan) -> list[str]:
     return lines
 
 
+def _same_plan(python: FilePlan, frame: FilePlan) -> bool:
+    """Whether `plan_lines` spells the two plans alike, told without
+    spelling them: the same files, folders and hashes in the same order,
+    one hash to each file, and the same reports in any order."""
+    return (
+        python.files == frame.files
+        and python.dirs == frame.dirs
+        and python.hashes == frame.hashes
+        and len(python.files) == len(python.hashes)
+        and all(
+            sorted(ours) == sorted(theirs)
+            for ours, theirs in (
+                (python.symlinks, frame.symlinks),
+                (python.special, frame.special),
+                (python.undecodable, frame.undecodable),
+            )
+        )
+    )
+
+
 def plan_difference(python: FilePlan, frame: FilePlan) -> list[str]:
     """How the frame's plan differs from Python's, in order: `-` for a line
     only Python's holds, `+` for one only the frame's does."""
-    return difference_in_order(plan_lines(python), plan_lines(frame))
+    # Most runs agree, and two plans alike spell the same lines.
+    if _same_plan(python, frame):
+        return []
+    return _difference(plan_lines(python), plan_lines(frame))
 
 
-def _frame_and_difference(
-    repo_path: Path,
-    exclude: frozenset[str] | None,
-    unignore: frozenset[str] | None,
-    python: FilePlan,
-) -> tuple[FilePlan | None, list[str]] | None:
-    """The frame's plan and its difference from Python's, or None when the
-    frame has no plan to offer.
+def _frame_failed(error: BaseException) -> bool:
+    """Whether `error` is the frame failing, which a run must not end on:
+    any `Exception`, or a panic in the extension, which pyo3 raises as a
+    `BaseException` of its own so that `except Exception` misses it, under
+    a name no module exports. An interrupt, an exit or a cancelled task
+    stops the run as before."""
+    kind = type(error)
+    return isinstance(error, Exception) or (kind.__module__, kind.__qualname__) == (
+        cs.PYO3_RUNTIME_MODULE,
+        cs.PYO3_PANIC_EXCEPTION,
+    )
 
-    A pattern the frame refuses is a difference of its own, with no plan.
+
+def _compared[T](
+    ask: Callable[[], T | None], differ: Callable[[T], list[str]]
+) -> tuple[T | None, list[str]] | None:
+    """The frame's answer, from `ask`, and how it differs from Python's,
+    from `differ`; None when the frame has no answer to offer (an extension
+    from before it).
+
+    Whatever the frame raises on the way is a difference of its own, with
+    no answer: a pattern it refuses where Python's walk does not, or any
+    other failure of the frame's (`_frame_failed`).
     """
     try:
-        frame = frame_file_plan(repo_path, exclude, unignore)
-    except ValueError as error:
+        frame = ask()
+        if frame is None:
+            return None
+        return frame, differ(frame)
+    except BaseException as error:
+        if not _frame_failed(error):
+            raise
         return None, _raised(error)
-    if frame is None:
-        return None
-    return frame, plan_difference(hashed(python), frame)
 
 
 def plan_for_run(
@@ -645,9 +736,12 @@ def plan_for_run(
     Python's.
     """
     check = CHECK
-    if (not ENABLED and check is None) or (check is not None and not check.compares()):
+    if not (_asked_in_production() if check is None else check.compares()):
         return python
-    compared = _frame_and_difference(repo_path, exclude, unignore, python)
+    compared = _compared(
+        lambda: frame_file_plan(repo_path, exclude, unignore),
+        lambda frame: plan_difference(hashed(python), frame),
+    )
     if compared is None:
         return python
     frame, difference = compared
@@ -672,8 +766,9 @@ def _settled[T](
     """The answer a run uses once the frame's is compared with Python's.
 
     The frame's when it is on and the two agree; on a difference, the check
-    is told and a frame that is on is still used, or, with no check, one
-    warning names the first differing lines and the run uses Python's.
+    is told and a frame that is on is still used, or, with no check, the
+    run's one warning names the first differing lines and the run uses
+    Python's.
     """
     if _warned(repo_path, difference, report, warning):
         return python
@@ -686,29 +781,39 @@ def _warned(
     report: Callable[[Path, Sequence[str]], None] | None,
     warning: str,
 ) -> bool:
-    """Tell the check of a difference, or, with no check in place, log one
-    warning naming its first lines; whether the warning was logged."""
+    """Tell the check of a difference, or, with no check in place, log the
+    run's one warning naming its first lines, the run going back to
+    Python's answers; whether the run is on Python's."""
     if not difference:
         return False
     if report is not None:
         report(repo_path, difference)
         return False
-    logger.warning(
-        warning.format(
-            repo=repo_path,
-            first=cs.FRAME_PLAN_NAMES_SEPARATOR.join(
-                difference[: cs.FRAME_PLAN_NAMED_LINES]
-            ),
+    run = _this_run()
+    if not run.on_python:
+        run.on_python = True
+        logger.warning(
+            warning.format(
+                repo=repo_path,
+                first=cs.FRAME_PLAN_NAMES_SEPARATOR.join(
+                    difference[: cs.FRAME_PLAN_NAMED_LINES]
+                ),
+            )
         )
-    )
     return True
 
 
-def _raised(error: ValueError) -> list[str]:
-    """A frame that raised, as the one line only its side holds."""
+def _raised(error: BaseException) -> list[str]:
+    """A frame that raised, as the one line only its side holds: a pattern
+    it refused by its message, any other failure by its kind too."""
+    shown = (
+        str(error)
+        if isinstance(error, ValueError)
+        else cs.FRAME_FAILURE.format(kind=type(error).__name__, error=error)
+    )
     return [
         cs.REFERENCE_ONLY_ACTUAL.format(
-            line=cs.FRAME_PLAN_RAISED_LINE.format(error=error)
+            line=cs.FRAME_PLAN_RAISED_LINE.format(error=shown)
         )
     ]
 
@@ -717,7 +822,7 @@ def _asks_changes(check: PlanCheck | None) -> bool:
     """Whether a run's change detection is compared: with the frame on or a
     check in place, unless the check cannot compare this run."""
     if check is None:
-        return ENABLED
+        return _asked_in_production()
     return check.compares_changes()
 
 
@@ -761,18 +866,16 @@ def in_sync_for_run(inputs: StateInputs, discard_cache: bool, python: bool) -> b
     check = CHECK
     if not _asks_changes(check):
         return python
-    try:
-        frame = frame_in_sync(inputs, discard_cache)
-    except ValueError as error:
-        frame = None
-        difference = _raised(error)
-    else:
-        if frame is None:
-            return python
-        difference = _difference(
+    compared = _compared(
+        lambda: frame_in_sync(inputs, discard_cache),
+        lambda frame: _difference(
             [cs.FRAME_IN_SYNC_LINE.format(in_sync=python)],
             [cs.FRAME_IN_SYNC_LINE.format(in_sync=frame)],
-        )
+        ),
+    )
+    if compared is None:
+        return python
+    frame, difference = compared
     return _settled(
         inputs.repo_path,
         python,
@@ -784,6 +887,7 @@ def in_sync_for_run(inputs: StateInputs, discard_cache: bool, python: bool) -> b
 
 
 def baseline_for_run(
+    repo_path: Path,
     cache_path: Path,
     *,
     force: bool,
@@ -796,21 +900,47 @@ def baseline_for_run(
     """The frame's baseline for a run whose change detection is compared,
     read as `_hash_baseline` reads Python's, before the run writes its
     placeholder cache; None when the run is not compared or the extension
-    is from before it."""
-    if not _asks_changes(CHECK):
+    is from before it.
+
+    A frame that fails to read it is a difference in the run's change
+    detection, told or warned of as `changes_for_run` tells one, and the
+    run is not compared further.
+    """
+    check = CHECK
+    if not _asks_changes(check):
         return None
-    made = engine()
-    if made is None or not hasattr(made, cs.EG_RUST_CHANGE_BASELINE):
+
+    def read() -> ChangeBaseline | None:
+        made = engine()
+        if made is None or not hasattr(made, cs.EG_RUST_CHANGE_BASELINE):
+            return None
+        return made.change_baseline(
+            cache_path,
+            force,
+            single,
+            cache_dead,
+            project_mismatch,
+            parser_changed,
+            sorted(stale_keys),
+        )
+
+    compared = _compared(read, _not_compared)
+    if compared is None:
         return None
-    return made.change_baseline(
-        cache_path,
-        force,
-        single,
-        cache_dead,
-        project_mismatch,
-        parser_changed,
-        sorted(stale_keys),
+    baseline, failure = compared
+    _warned(
+        repo_path,
+        failure,
+        None if check is None else check.changes_differ,
+        ls.ENGINE_FRAME_CHANGES_DIFFER,
     )
+    return baseline
+
+
+def _not_compared(_baseline: ChangeBaseline) -> list[str]:
+    # A baseline is not compared by itself: what it leads to is, in
+    # `changes_for_run`.
+    return []
 
 
 def frame_changes(
@@ -973,18 +1103,18 @@ def changes_for_run(
     used. Otherwise the frame detects the changes too, from its baseline,
     and the two are compared and chosen as `plan_for_run` chooses a plan.
     """
-    if baseline is None:
-        return python
     check = CHECK
-    try:
-        frame = frame_changes(baseline, inputs, single, graph_paths)
-    except ValueError as error:
-        frame = None
-        difference = _raised(error)
-    else:
-        if frame is None:
-            return python
-        difference = changes_difference(python, frame)
+    # A run that went back to Python's answers after its baseline was read
+    # asks the frame no more.
+    if baseline is None or (check is None and _this_run().on_python):
+        return python
+    compared = _compared(
+        lambda: frame_changes(baseline, inputs, single, graph_paths),
+        lambda frame: changes_difference(python, frame),
+    )
+    if compared is None:
+        return python
+    frame, difference = compared
     return _settled(
         inputs.repo_path,
         python,
@@ -1034,7 +1164,7 @@ def _asks_structure(check: PlanCheck | None) -> bool:
     """Whether a run's structure is compared: with the frame on or a check
     in place, unless the check cannot compare this run."""
     if check is None:
-        return ENABLED
+        return _asked_in_production()
     return check.compares_structure()
 
 
@@ -1157,6 +1287,9 @@ def structure_lines(structure: Structure) -> list[str]:
 def structure_difference(python: Structure, frame: Structure) -> list[str]:
     """How the frame's structure differs from Python's, in order: `-` for a
     line only Python's holds, `+` for one only the frame's does."""
+    # Equal structures spell the same lines.
+    if python == frame:
+        return []
     return _difference(structure_lines(python), structure_lines(frame))
 
 
@@ -1183,6 +1316,9 @@ def file_rows_difference(
 ) -> list[str]:
     """How the frame's File rows for `paths` differ from Python's, in order:
     `-` for a line only Python's hold, `+` for one only the frame's do."""
+    # Equal rows, one to each path, spell the same lines.
+    if len(python) == len(paths) and tuple(python) == tuple(frame):
+        return []
     return _difference(file_row_lines(paths, python), file_row_lines(paths, frame))
 
 
@@ -1203,15 +1339,13 @@ def structure_for_run(
     check = CHECK
     if not _asks_structure(check):
         return python, None
-    try:
-        frame = frame_structure(repo_path, project_name, markers, exclude, unignore)
-    except ValueError as error:
-        frame = None
-        difference = _raised(error)
-    else:
-        if frame is None:
-            return python, None
-        difference = structure_difference(python, frame)
+    compared = _compared(
+        lambda: frame_structure(repo_path, project_name, markers, exclude, unignore),
+        lambda frame: structure_difference(python, frame),
+    )
+    if compared is None:
+        return python, None
+    frame, difference = compared
     used = _settled(
         repo_path,
         python,
@@ -1236,15 +1370,13 @@ def file_rows_for_run(
     check = CHECK
     if not _asks_structure(check):
         return python
-    try:
-        frame = frame_file_rows(repo_path, project_name, elements, paths)
-    except ValueError as error:
-        frame = None
-        difference = _raised(error)
-    else:
-        if frame is None:
-            return python
-        difference = file_rows_difference(paths, python, frame)
+    compared = _compared(
+        lambda: frame_file_rows(repo_path, project_name, elements, paths),
+        lambda frame: file_rows_difference(paths, python, frame),
+    )
+    if compared is None:
+        return python
+    frame, difference = compared
     return _settled(
         repo_path,
         python,
@@ -1260,7 +1392,7 @@ def modules_compared() -> bool:
     check in place, unless the check cannot compare this run."""
     check = CHECK
     if check is None:
-        return ENABLED
+        return _asked_in_production()
     return check.compares_modules()
 
 
@@ -1370,14 +1502,13 @@ def modules_for_run(
     no check, named in one warning.
     """
     check = CHECK
-    try:
-        frame = frame_module_plan(repo_path, project_name, claims, exclude, unignore)
-    except ValueError as error:
-        difference = _raised(error)
-    else:
-        if frame is None:
-            return
-        difference = modules_difference(repo_path, python, frame)
+    compared = _compared(
+        lambda: frame_module_plan(repo_path, project_name, claims, exclude, unignore),
+        lambda frame: modules_difference(repo_path, python, frame),
+    )
+    if compared is None:
+        return
+    _frame, difference = compared
     _warned(
         repo_path,
         difference,

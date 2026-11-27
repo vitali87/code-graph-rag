@@ -2,7 +2,9 @@
 
 The `--engine-mode` option (docs/reports/PHASE1_SEAMS.md, section 2):
 
-- `python`, the default: today's suite, unchanged.
+- `python`, the default: today's suite, unchanged, with the engine's frame
+  as users run it: on, beside Python's walk, warning of a difference and
+  going on with Python's answers (engine_frame.py).
 - `rust`: the session runs with `CGR_INDEX_ENGINE=rust`, in its own process
   (the setting) and in any `cgr` a test starts (the variable), so every
   language the build can index on Rust is indexed there and the rest on
@@ -25,10 +27,10 @@ deleted, the hash cache and folder times it would publish), its structure
 File rows of the files indexed) and, on a run whose module map starts
 empty, its module-name plan (which file claims each module's name) with
 Python's, whatever language is on Rust, at no second index, and a
-difference fails the test as above. `both` keeps Python's answers for the
-run; `rust` turns the frame on (`engine_frame.ENABLED`), so the run goes on
-with the frame's, but for the module names, which stay Python's until phase
-3. A test that patches the built-in names or endings the frame holds copies
+difference fails the test as above. `both` turns the frame off
+(`engine_frame.ENABLED`) and keeps Python's answers for the run; `rust`
+leaves it on, so the run goes on with the frame's, but for the module
+names, which stay Python's until phase 3. A test that patches the built-in names or endings the frame holds copies
 of, or what Python's walk decides with or reads files by, is not compared;
 nor is a run's change detection while a test patches what Python's decides
 with, reads the state files by, or its clock, nor its structure while a
@@ -379,8 +381,8 @@ class EngineSession:
         from codebase_rag import engine_frame
 
         self._patch.setattr(engine_frame, "CHECK", FramePlanCheck(self._file_report))
-        if mode is EngineMode.RUST:
-            self._patch.setattr(engine_frame, "ENABLED", True)
+        # On in production; `both` keeps Python's answers for the run.
+        self._patch.setattr(engine_frame, "ENABLED", mode is EngineMode.RUST)
         if mode is EngineMode.BOTH:
             self._compare_after_every_run()
 

@@ -321,6 +321,9 @@ change. What a port must keep:
 - **Threads:** `rayon` on a pool of the engine's own, sized by an internal
   parameter that defaults to the available cores. Tests run with 1, 2 and
   every core and require identical output.
+- **Small batches** (fewer than 16 folders or files) run on the calling
+  thread: waking the pool costs more than they do, and its threads spin
+  on cores other work needs. Tests hold their output to the pool's.
 - **Parsers:** one per language per worker (`map_init`), from phase 3 on.
 - **The interpreter lock** is released for the whole engine call.
 - **Order:** results are collected by position and replayed in walk order,

@@ -1101,8 +1101,19 @@ def test_python_mode_leaves_the_frame_alone(
 
     result = _run(pytester, "-s", "--engine-mode", "python")
 
+    # As users run it: on, with no check, so each run of the planted frame,
+    # the patched walk's too, warns once and goes on with Python's plan
+    # instead of failing.
     result.assert_outcomes(passed=4)
-    assert _printed(result, "test_probe") == ["ENABLED=False CHECK=NoneType"]
+    assert _printed(result, "test_probe") == ["ENABLED=True CHECK=NoneType"]
+    warned = [
+        line
+        for line in [*result.outlines, *result.errlines]
+        if "The Rust engine's file plan" in line
+    ]
+    assert len(warned) == 2
+    assert any("test_planted0" in line for line in warned)
+    assert any("test_patched_walk0" in line for line in warned)
 
 
 def test_the_pass_failure_gate_leaves_scratch_runs_to_the_comparison(

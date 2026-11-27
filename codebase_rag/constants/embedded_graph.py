@@ -501,6 +501,14 @@ FRAME_PLAN_FILE_LINE = "file\t{rel_path}\t{md5}\t{dirpath}\t{name}"
 FRAME_PLAN_DIR_LINE = "dir\t{key}\t{dirpath}"
 FRAME_PLAN_REPORT_LINE = "{kind}\t{rel_path}"
 FRAME_PLAN_RAISED_LINE = "raised\t{error}"
+# What the frame raised, when it is not a pattern refused: its kind and its
+# message. A Rust panic is pyo3's `PanicException`, which no module exports,
+# so it is known by its module and name.
+FRAME_FAILURE = "{kind}: {error}"
+PYO3_RUNTIME_MODULE = "pyo3_runtime"
+PYO3_PANIC_EXCEPTION = "PanicException"
+# The context variable that holds the run in progress (engine_frame.py).
+FRAME_RUN_CONTEXT = "cgr_engine_frame_run"
 # How many differing lines the warning names.
 FRAME_PLAN_NAMED_LINES = 2
 FRAME_PLAN_NAMES_SEPARATOR = ", "
