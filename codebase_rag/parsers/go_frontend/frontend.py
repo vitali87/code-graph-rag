@@ -13,6 +13,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -27,7 +28,11 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
-from ...utils.path_utils import is_special_file_entry, is_symlink_entry
+from ...utils.path_utils import (
+    is_regular_file,
+    is_special_file_entry,
+    is_symlink_entry,
+)
 from ..build_lock import artifact_fresh, build_cached_artifact, newest_source_mtime
 from ..frontend_mode import resolve_frontend_mode
 from ..go.module_paths import discover_go_module_paths
@@ -597,25 +602,266 @@ def _special_files(repo_path: Path) -> list[str]:
     or a folder costs a `stat`. The paths are absolute, as Go reads an
     overlay's relative ones from the folder each load runs in.
     """
+    found, _complete = _special_entries(os.path.abspath(repo_path))
+    return sorted(found)
+
+
+def _special_entries(root: str, limit: int | None = None) -> tuple[list[str], bool]:
+    """The pipes, sockets and devices under `root`, and links to one, each
+    spelled from `root`, and whether the listing ended before `limit`
+    entries. Links are never followed, so no listing loops; a folder that
+    cannot be listed is passed over."""
     found: list[str] = []
-    pending = [os.path.abspath(repo_path)]
+    seen = 0
+    pending = [root]
     while pending:
         try:
             with os.scandir(pending.pop()) as entries:
                 for entry in entries:
+                    seen += 1
+                    if limit is not None and seen > limit:
+                        return found, False
                     if entry.is_dir(follow_symlinks=False):
                         pending.append(entry.path)
-                    elif not entry.is_file(follow_symlinks=False) and (
-                        is_special_file_entry(entry.path)
-                        or (
-                            is_symlink_entry(entry.path)
-                            and is_special_file_entry(os.path.realpath(entry.path))
-                        )
-                    ):
+                    elif _is_special(entry):
                         found.append(entry.path)
         except OSError:
             continue
-    return sorted(found)
+    return found, True
+
+
+def _is_special(entry: os.DirEntry[str]) -> bool:
+    """Whether a listed entry that is no folder is a pipe, socket or device,
+    or a link to one. One the listing shows to be a regular file costs no
+    `stat`."""
+    if entry.is_file(follow_symlinks=False):
+        return False
+    path = entry.path
+    return is_special_file_entry(path) or (
+        is_symlink_entry(path) and is_special_file_entry(os.path.realpath(path))
+    )
+
+
+# One entry of what `go mod edit -json` or `go work edit -json` prints: a
+# `Use` entry's fields, or a `Replace` entry's `Old` and `New` modules.
+_EditEntry = dict[str, str | dict[str, str]]
+_EditView = dict[str, list[_EditEntry]]
+
+
+def _go_output(go: str, args: list[str], folder: str | None = None) -> str | None:
+    """What `go` prints for `args`, run in `folder` when one is given, or
+    None after a debug line when it fails."""
+    command = [go, *args]
+    env = {**os.environ, **_GO_ENV}
+    if folder is not None:
+        env[cs.GO_ENV_PWD] = folder
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=folder,
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            errors="replace",
+            check=False,
+            timeout=cs.GO_QUERY_TIMEOUT_S,
+            env=env,
+        )
+    except (subprocess.SubprocessError, OSError) as error:
+        logger.debug(
+            ls.GO_FRONTEND_QUERY_FAILED.format(command=shlex.join(command), error=error)
+        )
+        return None
+    if proc.returncode != 0:
+        logger.debug(
+            ls.GO_FRONTEND_QUERY_FAILED.format(
+                command=shlex.join(command), error=proc.stderr.strip()
+            )
+        )
+        return None
+    return proc.stdout
+
+
+def _edit_view(go: str, args: tuple[str, ...], file: Path) -> _EditView:
+    """`file` as `go mod edit -json` or `go work edit -json` prints it, or
+    empty when it cannot be read."""
+    if not is_regular_file(file):
+        return {}
+    output = _go_output(go, [*args, str(file)])
+    try:
+        view = json.loads(output) if output is not None else {}
+    except ValueError:
+        return {}
+    return view if isinstance(view, dict) else {}
+
+
+def _entries(view: _EditView, key: str) -> list[_EditEntry]:
+    found = view.get(key)
+    if not isinstance(found, list):
+        return []
+    return [entry for entry in found if isinstance(entry, dict)]
+
+
+def _local_replace_paths(view: _EditView) -> list[str]:
+    """The folder each `replace` in `view` names. A target that carries a
+    version is a module Go fetches, not a folder."""
+    paths: list[str] = []
+    for entry in _entries(view, cs.GO_MOD_JSON_REPLACE):
+        new = entry.get(cs.GO_MOD_JSON_NEW)
+        if isinstance(new, dict) and not new.get(cs.GO_MOD_JSON_VERSION):
+            paths.append(new.get(cs.GO_MOD_JSON_PATH, ""))
+    return [path for path in paths if isinstance(path, str) and path]
+
+
+def _use_paths(view: _EditView) -> list[str]:
+    paths = [
+        entry.get(cs.GO_WORK_JSON_DISK_PATH)
+        for entry in _entries(view, cs.GO_WORK_JSON_USE)
+    ]
+    return [path for path in paths if isinstance(path, str) and path]
+
+
+def _joined(folder: str, paths: list[str]) -> list[str]:
+    """`paths` resolved against `folder` as Go resolves them: joined and
+    cleaned by their spelling, not through the links on the way."""
+    return [os.path.normpath(os.path.join(folder, path)) for path in paths]
+
+
+def _mentions(path: Path, word: str) -> bool:
+    try:
+        return is_regular_file(path) and word in path.read_text(
+            encoding=cs.ENCODING_UTF8
+        )
+    except (OSError, ValueError):
+        return False
+
+
+def _local_replace_targets(go: str, module: str) -> list[str]:
+    """The folder each local `replace` in the go.mod of `module` names,
+    joined to `module`.
+
+    Read by `go mod edit -json`, Go's own parser, so a quoted path or a
+    `replace ( ... )` block reads as the loads read it. A go.mod that does
+    not mention `replace` costs no `go` run.
+    """
+    gomod = Path(module) / cs.DEP_FILE_GOMOD
+    if not _mentions(gomod, cs.GO_KEYWORD_REPLACE):
+        return []
+    view = _edit_view(go, cs.GO_MOD_EDIT_JSON_ARGS, gomod)
+    return _joined(module, _local_replace_paths(view))
+
+
+def _workfile_above(folder: str) -> bool:
+    """Whether `folder` or one above it holds an entry named go.work."""
+    while not os.path.lexists(os.path.join(folder, cs.GO_WORK_FILE)):
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            return False
+        folder = parent
+    return True
+
+
+def _active_workfile(go: str, module: str) -> str | None:
+    """The go.work the helper's loads in `module` use, or None.
+
+    `go env GOWORK`, run there with the helper's environment, answers as
+    the loads choose. It is not run when GOWORK is `off`, nor when GOWORK
+    is unset and no folder above holds a go.work, the usual case, where Go
+    finds none either; a GOWORK kept in Go's own settings file by `go env
+    -w` is then not looked for.
+    """
+    chosen = os.environ.get(cs.GO_ENV_GOWORK, "")
+    if chosen == cs.GO_WORK_OFF:
+        return None
+    if chosen in cs.GO_WORK_SEARCH and not _workfile_above(module):
+        return None
+    output = _go_output(go, list(cs.GO_ENV_GOWORK_ARGS), module) or ""
+    workfile = output.strip()
+    return workfile if workfile and workfile != cs.GO_WORK_OFF else None
+
+
+def _workspace_folders(go: str, workfile: str) -> tuple[list[str], list[str]]:
+    """The modules a go.work uses and the folders its own `replace` names,
+    each joined to the go.work's folder."""
+    view = _edit_view(go, cs.GO_WORK_EDIT_JSON_ARGS, Path(workfile))
+    base = os.path.dirname(workfile)
+    return _joined(base, _use_paths(view)), _joined(base, _local_replace_paths(view))
+
+
+def _loaded_folders(go: str, anchors: list[Path]) -> list[str]:
+    """Each folder a local `replace` or the active workspace has the
+    helper's loads read, spelled as Go spells it.
+
+    Go applies the `replace` of each main module: the anchor's go.mod, and
+    in a workspace the go.mod of each module it uses and the go.work's own.
+    It loads the workspace's modules too, wherever they are. A go.work can
+    sit above the repository or be named by GOWORK, so each anchor's is
+    asked for (PR #3777 review); each is read once.
+    """
+    modules = [os.path.abspath(anchor) for anchor in anchors]
+    workfiles = {
+        workfile: None
+        for module in modules
+        if (workfile := _active_workfile(go, module)) is not None
+    }
+    folders: list[str] = []
+    for workfile in workfiles:
+        used, replaced = _workspace_folders(go, workfile)
+        modules.extend(used)
+        folders.extend(used + replaced)
+    for module in dict.fromkeys(modules):
+        folders.extend(_local_replace_targets(go, module))
+    return folders
+
+
+def _listed_with_repository(repo: str, target: str) -> bool:
+    """Whether the repository's own listing already spells each entry of
+    `target` as Go opens it: true of a folder inside it that no link leads
+    to on the way down."""
+    try:
+        if os.path.commonpath([repo, target]) != repo:
+            return False
+    except ValueError:
+        # Paths on different drives share no folder.
+        return False
+    current = repo
+    for part in Path(os.path.relpath(target, repo)).parts:
+        current = os.path.join(current, part)
+        if is_symlink_entry(current):
+            return False
+    return True
+
+
+def _bounded_special_entries(folder: str) -> list[str]:
+    entries, complete = _special_entries(folder, cs.GO_REPLACE_TARGET_MAX_ENTRIES)
+    if not complete:
+        logger.warning(
+            ls.GO_FRONTEND_REPLACE_LISTING_CUT.format(
+                target=folder, limit=cs.GO_REPLACE_TARGET_MAX_ENTRIES
+            )
+        )
+    return entries
+
+
+def _reached_special_files(go: str, repo_path: Path, anchors: list[Path]) -> list[str]:
+    """The pipes, sockets and devices Go opens under a spelling the
+    repository's own listing never gives (issue #3744).
+
+    A load reads a replaced or used module from the folder named for it,
+    joined as `_loaded_folders` joins it, and an overlay matches paths by
+    spelling. A folder outside the repository is never listed, and one a
+    link leads to is listed by its real path, if at all. Each such folder is
+    listed from the spelling Go joins, so every entry found is spelled as
+    Go opens it. Such a folder can be anywhere, `/` included, so its
+    listing is bounded; links below it are not followed, as in the
+    repository's.
+    """
+    repo = os.path.abspath(repo_path)
+    found: list[str] = []
+    for folder in dict.fromkeys(_loaded_folders(go, anchors)):
+        if not _listed_with_repository(repo, folder):
+            found.extend(_bounded_special_entries(folder))
+    return found
 
 
 @contextmanager
@@ -699,7 +945,11 @@ def run_go_frontend(
     checked: set[str] = set()
     compared: set[tuple[str, int, int]] = set()
     in_repo_modules = _in_repo_modules(repo_path)
-    with _overlay_without(_special_files(repo_path)) as overlay:
+    special = {
+        *_special_files(repo_path),
+        *_reached_special_files(go, repo_path, anchors),
+    }
+    with _overlay_without(sorted(special)) as overlay:
         for anchor in anchors:
             prefix = (
                 "" if anchor == repo_path else anchor.relative_to(repo_path).as_posix()
