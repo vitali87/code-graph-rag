@@ -71,9 +71,10 @@ scope the assistant to; without `--update-graph`, `--projects` can still name
 the projects to chat about.
 
 A workspace is saved as `~/.cgr/workspaces/<name>.toml`, so its name is an
-identifier, not a path: it starts with a letter or digit and uses only
-letters, digits, `.`, `_` and `-`. Any other name (empty, `a/b`, `../x`) is
-refused with exit 1 before a file is touched.
+identifier, not a path: it starts with a letter or digit, uses only
+letters, digits, `.`, `_` and `-`, and is at most 250 characters long. Any other
+name (empty, `a/b`, `../x`, or over 250 characters) is refused with exit 1 before
+a file is touched.
 
 ## Semantic search within one project
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from .constants import WORKSPACE_NAME_PATTERN
+from .constants import WORKSPACE_NAME_MAX_LENGTH, WORKSPACE_NAME_PATTERN
 
 
 class WorkspaceRepo(BaseModel):
@@ -20,8 +20,10 @@ class WorkspaceRepo(BaseModel):
 
 class WorkspaceConfig(BaseModel):
     # save_workspace writes to the path this name selects, so a hand-edited
-    # file must not smuggle a traversing name back in on the next save.
-    name: str = Field(pattern=WORKSPACE_NAME_PATTERN)
+    # file must not smuggle a traversing or over-long name back in on the next save.
+    name: str = Field(
+        pattern=WORKSPACE_NAME_PATTERN, max_length=WORKSPACE_NAME_MAX_LENGTH
+    )
     description: str = ""
     repos: list[WorkspaceRepo] = Field(default_factory=list)
 

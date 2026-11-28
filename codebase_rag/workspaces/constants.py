@@ -1,5 +1,9 @@
 WORKSPACES_SUBDIR = "workspaces"
 WORKSPACE_EXTENSION = ".toml"
+# `<name>.toml` must fit within the 255-byte filesystem component limit,
+# leaving 5 bytes for WORKSPACE_EXTENSION (issue #3686). Every character
+# WORKSPACE_NAME_PATTERN allows is 1-byte ASCII, so character count equals bytes.
+WORKSPACE_NAME_MAX_LENGTH = 250
 # A workspace name becomes a file name under the workspaces directory, so it
 # must not carry a path separator or a leading dot: either would let `..`,
 # `a/b` or an empty name point the file outside that directory (issue #2663).
@@ -8,6 +12,9 @@ WORKSPACE_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
 ERR_WORKSPACE_INVALID_NAME = (
     "Invalid workspace name '{name}': use letters, digits, '.', '_' and '-', "
     "starting with a letter or digit."
+)
+ERR_WORKSPACE_NAME_TOO_LONG = (
+    "Invalid workspace name: too long ({length} characters, maximum is {max_length})."
 )
 ERR_WORKSPACE_NOT_FOUND = "Workspace '{name}' not found at {path}."
 ERR_WORKSPACE_ALREADY_EXISTS = "Workspace '{name}' already exists at {path}."
