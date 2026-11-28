@@ -70,7 +70,7 @@ from . import logs as ls
 from .canonical_graph import difference_in_order
 from .embedded_graph.extension import rust_extension
 from .language_spec import LANGUAGE_SPECS, get_language_for_extension
-from .types_defs import NodeIdentifier
+from .types_defs import DescribedNode, NodeIdentifier
 from .utils.path_utils import (
     cached_relative_path,
     readable_name,
@@ -283,6 +283,9 @@ type RawStructure = tuple[list[tuple[str, str | None]], list[RawRow]]
 # A module the frame's plan holds: its qualified name, then the path from the
 # root and the language of the file that claimed it.
 type PlannedModule = tuple[str, str, str]
+# A Go build constraint as the Go engine hands it back: `builds.Expr`'s
+# fields in order, `(op, name, parts, size, depth)`, each part the same.
+type RawGoConstraint = tuple[str, str, tuple[RawGoConstraint, ...], int, int]
 
 
 class Engine(Protocol):
@@ -394,6 +397,23 @@ class Engine(Protocol):
         keys: Sequence[str],
         case_table: Sequence[tuple[str, str]] | None = None,
     ) -> list[str]: ...
+
+    # The Go engine's skeleton (docs/reports/PHASE3_GO.md, section 10, step
+    # 3), which nothing a user runs calls yet: each file parsed and
+    # described, `GoBuilds(root).constraint`, whether each group of files
+    # builds together (True), apart (False) or neither (None), and
+    # `read_package_clause`, each in its input's order.
+    def go_parse(self, paths: Sequence[Path]) -> list[list[DescribedNode] | None]: ...
+
+    def go_build_constraints(
+        self, root: Path, rel_paths: Sequence[str]
+    ) -> list[RawGoConstraint]: ...
+
+    def go_build_decisions(
+        self, root: Path, groups: Sequence[Sequence[str]]
+    ) -> list[bool | None]: ...
+
+    def go_package_clauses(self, paths: Sequence[Path]) -> list[str | None]: ...
 
 
 class IgnoreRules(Protocol):

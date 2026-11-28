@@ -1,0 +1,90 @@
+$ cgr -q graph overrides afero.afero.Fs.Open --project afero
+status: 0
+--- stdout
+[
+  {
+    "label": "Method",
+    "path": "basepath.go",
+    "qualified_name": "afero.basepath.BasePathFs.Open",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "cacheOnReadFs.go",
+    "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs.Open",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "copyOnWriteFs.go",
+    "qualified_name": "afero.copyOnWriteFs.CopyOnWriteFs.Open",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "gcsfs/fs.go",
+    "qualified_name": "afero.gcsfs.fs.Fs.Open",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "gcsfs/gcs.go",
+    "qualified_name": "afero.gcsfs.gcs.GcsFs.Open",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "httpFs.go",
+    "qualified_name": "afero.httpFs.HttpFs.Open",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "iofs.go",
+    "qualified_name": "afero.iofs.FromIOFS.Open",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "memmap.go",
+    "qualified_name": "afero.memmap.MemMapFs.Open",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "os.go",
+    "qualified_name": "afero.os.OsFs.Open",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "readonlyfs.go",
+    "qualified_name": "afero.readonlyfs.ReadOnlyFs.Open",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "regexpfs.go",
+    "qualified_name": "afero.regexpfs.RegexpFs.Open",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "sftpfs/sftp.go",
+    "qualified_name": "afero.sftpfs.sftp.Fs.Open",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "tarfs/fs.go",
+    "qualified_name": "afero.tarfs.fs.Fs.Open",
+    "relationship": "OVERRIDES"
+  },
+  {
+    "label": "Method",
+    "path": "zipfs/fs.go",
+    "qualified_name": "afero.zipfs.fs.Fs.Open",
+    "relationship": "OVERRIDES"
+  }
+]
+--- stderr

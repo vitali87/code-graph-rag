@@ -7,6 +7,11 @@
 //! `(label, [(key, value), ...], start, rel_type, end)`: the node's label
 //! and its properties in order, then the edge from what contains it, each
 //! end a `(label, key, value)` node identifier.
+//!
+//! The Go engine's methods (`go_*`, `engine::go`) are its skeleton, which
+//! nothing a user runs calls yet. A Go build constraint crosses as
+//! `builds.Expr`'s fields in order, `(op, name, parts, size, depth)`, each
+//! of `parts` the same.
 
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashSet};
@@ -18,11 +23,14 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyString, PyTuple};
 
 use super::discover;
+use super::go::builds::Expr;
+use super::go::syntax;
 use super::ignore::{self, PatternError};
 use super::merge::{self, FileSummary, NamingInputs};
 use super::rows::{self, ContainedRow, NodeId};
 use super::state::{self, json, Entries};
 use super::structure;
+use crate::trees::{describe, Described};
 
 #[pyclass(frozen, name = "Engine", module = "cgr_graph_rs")]
 pub struct PyEngine {
@@ -590,6 +598,74 @@ impl PyEngine {
             .collect()
     }
 
+    /// The Go grammar's node kinds, tokens and field names the Go engine
+    /// reads (`engine::go::syntax`), each checked against the grammar.
+    #[classattr]
+    #[pyo3(name = "GO_NODE_KINDS")]
+    fn go_node_kinds() -> Vec<&'static str> {
+        syntax::NODE_KINDS.to_vec()
+    }
+
+    #[classattr]
+    #[pyo3(name = "GO_TOKENS")]
+    fn go_tokens() -> Vec<&'static str> {
+        syntax::TOKENS.to_vec()
+    }
+
+    #[classattr]
+    #[pyo3(name = "GO_FIELDS")]
+    fn go_fields() -> Vec<&'static str> {
+        syntax::FIELDS.to_vec()
+    }
+
+    /// Each Go file of `paths` read and parsed on the pool, one parser per
+    /// worker, with the Go grammar compiled in: its tree as
+    /// `Grammar.describe` reports one, or None for a file that cannot be
+    /// read. The interpreter lock is released meanwhile.
+    fn go_parse(&self, py: Python<'_>, paths: Vec<PathBuf>) -> Vec<Option<Vec<Described>>> {
+        py.detach(|| {
+            self.engine.go_parse_map(&paths, |file| {
+                file.map(|file| describe(file.tree.root_node()))
+            })
+        })
+    }
+
+    /// `GoBuilds(root).constraint(rel_path)` for each of `rel_paths`, in
+    /// order (see the module's doc for its form). The interpreter lock is
+    /// released while the files are read.
+    fn go_build_constraints<'py>(
+        &self,
+        py: Python<'py>,
+        root: PathBuf,
+        rel_paths: Vec<String>,
+    ) -> PyResult<Vec<Bound<'py, PyTuple>>> {
+        let found = py.detach(|| self.engine.go_build_constraints(&root, &rel_paths));
+        found
+            .iter()
+            .map(|constraint| constraint_tuple(py, constraint))
+            .collect()
+    }
+
+    /// For each group of paths from `root`, whether one build compiles every
+    /// file in it: True where `GoBuilds(root).together(group)`, False where
+    /// `apart(group)`, None where neither, in order. What
+    /// `editing/rename.py` asks of two declarations of one name. The
+    /// interpreter lock is released meanwhile.
+    fn go_build_decisions(
+        &self,
+        py: Python<'_>,
+        root: PathBuf,
+        groups: Vec<Vec<String>>,
+    ) -> Vec<Option<bool>> {
+        py.detach(|| self.engine.go_build_decisions(&root, &groups))
+    }
+
+    /// `read_package_clause(path)` for each Go file of `paths`, in order.
+    /// The interpreter lock is released while the files are read.
+    fn go_package_clauses(&self, py: Python<'_>, paths: Vec<PathBuf>) -> Vec<Option<String>> {
+        py.detach(|| self.engine.go_package_clauses(&paths))
+    }
+
     /// `load_ignore_patterns(root)` as the frame reads the two ignore files
     /// and runs the tracked-source rescue: `(exclude, unignore,
     /// refused_lines, unreadable, tracked_dirs)`, the sets sorted,
@@ -611,6 +687,25 @@ impl PyEngine {
         )
             .into_pyobject(py)
     }
+}
+
+/// A Go build constraint as it crosses to Python (see the module's doc).
+/// Its nesting is capped (`builds::MAX_EXPR_DEPTH`), which bounds the
+/// recursion.
+fn constraint_tuple<'py>(py: Python<'py>, constraint: &Expr) -> PyResult<Bound<'py, PyTuple>> {
+    let parts = constraint
+        .parts()
+        .iter()
+        .map(|part| constraint_tuple(py, part))
+        .collect::<PyResult<Vec<_>>>()?;
+    (
+        constraint.op().name(),
+        constraint.name(),
+        PyTuple::new(py, parts)?,
+        constraint.size(),
+        constraint.depth(),
+    )
+        .into_pyobject(py)
 }
 
 /// A row as it crosses to Python (see the module's doc).

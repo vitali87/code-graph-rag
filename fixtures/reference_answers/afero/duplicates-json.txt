@@ -1,0 +1,1112 @@
+$ cgr -q duplicates --project afero --format json
+status: 0
+--- stdout
+{
+  "groups": [
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 15,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.gcsfs.gcs.GcsFs.OpenFile",
+          "name": "OpenFile",
+          "path": "gcsfs/gcs.go",
+          "start_line": 104,
+          "end_line": 106
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.gcsfs.gcs.GcsFs.Chtimes",
+          "name": "Chtimes",
+          "path": "gcsfs/gcs.go",
+          "start_line": 128,
+          "end_line": 130
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.gcsfs.gcs.GcsFs.Chown",
+          "name": "Chown",
+          "path": "gcsfs/gcs.go",
+          "start_line": 132,
+          "end_line": 134
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.httpFs.HttpFs.Chown",
+          "name": "Chown",
+          "path": "httpFs.go",
+          "start_line": 70,
+          "end_line": 72
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.httpFs.HttpFs.Chtimes",
+          "name": "Chtimes",
+          "path": "httpFs.go",
+          "start_line": 74,
+          "end_line": 76
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.httpFs.HttpFs.OpenFile",
+          "name": "OpenFile",
+          "path": "httpFs.go",
+          "start_line": 96,
+          "end_line": 98
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.sftpfs.sftp.Fs.Chown",
+          "name": "Chown",
+          "path": "sftpfs/sftp.go",
+          "start_line": 135,
+          "end_line": 137
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.sftpfs.sftp.Fs.Chtimes",
+          "name": "Chtimes",
+          "path": "sftpfs/sftp.go",
+          "start_line": 139,
+          "end_line": 141
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 22,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "afero.mem.file.ChangeFileName",
+          "name": "ChangeFileName",
+          "path": "mem/file.go",
+          "start_line": 82,
+          "end_line": 86
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.mem.file.SetMode",
+          "name": "SetMode",
+          "path": "mem/file.go",
+          "start_line": 88,
+          "end_line": 92
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.mem.file.SetUID",
+          "name": "SetUID",
+          "path": "mem/file.go",
+          "start_line": 104,
+          "end_line": 108
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.mem.file.SetGID",
+          "name": "SetGID",
+          "path": "mem/file.go",
+          "start_line": 110,
+          "end_line": 114
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 21,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.mem.file.FileData.Name",
+          "name": "Name",
+          "path": "mem/file.go",
+          "start_line": 68,
+          "end_line": 72
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.mem.file.FileInfo.Mode",
+          "name": "Mode",
+          "path": "mem/file.go",
+          "start_line": 339,
+          "end_line": 343
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.mem.file.FileInfo.ModTime",
+          "name": "ModTime",
+          "path": "mem/file.go",
+          "start_line": 345,
+          "end_line": 349
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.mem.file.FileInfo.IsDir",
+          "name": "IsDir",
+          "path": "mem/file.go",
+          "start_line": 351,
+          "end_line": 355
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 40,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.basepath.BasePathFs.Chmod",
+          "name": "Chmod",
+          "path": "basepath.go",
+          "start_line": 90,
+          "end_line": 95
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.basepath.BasePathFs.Mkdir",
+          "name": "Mkdir",
+          "path": "basepath.go",
+          "start_line": 161,
+          "end_line": 166
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.basepath.BasePathFs.MkdirAll",
+          "name": "MkdirAll",
+          "path": "basepath.go",
+          "start_line": 168,
+          "end_line": 173
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 18,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "afero.gcsfs.gcs_test.TestGcsMkdir",
+          "name": "TestGcsMkdir",
+          "path": "gcsfs/gcs_test.go",
+          "start_line": 726,
+          "end_line": 764
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.gcsfs.gcs_test.TestGcsMkdirAll",
+          "name": "TestGcsMkdirAll",
+          "path": "gcsfs/gcs_test.go",
+          "start_line": 766,
+          "end_line": 831
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.gcsfs.gcs_test.TestGcsRemoveAll",
+          "name": "TestGcsRemoveAll",
+          "path": "gcsfs/gcs_test.go",
+          "start_line": 833,
+          "end_line": 863
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 15,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.iofs.fromIOFSFile.Write",
+          "name": "Write",
+          "path": "iofs.go",
+          "start_line": 239,
+          "end_line": 241
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.iofs.fromIOFSFile.WriteAt",
+          "name": "WriteAt",
+          "path": "iofs.go",
+          "start_line": 243,
+          "end_line": 245
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.iofs.fromIOFSFile.WriteString",
+          "name": "WriteString",
+          "path": "iofs.go",
+          "start_line": 296,
+          "end_line": 298
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 123,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs.Chtimes",
+          "name": "Chtimes",
+          "path": "cacheOnReadFs.go",
+          "start_line": 82,
+          "end_line": 101
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs.Chown",
+          "name": "Chown",
+          "path": "cacheOnReadFs.go",
+          "start_line": 124,
+          "end_line": 143
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 120,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs.Chmod",
+          "name": "Chmod",
+          "path": "cacheOnReadFs.go",
+          "start_line": 103,
+          "end_line": 122
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs.Rename",
+          "name": "Rename",
+          "path": "cacheOnReadFs.go",
+          "start_line": 158,
+          "end_line": 177
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 87,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.unionFile.UnionFile.Write",
+          "name": "Write",
+          "path": "unionFile.go",
+          "start_line": 92,
+          "end_line": 105
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.unionFile.UnionFile.WriteString",
+          "name": "WriteString",
+          "path": "unionFile.go",
+          "start_line": 257,
+          "end_line": 269
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 81,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.memmap.MemMapFs.setFileMode",
+          "name": "setFileMode",
+          "path": "memmap.go",
+          "start_line": 408,
+          "end_line": 423
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.memmap.MemMapFs.Chtimes",
+          "name": "Chtimes",
+          "path": "memmap.go",
+          "start_line": 441,
+          "end_line": 456
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 77,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "afero.tarfs.fs.splitpath",
+          "name": "splitpath",
+          "path": "tarfs/fs.go",
+          "start_line": 20,
+          "end_line": 29
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.zipfs.fs.splitpath",
+          "name": "splitpath",
+          "path": "zipfs/fs.go",
+          "start_line": 18,
+          "end_line": 27
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 77,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs.Remove",
+          "name": "Remove",
+          "path": "cacheOnReadFs.go",
+          "start_line": 179,
+          "end_line": 193
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs.RemoveAll",
+          "name": "RemoveAll",
+          "path": "cacheOnReadFs.go",
+          "start_line": 195,
+          "end_line": 209
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 67,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.copyOnWriteFs.CopyOnWriteFs.Chtimes",
+          "name": "Chtimes",
+          "path": "copyOnWriteFs.go",
+          "start_line": 53,
+          "end_line": 64
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.copyOnWriteFs.CopyOnWriteFs.Chown",
+          "name": "Chown",
+          "path": "copyOnWriteFs.go",
+          "start_line": 79,
+          "end_line": 90
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 66,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.copyOnWriteFs.CopyOnWriteFs.Remove",
+          "name": "Remove",
+          "path": "copyOnWriteFs.go",
+          "start_line": 179,
+          "end_line": 191
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.copyOnWriteFs.CopyOnWriteFs.RemoveAll",
+          "name": "RemoveAll",
+          "path": "copyOnWriteFs.go",
+          "start_line": 193,
+          "end_line": 205
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 63,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.basepath.BasePathFs.Open",
+          "name": "Open",
+          "path": "basepath.go",
+          "start_line": 150,
+          "end_line": 159
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.basepath.BasePathFs.Create",
+          "name": "Create",
+          "path": "basepath.go",
+          "start_line": 175,
+          "end_line": 184
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 63,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.tarfs.file.File.Readdirnames",
+          "name": "Readdirnames",
+          "path": "tarfs/file.go",
+          "start_line": 124,
+          "end_line": 136
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.unionFile.UnionFile.Readdirnames",
+          "name": "Readdirnames",
+          "path": "unionFile.go",
+          "start_line": 207,
+          "end_line": 217
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 49,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.tarfs.file.File.ReadAt",
+          "name": "ReadAt",
+          "path": "tarfs/file.go",
+          "start_line": 46,
+          "end_line": 56
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.tarfs.file.File.Seek",
+          "name": "Seek",
+          "path": "tarfs/file.go",
+          "start_line": 58,
+          "end_line": 68
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 45,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.iofs.fromIOFSFile.ReadAt",
+          "name": "ReadAt",
+          "path": "iofs.go",
+          "start_line": 221,
+          "end_line": 228
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.iofs.fromIOFSFile.Seek",
+          "name": "Seek",
+          "path": "iofs.go",
+          "start_line": 230,
+          "end_line": 237
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 41,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.basepath.BasePathFs.Chtimes",
+          "name": "Chtimes",
+          "path": "basepath.go",
+          "start_line": 83,
+          "end_line": 88
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.basepath.BasePathFs.Chown",
+          "name": "Chown",
+          "path": "basepath.go",
+          "start_line": 97,
+          "end_line": 102
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 40,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs.Mkdir",
+          "name": "Mkdir",
+          "path": "cacheOnReadFs.go",
+          "start_line": 282,
+          "end_line": 288
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs.MkdirAll",
+          "name": "MkdirAll",
+          "path": "cacheOnReadFs.go",
+          "start_line": 294,
+          "end_line": 300
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 39,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.basepath.BasePathFs.RemoveAll",
+          "name": "RemoveAll",
+          "path": "basepath.go",
+          "start_line": 125,
+          "end_line": 130
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.basepath.BasePathFs.Remove",
+          "name": "Remove",
+          "path": "basepath.go",
+          "start_line": 132,
+          "end_line": 137
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 38,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "afero.util_test.createZeroSizedFileInTempDir",
+          "name": "createZeroSizedFileInTempDir",
+          "path": "util_test.go",
+          "start_line": 188,
+          "end_line": 197
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.util_test.createEmptyTempDir",
+          "name": "createEmptyTempDir",
+          "path": "util_test.go",
+          "start_line": 221,
+          "end_line": 229
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 38,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.regexpfs.RegexpFs.Chtimes",
+          "name": "Chtimes",
+          "path": "regexpfs.go",
+          "start_line": 48,
+          "end_line": 53
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.regexpfs.RegexpFs.Chown",
+          "name": "Chown",
+          "path": "regexpfs.go",
+          "start_line": 62,
+          "end_line": 67
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 37,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.memmap.MemMapFs.Open",
+          "name": "Open",
+          "path": "memmap.go",
+          "start_line": 204,
+          "end_line": 210
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.memmap.MemMapFs.openWrite",
+          "name": "openWrite",
+          "path": "memmap.go",
+          "start_line": 212,
+          "end_line": 218
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 37,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.regexpfs.RegexpFs.Stat",
+          "name": "Stat",
+          "path": "regexpfs.go",
+          "start_line": 73,
+          "end_line": 78
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.regexpfs.RegexpFs.Create",
+          "name": "Create",
+          "path": "regexpfs.go",
+          "start_line": 149,
+          "end_line": 154
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 36,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "afero.sftpfs.file.FileOpen",
+          "name": "FileOpen",
+          "path": "sftpfs/file.go",
+          "start_line": 27,
+          "end_line": 33
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.sftpfs.file.FileCreate",
+          "name": "FileCreate",
+          "path": "sftpfs/file.go",
+          "start_line": 35,
+          "end_line": 41
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 34,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.gcsfs.internal.stiface.adapters.objectHandle.NewReader",
+          "name": "NewReader",
+          "path": "gcsfs/internal/stiface/adapters.go",
+          "start_line": 109,
+          "end_line": 115
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.iofs.FromIOFS.Open",
+          "name": "Open",
+          "path": "iofs.go",
+          "start_line": 175,
+          "end_line": 182
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 32,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.os.OsFs.Create",
+          "name": "Create",
+          "path": "os.go",
+          "start_line": 36,
+          "end_line": 44
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.os.OsFs.Open",
+          "name": "Open",
+          "path": "os.go",
+          "start_line": 54,
+          "end_line": 62
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 25,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "afero.afero_test.setupTestDirReusePath",
+          "name": "setupTestDirReusePath",
+          "path": "afero_test.go",
+          "start_line": 439,
+          "end_line": 442
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.match_test.setupGlobDirReusePath",
+          "name": "setupGlobDirReusePath",
+          "path": "match_test.go",
+          "start_line": 40,
+          "end_line": 43
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 22,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "afero.afero_test.setupTestDirRoot",
+          "name": "setupTestDirRoot",
+          "path": "afero_test.go",
+          "start_line": 433,
+          "end_line": 437
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.match_test.setupGlobDirRoot",
+          "name": "setupGlobDirRoot",
+          "path": "match_test.go",
+          "start_line": 34,
+          "end_line": 38
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 20,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "afero.gcsfs.gcs.NewGcsFSFromClient",
+          "name": "NewGcsFSFromClient",
+          "path": "gcsfs/gcs.go",
+          "start_line": 65,
+          "end_line": 69
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.gcsfs.gcs.NewGcsFSFromClientWithSeparator",
+          "name": "NewGcsFSFromClientWithSeparator",
+          "path": "gcsfs/gcs.go",
+          "start_line": 72,
+          "end_line": 80
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 20,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.memmap.MemMapFs.LstatIfPossible",
+          "name": "LstatIfPossible",
+          "path": "memmap.go",
+          "start_line": 379,
+          "end_line": 382
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.os.OsFs.LstatIfPossible",
+          "name": "LstatIfPossible",
+          "path": "os.go",
+          "start_line": 102,
+          "end_line": 105
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 18,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.ioutil.byName.Swap",
+          "name": "Swap",
+          "path": "ioutil.go",
+          "start_line": 35,
+          "end_line": 35
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.mem.dirmap.filesSorter.Swap",
+          "name": "Swap",
+          "path": "mem/dirmap.go",
+          "start_line": 35,
+          "end_line": 35
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "max_similarity": 1.0,
+      "node_count": 15,
+      "members": [
+        {
+          "label": "Method",
+          "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs.copyToLayer",
+          "name": "copyToLayer",
+          "path": "cacheOnReadFs.go",
+          "start_line": 74,
+          "end_line": 76
+        },
+        {
+          "label": "Method",
+          "qualified_name": "afero.copyOnWriteFs.CopyOnWriteFs.copyToLayer",
+          "name": "copyToLayer",
+          "path": "copyOnWriteFs.go",
+          "start_line": 49,
+          "end_line": 51
+        }
+      ],
+      "exact_subgroups": [],
+      "links": []
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.8,
+      "max_similarity": 0.889,
+      "node_count": 225,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "afero.composite_test.TestNestedDirBaseReaddir",
+          "name": "TestNestedDirBaseReaddir",
+          "path": "composite_test.go",
+          "start_line": 164,
+          "end_line": 197
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.composite_test.TestNestedDirOverlayReaddir",
+          "name": "TestNestedDirOverlayReaddir",
+          "path": "composite_test.go",
+          "start_line": 199,
+          "end_line": 230
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.composite_test.TestNestedDirOverlayOsFsReaddir",
+          "name": "TestNestedDirOverlayOsFsReaddir",
+          "path": "composite_test.go",
+          "start_line": 232,
+          "end_line": 265
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "afero.composite_test.TestNestedDirBaseReaddir",
+          "second": "afero.composite_test.TestNestedDirOverlayReaddir",
+          "similarity": 0.889
+        },
+        {
+          "first": "afero.composite_test.TestNestedDirBaseReaddir",
+          "second": "afero.composite_test.TestNestedDirOverlayOsFsReaddir",
+          "similarity": 0.8
+        },
+        {
+          "first": "afero.composite_test.TestNestedDirOverlayReaddir",
+          "second": "afero.composite_test.TestNestedDirOverlayOsFsReaddir",
+          "similarity": 0.8
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.8,
+      "max_similarity": 0.8,
+      "node_count": 245,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "afero.composite_test.TestUnionMergeReaddir",
+          "name": "TestUnionMergeReaddir",
+          "path": "composite_test.go",
+          "start_line": 99,
+          "end_line": 122
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.composite_test.TestExistingDirectoryCollisionReaddir",
+          "name": "TestExistingDirectoryCollisionReaddir",
+          "path": "composite_test.go",
+          "start_line": 124,
+          "end_line": 162
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "afero.composite_test.TestUnionMergeReaddir",
+          "second": "afero.composite_test.TestExistingDirectoryCollisionReaddir",
+          "similarity": 0.8
+        }
+      ]
+    },
+    {
+      "kind": "similar",
+      "similarity": 0.818,
+      "max_similarity": 0.818,
+      "node_count": 129,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "afero.mem.file_test.TestFileDataNameRace",
+          "name": "TestFileDataNameRace",
+          "path": "mem/file_test.go",
+          "start_line": 10,
+          "end_line": 34
+        },
+        {
+          "label": "Function",
+          "qualified_name": "afero.mem.file_test.TestFileDataModeRace",
+          "name": "TestFileDataModeRace",
+          "path": "mem/file_test.go",
+          "start_line": 67,
+          "end_line": 96
+        }
+      ],
+      "exact_subgroups": [],
+      "links": [
+        {
+          "first": "afero.mem.file_test.TestFileDataNameRace",
+          "second": "afero.mem.file_test.TestFileDataModeRace",
+          "similarity": 0.818
+        }
+      ]
+    }
+  ],
+  "skipped_symbols": 94,
+  "truncated": false
+}
+--- stderr
