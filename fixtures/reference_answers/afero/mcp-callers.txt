@@ -20,6 +20,23 @@ isError: false
     "through": "afero.match.Glob"
   },
   {
+    "label": "Method",
+    "qualified_name": "afero.iofs.IOFS.Glob",
+    "path": "iofs.go",
+    "callee_path": "match.go",
+    "line": 64,
+    "col": 15,
+    "col_char": 15,
+    "end_line": 64,
+    "end_col": 37,
+    "end_col_char": 37,
+    "arg_count": 2,
+    "kwarg_names": [],
+    "resolution": "exact",
+    "depth": 1,
+    "through": "afero.match.Glob"
+  },
+  {
     "label": "Function",
     "qualified_name": "afero.match.Glob",
     "path": "match.go",
