@@ -13,7 +13,11 @@ from tree_sitter import Language, Parser, Query
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
-from .crate_grammars import highlights_query, language_loader
+from .crate_grammars import (
+    bounded_scanner_loader,
+    highlights_query,
+    language_loader,
+)
 from .language_spec import LANGUAGE_SPECS, LanguageSpec
 from .query_predicates import compile_query
 from .source_checkout import source_checkout_root
@@ -304,6 +308,10 @@ def _get_language_library(lang_name: cs.SupportedLanguage) -> LanguageLoader:
         )
     else:
         loader = _try_load_from_submodule(lang_name)
+    if lang_name in cs.BOUNDED_SCANNER_LANGUAGES:
+        # The package's grammar, with a scanner that cannot overrun the
+        # runtime's buffer and crash the process (issue #3831).
+        loader = bounded_scanner_loader(loader)
     _loader_cache[lang_name] = loader
     return loader
 

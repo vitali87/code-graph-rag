@@ -337,6 +337,12 @@ C_FAMILY_LANGUAGES = frozenset({SupportedLanguage.C, SupportedLanguage.CPP})
 # (docs/reports/PHASE2_FRAME.md, section 11).
 CRATE_GRAMMAR_LANGUAGES = frozenset({SupportedLanguage.C, SupportedLanguage.CPP})
 
+# The languages py-tree-sitter parses with the extension's copy of the Python
+# package's grammar whose external scanner cannot write past the runtime's
+# buffer (crate_grammars.py): tree-sitter-python's overruns it 511
+# indentation levels deep and crashes the process (issue #3831).
+BOUNDED_SCANNER_LANGUAGES = frozenset({SupportedLanguage.PYTHON})
+
 # Languages whose definitions store `positional_params` with the optionality
 # the signature declares (issue #2517); Python stores CPython's positional
 # names instead. A call into one is judged by the count it passes.
