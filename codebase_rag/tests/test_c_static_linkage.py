@@ -435,6 +435,20 @@ _THREE_UP = {
     "mid.h": '#include "util.h"\n',
     "util.h": "static inline int wrap(void) { return helper(); }\n",
 }
+# b/early.h takes the local name `early` from a/early.h, so main.c's map
+# names b/early.h alone; a/early.h is still compiled into main.c, and with it
+# the `static inline leaf()` it includes, which util.h's `wrap()` calls.
+_DISPLACED_UP = {
+    "main.c": (
+        '#include "a/early.h"\n#include "b/early.h"\n#include "mid.h"\n'
+        "int main(void) { return 0; }\n"
+    ),
+    "a/early.h": '#include "leaf.h"\n',
+    "a/leaf.h": "static inline int leaf(void) { return 1; }\n",
+    "b/early.h": "static inline int other(void) { return 2; }\n",
+    "mid.h": '#include "util.h"\n',
+    "util.h": "static inline int wrap(void) { return leaf(); }\n",
+}
 # Two translation units compile util.h, each with a `static helper()` of its
 # own: a fresh index binds the call to a.c's, and a sync that found b.c alone
 # would bind it to b.c's.
@@ -502,9 +516,10 @@ def _sync_util_h(
     [
         (_TWO_UP, {("util.wrap", "main.helper"), ("util.wrap", "early.early")}),
         (_THREE_UP, {("util.wrap", "main.helper")}),
+        (_DISPLACED_UP, {("util.wrap", "a.leaf.leaf")}),
         (_TWO_UNITS, {("util.wrap", "a.helper")}),
     ],
-    ids=["two-up", "three-up", "two-units"],
+    ids=["two-up", "three-up", "displaced-up", "two-units"],
 )
 def test_a_sync_of_a_header_finds_every_unit_that_compiles_it(
     tmp_path: Path, files: dict[str, str], edges: set[tuple[str, str]], updater: str
@@ -527,9 +542,10 @@ def test_a_sync_of_a_header_finds_every_unit_that_compiles_it(
     ("files", "read"),
     [
         (_TWO_UP, {"util", "mid", "main", "early"}),
+        (_DISPLACED_UP, {"util", "mid", "main", "a.early", "a.leaf", "b.early"}),
         (_TWO_UNITS, {"util", "mid", "a", "b"}),
     ],
-    ids=["two-up", "two-units"],
+    ids=["two-up", "displaced-up", "two-units"],
 )
 def test_a_sync_of_a_header_reads_the_units_that_compile_it_and_no_other(
     tmp_path: Path, files: dict[str, str], read: set[str]

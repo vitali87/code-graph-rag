@@ -3082,6 +3082,11 @@ class GraphUpdater:
         mapping = import_processor.import_mapping
         # Read once: each restored map is re-pointed before the walk reads it.
         siblings = import_processor.stem_sibling_modules(module_paths)
+        # A header a later include took the local name of (`a/early.h`, then
+        # `b/early.h`) is in no map, yet is still compiled into the file, and
+        # the resolver follows it on to what it includes (`_include_closure`).
+        # Read again after each restore, which can displace more.
+        displaced = import_processor.displaced_include_targets()
         # The walk is a closure, so the order scopes are taken in is moot.
         pending = list(mapping)
         walked = set(pending)
@@ -3097,6 +3102,7 @@ class GraphUpdater:
             # (`use crate::api::inner::Widget`) leads on from there.
             targets = [
                 *mapping.get(scope, {}).values(),
+                *displaced.get(scope, ()),
                 *import_processor.rust_mod_scope_targets(scope),
             ]
             targets += _js_entry_modules(targets, module_paths)
@@ -3111,6 +3117,7 @@ class GraphUpdater:
                     ):
                         continue
                     restored += 1
+                    displaced = import_processor.displaced_include_targets()
                 pending.append(holder)
         return restored
 
