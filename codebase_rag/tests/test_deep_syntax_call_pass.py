@@ -20,6 +20,7 @@ from typer.testing import CliRunner, Result
 
 from codebase_rag import cli
 from codebase_rag import constants as cs
+from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parsers.call_processor import CallProcessor
@@ -145,11 +146,16 @@ _MODULE = {"rust": "src.lib", "go": "a", "cpp": "a"}
 _FILE = {"rust": "src/lib.rs", "go": "a.go", "cpp": "a.cpp"}
 
 
-def _index(repo: Path, files: dict[str, str], mock: MagicMock) -> GraphUpdater:
+def _index(
+    repo: Path,
+    files: dict[str, str],
+    mock: MagicMock,
+    capture: CaptureSelection | None = None,
+) -> GraphUpdater:
     for rel, text in files.items():
         (repo / rel).parent.mkdir(parents=True, exist_ok=True)
         (repo / rel).write_text(text, encoding="utf-8")
-    return create_and_run_updater(repo, mock)
+    return create_and_run_updater(repo, mock, capture=capture)
 
 
 def _calls(repo: Path, mock: MagicMock) -> set[tuple[str, str]]:
@@ -178,6 +184,23 @@ def test_a_deep_function_keeps_every_call_in_its_file(
         f"{mod}.helper"
     }
     assert worker_calls == {f"{mod}.{_WORKER_RUN[lang].removeprefix(mod + '.')}"}, calls
+    assert updater.call_pass_failures == []
+
+
+@pytest.mark.parametrize("shape", ["else-if", "or-chain"])
+def test_a_deep_go_function_with_io_keeps_every_call(
+    temp_repo: Path, mock_ingestor: MagicMock, shape: str
+) -> None:
+    # Regression guard for #3819: the lean flow walk with `io` enabled must
+    # preserve every CALLS edge a fresh index without `io` produces.
+    files = _SOURCES[("go", shape)]()
+    updater = _index(
+        temp_repo, files, mock_ingestor, capture=resolve_capture(["calls", "io"])
+    )
+
+    baseline = MagicMock()
+    _index(temp_repo, files, baseline, capture=resolve_capture(["calls"]))
+    assert _calls(temp_repo, mock_ingestor) == _calls(temp_repo, baseline)
     assert updater.call_pass_failures == []
 
 
