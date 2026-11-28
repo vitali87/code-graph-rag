@@ -21,7 +21,7 @@
 mod files;
 mod fnmatch;
 mod pathspec;
-mod python_str;
+pub(crate) mod python_str;
 #[cfg(test)]
 mod tests;
 mod tracked;

@@ -83,11 +83,16 @@ impl<'a> Input<'a> {
         &items[self.below(items.len())]
     }
 
-    /// Up to `max` bytes, read as UTF-8 with each bad sequence replaced.
-    pub fn text(&mut self, max: usize) -> String {
+    /// Up to `max` bytes, as they are.
+    pub fn bytes(&mut self, max: usize) -> &'a [u8] {
         let len = self.below(max + 1).min(self.data.len());
         let (head, rest) = self.data.split_at(len);
         self.data = rest;
-        String::from_utf8_lossy(head).into_owned()
+        head
+    }
+
+    /// Up to `max` bytes, read as UTF-8 with each bad sequence replaced.
+    pub fn text(&mut self, max: usize) -> String {
+        String::from_utf8_lossy(self.bytes(max)).into_owned()
     }
 }

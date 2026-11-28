@@ -1,7 +1,8 @@
-//! What Python does with the strings the ignore rules handle, where Rust
-//! would do something else: the code points a str may hold, the str it
-//! builds for a file name, which characters `str.strip()` removes, and how
-//! `re` reads a bracket expression.
+//! What Python does with the strings the ignore rules and the Go readers
+//! handle, where Rust would do something else: the code points a str may
+//! hold, the str it builds for a file name, which characters `str.strip()`
+//! removes and `str.split()` splits at, where `str.splitlines()` ends a
+//! line, and how `re` reads a bracket expression.
 
 use std::borrow::Cow;
 use std::ffi::OsStr;
@@ -117,6 +118,50 @@ pub(crate) fn strip(s: &str) -> &str {
 /// Python's `s.rstrip()`.
 pub(crate) fn rstrip(s: &str) -> &str {
     s.trim_end_matches(is_space)
+}
+
+/// Python's `s.split()`: the runs of characters between spaces.
+pub(crate) fn split(s: &str) -> impl Iterator<Item = &str> {
+    s.split(is_space).filter(|part| !part.is_empty())
+}
+
+/// Whether `str.splitlines()` ends a line at `c`: the line feed, the
+/// carriage return, the line and form feeds of the C0 range, the file,
+/// group and record separators, NEL and the line and paragraph separators.
+fn is_line_break(c: char) -> bool {
+    matches!(
+        c,
+        '\n' | '\r'
+            | '\u{b}'
+            | '\u{c}'
+            | '\u{1c}'
+            | '\u{1d}'
+            | '\u{1e}'
+            | '\u{85}'
+            | '\u{2028}'
+            | '\u{2029}'
+    )
+}
+
+/// Python's `s.splitlines()`: each line without its break, `\r\n` one
+/// break, and no empty line after a final break.
+pub(crate) fn splitlines(s: &str) -> impl Iterator<Item = &str> {
+    let mut rest = s;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let Some((end, c)) = rest.char_indices().find(|&(_, c)| is_line_break(c)) else {
+            return Some(std::mem::take(&mut rest));
+        };
+        let line = &rest[..end];
+        let after = &rest[end + c.len_utf8()..];
+        rest = match c {
+            '\r' => after.strip_prefix('\n').unwrap_or(after),
+            _ => after,
+        };
+        Some(line)
+    })
 }
 
 /// Why a bracket expression is refused.
