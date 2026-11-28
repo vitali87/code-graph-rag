@@ -76,6 +76,14 @@ def _graph(repo: Path) -> list[str]:
     return _graph_lines(store)
 
 
+def _keep_goflags(root: Path, monkeypatch: pytest.MonkeyPatch, goflags: str) -> None:
+    """GOFLAGS kept in Go's settings file, named by GOENV, as `go env -w`
+    keeps it, and left unset in the environment (PR #3807 review)."""
+    monkeypatch.delenv(cs.GO_ENV_GOFLAGS, raising=False)
+    settings_file = _write(root / "go-settings" / "env", f"GOFLAGS={goflags}\n")
+    monkeypatch.setenv(cs.GO_ENV_GOENV, str(settings_file))
+
+
 @pytest.fixture
 def go_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     """No GOFLAGS or GOWORK from the host, and no module fetched: a load
@@ -87,20 +95,27 @@ def go_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
 
 
 @pytest.mark.usefixtures("one_go_helper_per_session")
+@pytest.mark.parametrize("kept", [False, True], ids=["environment", "settings-file"])
 @pytest.mark.parametrize("goflags", _MODFILE_GOFLAGS)
 def test_a_module_whose_modfile_is_named_gets_the_type_checkers_graph(
-    tmp_path: Path, go_env: pytest.MonkeyPatch, goflags: str
+    tmp_path: Path, go_env: pytest.MonkeyPatch, goflags: str, kept: bool
 ) -> None:
+    # GOFLAGS set in the environment, or kept in Go's settings file by `go
+    # env -w`, which Go reads when the environment leaves it unset.
     _needs_go_type_checker()
     go_env.setattr(settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
     repo = _module_with_alt_mod(tmp_path)
-    go_env.setenv(cs.GO_ENV_GOFLAGS, goflags.format(repo=repo))
+    if kept:
+        _keep_goflags(tmp_path, go_env, goflags.format(repo=repo))
+    else:
+        go_env.setenv(cs.GO_ENV_GOFLAGS, goflags.format(repo=repo))
 
     with_modfile = _graph(repo)
 
     # alt.mod renamed to go.mod, and the go.mod it replaces kept as alt.mod,
     # so both runs list the same files.
-    go_env.delenv(cs.GO_ENV_GOFLAGS)
+    go_env.delenv(cs.GO_ENV_GOFLAGS, raising=False)
+    go_env.setenv(cs.GO_ENV_GOENV, cs.GO_ENV_FILE_OFF)
     (repo / "go.mod").rename(repo / "stub.mod")
     (repo / "alt.mod").rename(repo / "go.mod")
     (repo / "stub.mod").rename(repo / "alt.mod")
@@ -205,18 +220,11 @@ _HANDED = [
 ]
 
 
-@pytest.mark.parametrize(("goflags", "handed", "modfile"), _HANDED)
-def test_the_helper_is_handed_the_modfile_apart_from_its_goflags(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    goflags: str,
-    handed: str,
-    modfile: str,
-) -> None:
-    # What the helper is handed, so a host without Go checks it too.
+def _handed(root: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, str]]:
+    """The environment of each helper run over a module at `root`. What
+    the helper is handed, so a host without Go checks it too."""
     monkeypatch.delenv(cs.GO_ENV_GOWORK, raising=False)
-    monkeypatch.setenv(cs.GO_ENV_GOFLAGS, goflags)
-    _write(tmp_path / "go.mod", "module example.com/app\n\ngo 1.21\n")
+    _write(root / "go.mod", "module example.com/app\n\ngo 1.21\n")
     envs: list[dict[str, str]] = []
 
     def _run(
@@ -229,10 +237,59 @@ def test_the_helper_is_handed_the_modfile_apart_from_its_goflags(
     monkeypatch.setattr(fe, "_build_tool", lambda _go: Path("gotypes"))
     monkeypatch.setattr(fe.subprocess, "run", _run)
 
-    run_go_frontend(tmp_path)
+    run_go_frontend(root)
+    return envs
+
+
+@pytest.mark.parametrize(("goflags", "handed", "modfile"), _HANDED)
+def test_the_helper_is_handed_the_modfile_apart_from_its_goflags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    goflags: str,
+    handed: str,
+    modfile: str,
+) -> None:
+    monkeypatch.setenv(cs.GO_ENV_GOFLAGS, goflags)
+
+    envs = _handed(tmp_path, monkeypatch)
 
     assert [(env[cs.GO_ENV_GOFLAGS], env[fe._MODFILE_ENV]) for env in envs] == [
         (handed, modfile)
+    ]
+
+
+# GOFLAGS kept in Go's settings file, and the GOFLAGS and the module file
+# the helper is handed when the environment leaves GOFLAGS unset (None) or
+# empty. A kept -modfile is cut out as one in the environment is, and the
+# rest set, which keeps Go from reading the file's; a kept GOFLAGS without
+# one is left as the environment had it, for Go to read itself.
+_HANDED_FROM_FILE = [
+    ("-tags=x -modfile=alt.mod", "-tags=x", "alt.mod"),
+    ("'-modfile=alt b.mod'", " ", "alt b.mod"),
+    ("-mod=mod", None, ""),
+]
+
+
+@pytest.mark.parametrize("environment", [None, ""])
+@pytest.mark.parametrize(("kept", "handed", "modfile"), _HANDED_FROM_FILE)
+def test_the_helper_is_handed_a_kept_modfile_apart_from_its_goflags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    environment: str | None,
+    kept: str,
+    handed: str | None,
+    modfile: str,
+) -> None:
+    # Inherited, a kept -modfile reached go/packages' GO111MODULE=off query,
+    # which Go refuses, and every run failed (PR #3807 review).
+    _keep_goflags(tmp_path, monkeypatch, kept)
+    if environment is not None:
+        monkeypatch.setenv(cs.GO_ENV_GOFLAGS, environment)
+
+    envs = _handed(tmp_path / "module", monkeypatch)
+
+    assert [(env.get(cs.GO_ENV_GOFLAGS), env[fe._MODFILE_ENV]) for env in envs] == [
+        (environment if handed is None else handed, modfile)
     ]
 
 
@@ -292,3 +349,16 @@ def test_the_helper_is_built_outside_the_users_go_work_and_goflags(
         built_with,
         cs.GO_WORK_OFF,
     )
+
+
+@pytest.mark.parametrize(
+    ("kept", "built_with"), [case for case in _BUILD_GOFLAGS if case[0]]
+)
+def test_the_helper_is_built_with_a_kept_modcacherw_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kept: str, built_with: str
+) -> None:
+    # `go env -w GOFLAGS=-modcacherw` is the usual way to keep it, and Go
+    # reads it from the settings file when GOFLAGS is unset.
+    _keep_goflags(tmp_path, monkeypatch, kept)
+
+    assert fe._host_build_env()[cs.GO_ENV_GOFLAGS] == built_with

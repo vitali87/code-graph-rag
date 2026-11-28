@@ -132,6 +132,8 @@ _UNKNOWN_FLOOR = "unknown"
 # #2395, #3806). The time is stored in the file, not read from its mtime, which
 # copying or restoring the cache can reset (PR #2417 review).
 _BUILD_FAILED_MARKER = ".build-failed"
+# The cache folder the helper is built in, from a copy of its sources.
+_BUILD_SRC = "src"
 _MARKER_GO_VERSION = "go_version"
 _MARKER_GO_SETTINGS = "go_settings"
 _MARKER_FAILED_AT = "failed_at"
@@ -283,13 +285,16 @@ def _host_build_env() -> dict[str, str]:
     #3806): in the helper's folder the build failed to open a relative
     -modfile, took an absolute one or the user's go.work as the helper's
     own, or found no vendor folder for -mod=vendor. Both are set even when
-    unset, so Go does not read either from its own settings file.
+    unset, so Go does not read either from its own settings file; a
+    -modcacherw kept there by `go env -w` is kept all the same (PR #3807
+    review).
     """
     env = {key: value for key, value in os.environ.items() if key not in _TARGET_ENV}
+    goflags = go_setting(cs.GO_ENV_GOFLAGS, str(_cache_dir() / _BUILD_SRC), env)
     return {
         **env,
         **_GO_ENV,
-        cs.GO_ENV_GOFLAGS: _build_goflags(env.get(cs.GO_ENV_GOFLAGS, "")),
+        cs.GO_ENV_GOFLAGS: _build_goflags(goflags),
         cs.GO_ENV_GOWORK: cs.GO_WORK_OFF,
     }
 
@@ -500,7 +505,7 @@ def _cached_tool(go: str, inputs: _BuildInputs) -> Path | None:
     """The helper from the cache, built there first when it is stale, or
     None after one warning."""
     cache = _cache_dir()
-    src = cache / "src"
+    src = cache / _BUILD_SRC
     out = cache / "out"
     binary = out / _BINARY_NAME
     if artifact_fresh(binary, _newest_source_mtime):
@@ -884,18 +889,21 @@ def _modfile_flag(module: str) -> str:
     return _split_modfile(go_setting(cs.GO_ENV_GOFLAGS, module)).modfile
 
 
-def _without_modfile(env: Mapping[str, str]) -> dict[str, str]:
-    """`env` with every -modfile taken out of its GOFLAGS, for the helper's
-    run, which keeps the rest of GOFLAGS and the user's GOWORK.
+def _without_modfile(env: Mapping[str, str], module: str) -> dict[str, str]:
+    """`env` with every -modfile taken out of the GOFLAGS the helper's loads
+    in `module` take, for the helper's run, which keeps the rest of GOFLAGS
+    and the user's GOWORK.
 
     Its loads take the file as a build flag instead (issue #3805):
     go/packages asks Go its version with GO111MODULE=off, and without the
     build flags, before it loads, and Go refuses -modfile outside module
     mode, so the inherited flag failed every run. As a build flag it still
-    reaches every load, run from the module's folder as before. A GOFLAGS
-    with nothing else stays set, as a blank.
+    reaches every load, run from the module's folder as before. That
+    GOFLAGS can come from Go's own settings file, where `go env -w` keeps
+    it, so a -modfile cut out of it is overridden by setting GOFLAGS (PR
+    #3807 review). A GOFLAGS with nothing else stays set, as a blank.
     """
-    goflags = env.get(cs.GO_ENV_GOFLAGS, "")
+    goflags = go_setting(cs.GO_ENV_GOFLAGS, module, env)
     rest = _split_modfile(goflags).rest
     if rest == goflags:
         return dict(env)
@@ -1071,11 +1079,14 @@ def _run_tool_once(
     in yields empty facts and is fine, while a timed-out or crashed run means
     that module was never analysed at all (issue #1462).
     """
+    # The helper's loads run in the module's folder, where Go reads a
+    # relative GOENV from.
+    module = os.path.abspath(module_root)
     env = {
-        **_without_modfile(os.environ),
+        **_without_modfile(os.environ, module),
         **_GO_ENV,
         "CGR_IGNORE_DIRS": ",".join(sorted(ignored_dirs)),
-        _MODFILE_ENV: _modfile_flag(os.path.abspath(module_root)),
+        _MODFILE_ENV: _modfile_flag(module),
     }
     if overlay is not None:
         env[_OVERLAY_ENV] = str(overlay)
