@@ -590,6 +590,10 @@ EG_RUST_MODULE_PLAN = "module_plan"
 # py-tree-sitter, as a grammar package's `language` does.
 EG_RUST_GRAMMAR = "Grammar"
 EG_RUST_GRAMMAR_LANGUAGE = "language"
+# The copy of a grammar package's language whose scanner writes nothing past
+# the runtime's buffer (crate_grammars.py), which an extension from before
+# issue #3831 lacks.
+EG_RUST_BOUNDED_SCANNER = "bounded_scanner"
 # How a grammar fingerprint's digest writes a name (src/grammars/mod.rs): its
 # UTF-8 length in 4 big-endian bytes, then the bytes; a missing name is the
 # length 0xFFFFFFFF alone.

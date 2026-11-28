@@ -15,6 +15,10 @@ engine keeps loading Go from its package, pinned to the same release.
 `grammar_fingerprint` is the crate's `Grammar.fingerprint` as py-tree-sitter
 reads a grammar, so a compiled grammar can be compared with a Python
 package's, or with itself as py-tree-sitter sees it.
+
+`bounded_scanner_loader` is for a grammar the extension does not compile but
+repairs: Python's, from its package, for the languages in
+`cs.BOUNDED_SCANNER_LANGUAGES` (issue #3831).
 """
 
 from __future__ import annotations
@@ -76,6 +80,34 @@ def crate_language(lang_name: str) -> Language | None:
     same grammar loaded from a Python package."""
     loader = language_loader(lang_name)
     return None if loader is None else Language(loader())
+
+
+def bounded_scanner_loader(loader: LanguageLoader) -> LanguageLoader:
+    """`loader`, handing out the extension's copy of its grammar whose
+    external scanner writes nothing past the runtime's buffer.
+
+    The runtime lends a scanner 1,024 bytes to save its state in after each
+    of its tokens. tree-sitter-python 0.25.0's saves two bytes an indentation
+    level and checks for room for one, so 511 levels deep with a string open
+    it writes 1,025: the byte past the buffer lands in the parser's stack
+    pointer, and the parse segfaults. The copy's scanner writes into a larger
+    buffer, of which the runtime gets the first 1,024 bytes
+    (rust/cgr_graph_rs/src/grammars/bounded_scanner.rs). `loader`'s own
+    grammar when the extension does not copy it: one from before the copy,
+    or a grammar of another ABI."""
+    if loader is None:
+        return None
+    bound = getattr(rust_extension(), cs.EG_RUST_BOUNDED_SCANNER, None)
+    if bound is None:
+        return loader
+    package_loader = loader
+
+    def bounded() -> Language:
+        language = package_loader()
+        copy: Language | None = bound(language)
+        return language if copy is None else copy
+
+    return bounded
 
 
 def highlights_query(lang_name: str) -> str | None:

@@ -17,6 +17,10 @@
 //! package was generated at ABI 15 and its crate at ABI 14. So `fingerprint`
 //! describes a grammar's structure, and `codebase_rag/tests/test_grammar_pins.py`
 //! compares it with what py-tree-sitter reads from the Python package.
+//!
+//! `bounded_scanner` is no grammar but a repair of one the parser loader takes
+//! from its Python package: a copy of tree-sitter-python whose scanner cannot
+//! write past the runtime's buffer (issue #3831).
 
 use sha2::{Digest, Sha256};
 use tree_sitter::{Language, LanguageError, Parser};
@@ -24,6 +28,7 @@ use tree_sitter_language::LanguageFn;
 
 use crate::trees::{describe, hex, Described};
 
+pub mod bounded_scanner;
 #[cfg(feature = "python")]
 pub mod python;
 #[cfg(test)]
