@@ -1250,7 +1250,6 @@ E	OVERRIDES	Method	"equatable.test.equatable_test.SuperLongPropertiesStringify.p
 E	OVERRIDES	Method	"equatable.test.equatable_test.SuperLongPropertiesStringify.stringify"	Method	"equatable.lib.src.equatable.Equatable.stringify"	{}
 E	OVERRIDES	Method	"equatable.test.equatable_utils_test.Person.props"	Method	"equatable.lib.src.equatable_mixin.EquatableMixin.props"	{}
 E	REFERENCES	Function	"equatable.lib.src.equatable_utils.mapPropsToHashCode"	Function	"equatable.lib.src.equatable_utils._combine"	{"col":51,"end_col":59,"end_line":6,"line":6,"resolution":"exact"}
-E	REFERENCES	Function	"equatable.lib.src.equatable_utils.mapPropsToHashCode"	Method	"equatable.test.custom_list.CustomList.fold"	{"col":37,"end_col":47,"end_line":6,"line":6,"resolution":"heuristic"}
 E	REFERENCES	Function	"equatable.test.equatable_mixin_test.main"	Method	"equatable.lib.src.equatable_mixin.EquatableMixin.hashCode"	{"col":13,"end_col":31,"end_line":402,"line":402,"resolution":"exact"}
 E	REFERENCES	Function	"equatable.test.equatable_test.main"	Method	"equatable.lib.src.equatable.Equatable.hashCode"	{"col":13,"end_col":31,"end_line":573,"line":573,"resolution":"exact"}
 E	REFERENCES	Function	"equatable.test.equatable_test.main"	Method	"equatable.lib.src.equatable.Equatable.hashCode"	{"col":15,"end_col":26,"end_line":829,"line":829,"resolution":"exact"}

@@ -180,6 +180,7 @@ class _RefEmitScope(NamedTuple):
     caller_qn: str | None
     resolve_func: Callable[..., tuple[str, str] | None]
     ensure_rel: Callable[..., None]
+    language: cs.SupportedLanguage | None
 
 
 class _GoValueReceiverCallee(NamedTuple):
@@ -3936,6 +3937,7 @@ class CallProcessor:
                 None,
                 None,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                language=language,
             )
         if language == cs.SupportedLanguage.PYTHON:
             self._ingest_module_decorator_calls(
@@ -4238,6 +4240,7 @@ class CallProcessor:
             None,
             None,
             self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+            language,
         )
         # A module-scope `var e = &Error{}` constructs too (issue #1642).
         self._ingest_go_composite_literal_instantiations(
@@ -6750,6 +6753,7 @@ class CallProcessor:
                 local_var_types,
                 class_context,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                language,
             )
         return caller_params
 
@@ -6895,6 +6899,7 @@ class CallProcessor:
                 class_context,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
+                language,
             )
         if language in _JS_TS_LANGUAGES or language == cs.SupportedLanguage.PYTHON:
             # A DEFAULT PARAMETER value naming a function (`useStore(api,
@@ -6909,6 +6914,7 @@ class CallProcessor:
                 local_var_types,
                 class_context,
                 caller_qn,
+                language,
             )
         # A function handed back bare (`return defaultUsageFunc`) is a first-class
         # value invoked by whoever receives it, never by a visible call; Go leans
@@ -6981,6 +6987,7 @@ class CallProcessor:
                 local_var_types,
                 class_context,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                language,
             )
             self._ingest_go_composite_literal_instantiations(
                 caller_node,
@@ -7622,6 +7629,7 @@ class CallProcessor:
                 ctx.resolve_func,
                 ctx.ensure_rel,
                 ctx.caller_qn,
+                ctx.language,
             )
 
         if not callee_info:
@@ -9518,6 +9526,7 @@ class CallProcessor:
                     ctx.local_var_types,
                     ctx.class_context,
                     ctx.caller_qn,
+                    ctx.language,
                 )
         if callee_info is None and ctx.is_flow_lang:
             # `x = factory(...); x(cb)`: x holds a closure returned by a
@@ -9534,6 +9543,7 @@ class CallProcessor:
                         ctx.queries[ctx.language][cs.QUERY_CONFIG]
                     ),
                     ctx.caller_qn,
+                    ctx.language,
                 )
             if (alias := ctx.factory_aliases.get(call_name)) is not None:
                 factory_qn, exact = alias
@@ -9544,6 +9554,7 @@ class CallProcessor:
                     ctx.module_qn,
                     ctx.local_var_types,
                     ctx.class_context,
+                    ctx.language,
                     callbacks_only=not exact,
                 )
         return callee_info
@@ -9674,6 +9685,7 @@ class CallProcessor:
                 ctx.module_qn,
                 ctx.local_var_types,
                 ctx.class_context,
+                ctx.language,
                 ctx,
             )
         if ctx.is_arg_ref_lang:
@@ -9804,6 +9816,7 @@ class CallProcessor:
                 ctx.class_context,
                 ctx.resolve_func,
                 ctx.caller_qn,
+                ctx.language,
             )
 
         if (
@@ -10859,6 +10872,7 @@ class CallProcessor:
             caller_qn,
             resolve_func,
             ensure_rel,
+            language,
         )
         stack: list[Node] = list(caller_node.children)
         while stack:
@@ -11062,6 +11076,7 @@ class CallProcessor:
             scope.ensure_rel,
             scope.caller_qn,
             cs.RelationshipType.REFERENCES,
+            language=scope.language,
         )
 
     @_site_scoped
@@ -11112,6 +11127,7 @@ class CallProcessor:
         class_context: str | None,
         boundary_types: frozenset[str],
         caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> None:
         # `<Card />` renders the Card component: the framework invokes it
         # through the element, never by a call the graph can see, so the JSX
@@ -11135,6 +11151,7 @@ class CallProcessor:
             caller_qn,
             resolve_func,
             ensure_rel,
+            language,
         )
         stack: list[Node] = list(caller_node.children)
         while stack:
@@ -11248,6 +11265,7 @@ class CallProcessor:
             local_var_types,
             class_context,
             resolve_func,
+            language,
         )
         stack: list[Node] = list(caller_node.children)
         while stack:
@@ -11264,6 +11282,7 @@ class CallProcessor:
                     local_var_types,
                     class_context,
                     resolve_func,
+                    language,
                 )
             if node.type == cs.TS_RETURN_STATEMENT:
                 for value in node.named_children:
@@ -11283,6 +11302,7 @@ class CallProcessor:
                             ensure_rel,
                             caller_qn=caller_qn,
                             rel_type=cs.RelationshipType.REFERENCES,
+                            language=language,
                         )
             stack.extend(node.children)
 
@@ -11326,6 +11346,7 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         resolve_func,
+        language: cs.SupportedLanguage | None,
     ) -> None:
         body = func_node.child_by_field_name(cs.FIELD_BODY)
         if body is None:
@@ -11362,6 +11383,7 @@ class CallProcessor:
                 ensure_rel,
                 caller_qn=caller_qn,
                 rel_type=cs.RelationshipType.REFERENCES,
+                language=language,
             )
 
     @staticmethod
@@ -11409,6 +11431,7 @@ class CallProcessor:
             caller_spec[2],
             resolve_func,
             ensure_rel,
+            language,
         )
         # Containers an enclosing literal's expansion already peeled. Each
         # expansion covers the whole nested literal, so expanding every
@@ -11494,6 +11517,7 @@ class CallProcessor:
                 scope.resolve_func,
                 scope.ensure_rel,
                 scope.caller_qn,
+                scope.language,
             )
 
     @_site_scoped
@@ -12130,6 +12154,7 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         boundary_types: frozenset[str],
+        language: cs.SupportedLanguage,
     ) -> None:
         # A Go function placed as a value in a composite literal, a func map
         # (`map[string]any{"rpad": rpad}`) or a func slice (`[]Handler{a, b}`), is
@@ -12158,6 +12183,7 @@ class CallProcessor:
                         class_context,
                         resolve_func,
                         ensure_rel,
+                        language=language,
                     )
             stack.extend(node.children)
 
@@ -12172,6 +12198,7 @@ class CallProcessor:
         resolve_func,
         ensure_rel,
         caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> None:
         # A value cast for typing (`persistImpl as unknown as Persist`) is
         # transparent for reference resolution, and `fn.bind(ctx)` /
@@ -12211,6 +12238,7 @@ class CallProcessor:
             resolve_func,
             ensure_rel,
             caller_qn,
+            language=language,
         )
 
     def _unwrap_ts_value(self, node: Node) -> Node:
@@ -12374,6 +12402,7 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         caller_qn: str | None,
+        language: cs.SupportedLanguage,
     ) -> None:
         params = caller_node.child_by_field_name(cs.FIELD_PARAMETERS)
         if params is None:
@@ -12405,6 +12434,7 @@ class CallProcessor:
                     ensure_rel,
                     caller_qn,
                     cs.RelationshipType.REFERENCES,
+                    language=language,
                 )
 
     def _ingest_inline_call_arg_references(
@@ -12548,6 +12578,7 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         boundary_types: frozenset[str],
+        language: cs.SupportedLanguage,
     ) -> None:
         # Record which functions/closures this function may return, so a call site
         # that binds and invokes the returned value (x = factory(); x(cb)) can flow
@@ -12561,11 +12592,21 @@ class CallProcessor:
             if node.type == cs.TS_PY_RETURN_STATEMENT:
                 for name in self._returned_names(node):
                     self._record_returned_callable(
-                        name, caller_qn, module_qn, local_var_types, class_context
+                        name,
+                        caller_qn,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        language,
                     )
                 for name in self._returned_call_names(node):
                     self._record_returned_call(
-                        name, caller_qn, module_qn, local_var_types, class_context
+                        name,
+                        caller_qn,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        language,
                     )
             stack.extend(node.children)
 
@@ -12602,9 +12643,10 @@ class CallProcessor:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
+        language: cs.SupportedLanguage,
     ) -> None:
         resolved = self._resolver.resolve_function_call(
-            name, module_qn, local_var_types, class_context, caller_qn
+            name, module_qn, local_var_types, class_context, caller_qn, language
         )
         if (
             resolved is None
@@ -12621,6 +12663,7 @@ class CallProcessor:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
+        language: cs.SupportedLanguage,
     ) -> None:
         registry = self._resolver.function_registry
         nested_qn = f"{caller_qn}{cs.SEPARATOR_DOT}{name}"
@@ -12631,7 +12674,7 @@ class CallProcessor:
             target_qn = nested_qn
         else:
             resolved = self._resolver.resolve_function_call(
-                name, module_qn, local_var_types, class_context, caller_qn
+                name, module_qn, local_var_types, class_context, caller_qn, language
             )
             if resolved is None or resolved[0] not in _CALLABLE_NODE_LABELS:
                 return
@@ -12647,7 +12690,8 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         boundary_types: frozenset[str],
-        caller_qn: str | None = None,
+        caller_qn: str | None,
+        language: cs.SupportedLanguage,
     ) -> dict[str, tuple[str, bool]]:
         # Map a local `x` to the function `factory` in `x = factory(...)`, so a
         # later `x(cb)` can be traced through factory's returned closure. Handles
@@ -12663,7 +12707,12 @@ class CallProcessor:
             for var, fn_name in self._factory_bindings(node):
                 if (
                     resolved := resolve_func(
-                        fn_name, module_qn, local_var_types, class_context, caller_qn
+                        fn_name,
+                        module_qn,
+                        local_var_types,
+                        class_context,
+                        caller_qn,
+                        language,
                     )
                 ) is not None:
                     exact = self._resolver.last_resolution == cs.EdgeResolution.EXACT
@@ -12737,14 +12786,15 @@ class CallProcessor:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
-        caller_qn: str | None = None,
+        caller_qn: str | None,
+        language: cs.SupportedLanguage,
     ) -> str | None:
         if node.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
             return None
         if not (text := safe_decode_text(node)):
             return None
         resolved = self._resolver.resolve_function_call(
-            text, module_qn, local_var_types, class_context, caller_qn
+            text, module_qn, local_var_types, class_context, caller_qn, language
         )
         if resolved is None or resolved[0] not in _CALLABLE_NODE_LABELS:
             return None
@@ -12791,6 +12841,7 @@ class CallProcessor:
             ctx.module_qn,
             ctx.local_var_types,
             ctx.class_context,
+            ctx.language,
             depth,
         )
 
@@ -12802,13 +12853,14 @@ class CallProcessor:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
+        language: cs.SupportedLanguage,
         depth: int = 1,
         callbacks_only: bool = False,
     ) -> None:
         positional, keyword = self._parse_call_arguments(call_node)
         pos_qns = tuple(
             self._resolve_callback_qn(
-                n, module_qn, local_var_types, class_context, scope_qn
+                n, module_qn, local_var_types, class_context, scope_qn, language
             )
             or ""
             for n in positional
@@ -12818,7 +12870,12 @@ class CallProcessor:
             for name, value in keyword.items()
             if (
                 qn := self._resolve_callback_qn(
-                    value, module_qn, local_var_types, class_context, scope_qn
+                    value,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    scope_qn,
+                    language,
                 )
             )
         )
@@ -12851,7 +12908,8 @@ class CallProcessor:
         ensure_rel,
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
-        language: cs.SupportedLanguage | None = None,
+        *,
+        language: cs.SupportedLanguage | None,
     ) -> None:
         # A TS cast (`handler as any`, `fn satisfies T`, `cb!`) is transparent
         # for reference resolution, and `fn.bind(ctx)` / `.call` / `.apply` in
@@ -12891,9 +12949,19 @@ class CallProcessor:
                 rel_type,
             ):
                 return
+        # The caller's language, as for a call: without it the resolver skips
+        # that language's own rules for the name (Go's local, sibling-file
+        # and no-method rules for a bare name; the JS/TS/Dart, C++ and Python
+        # rules for a member), and the value binds what a call of the same
+        # name would not (#3822).
         if not (
             resolved := resolve_func(
-                arg_text, module_qn, local_var_types, class_context, caller_qn
+                arg_text,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
             )
         ):
             return
@@ -13110,7 +13178,8 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         resolve_func,
-        caller_qn: str | None = None,
+        caller_qn: str | None,
+        language: cs.SupportedLanguage,
     ) -> None:
         if not (params := self._resolver.function_registry.callable_params(callee_qn)):
             return
@@ -13130,6 +13199,7 @@ class CallProcessor:
                     resolve_func,
                     self._passed_callback_recorder(param_name),
                     caller_qn,
+                    language=language,
                 )
 
     def _passed_callback_recorder(self, param_name: str) -> Callable[..., None]:
@@ -13178,6 +13248,7 @@ class CallProcessor:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
+        language: cs.SupportedLanguage,
         scan_ctx: _CallScanContext | None = None,
     ) -> None:
         # Record, for each call-site argument that names a callable, whether it is a
@@ -13222,7 +13293,12 @@ class CallProcessor:
                 )
                 continue
             resolved = self._resolver.resolve_function_call(
-                arg_text, module_qn, local_var_types, class_context, caller_qn
+                arg_text,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
             )
             if resolved is not None and resolved[0] in callable_labels:
                 self._flow_bucket.args.append(
@@ -13502,7 +13578,8 @@ class CallProcessor:
         class_context: str | None,
         resolve_func,
         ensure_rel,
-        caller_qn: str | None = None,
+        caller_qn: str | None,
+        language: cs.SupportedLanguage,
     ) -> None:
         positional, keyword = self._parse_call_arguments(call_node)
         for arg_node in (*positional, *keyword.values()):
@@ -13515,6 +13592,7 @@ class CallProcessor:
                 resolve_func,
                 ensure_rel,
                 caller_qn,
+                language=language,
             )
 
     @_preserves_verdict
@@ -13562,7 +13640,7 @@ class CallProcessor:
                         ensure_rel,
                         caller_qn,
                         rel_type,
-                        language,
+                        language=language,
                     )
 
     def _build_local_alias_map(

@@ -176,9 +176,11 @@ class _CallSite(NamedTuple):
     receiver: cs.CallReceiver
 
 
-# A cached answer is keyed by the call name, the module and the two flags that
-# change the question: `constructing` and what the call is made on.
-_ResolutionKey = tuple[str, str, bool, cs.CallReceiver]
+# A cached answer is keyed by the call name, the module, the language and the
+# two flags that change the question: `constructing` and what the call is made
+# on. A resolve that names no language skips every language's own rules, so
+# its answer is never one for a caller that names one (issue #3822).
+_ResolutionKey = tuple[str, str, cs.SupportedLanguage | None, bool, cs.CallReceiver]
 
 
 def _rust_assoc_path(call: _CallSite) -> tuple[list[str], str] | None:
@@ -3183,10 +3185,10 @@ class CallResolver:
 
     def _resolution_cache_key(self, call: _CallSite) -> _ResolutionKey | None:
         module_qn, caller_qn = call.module_qn, call.caller_qn
-        # The cache is keyed by (call_name, module_qn) only, so a caller whose
-        # class carries extends-clause type arguments must bypass it: its
-        # member resolution is class-context-dependent (#875) and a sibling
-        # class's cached answer for the same name would be wrong.
+        # The cache is keyed by the call and its module, not its caller, so a
+        # caller whose class carries extends-clause type arguments must bypass
+        # it: its member resolution is class-context-dependent (#875) and a
+        # sibling class's cached answer for the same name would be wrong.
         use_cache = not call.local_var_types and not (
             call.language == cs.SupportedLanguage.DART
             and call.class_context in self.type_inference.dart_extends_type_args
@@ -3225,8 +3227,15 @@ class CallResolver:
             return None
         # `new X()` and a bare `X()` in one module are different
         # questions with different answers, so they never share a slot; so
-        # are PHP's `count($xs)` and `$bag->count()`, both named `count`.
-        return (call.call_name, module_qn, call.constructing, call.receiver)
+        # are PHP's `count($xs)` and `$bag->count()`, both named `count`,
+        # and a resolve with no language and one with the module's.
+        return (
+            call.call_name,
+            module_qn,
+            call.language,
+            call.constructing,
+            call.receiver,
+        )
 
     def _resolve_structural_call(
         self, call: _CallSite

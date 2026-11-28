@@ -108,36 +108,6 @@ status: 0
     "through": "body-parser.lib.read.read"
   },
   {
-    "arg_count": null,
-    "callee_path": "test/utils.js",
-    "col": 16,
-    "depth": 1,
-    "end_col": 24,
-    "end_line": 110,
-    "kwarg_names": null,
-    "label": "Function",
-    "line": 110,
-    "path": "lib/read.js",
-    "qualified_name": "body-parser.test.utils.type",
-    "resolution": "heuristic",
-    "through": "body-parser.lib.read.read"
-  },
-  {
-    "arg_count": null,
-    "callee_path": "test/utils.js",
-    "col": 14,
-    "depth": 1,
-    "end_col": 22,
-    "end_line": 127,
-    "kwarg_names": null,
-    "label": "Function",
-    "line": 127,
-    "path": "lib/read.js",
-    "qualified_name": "body-parser.test.utils.type",
-    "resolution": "heuristic",
-    "through": "body-parser.lib.read.read"
-  },
-  {
     "arg_count": 4,
     "callee_path": "test/utils.js",
     "col": 8,

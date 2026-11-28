@@ -24,8 +24,8 @@ Scoped to: ky
 ┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
 ┃ Relationship Type   ┃ Count ┃
 ┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
-│ CALLS               │   701 │
-│ REFERENCES          │   477 │
+│ CALLS               │   680 │
+│ REFERENCES          │   472 │
 │ DEFINES             │   455 │
 │ IMPORTS             │   153 │
 │ CONTAINS_SECTION    │    54 │
@@ -40,7 +40,7 @@ Scoped to: ky
 │ INHERITS            │     6 │
 │ LINKS_TO            │     5 │
 ├─────────────────────┼───────┤
-│ Total Relationships │ 2,022 │
+│ Total Relationships │ 1,996 │
 └─────────────────────┴───────┘
 --- stderr
 Fetching graph statistics...

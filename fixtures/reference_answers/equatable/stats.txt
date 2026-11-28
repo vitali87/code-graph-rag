@@ -33,12 +33,12 @@ Scoped to: equatable
 │ INHERITS            │    33 │
 │ IMPORTS             │    31 │
 │ CONTAINS_MODULE     │    21 │
-│ REFERENCES          │    15 │
+│ REFERENCES          │    14 │
 │ CONTAINS_FOLDER     │    11 │
 │ DEPENDS_ON_EXTERNAL │     5 │
 │ IMPLEMENTS          │     1 │
 ├─────────────────────┼───────┤
-│ Total Relationships │ 1,266 │
+│ Total Relationships │ 1,265 │
 └─────────────────────┴───────┘
 --- stderr
 Fetching graph statistics...

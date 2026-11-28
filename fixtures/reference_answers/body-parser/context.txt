@@ -135,12 +135,9 @@ status: 0
     "body-parser.lib.types.urlencoded.urlencoded (direct caller: the call line)",
     "body-parser.lib.types.urlencoded.urlencoded.parse (direct callee: its signature)",
     "body-parser.lib.types.urlencoded.urlencoded.urlencodedParser (direct caller: the call line)",
-    "body-parser.test.utils.type (direct callee: its signature)",
-    "body-parser.test.utils.verify (direct callee: its signature)",
-    "body-parser.test.urlencoded (test reaching it at depth 2 through body-parser.lib.types.text.text)",
-    "body-parser.test.urlencoded.expectKeyCount (test reaching it at depth 2 through body-parser.lib.types.text.text)"
+    "body-parser.test.utils.verify (direct callee: its signature)"
   ],
-  "omitted_count": 9,
+  "omitted_count": 6,
   "truncated": false
 }
 --- stderr

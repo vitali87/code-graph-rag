@@ -1,20 +1,5 @@
 $ cgr -q graph tests-reaching body-parser.lib.read.read --project body-parser
 status: 0
 --- stdout
-[
-  {
-    "depth": 2,
-    "label": "Module",
-    "path": "test/urlencoded.js",
-    "qualified_name": "body-parser.test.urlencoded",
-    "through": "body-parser.lib.types.text.text"
-  },
-  {
-    "depth": 2,
-    "label": "Function",
-    "path": "test/urlencoded.js",
-    "qualified_name": "body-parser.test.urlencoded.expectKeyCount",
-    "through": "body-parser.lib.types.text.text"
-  }
-]
+[]
 --- stderr
