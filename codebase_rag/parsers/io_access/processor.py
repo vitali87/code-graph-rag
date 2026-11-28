@@ -419,13 +419,17 @@ class IOAccessProcessor:
         self._selection = selection
         self._enabled = selection.io_enabled
         # Sibling-file lookups for the package-level field map: Go splits a
-        # struct declaration and its method files across one directory.
-        self._module_paths = module_paths or {}
+        # struct declaration and its method files across one directory. This
+        # map and the next are the run's, held as given: an empty one is
+        # still filled after this processor is built (issue #3818).
+        self._module_paths = module_paths if module_paths is not None else {}
         self._ast_cache = ast_cache
         # Go module qn -> `package` clause; membership is (directory, clause),
         # so an external `package svc_test` file shares a directory with
         # `package svc` production files without sharing their fields.
-        self._go_package_names: Mapping[str, str] = go_package_names or {}
+        self._go_package_names: Mapping[str, str] = (
+            go_package_names if go_package_names is not None else {}
+        )
         # (package_qn, sorted root ids of every participating file) ->
         # {field name: service stem} for connect-client-typed struct fields
         # (issue #912). Fingerprinting EVERY root id keys out stale entries

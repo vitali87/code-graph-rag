@@ -2994,20 +2994,31 @@ class CallProcessor:
         # Dispatchers that name their callee in a string argument, declared in
         # the repository's .cgr.toml. Empty unless the project opts in.
         self._string_call_specs = load_string_call_specs(repo_path)
-        self.module_qn_to_file_path = module_qn_to_file_path or {}
+        # The run's maps are held as given, never replaced by an empty copy:
+        # the passes fill them after this processor may exist (a sync with
+        # FLOWS_TO captured builds it during the deletes, before the
+        # definition pass), and a private copy would miss those writes
+        # (issue #3818).
+        self.module_qn_to_file_path = (
+            module_qn_to_file_path if module_qn_to_file_path is not None else {}
+        )
         self._path_to_module_qn: dict[Path, str] | None = None
         # Package-prefix index over module_qn_to_file_path (issue #930),
         # rebuilt lazily whenever the underlying map grows.
         self._package_index: dict[Path, list[str]] = {}
         self._package_index_size = -1
-        self._go_package_names: Mapping[str, str] = go_package_names or {}
-        # The definition pass fills this map after the processor exists, so
-        # it is held as given, never replaced by an empty copy.
+        self._go_package_names: Mapping[str, str] = (
+            go_package_names if go_package_names is not None else {}
+        )
         self._sql_sources: Mapping[Path, bytes] = (
             sql_sources if sql_sources is not None else {}
         )
-        self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
-        self.function_locations = function_locations or {}
+        self.cpp_out_of_class_methods = (
+            cpp_out_of_class_methods if cpp_out_of_class_methods is not None else {}
+        )
+        self.function_locations = (
+            function_locations if function_locations is not None else {}
+        )
         self.macro_qns = macro_qns if macro_qns is not None else set()
         # Per-module map of identifier -> introductions as (function node,
         # container) for the #988 lexical receiver resolution; built once per
