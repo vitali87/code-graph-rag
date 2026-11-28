@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -657,6 +658,150 @@ def test_milvus_clean_rebuilds_a_collection_of_the_wrong_size(
 
     assert stored == 1
     assert found == {2}
+
+
+def _env_example_milvus_lite() -> dict[str, str]:
+    # The Milvus Lite lines `.env.example` shows, uncommented as a user would.
+    example = Path(__file__).resolve().parents[2] / ".env.example"
+    values: dict[str, str] = {}
+    for line in example.read_text(encoding=cs.ENCODING_UTF8).splitlines():
+        name, _, value = line.removeprefix("# ").partition("=")
+        if name == "CGR_VECTOR_STORE_BACKEND" and value == VectorStoreBackend.MILVUS:
+            values[name] = value
+        elif name == "MILVUS_URI" and value.endswith(".db"):
+            values[name] = value
+    assert set(values) == {"CGR_VECTOR_STORE_BACKEND", "MILVUS_URI"}
+    return values
+
+
+def _run_with_milvus_settings(
+    tmp_path: Path, source: str, values: dict[str, str], script: str
+) -> str:
+    """The last line `script` prints, run where `values` come from `source`.
+
+    A fresh process, because pymilvus reads MILVUS_URI once, when imported,
+    and cgr merges `.env` into the environment when its config is imported.
+    """
+    # The developer's own Milvus settings and backend, exported or merged in
+    # from the checkout's .env, must not reach the child.
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.upper().startswith("MILVUS_")
+        and name.upper()
+        not in {"CGR_VECTOR_STORE_BACKEND", cs.ENV_PYTHON_DOTENV_DISABLED}
+    }
+    env[cs.ENV_CGR_HOME] = str(tmp_path / "cgr-home")
+    if source == "dotenv":
+        lines = "".join(f"{name}={value}\n" for name, value in values.items())
+        (tmp_path / ".env").write_text(lines, encoding=cs.ENCODING_UTF8)
+    else:
+        env.update(values)
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        check=False,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip().splitlines()[-1]
+
+
+_MILVUS_LITE_ROUNDTRIP = """
+import json, os
+from codebase_rag import constants as cs, vector_store as vs
+from codebase_rag.types_defs import EmbeddingSymbol
+
+vector = [1.0] + [0.0] * (vs.settings.MILVUS_VECTOR_DIM - 1)
+symbol = EmbeddingSymbol(cs.NodeLabel.FUNCTION, "pkg.auth.login")
+stored = vs.store_embedding_batch("pkg", [(101, vector, symbol)])
+hits = vs.search_embeddings(vector, top_k=1)
+print(json.dumps([
+    vs.settings.VECTOR_STORE_BACKEND,
+    stored,
+    [node_id for node_id, _score in hits],
+    os.environ.get("MILVUS_URI"),
+]))
+"""
+
+
+# Issue #3813: pymilvus reads MILVUS_URI when imported and takes only a
+# server address there, so the Milvus Lite file `.env.example` shows made
+# importing cgr's vector store raise, from `.env` or from the shell alike.
+@pytest.mark.skipif(not has_pymilvus(), reason="pymilvus not installed")
+@pytest.mark.skipif(not _has_milvus_lite(), reason="milvus-lite not installed")
+@pytest.mark.parametrize("source", ["dotenv", "environment"])
+def test_a_milvus_lite_file_in_milvus_uri_indexes_and_searches(
+    tmp_path: Path, source: str
+) -> None:
+    values = _env_example_milvus_lite()
+
+    line = _run_with_milvus_settings(tmp_path, source, values, _MILVUS_LITE_ROUNDTRIP)
+
+    # Still in the environment afterwards, for the processes cgr starts.
+    assert json.loads(line) == ["milvus", 1, [101], values["MILVUS_URI"]]
+    assert (tmp_path / values["MILVUS_URI"]).exists()
+
+
+_MILVUS_SERVER_CLIENT = """
+import json, os
+from unittest.mock import patch
+from pymilvus.settings import Config
+from codebase_rag import vector_store as vs
+
+with patch.object(vs, "MilvusClient") as client:
+    vs.get_milvus_client(validate=False)
+print(json.dumps([
+    client.call_args.kwargs["uri"], Config.MILVUS_URI, os.environ.get("MILVUS_URI")
+]))
+"""
+
+
+@pytest.mark.skipif(not has_pymilvus(), reason="pymilvus not installed")
+@pytest.mark.parametrize("source", ["dotenv", "environment"])
+def test_a_milvus_server_uri_still_reaches_pymilvus_and_the_client(
+    tmp_path: Path, source: str
+) -> None:
+    uri = "http://localhost:19530"
+    values = {"CGR_VECTOR_STORE_BACKEND": "milvus", "MILVUS_URI": uri}
+
+    line = _run_with_milvus_settings(tmp_path, source, values, _MILVUS_SERVER_CLIENT)
+
+    # pymilvus's own default connection still gets it at import, as before.
+    assert json.loads(line) == [uri, uri, uri]
+
+
+# Emptied when unset too: the import loads a `.env` of its own, from the
+# working directory or a folder above pymilvus's install, which could hold a
+# Milvus Lite file cgr never reads.
+@pytest.mark.parametrize(
+    ("before", "during"),
+    [
+        (None, ""),
+        ("./.milvus_code_embeddings.db", ""),
+        ("unix:/tmp/milvus.sock", ""),
+        ("http://localhost:19530", "http://localhost:19530"),
+        ("tcp://localhost:19530", "tcp://localhost:19530"),
+    ],
+)
+def test_importing_pymilvus_sees_milvus_uri_only_when_it_names_a_server(
+    monkeypatch: pytest.MonkeyPatch, before: str | None, during: str
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    if before is None:
+        monkeypatch.delenv(cs.ENV_MILVUS_URI, raising=False)
+    else:
+        monkeypatch.setenv(cs.ENV_MILVUS_URI, before)
+
+    with vs._milvus_uri_shown_to_pymilvus_only_if_a_server():
+        seen = os.environ.get(cs.ENV_MILVUS_URI)
+
+    assert (seen, os.environ.get(cs.ENV_MILVUS_URI)) == (during, before)
 
 
 def test_a_failed_milvus_clean_does_not_leave_its_unvalidated_client_cached(
