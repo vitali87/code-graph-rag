@@ -1253,6 +1253,44 @@ def _file_module_holding(name: str, module_paths: Mapping[str, Path]) -> str | N
     return holder
 
 
+def _go_package_modules(
+    module_paths: Mapping[str, Path], repo_path: Path, project_name: str
+) -> dict[str, list[str]]:
+    """The Go file modules of each package, under the qn an import names it by."""
+    packages: dict[str, list[str]] = {}
+    for module_qn, path in module_paths.items():
+        if path.suffix == cs.EXT_GO:
+            package = go_utils.file_package_qn(module_qn, path, repo_path, project_name)
+            packages.setdefault(package, []).append(module_qn)
+    return packages
+
+
+def _go_package_files(
+    scope: str,
+    targets: Iterable[str],
+    module_paths: Mapping[str, Path],
+    packages: Mapping[str, list[str]],
+    project: tuple[Path, str],
+) -> list[str]:
+    """The files of the Go packages `scope` reaches: its own and each it imports.
+
+    A Go import names a package, a directory of files, never one file, so
+    the walk found no module behind it and restored no unchanged Go file's
+    map. A re-parsed caller's `pgf.Cursor().Preorder()` then read Cursor's
+    `inspector.Cursor` result in parsego/file.go's map, found none, and lost
+    the edge a clean index has (issue #3781). The same holds for a function
+    of the caller's own package declared in a file beside it.
+    """
+    path = module_paths.get(scope)
+    if path is None or path.suffix != cs.EXT_GO:
+        return []
+    repo_path, project_name = project
+    own = go_utils.file_package_qn(scope, path, repo_path, project_name)
+    return [
+        module for package in (own, *targets) for module in packages.get(package, ())
+    ]
+
+
 def _js_entry_modules(
     targets: Iterable[str], module_paths: Mapping[str, Path]
 ) -> list[str]:
@@ -2953,6 +2991,9 @@ class GraphUpdater:
         mapping = import_processor.import_mapping
         # Read once: each restored map is re-pointed before the walk reads it.
         siblings = import_processor.stem_sibling_modules(module_paths)
+        go_packages = _go_package_modules(
+            module_paths, self.repo_path, self.project_name
+        )
         # The walk is a closure, so the order scopes are taken in is moot.
         pending = list(mapping)
         walked = set(pending)
@@ -2971,6 +3012,13 @@ class GraphUpdater:
                 *import_processor.rust_mod_scope_targets(scope),
             ]
             targets += _js_entry_modules(targets, module_paths)
+            targets += _go_package_files(
+                scope,
+                targets,
+                module_paths,
+                go_packages,
+                (self.repo_path, self.project_name),
+            )
             for target in targets:
                 holder = _file_module_holding(target, module_paths)
                 if holder is None or holder in walked:
