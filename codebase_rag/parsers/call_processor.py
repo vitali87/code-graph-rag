@@ -2928,6 +2928,7 @@ class CallProcessor:
         "_go_type_declarations",
         "_callable_flow",
         "_flow_bucket",
+        "_field_sites",
         "failed_call_files",
         "_call_file",
         "_io_processor",
@@ -3066,6 +3067,10 @@ class CallProcessor:
         # file being walked writes into `_flow_bucket`.
         self._callable_flow: dict[Path, _FileCallableFlow] = {}
         self._flow_bucket = _FileCallableFlow()
+        # The construction sites binding a function to a callable field
+        # (`Spec(handler=h)`), as (class, keyword or position, function), by
+        # the file holding them, for the same reason (issue #3781).
+        self._field_sites: dict[Path, list[tuple[str, int | str, str]]] = {}
         # Files whose call pass failed this run, whole or in one caller, for
         # the sync summary (issue #3173); `_call_file` is the file being walked.
         self.failed_call_files: set[Path] = set()
@@ -3487,12 +3492,13 @@ class CallProcessor:
         # Pre-pass: record which functions are bound to a class's callable
         # fields (FQNSpec(get_name=_python_get_name, ...)). Runs before call
         # resolution so a field invocation resolves regardless of which file
-        # the construction site lives in. Bindings are recorded PENDING
-        # (keyword name or positional index) and resolved by
-        # finalize_field_bindings after every file's ctor metadata (param
-        # order + param->attribute renames) is collected.
+        # the construction site lives in. Bindings are recorded by keyword
+        # name or positional index and resolved by
+        # finalize_callable_field_bindings after every file's ctor metadata
+        # (param order + param->attribute renames) is collected.
         if language != cs.SupportedLanguage.PYTHON:
             return
+        sites = self._field_sites[file_path] = []
         try:
             module_qn = self._module_qn(
                 file_path, cached_relative_path(file_path, self.repo_path)
@@ -3509,12 +3515,17 @@ class CallProcessor:
                     root_node, language, queries
                 )
             for call_node in call_nodes:
-                self._record_call_field_bindings(call_node, module_qn)
+                self._record_call_field_bindings(call_node, module_qn, sites)
         except Exception as e:
             self.failed_call_files.add(file_path)
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
 
-    def _record_call_field_bindings(self, call_node: Node, module_qn: str) -> None:
+    def _record_call_field_bindings(
+        self,
+        call_node: Node,
+        module_qn: str,
+        sites: list[tuple[str, int | str, str]],
+    ) -> None:
         # A class construction whose arguments name functions binds each
         # to the matching (keyword or positional) ctor field.
         resolver = self._resolver
@@ -3536,10 +3547,12 @@ class CallProcessor:
                 continue
             bound = resolver.resolve_function_call(value_text, module_qn)
             if bound and bound[0] in callable_labels and bound[1] in registry:
-                resolver.record_pending_field_binding(callee[1], key, bound[1])
+                sites.append((callee[1], key, bound[1]))
 
     def finalize_callable_field_bindings(self) -> None:
-        self._resolver.finalize_field_bindings()
+        self._resolver.rebuild_field_bindings(
+            site for sites in self._field_sites.values() for site in sites
+        )
 
     def _collect_ctor_field_metadata(self, root_node: Node, module_qn: str) -> None:
         # For every class in this file, record the ordered ctor param names
@@ -14725,13 +14738,16 @@ class CallProcessor:
 
     def forget_callable_flow(self, file_path: Path) -> None:
         # A deleted file is never re-walked, so nothing else replaces its
-        # records; left in place they keep emitting its call sites' edges.
+        # records; left in place they keep emitting its call sites' edges,
+        # and keep its construction sites binding callable fields.
         self._callable_flow.pop(file_path, None)
+        self._field_sites.pop(file_path, None)
 
     def reset_callable_flow(self) -> None:
         # For a pass that re-walks every file: records of a file deleted
         # since the last pass would otherwise outlive it.
         self._callable_flow.clear()
+        self._field_sites.clear()
 
     def reset_js_receiver_bindings(self) -> None:
         # Despite the historical name this clears ALL per-run JS call-pass

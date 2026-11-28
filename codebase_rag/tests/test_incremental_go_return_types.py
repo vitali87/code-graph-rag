@@ -20,6 +20,7 @@ from codebase_rag.checkout_state import state_file
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.test_incremental_interface_skip import _diff, _snapshot
 from evals.cgr_graph import _StatefulIngestor
 
 _GO = {
@@ -239,3 +240,108 @@ def test_build_variants_of_a_method_type_its_chain_as_a_fresh_index_does(
     _index(store, root, force=False)
 
     assert _size_calls(store) == fresh
+
+
+_INTERFACE_CHAIN = {
+    "go.mod": "module example.com/ret\n\ngo 1.21\n",
+    "ssa/ssa.go": (
+        "package ssa\n\ntype CallCommon struct{}\n\n"
+        "func (c *CallCommon) StaticCallee() int { return 1 }\n\n"
+        "type CallInstruction interface {\n\tCommon() *CallCommon\n}\n"
+    ),
+    "util/util.go": "package util\n\nfunc Log() {}\n",
+    "app/app.go": (
+        'package app\n\nimport (\n\t"example.com/ret/ssa"\n\t"example.com/ret/util"\n)\n\n'
+        "func run(i ssa.CallInstruction) int {\n\tutil.Log()\n"
+        "\treturn i.Common().StaticCallee()\n}\n"
+    ),
+}
+
+
+def test_a_chain_through_an_interface_method_resolves_as_a_fresh_index_does(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An interface method's node stores its result for the read-back, but
+    # parsing records none for it, so a clean index leaves
+    # `i.Common().StaticCallee()` unresolved. Read back for ssa.go, which the
+    # sync did not re-parse, it typed the chain, and the re-parsed app.go
+    # gained a CALLS edge to `CallCommon.StaticCallee` that a fresh index of
+    # the same tree does not have (issue #3781, golang/tools'
+    # cmd/deadcode isStaticCall).
+    if cs.SupportedLanguage.GO not in load_parsers()[0]:
+        pytest.skip("go parser not available")
+    monkeypatch.setattr(settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = temp_repo / "proj"
+    for rel, text in _INTERFACE_CHAIN.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    util_file = root / "util" / "util.go"
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    util_file.write_text(util_file.read_text(encoding="utf-8") + "// edited\n")
+    os.utime(util_file, (cache_mtime + 1, cache_mtime + 1))
+    _index(store, root, force=False)
+    clean = _StatefulIngestor()
+    _index(clean, root, force=True)
+
+    synced, fresh = _snapshot(store), _snapshot(clean)
+    assert synced == fresh, _diff(synced, fresh)
+
+
+_IMPORTED_RESULT = {
+    "go.mod": "module example.com/ret\n\ngo 1.23\n",
+    "inspector/cursor.go": (
+        "package inspector\n\ntype Cursor struct{ n int }\n\n"
+        "func (c Cursor) Preorder(types ...int) int { return c.n }\n"
+    ),
+    "parsego/file.go": (
+        'package parsego\n\nimport "example.com/ret/inspector"\n\n'
+        "type File struct{ cursor inspector.Cursor }\n\n"
+        "func (pgf *File) Cursor() inspector.Cursor { return pgf.cursor }\n"
+    ),
+    "server/helper.go": (
+        'package server\n\nimport "example.com/ret/inspector"\n\n'
+        "func first() inspector.Cursor { return inspector.Cursor{} }\n"
+    ),
+    "util/util.go": "package util\n\nfunc Log() {}\n",
+    "server/link.go": (
+        "package server\n\nimport (\n"
+        '\t"example.com/ret/parsego"\n\t"example.com/ret/util"\n)\n\n'
+        "func links(pgf *parsego.File) int {\n\tutil.Log()\n"
+        "\treturn pgf.Cursor().Preorder(1) + first().Preorder(2)\n}\n"
+    ),
+}
+
+
+def test_a_chain_through_an_unchanged_files_imported_result_resolves(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `pgf.Cursor()` returns `inspector.Cursor`, a name read in the import
+    # map of parsego/file.go, the file declaring Cursor(); `first()` returns
+    # one read in the map of server/helper.go, beside the caller. A sync
+    # re-parsing link.go alone restored neither map, since a Go import names
+    # a package and the import walk found no file behind it, so both
+    # `Preorder` edges were missing where a fresh index has them (issue
+    # #3781, golang/tools' gopls/internal/server/link.go).
+    if cs.SupportedLanguage.GO not in load_parsers()[0]:
+        pytest.skip("go parser not available")
+    monkeypatch.setattr(settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = temp_repo / "proj"
+    for rel, text in _IMPORTED_RESULT.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+
+    util_file = root / "util" / "util.go"
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    util_file.write_text(util_file.read_text(encoding="utf-8") + "// edited\n")
+    os.utime(util_file, (cache_mtime + 1, cache_mtime + 1))
+    _index(store, root, force=False)
+    clean = _StatefulIngestor()
+    _index(clean, root, force=True)
+
+    synced, fresh = _snapshot(store), _snapshot(clean)
+    assert synced == fresh, _diff(synced, fresh)

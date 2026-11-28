@@ -397,7 +397,6 @@ class CallResolver:
         "_cpp_free_operators",
         "_ctor_params",
         "_ctor_param_attrs",
-        "_pending_field_bindings",
         "_module_language_cache",
         "_c_includers_cache",
         "_c_unit_reach_cache",
@@ -553,11 +552,10 @@ class CallResolver:
         # params, or annotated class-body fields for NamedTuple/dataclass),
         # plus the param -> stored-attribute renames found in __init__ bodies
         # (self.ctx_factory = create_context). Construction-site bindings are
-        # held PENDING until every file's ctor metadata is collected, since a
-        # site may be scanned before its class's file.
+        # resolved only once every file's ctor metadata is collected, since a
+        # site may be scanned before its class's file (`rebuild_field_bindings`).
         self._ctor_params: dict[str, tuple[str, ...]] = {}
         self._ctor_param_attrs: dict[tuple[str, str], str] = {}
-        self._pending_field_bindings: list[tuple[str, int | str, str]] = []
         self._module_language_cache: dict[str, cs.SupportedLanguage | None] = {}
         # {included C/C++ module qn: the modules that `#include` it}, built
         # once per call pass from the include map, and {module qn: every
@@ -607,20 +605,25 @@ class CallResolver:
     def record_ctor_param_attr(self, class_qn: str, param: str, attr: str) -> None:
         self._ctor_param_attrs[(class_qn, param)] = attr
 
-    def record_pending_field_binding(
-        self, class_qn: str, key: int | str, func_qn: str
+    def rebuild_field_bindings(
+        self, sites: Iterable[tuple[str, int | str, str]]
     ) -> None:
-        # key: keyword name, or positional index awaiting the ctor param order.
-        self._pending_field_bindings.append((class_qn, key, func_qn))
+        """The callable-field bindings, from every construction site the
+        call pass holds: (class, keyword name or positional index, function).
 
-    def finalize_field_bindings(self) -> None:
-        # Resolve pendings now that every class's ctor metadata is known. A
+        Rebuilt whole, so a site a later pass re-walked or deleted binds only
+        what it binds now: a watcher's updater kept every binding it ever
+        saw, and a field call went on reaching a function no site handed it
+        any more (issue #3781)."""
+        self._field_bindings.clear()
+        self._field_to_classes.clear()
+        # Resolved now that every class's ctor metadata is known. A
         # subclass without its own __init__ inherits the base's params and
         # field, so both a positional index and a keyword name resolve against
         # the nearest self-or-ancestor that owns the ctor param, and the
         # binding is recorded under THAT owner (where the field lives) so an
         # inherited self.handler(), typed to the base, still matches.
-        for class_qn, key, func_qn in self._pending_field_bindings:
+        for class_qn, key, func_qn in sites:
             if isinstance(key, int):
                 owner_qn, params = self._ctor_params_owner(class_qn)
                 if key >= len(params):
@@ -631,7 +634,6 @@ class CallResolver:
                 owner_qn = self._ctor_param_owner(class_qn, param)
             field = self._ctor_param_attrs.get((owner_qn, param), param)
             self.record_callable_field_binding(owner_qn, field, func_qn)
-        self._pending_field_bindings.clear()
 
     def _ctor_params_owner(self, class_qn: str) -> tuple[str, tuple[str, ...]]:
         # Nearest self-or-ancestor with a non-empty recorded ctor param list
@@ -1907,9 +1909,8 @@ class CallResolver:
         # `package_dir`: a string test that drops the other packages' same
         # names before any path lookup. Empty, dropping nothing, when the
         # caller's own qn does not carry it.
-        try:
-            parts = package_dir.relative_to(self.type_inference.repo_path).parts
-        except ValueError:
+        parts = go_utils.directory_parts(package_dir, self.type_inference.repo_path)
+        if parts is None:
             return ""
         project = self.import_processor.project_name
         prefix = cs.SEPARATOR_DOT.join((project, *parts, ""))

@@ -63,7 +63,14 @@ from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from .parsers import utils as parser_utils
 from .parsers.ast_grep_tier import AstGrepTier
-from .parsers.callable_flow_scope import FileFlowFunctions, settled_flow_names
+from .parsers.callable_flow_scope import (
+    FileFlowFunctions,
+    FlowCallees,
+    defined_names,
+    flow_caller_paths,
+    handed_names,
+    settled_flow_names,
+)
 from .parsers.constant_nodes import PendingConstantType
 from .parsers.contract_linking import link_contracts
 from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
@@ -1260,6 +1267,44 @@ def _file_module_holding(name: str, module_paths: Mapping[str, Path]) -> str | N
     return holder
 
 
+def _go_package_modules(
+    module_paths: Mapping[str, Path], repo_path: Path, project_name: str
+) -> dict[str, list[str]]:
+    """The Go file modules of each package, under the qn an import names it by."""
+    packages: dict[str, list[str]] = {}
+    for module_qn, path in module_paths.items():
+        if path.suffix == cs.EXT_GO:
+            package = go_utils.file_package_qn(module_qn, path, repo_path, project_name)
+            packages.setdefault(package, []).append(module_qn)
+    return packages
+
+
+def _go_package_files(
+    scope: str,
+    targets: Iterable[str],
+    module_paths: Mapping[str, Path],
+    packages: Mapping[str, list[str]],
+    project: tuple[Path, str],
+) -> list[str]:
+    """The files of the Go packages `scope` reaches: its own and each it imports.
+
+    A Go import names a package, a directory of files, never one file, so
+    the walk found no module behind it and restored no unchanged Go file's
+    map. A re-parsed caller's `pgf.Cursor().Preorder()` then read Cursor's
+    `inspector.Cursor` result in parsego/file.go's map, found none, and lost
+    the edge a clean index has (issue #3781). The same holds for a function
+    of the caller's own package declared in a file beside it.
+    """
+    path = module_paths.get(scope)
+    if path is None or path.suffix != cs.EXT_GO:
+        return []
+    repo_path, project_name = project
+    own = go_utils.file_package_qn(scope, path, repo_path, project_name)
+    return [
+        module for package in (own, *targets) for module in packages.get(package, ())
+    ]
+
+
 def _js_entry_modules(
     targets: Iterable[str], module_paths: Mapping[str, Path]
 ) -> list[str]:
@@ -1573,6 +1618,16 @@ class _HashBaseline(NamedTuple):
     cache_mtime: float
 
 
+class _FlowMoves(NamedTuple):
+    # The call sites whose callbacks a sync may move (issue #3781): the
+    # edited files, those among them whose calls changed, the deleted ones,
+    # and how a file the closure has not read yet is read.
+    edited: Collection[str]
+    changed: Collection[str]
+    gone: Collection[str]
+    read: Callable[[str], tuple[Path, bytes] | None] | None
+
+
 @dataclass
 class _FileScan:
     """Per-run accumulator of `_process_files`'s hash pass and its dependents."""
@@ -1753,6 +1808,17 @@ def _carried_pair_rows(
     return implements, overrides
 
 
+def _prefix_test(module_qn_prefixes: Collection[str]) -> Callable[[str], bool]:
+    """Whether a qn is one of `module_qn_prefixes` or sits beneath one.
+
+    The state sweeps ask it of every entry of every map for each re-parsed
+    file, so the dotted forms are built once per sweep rather than per entry
+    (issue #3781)."""
+    exact = frozenset(module_qn_prefixes)
+    dotted = tuple(f"{prefix}{cs.SEPARATOR_DOT}" for prefix in exact)
+    return lambda qn: qn in exact or qn.startswith(dotted)
+
+
 def _go_package_dirs(keys: Iterable[str]) -> set[str]:
     return {
         PurePosixPath(key).parent.as_posix() for key in keys if key.endswith(cs.EXT_GO)
@@ -1762,7 +1828,8 @@ def _go_package_dirs(keys: Iterable[str]) -> set[str]:
 def _go_package_siblings(
     keys: Iterable[str], eligible_by_key: Mapping[str, Path]
 ) -> list[str]:
-    """The walked Go files beside a Go file the sync re-parses or deletes.
+    """The walked Go files beside a Go file the sync finds changed, added or
+    deleted.
 
     A Go method hangs off its receiver type, which another file of the
     package may declare, so re-parsing the type's file deleted the methods
@@ -1770,7 +1837,10 @@ def _go_package_siblings(
     method's file alone could not find its type and filed the method under
     a second name beside the stale one. Package files re-parse together,
     and the type's methods, a build's declarations of one among them, come
-    back as a clean index has them (issue #2483).
+    back as a clean index has them (issue #2483). A changed file can pair
+    with any file beside it in a way the graph does not hold yet; an
+    unchanged one pairs only as the graph says, so it brings in just those
+    files (`_go_member_owner_keys`, `_queue_foreign_members`, issue #3781).
     """
     keys = set(keys)
     dirs = _go_package_dirs(keys)
@@ -2960,6 +3030,9 @@ class GraphUpdater:
         mapping = import_processor.import_mapping
         # Read once: each restored map is re-pointed before the walk reads it.
         siblings = import_processor.stem_sibling_modules(module_paths)
+        go_packages = _go_package_modules(
+            module_paths, self.repo_path, self.project_name
+        )
         # The walk is a closure, so the order scopes are taken in is moot.
         pending = list(mapping)
         walked = set(pending)
@@ -2978,6 +3051,13 @@ class GraphUpdater:
                 *import_processor.rust_mod_scope_targets(scope),
             ]
             targets += _js_entry_modules(targets, module_paths)
+            targets += _go_package_files(
+                scope,
+                targets,
+                module_paths,
+                go_packages,
+                (self.repo_path, self.project_name),
+            )
             for target in targets:
                 holder = _file_module_holding(target, module_paths)
                 if holder is None or holder in walked:
@@ -4970,6 +5050,17 @@ class GraphUpdater:
             if row.get(cs.KEY_LABEL) != cs.NodeLabel.METHOD.value:
                 type_inference.method_return_types[qn] = chain
                 continue
+            # An interface's method stores its result as every Go method
+            # does, but parsing records none for it, so a clean index leaves
+            # a chain through it (`i.Common().StaticCallee()`) unresolved;
+            # read back, the chain resolved (issue #3781).
+            if (
+                self.function_registry.get(
+                    _natural_qn(qn).rpartition(cs.SEPARATOR_DOT)[0]
+                )
+                == NodeType.INTERFACE
+            ):
+                continue
             # Parsing keys a method's result by its natural qn, which each
             # build file declaring it again (`Self`, `Self@5`) shares, and
             # writes each over the last in registration order: replayed in
@@ -5827,7 +5918,9 @@ class GraphUpdater:
         self, sources: Iterable[tuple[Path, str, bytes]]
     ) -> dict[str, str]:
         """{file key: module qn} of the re-indexed `sources` whose new bytes
-        keep the interface fingerprint the graph stored for them.
+        keep the interface fingerprint the graph stored for them, those whose
+        callback flow edges other files' parses write among them
+        (`_without_flow_sources` takes those out for the dependents).
 
         Empty on a full build (every file re-parses anyway) and while a
         capture group outside the ones the fingerprint models is enabled.
@@ -5857,9 +5950,7 @@ class GraphUpdater:
         longer_projects = [
             name for name in self._registered_project_names() if name.startswith(prefix)
         ]
-        return self._without_flow_sources(
-            stable_interface_modules(rows, fresh, longer_projects)
-        )
+        return stable_interface_modules(rows, fresh, longer_projects)
 
     def _without_flow_sources(self, stable: dict[str, str]) -> dict[str, str]:
         """`stable` less the files whose callback flow edges other files'
@@ -6534,6 +6625,38 @@ class GraphUpdater:
             )
             if len(present) == joined:
                 return reindexed_keys
+
+    def _go_member_owner_keys(self, keys: Collection[str]) -> list[str]:
+        """The files declaring the types the Go files at `keys` attach
+        methods to, read from the graph as `_foreign_member_keys` reads the
+        other direction."""
+        go_keys = sorted(key for key in keys if key.endswith(cs.EXT_GO))
+        if not go_keys or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_MEMBER_OWNER_PATHS,
+                {
+                    cs.CYPHER_PARAM_PATHS: go_keys,
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            # The stale methods would outlive the run under a completed hash
+            # commit, so an incremental run aborts, as the foreign-member
+            # read does.
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="member owners")
+            return []
+        return sorted(
+            {
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_PATH), str) and path
+            }
+        )
 
     def _member_files(
         self, keys: list[str], eligible_by_key: dict[str, Path]
@@ -7220,10 +7343,19 @@ class GraphUpdater:
         # be preserved as a stale entry that goes on steering call resolution
         # (raised by CodeRabbit on #1844). Require the recorded path to belong
         # to a module that is still live.
-        live_paths = {
-            cached_relative_path(path, self.repo_path).as_posix()
-            for path in self.factory.definition_processor.module_qn_to_file_path.values()
-        }
+        # Built on the first rehydrated qn that asks: most sweeps meet none,
+        # and the set walks every module (issue #3781).
+        live: list[set[str]] = []
+
+        def live_paths() -> set[str]:
+            if not live:
+                live.append(
+                    {
+                        cached_relative_path(path, self.repo_path).as_posix()
+                        for path in self.factory.definition_processor.module_qn_to_file_path.values()
+                    }
+                )
+            return live[0]
 
         def _owned_by_a_surviving_file(qn: str) -> bool:
             owner = owner_module.get(qn)
@@ -7236,7 +7368,7 @@ class GraphUpdater:
             if rehydrated_path is not None:
                 return (
                     str(rehydrated_path) != deleted_rel
-                    and str(rehydrated_path) in live_paths
+                    and str(rehydrated_path) in live_paths()
                 )
             return False
 
@@ -7261,11 +7393,9 @@ class GraphUpdater:
         owned_by_a_surviving_file: Callable[[str], bool],
     ) -> None:
         """Deregister every registry qn the removed file owns."""
+        under = _prefix_test(module_qn_prefixes)
         for qn in list(self.function_registry.keys()):
-            matched_prefix = any(
-                qn.startswith(f"{prefix}.") or qn == prefix
-                for prefix in module_qn_prefixes
-            )
+            matched_prefix = under(qn)
             if matched_prefix and qn not in owned_qns and owned_by_a_surviving_file(qn):
                 # Declared by a file that still exists; the prefix match is an
                 # accident of the shared stem. `owned_qns` still wins, since
@@ -7290,17 +7420,11 @@ class GraphUpdater:
         # file still owns survives; the map's own keys are checked as well as
         # `qns_to_remove` because an entry can outlive its registry row.
         go_return_types = self.factory.type_inference.go_function_return_types
+        under = _prefix_test(module_qn_prefixes)
         stale_go_qns = [
             qn
             for qn in go_return_types
-            if qn in qns_to_remove
-            or (
-                any(
-                    qn.startswith(f"{prefix}.") or qn == prefix
-                    for prefix in module_qn_prefixes
-                )
-                and qn not in foreign_qns
-            )
+            if qn in qns_to_remove or (under(qn) and qn not in foreign_qns)
         ]
         if stale_go_qns:
             self.factory.type_inference.drop_go_return_types(stale_go_qns)
@@ -7345,18 +7469,13 @@ class GraphUpdater:
             | type_inference.csharp_method_return_types.keys()
         )
         owned_natural = {_natural_qn(qn) for qn in owned_qns}
+        under = _prefix_test(module_qn_prefixes)
         stale_method_qns = [
             qn
             for qn in method_return_types
             if qn in qns_to_remove
             or _natural_qn(qn) in owned_natural
-            or (
-                qn not in foreign_qns
-                and any(
-                    qn.startswith(f"{prefix}.") or qn == prefix
-                    for prefix in module_qn_prefixes
-                )
-            )
+            or (qn not in foreign_qns and under(qn))
         ]
         if stale_method_qns:
             self.factory.type_inference.drop_method_return_types(stale_method_qns)
@@ -7364,7 +7483,13 @@ class GraphUpdater:
 
     def _drop_module_records(self, file_path: Path, qns_to_remove: set[str]) -> None:
         """Drop the removed file's simple-name, module and rehydrated records."""
-        for simple_name, qn_set in self.simple_name_lookup.items():
+        # A sweep that removed nothing shrinks no set, and a set holding none
+        # of the removed qns stays as it is: neither is rebuilt (issue #3781).
+        for simple_name, qn_set in (
+            self.simple_name_lookup.items() if qns_to_remove else ()
+        ):
+            if qn_set.isdisjoint(qns_to_remove):
+                continue
             original_count = len(qn_set)
             new_qn_set = qn_set - qns_to_remove
             if len(new_qn_set) < original_count:
@@ -7547,9 +7672,7 @@ class GraphUpdater:
     @staticmethod
     def _under(qn: str, module_qn_prefixes: Collection[str]) -> bool:
         """True when `qn` is one of the prefixes or sits beneath one."""
-        return any(
-            qn.startswith(f"{prefix}.") or qn == prefix for prefix in module_qn_prefixes
-        )
+        return _prefix_test(module_qn_prefixes)(qn)
 
     def _existing_module_paths(self) -> frozenset[str] | None:
         """Paths of this project's Module nodes already in the graph.
@@ -8338,9 +8461,12 @@ class GraphUpdater:
         )
         added_keys = [key for key, _b in added_entries]
         edited_count = len(scan.changed_entries)
-        stable = self._interface_stable_modules(
+        # The files whose fingerprint held, and those of them whose callers
+        # may keep their edges: a file starting flow edges is not one.
+        held = self._interface_stable_modules(
             _interface_sources(scan.changed_entries, {*deleted_before_parse, *siblings})
         )
+        stable = self._without_flow_sources(held)
         waiters = {
             *self._unresolved_importer_keys(added_keys),
             *self._unresolved_reference_waiters(added_entries, modified_entries),
@@ -8382,21 +8508,34 @@ class GraphUpdater:
             scan,
             reindexed_keys,
         )
+        # The whole package of a Go file whose source changed; the files
+        # joined above are unchanged, and bring in only the files their
+        # members hang in, in the closure below (issue #3781).
         reindexed_keys = self._queue_affected_callers(
-            _go_package_siblings({*present, *deleted_before_parse}, eligible_by_key),
+            _go_package_siblings(
+                {
+                    *(key for _p, key, _n, _b in scan.changed_entries[:edited_count]),
+                    *deleted_before_parse,
+                },
+                eligible_by_key,
+            ),
             present,
             eligible_by_key,
             scan,
             reindexed_keys,
         )
-        reindexed_keys = self._queue_callable_flow_closure(
-            edited_count,
-            deleted_before_parse,
-            present,
-            eligible_by_key,
-            scan,
-            reindexed_keys,
-        )
+        # A full build re-parses every walked file already, so the closure
+        # could only queue files it skips; its scan read every file once more.
+        if not is_full_build:
+            reindexed_keys = self._queue_callable_flow_closure(
+                edited_count,
+                deleted_before_parse,
+                present,
+                eligible_by_key,
+                scan,
+                reindexed_keys,
+                held,
+            )
         # Pass 2 order decides which same-stem file claims the bare module
         # qn; a clean build processes files in walk order, so the re-parse
         # set follows it too instead of the order the dependents were found.
@@ -9213,9 +9352,12 @@ class GraphUpdater:
         eligible_by_key: dict[str, Path],
         scan: _FileScan,
         reindexed_keys: list[str],
+        held: Collection[str] | None = None,
     ) -> list[str]:
-        """Queue the callable-flow passers, then the Go package files and the
-        member files of everything re-parsed, until none brings in more.
+        """Queue the callable-flow passers, then the files Go methods of the
+        re-parsed files hang in and the member files of everything re-parsed,
+        until none brings in more. `held` names the edited files whose
+        interface fingerprint held, so whose calls hand on what they did.
 
         A file the last two bring in can hold a receiver itself: registry.cpp
         joins for the out-of-line members of registry.h, a dependent, and
@@ -9223,17 +9365,54 @@ class GraphUpdater:
         plugins.cpp, re-parses too. So the callable flow is walked again over
         every file they add.
         """
+        # Each round scans every re-parsed file again; a file's functions are
+        # what its bytes say, so each is read once for the whole closure.
+        flow_functions: dict[str, FileFlowFunctions | None] = {}
+        edited = {key for _p, key, _n, _b in scan.changed_entries[:edited_count]}
+
+        def read(key: str) -> tuple[Path, bytes] | None:
+            path = eligible_by_key.get(key)
+            if path is None or not path.is_file():
+                return None
+            return path, self._delombok_overlay.get(key, _read_bytes(path))
+
+        moves = _FlowMoves(
+            edited,
+            self._flow_changed_keys(
+                {
+                    key: path
+                    for path, key, _n, _b in scan.changed_entries[:edited_count]
+                },
+                held or (),
+                {
+                    key
+                    for _p, key, new, _b in scan.changed_entries[:edited_count]
+                    if new
+                },
+            ),
+            deleted_keys,
+            read,
+        )
         while True:
             reindexed_keys = self._queue_callable_flow_passers(
-                edited_count, present, eligible_by_key, scan, reindexed_keys
-            )
-            flowed = len(present)
-            # A Go caller the callable flow brought in re-parses with its
-            # package too, as every other re-parsed Go file does (issue #2483).
-            reindexed_keys = self._queue_affected_callers(
-                _go_package_siblings(present, eligible_by_key),
+                edited_count,
                 present,
                 eligible_by_key,
+                scan,
+                reindexed_keys,
+                flow_functions,
+                moves,
+            )
+            flowed = len(present)
+            # A Go file re-parsed unchanged brings in the files whose types
+            # its methods hang off, whose re-parse alone deletes those
+            # methods' old nodes; their own other members join below, as
+            # every type's do (issues #2483, #3781).
+            owners = self._go_member_owner_keys(present)
+            reindexed_keys = self._queue_affected_callers(
+                owners,
+                present,
+                self._member_files(owners, eligible_by_key),
                 scan,
                 reindexed_keys,
             )
@@ -9252,8 +9431,11 @@ class GraphUpdater:
         eligible_by_key: dict[str, Path],
         scan: _FileScan,
         reindexed_keys: list[str],
+        flow_functions: dict[str, FileFlowFunctions | None] | None = None,
+        moves: _FlowMoves | None = None,
     ) -> list[str]:
-        """Queue the files that pass callables into a re-parsed function."""
+        """Queue the files that pass callables into a re-parsed function, and
+        those the re-parsed call sites need (`moves`)."""
         queued = len(scan.changed_entries)
 
         def queue_callers(caller_keys: list[str]) -> list[tuple[Path, str, bytes]]:
@@ -9270,6 +9452,8 @@ class GraphUpdater:
             [(path, key, data) for path, key, _new, data in scan.changed_entries],
             {key for _path, key, _new, _data in scan.changed_entries[:edited_count]},
             queue_callers,
+            flow_functions,
+            moves,
         )
         if len(scan.changed_entries) == queued:
             return reindexed_keys
@@ -9280,9 +9464,12 @@ class GraphUpdater:
         reparsed: list[tuple[Path, str, bytes]],
         edited: Collection[str],
         queue_callers: Callable[[list[str]], list[tuple[Path, str, bytes]]],
+        flow_functions: dict[str, FileFlowFunctions | None] | None = None,
+        moves: _FlowMoves | None = None,
     ) -> None:
-        """Bring the callers of the re-parsed callable-flow holders into the
-        re-parse, until no joined file holds one.
+        """Bring the callers of the re-parsed callable-flow functions into the
+        re-parse, and the receivers and factories its call sites need, until
+        no re-parsed file holds one they were not asked for.
 
         `run_callback(fn): return fn()` gets an edge to each callable its
         callers pass in (`run_callback(_on_start)`), derived from bindings
@@ -9291,37 +9478,208 @@ class GraphUpdater:
         a level past the dependents, were never walked to re-emit it
         (issue #2911). So a re-parsed file defining such a function brings in
         its callers, and a caller that forwards its own parameter into one
-        (`wrap(cb): return run_callback(cb)`) brings in its callers in turn.
-        An `edited` file holds only through what it forwards: when its
-        invokers hold edges, its callers already re-parse as its dependents.
+        (`wrap(cb): return run_callback(cb)`) or returns one (`factory():
+        return make()`, make returning a closure that invokes its parameter)
+        brings in its callers in turn (issue #3781). An `edited` file holds
+        only through what it forwards or returns: when its invokers hold
+        edges, its callers already re-parse as its dependents.
         A file is checked only when it is re-parsed, so a dependent whose
         functions take no part in callable flow widens nothing.
+
+        The other way round (issue #3781), a closure call (`make()(cb)`)
+        starts in the caller's file but is followed through the factory's
+        walk, so each re-parsed file brings in the factories its closure
+        calls go through; and a call site of `moves` that gains, changes or
+        loses a callback moves an edge starting in the receiver's file, which
+        holds no edge into the call site, so the receivers its calls hand a
+        name to, now or before, join too (`FlowCallees`).
         """
+        known = {} if flow_functions is None else flow_functions
+
+        def scanned(path: Path, key: str, data: bytes) -> FileFlowFunctions | None:
+            if key not in known:
+                known[key] = self._file_flow_functions(path, data)
+            return known[key]
+
         files = {
             key: flow
             for path, key, data in reparsed
-            if (flow := self._file_flow_functions(path, data)) is not None
+            if (flow := scanned(path, key, data)) is not None
         }
-        flow_names: frozenset[str] = frozenset()
-        holders: set[str] = set()
+        # The names each file's callers were asked for. A file asked once can
+        # gain a forwarder later, when the file it forwards into joins
+        # (`wrap(cb): return bridge.run_b(cb)`, once bridge.py does), and
+        # only the callers of that name bind the edges the re-parse drops, so
+        # they are asked for it then. The names only grow, so the loop ends
+        # (reviews of PR #3812).
+        queried: dict[str, frozenset[str]] = {}
+        callees = FlowCallees()
+        candidates: dict[str, FileFlowFunctions | None] = {}
+        if moves is not None:
+            callees.lost(self._flow_callee_names([*moves.changed, *moves.gone]))
         while True:
-            flow_names = settled_flow_names(list(files.values()), flow_names)
-            joined = sorted(
-                key
-                for key, flow in files.items()
-                if key not in holders
-                and (
-                    flow.forwarders(flow_names)
-                    if key in edited
-                    else flow.names(flow_names)
+            flow_names = settled_flow_names(files.values())
+            joined: dict[str, Collection[str]] = {}
+            for key, flow in sorted(files.items()):
+                names = (
+                    flow.relays(flow_names) if key in edited else flow.names(flow_names)
                 )
-            )
-            if not joined:
+                asked = queried.get(key, frozenset())
+                if gained := names - asked:
+                    joined[key] = gained
+                    queried[key] = asked | gained
+            reached = self._flow_callee_keys(callees, files, candidates, known, moves)
+            if not joined and not reached:
                 return
-            holders.update(joined)
-            for path, key, data in queue_callers(self._affected_caller_keys(joined)):
-                if (flow := self._file_flow_functions(path, data)) is not None:
+            callers = self._flow_caller_keys(joined) if joined else []
+            for path, key, data in queue_callers(sorted({*callers, *reached})):
+                if (flow := scanned(path, key, data)) is not None:
                     files[key] = flow
+
+    def _flow_changed_keys(
+        self,
+        edited: Mapping[str, Path],
+        held: Collection[str],
+        created: Collection[str],
+    ) -> set[str]:
+        """The edited files whose calls may hand a receiver a callback it did
+        not get before, or no longer get one it did: a new file, or one whose
+        interface fingerprint moved (issue #3781).
+
+        A file in a language the fingerprint has no rules for may have
+        changed too, but nothing says so, and taking every edit of one as a
+        change re-parsed half of golang/tools for a comment: its call sites
+        leave the receivers' edges as they were, as before."""
+        fingerprinted = INTERFACE_LANGUAGES - _semantic_frontend_languages()
+        return {
+            key
+            for key, path in edited.items()
+            if key in created
+            or (key not in held and self._tree_sitter_language(path) in fingerprinted)
+        }
+
+    def _flow_callee_keys(
+        self,
+        callees: FlowCallees,
+        files: Mapping[str, FileFlowFunctions],
+        candidates: dict[str, FileFlowFunctions | None],
+        known: dict[str, FileFlowFunctions | None],
+        moves: _FlowMoves | None,
+    ) -> list[str]:
+        """The files not yet re-parsed that the re-parsed call sites need
+        walked: the factories their closure calls go through, and for the
+        call sites of `moves`, the receivers they hand a callback to.
+
+        A receiver is known by name only, and whether it takes part in
+        callable flow can hang on a file further on (`wrap(cb)` forwards to
+        `run_callback`, defined elsewhere), so every name a candidate hands
+        on is looked up before any candidate is judged."""
+        changed = moves.changed if moves is not None else ()
+        edited = moves.edited if moves is not None else ()
+        # A name a changed file hands on is a function when the project
+        # defines one by it, in the graph or in a file this run reads.
+        handing = [
+            flow
+            for key, flow in files.items()
+            if key in changed and not callees.noted(key)
+        ]
+        functions = {
+            name
+            for _path, name in self._flow_definition_rows(sorted(handed_names(handing)))
+        } | defined_names([*files.values(), *(c for c in candidates.values() if c)])
+        for key, flow in files.items():
+            callees.reparsed(key, flow, key in edited, key in changed, functions)
+        while names := callees.ask():
+            definitions: list[tuple[str, str]] = []
+            for path, name in self._flow_definition_rows(names):
+                if path not in files and path not in candidates:
+                    candidates[path] = self._flow_candidate(path, known, moves)
+                definitions.append((path, name))
+            callees.answer(definitions, {**candidates, **files})
+        everything = [*files.values(), *(flow for flow in candidates.values() if flow)]
+        flow_names = settled_flow_names(everything)
+        return sorted(
+            key
+            for key in callees.joined({**candidates, **files}, flow_names)
+            if key not in files
+        )
+
+    def _flow_candidate(
+        self,
+        key: str,
+        known: dict[str, FileFlowFunctions | None],
+        moves: _FlowMoves | None,
+    ) -> FileFlowFunctions | None:
+        if key not in known:
+            source = moves.read(key) if moves is not None and moves.read else None
+            known[key] = None if source is None else self._file_flow_functions(*source)
+        return known[key]
+
+    def _flow_callee_names(self, keys: list[str]) -> list[str]:
+        """The names of what the files at `keys` reach, from their edges."""
+        if not keys or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_FLOW_CALLEE_TARGETS,
+                {
+                    cs.CYPHER_PARAM_PATHS: sorted(set(keys)),
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="callable-flow callees")
+            return []
+        return sorted(
+            {
+                name
+                for row in rows
+                if isinstance(name := row.get(cs.KEY_TARGET_NAME), str) and name
+            }
+        )
+
+    def _flow_definition_rows(self, names: list[str]) -> list[tuple[str, str]]:
+        """(path, name) of each function or method named one of `names`."""
+        if not names or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_FLOW_DEFINITION_PATHS,
+                {
+                    cs.CYPHER_PARAM_NAMES: names,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="callable-flow definitions")
+            return []
+        return sorted(
+            {
+                (path, name)
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_PATH), str)
+                and path
+                and isinstance(name := row.get(cs.KEY_NAME), str)
+            }
+        )
+
+    def _flow_caller_keys(self, holders: Mapping[str, Collection[str]]) -> list[str]:
+        """The files calling into the flow functions `holders` names for
+        each holder file, whose walks write its callable-flow edges."""
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_FLOW_CALLER_TARGETS,
+                {
+                    cs.CYPHER_PARAM_PATHS: sorted(holders),
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="callable-flow callers")
+            return []
+        return flow_caller_paths(rows, holders)
 
     def _file_flow_functions(
         self, filepath: Path, file_bytes: bytes
@@ -10635,14 +10993,18 @@ class GraphUpdater:
         present: dict[str, Path],
         gone: dict[str, Path],
         joined: dict[str, Path],
+        changed: Collection[str] = (),
     ) -> dict[str, Path]:
         """The callable-flow passers, Go package files and member files the
         re-parse needs beside `present` and `joined`, until none brings in
         more; `run()` widens its set the same way
-        (`_queue_callable_flow_closure`)."""
+        (`_queue_callable_flow_closure`). `changed` names the files whose
+        calls may hand on other callbacks (`_flow_changed_keys`)."""
         reached = dict(joined)
         while True:
-            reached.update(self._reingest_callable_flow_passers(present, gone, reached))
+            reached.update(
+                self._reingest_callable_flow_passers(present, gone, reached, changed)
+            )
             flowed = len(reached)
             reached.update(self._reingest_go_package_files({*present, *gone, *reached}))
             reached.update(self._reingest_foreign_members({*present, *gone, *reached}))
@@ -10654,6 +11016,7 @@ class GraphUpdater:
         present: dict[str, Path],
         gone: dict[str, Path],
         joined: dict[str, Path],
+        changed: Collection[str] = (),
     ) -> dict[str, Path]:
         """On-disk files the re-parse needs to re-derive a callable-flow edge
         out of a re-parsed file, beside `present` and the files it `joined`."""
@@ -10676,6 +11039,11 @@ class GraphUpdater:
                 queued.append((path, key, overlay(key, path)))
             return queued
 
+        def read(key: str) -> tuple[Path, bytes] | None:
+            if (path := self._member_file_on_disk(key)) is None:
+                return None
+            return path, overlay(key, path)
+
         self._expand_callable_flow(
             [
                 (path, key, overlay(key, path))
@@ -10683,6 +11051,7 @@ class GraphUpdater:
             ],
             present.keys(),
             queue_callers,
+            moves=_FlowMoves(present.keys(), changed, gone.keys(), read),
         )
         return passers
 
@@ -10751,8 +11120,9 @@ class GraphUpdater:
         hashes: FileHashCache,
         flux_stems: set[str],
         flipped_dirs: set[str],
-    ) -> dict[str, str]:
-        """`_interface_stable_modules` for a scoped re-ingest.
+    ) -> tuple[dict[str, str], Collection[str]]:
+        """`_interface_stable_modules` for a scoped re-ingest: the files whose
+        callers may keep their edges, and every file whose fingerprint held.
 
         A created file, a file on a stem in flux and a file under a directory
         whose package-ness flipped are left out, as the batch path leaves out
@@ -10769,12 +11139,13 @@ class GraphUpdater:
             and Path(key).parent.as_posix() not in flipped_dirs
             and (data := _read_source(path)) is not None
         }
-        stable = self._interface_stable_modules(
+        held = self._interface_stable_modules(
             (present[key], key, self._delombok_overlay.get(key, data))
             for key, data in judged.items()
         )
+        stable = self._without_flow_sources(held)
         self._reingest_pinned_sources = {key: judged[key] for key in stable}
-        return stable
+        return stable, held.keys()
 
     def _reingest_source(self, key: str, path: Path) -> bytes:
         """The bytes to re-parse `key` from: those its interface was judged
@@ -11182,13 +11553,12 @@ class GraphUpdater:
             flipped_dirs, flip_siblings = self._reingest_package_flip(present, gone)
             survivors.update(flip_siblings)
 
+            stable, held = self._reingest_interface_stable(
+                present, hashes, flux_stems, flipped_dirs
+            )
+            created = {key for key in present if key not in hashes}
             affected = self._reingest_dependents(
-                {**present, **survivors},
-                gone,
-                created={key for key in present if key not in hashes},
-                stable=self._reingest_interface_stable(
-                    present, hashes, flux_stems, flipped_dirs
-                ),
+                {**present, **survivors}, gone, created=created, stable=stable
             )
             affected.update(
                 self._reingest_go_package_files(
@@ -11197,7 +11567,10 @@ class GraphUpdater:
             )
             affected.update(
                 self._reingest_callable_flow_closure(
-                    present, gone, {**survivors, **affected}
+                    present,
+                    gone,
+                    {**survivors, **affected},
+                    self._flow_changed_keys(present, held, created),
                 )
             )
             all_keys = sorted({*present, *gone, *survivors, *affected})
