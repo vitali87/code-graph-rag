@@ -1788,6 +1788,17 @@ def _carried_pair_rows(
     return implements, overrides
 
 
+def _prefix_test(module_qn_prefixes: Collection[str]) -> Callable[[str], bool]:
+    """Whether a qn is one of `module_qn_prefixes` or sits beneath one.
+
+    The state sweeps ask it of every entry of every map for each re-parsed
+    file, so the dotted forms are built once per sweep rather than per entry
+    (issue #3781)."""
+    exact = frozenset(module_qn_prefixes)
+    dotted = tuple(f"{prefix}{cs.SEPARATOR_DOT}" for prefix in exact)
+    return lambda qn: qn in exact or qn.startswith(dotted)
+
+
 def _go_package_dirs(keys: Iterable[str]) -> set[str]:
     return {
         PurePosixPath(key).parent.as_posix() for key in keys if key.endswith(cs.EXT_GO)
@@ -7272,10 +7283,19 @@ class GraphUpdater:
         # be preserved as a stale entry that goes on steering call resolution
         # (raised by CodeRabbit on #1844). Require the recorded path to belong
         # to a module that is still live.
-        live_paths = {
-            cached_relative_path(path, self.repo_path).as_posix()
-            for path in self.factory.definition_processor.module_qn_to_file_path.values()
-        }
+        # Built on the first rehydrated qn that asks: most sweeps meet none,
+        # and the set walks every module (issue #3781).
+        live: list[set[str]] = []
+
+        def live_paths() -> set[str]:
+            if not live:
+                live.append(
+                    {
+                        cached_relative_path(path, self.repo_path).as_posix()
+                        for path in self.factory.definition_processor.module_qn_to_file_path.values()
+                    }
+                )
+            return live[0]
 
         def _owned_by_a_surviving_file(qn: str) -> bool:
             owner = owner_module.get(qn)
@@ -7288,7 +7308,7 @@ class GraphUpdater:
             if rehydrated_path is not None:
                 return (
                     str(rehydrated_path) != deleted_rel
-                    and str(rehydrated_path) in live_paths
+                    and str(rehydrated_path) in live_paths()
                 )
             return False
 
@@ -7313,11 +7333,9 @@ class GraphUpdater:
         owned_by_a_surviving_file: Callable[[str], bool],
     ) -> None:
         """Deregister every registry qn the removed file owns."""
+        under = _prefix_test(module_qn_prefixes)
         for qn in list(self.function_registry.keys()):
-            matched_prefix = any(
-                qn.startswith(f"{prefix}.") or qn == prefix
-                for prefix in module_qn_prefixes
-            )
+            matched_prefix = under(qn)
             if matched_prefix and qn not in owned_qns and owned_by_a_surviving_file(qn):
                 # Declared by a file that still exists; the prefix match is an
                 # accident of the shared stem. `owned_qns` still wins, since
@@ -7342,17 +7360,11 @@ class GraphUpdater:
         # file still owns survives; the map's own keys are checked as well as
         # `qns_to_remove` because an entry can outlive its registry row.
         go_return_types = self.factory.type_inference.go_function_return_types
+        under = _prefix_test(module_qn_prefixes)
         stale_go_qns = [
             qn
             for qn in go_return_types
-            if qn in qns_to_remove
-            or (
-                any(
-                    qn.startswith(f"{prefix}.") or qn == prefix
-                    for prefix in module_qn_prefixes
-                )
-                and qn not in foreign_qns
-            )
+            if qn in qns_to_remove or (under(qn) and qn not in foreign_qns)
         ]
         if stale_go_qns:
             self.factory.type_inference.drop_go_return_types(stale_go_qns)
@@ -7397,18 +7409,13 @@ class GraphUpdater:
             | type_inference.csharp_method_return_types.keys()
         )
         owned_natural = {_natural_qn(qn) for qn in owned_qns}
+        under = _prefix_test(module_qn_prefixes)
         stale_method_qns = [
             qn
             for qn in method_return_types
             if qn in qns_to_remove
             or _natural_qn(qn) in owned_natural
-            or (
-                qn not in foreign_qns
-                and any(
-                    qn.startswith(f"{prefix}.") or qn == prefix
-                    for prefix in module_qn_prefixes
-                )
-            )
+            or (qn not in foreign_qns and under(qn))
         ]
         if stale_method_qns:
             self.factory.type_inference.drop_method_return_types(stale_method_qns)
@@ -7416,7 +7423,13 @@ class GraphUpdater:
 
     def _drop_module_records(self, file_path: Path, qns_to_remove: set[str]) -> None:
         """Drop the removed file's simple-name, module and rehydrated records."""
-        for simple_name, qn_set in self.simple_name_lookup.items():
+        # A sweep that removed nothing shrinks no set, and a set holding none
+        # of the removed qns stays as it is: neither is rebuilt (issue #3781).
+        for simple_name, qn_set in (
+            self.simple_name_lookup.items() if qns_to_remove else ()
+        ):
+            if qn_set.isdisjoint(qns_to_remove):
+                continue
             original_count = len(qn_set)
             new_qn_set = qn_set - qns_to_remove
             if len(new_qn_set) < original_count:
@@ -7599,9 +7612,7 @@ class GraphUpdater:
     @staticmethod
     def _under(qn: str, module_qn_prefixes: Collection[str]) -> bool:
         """True when `qn` is one of the prefixes or sits beneath one."""
-        return any(
-            qn.startswith(f"{prefix}.") or qn == prefix for prefix in module_qn_prefixes
-        )
+        return _prefix_test(module_qn_prefixes)(qn)
 
     def _existing_module_paths(self) -> frozenset[str] | None:
         """Paths of this project's Module nodes already in the graph.
