@@ -14,6 +14,11 @@ the same name would:
 3. A bare name never names a method (#3783): `fmt.Println(format)` inside
    method `T.Printf` passes the parameter, never the method `T.format`.
 
+The first rule holds only where the local is in scope (#2616 review), so a
+passed name is resolved at its own position: before an inner block that
+declares the same name, or after that block closes, it is the package's
+function again (PR #3829 review).
+
 The resolver's cache did not key on the language either, so a call made
 after the pass reused the pass's answer.
 
@@ -97,6 +102,57 @@ PRINTER = (
     "\t_ = shown\n"
     "}\n"
 )
+# Each `helper` or `factory` passed outside the inner block that declares a
+# local of its name is the package's function; `Inside` passes the local.
+SHADOW = (
+    "package shadow\n"
+    "\n"
+    'import "sort"\n'
+    "\n"
+    "func helper(i, j int) bool { return i < j }\n"
+    "\n"
+    "func run(f func(int, int) bool) bool { return f(1, 2) }\n"
+    "\n"
+    "func factory() func(int, int) bool { return helper }\n"
+    "\n"
+    "func Before(xs []int) {\n"
+    "\tsort.Slice(xs, helper)\n"
+    "\tkept := helper\n"
+    "\t_ = kept\n"
+    "\tif true {\n"
+    "\t\thelper := 1\n"
+    "\t\t_ = helper + 1\n"
+    "\t}\n"
+    "}\n"
+    "\n"
+    "func After(xs []int) func(int, int) bool {\n"
+    "\tif true {\n"
+    "\t\thelper := 1\n"
+    "\t\t_ = helper + 1\n"
+    "\t}\n"
+    "\tsort.Slice(xs, helper)\n"
+    "\tkept := helper\n"
+    "\t_ = kept\n"
+    "\trun(helper)\n"
+    "\treturn helper\n"
+    "}\n"
+    "\n"
+    "func Inside(xs []int) {\n"
+    "\tif true {\n"
+    "\t\thelper := func(i, j int) bool { return i > j }\n"
+    "\t\tsort.Slice(xs, helper)\n"
+    "\t}\n"
+    "}\n"
+    "\n"
+    "func Alias() {\n"
+    "\tif true {\n"
+    "\t\tfactory := 1\n"
+    "\t\t_ = factory + 1\n"
+    "\t}\n"
+    "\tf := factory()\n"
+    "\tf(1, 2)\n"
+    "}\n"
+)
 FILES = {
     "go.mod": GO_MOD,
     "local/local.go": LOCAL,
@@ -104,6 +160,7 @@ FILES = {
     "sorted/sorted.go": SORTED,
     "other/other.go": DECOY,
     "printer/printer.go": PRINTER,
+    "shadow/shadow.go": SHADOW,
 }
 
 AUTHORS = "proj.local.local.authors"
@@ -111,6 +168,8 @@ NAMES = "proj.local.local.names"
 HANDLER_QN = "proj.sorted.handler.handler"
 DECOY_QN = "proj.other.other.handler"
 FORMAT = "proj.printer.printer.T.format"
+SHADOW_QN = "proj.shadow.shadow"
+HELPER = f"{SHADOW_QN}.helper"
 
 Edges = dict[tuple[str, str, str], set[str]]
 
@@ -234,3 +293,51 @@ def test_the_cache_keeps_answers_with_and_without_a_language_apart(
     )
     assert go is not None and go[1] == HANDLER_QN
     assert resolver.last_resolution == cs.EdgeResolution.EXACT
+
+
+@pytest.mark.parametrize("caller", ["Before", "After"])
+def test_a_passed_name_outside_the_block_of_its_local_is_the_function(
+    edges: Edges, caller: str
+) -> None:
+    # `sort.Slice(xs, helper)` and `kept := helper` before an inner block's
+    # `helper := 1`, or after it closes: no local `helper` is in scope there,
+    # so each names the package's `helper`, as a call there would. Resolved
+    # with no position, the site counted as inside the block.
+    caller_qn = f"{SHADOW_QN}.{caller}"
+    assert edges[(CALLS, caller_qn, HELPER)] == {cs.EdgeResolution.EXACT}, edges
+    assert edges[(REFERENCES, caller_qn, HELPER)] == {cs.EdgeResolution.EXACT}, edges
+
+
+def test_a_name_passed_to_a_first_party_callee_after_the_block_is_exact(
+    edges: Edges,
+) -> None:
+    # `run(helper)` after the block: the edge from `run`, which invokes its
+    # parameter, carries the pass's verdict.
+    run = f"{SHADOW_QN}.run"
+    assert edges[(CALLS, run, HELPER)] == {cs.EdgeResolution.EXACT}, edges
+
+
+def test_a_passed_name_inside_the_block_of_its_local_is_a_guess(
+    edges: Edges,
+) -> None:
+    # The negative: inside the block, `sort.Slice(xs, helper)` passes the
+    # local closure, so the package function is only the name trie's guess.
+    inside = f"{SHADOW_QN}.Inside"
+    assert edges[(CALLS, inside, HELPER)] == {cs.EdgeResolution.HEURISTIC}, edges
+
+
+def test_a_factory_bound_after_the_block_of_its_local_keeps_its_call(
+    indexed: tuple[gu.GraphUpdater, Edges],
+) -> None:
+    # `f := factory(); f(1, 2)` after an inner block's `factory := 1` binds
+    # the package's `factory` exactly, so the call through `f` is kept for
+    # the finalize. Taken for a guess, it was kept only for a callback it
+    # carried, and it carries none. The record is checked, not an edge: Go
+    # records no function a factory returns (`return helper` wraps the name
+    # in an expression list), so the finalize adds no edge for it yet.
+    updater, edges = indexed
+    alias, factory = f"{SHADOW_QN}.Alias", f"{SHADOW_QN}.factory"
+    assert edges[(CALLS, alias, factory)] == {cs.EdgeResolution.EXACT}, edges
+    flows = updater.factory.call_processor._callable_flow.values()
+    recorded = {(c.scope_qn, c.factory_qn) for f in flows for c in f.factory_calls}
+    assert (alias, factory) in recorded, recorded

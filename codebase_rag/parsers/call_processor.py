@@ -12598,6 +12598,7 @@ class CallProcessor:
                         local_var_types,
                         class_context,
                         language,
+                        node.start_byte,
                     )
                 for name in self._returned_call_names(node):
                     self._record_returned_call(
@@ -12607,6 +12608,7 @@ class CallProcessor:
                         local_var_types,
                         class_context,
                         language,
+                        node.start_byte,
                     )
             stack.extend(node.children)
 
@@ -12644,9 +12646,16 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         language: cs.SupportedLanguage,
+        call_point: int,
     ) -> None:
         resolved = self._resolver.resolve_function_call(
-            name, module_qn, local_var_types, class_context, caller_qn, language
+            name,
+            module_qn,
+            local_var_types,
+            class_context,
+            caller_qn,
+            language,
+            call_point=call_point,
         )
         if (
             resolved is None
@@ -12664,6 +12673,7 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         language: cs.SupportedLanguage,
+        call_point: int,
     ) -> None:
         registry = self._resolver.function_registry
         nested_qn = f"{caller_qn}{cs.SEPARATOR_DOT}{name}"
@@ -12674,7 +12684,13 @@ class CallProcessor:
             target_qn = nested_qn
         else:
             resolved = self._resolver.resolve_function_call(
-                name, module_qn, local_var_types, class_context, caller_qn, language
+                name,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
+                call_point=call_point,
             )
             if resolved is None or resolved[0] not in _CALLABLE_NODE_LABELS:
                 return
@@ -12713,6 +12729,7 @@ class CallProcessor:
                         class_context,
                         caller_qn,
                         language,
+                        call_point=node.start_byte,
                     )
                 ) is not None:
                     exact = self._resolver.last_resolution == cs.EdgeResolution.EXACT
@@ -12794,7 +12811,13 @@ class CallProcessor:
         if not (text := safe_decode_text(node)):
             return None
         resolved = self._resolver.resolve_function_call(
-            text, module_qn, local_var_types, class_context, caller_qn, language
+            text,
+            module_qn,
+            local_var_types,
+            class_context,
+            caller_qn,
+            language,
+            call_point=node.start_byte,
         )
         if resolved is None or resolved[0] not in _CALLABLE_NODE_LABELS:
             return None
@@ -12949,11 +12972,13 @@ class CallProcessor:
                 rel_type,
             ):
                 return
-        # The caller's language, as for a call: without it the resolver skips
-        # that language's own rules for the name (Go's local, sibling-file
-        # and no-method rules for a bare name; the JS/TS/Dart, C++ and Python
-        # rules for a member), and the value binds what a call of the same
-        # name would not (#3822).
+        # The caller's language and the value's site, as for a call: without
+        # the language the resolver skips that language's own rules for the
+        # name (Go's local, sibling-file and no-method rules for a bare name;
+        # the JS/TS/Dart, C++ and Python rules for a member), and the value
+        # binds what a call of the same name would not (#3822). Without the
+        # site a local's rule counts the value inside every block declaring
+        # the name, before or after it (PR #3829 review).
         if not (
             resolved := resolve_func(
                 arg_text,
@@ -12962,6 +12987,7 @@ class CallProcessor:
                 class_context,
                 caller_qn,
                 language,
+                call_point=arg_node.start_byte,
             )
         ):
             return
@@ -13299,6 +13325,7 @@ class CallProcessor:
                 class_context,
                 caller_qn,
                 language,
+                call_point=arg_node.start_byte,
             )
             if resolved is not None and resolved[0] in callable_labels:
                 self._flow_bucket.args.append(
