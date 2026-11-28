@@ -191,6 +191,10 @@ REGISTRY_REHYDRATED = "Rehydrated {count} definitions from the graph for resolut
 IMPORT_STATE_RESTORED = (
     "Restored the imports of {count} unchanged modules the re-parsed files reach"
 )
+C_INCLUDERS_UNREAD = (
+    "Could not read which files include the re-parsed C/C++ headers; a call "
+    "in one may miss a static function of a file that includes it."
+)
 INCREMENTAL_REBUILD_INBOUND = "Restored {count} inbound edges from unchanged files"
 MARKDOWN_BROKEN_LINKS = (
     "{count} relative Markdown link(s) in {documents} document(s) point at files "
