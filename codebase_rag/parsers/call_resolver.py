@@ -1899,9 +1899,8 @@ class CallResolver:
         # `package_dir`: a string test that drops the other packages' same
         # names before any path lookup. Empty, dropping nothing, when the
         # caller's own qn does not carry it.
-        try:
-            parts = package_dir.relative_to(self.type_inference.repo_path).parts
-        except ValueError:
+        parts = go_utils.directory_parts(package_dir, self.type_inference.repo_path)
+        if parts is None:
             return ""
         project = self.import_processor.project_name
         prefix = cs.SEPARATOR_DOT.join((project, *parts, ""))

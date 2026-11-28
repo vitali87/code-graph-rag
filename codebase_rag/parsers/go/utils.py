@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping
 from functools import lru_cache
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePath, PurePosixPath
 from types import MappingProxyType
 
 from tree_sitter import Node
@@ -59,13 +59,31 @@ def file_package_qn(
     a file of `pkg` (#2616 review). A module with no recorded file (a mock
     harness, or an unchanged file on an incremental run) falls back to the
     qn above it."""
-    try:
-        parts = path.parent.relative_to(repo_path).parts if path else None
-    except ValueError:
-        parts = None
+    parts = _file_directory_parts(path, repo_path) if path else None
     if parts is None:
         return module_qn.rpartition(cs.SEPARATOR_DOT)[0]
     return cs.SEPARATOR_DOT.join((project_name, *parts))
+
+
+# The call pass asks for the package of the same few hundred files once per
+# call it resolves, and the relative path was most of what that cost
+# (issue #3781). The answer is a function of the two paths alone, and an
+# entry holds two short paths, so the bound only caps a long-lived process.
+_GO_PATH_PARTS_CACHE_SIZE = 65536
+
+
+@lru_cache(maxsize=_GO_PATH_PARTS_CACHE_SIZE)
+def _file_directory_parts(path: Path, root: Path) -> tuple[str, ...] | None:
+    return directory_parts(path.parent, root)
+
+
+@lru_cache(maxsize=_GO_PATH_PARTS_CACHE_SIZE)
+def directory_parts(directory: PurePath, root: PurePath) -> tuple[str, ...] | None:
+    """`directory`'s parts below `root`, or None when it is not under it."""
+    try:
+        return directory.relative_to(root).parts
+    except ValueError:
+        return None
 
 
 def package_key(rel_path: str, clause: str | None) -> str:
