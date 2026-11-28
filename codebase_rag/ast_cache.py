@@ -71,6 +71,14 @@ class BoundedASTCache:
         self[key] = entry
         return entry
 
+    def peek(self, key: Path) -> tuple[Node, cs.SupportedLanguage] | None:
+        # `load` for a reader beside the run, which must leave what the run
+        # reads as it was: a cached tree keeps its place in the LRU order and
+        # a parsed one is not kept, so nothing is evicted for it.
+        if (entry := self.cache.get(key)) is not None:
+            return entry
+        return self.loader(key) if self.loader is not None else None
+
     def __setitem__(self, key: Path, value: tuple[Node, cs.SupportedLanguage]) -> None:
         self._remove(key)
         size = _estimate_entry_bytes(value)

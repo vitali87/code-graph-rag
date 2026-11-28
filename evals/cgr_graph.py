@@ -2053,6 +2053,9 @@ class _StatefulIngestor:
                         cs.KEY_LABEL: label,
                         cs.KEY_GO_PACKAGE: _text(props.get(cs.KEY_GO_PACKAGE)),
                         cs.KEY_PHP_NAMESPACE: _text(props.get(cs.KEY_PHP_NAMESPACE)),
+                        # The read-back leaves out the modules of files
+                        # parsing registers none of, told by this (#3790).
+                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
                     }
                     module_rows.append(module_row)
                 return module_rows
