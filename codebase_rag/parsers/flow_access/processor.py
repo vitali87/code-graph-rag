@@ -1640,34 +1640,44 @@ class FlowProcessor:
         # Structured walk for the non-hoisted flat languages (Go, Java, Rust,
         # C++): if/loop/try/match nodes branch-and-merge (issue #714 follow-up);
         # every other node applies its leaf effect and threads state through its
-        # children in source order (so a nested call in an argument is seen).
-        node_type = node.type
-        if node_type in jc.descriptor.nested_scope_types:
-            # Definition-time header expressions (TS parameter decorators) run in
-            # THIS scope; walk them, then leave the body to its own caller pass.
-            for header in lean_definition_header_nodes(node, jc.descriptor):
-                state = self._walk_flat_stmt(header, state, jc)
-            if is_inline_callback(node, jc.descriptor, self._has_own_pass):
-                self._walk_inline_callback(node, state, jc, self._walk_flat_stmt)
-            return state
-        if node_type == cs.TS_BREAK_STATEMENT:
-            self._record_break_exit(state)
-            return state
-        if node_type in _FLAT_IF_TYPES:
-            return self._walk_flat_if(node, state, jc)
-        if node_type in _FLAT_LOOP_TYPES:
-            return self._walk_flat_loop(node, state, jc)
-        if node_type in _FLAT_MANDATORY_LOOP_TYPES:
-            return self._walk_flat_mandatory_loop(node, state, jc)
-        if node_type in _FLAT_TRY_TYPES:
-            return self._walk_flat_try(node, state, jc)
-        if node_type in _FLAT_SWITCH_TYPES:
-            return self._walk_switch(node, state, jc, self._walk_flat_stmt)
-        if node_type == cs.TS_RS_MATCH_EXPRESSION:
-            return self._walk_flat_match(node, state, jc)
-        self._apply_js_leaf(node, state.taint, state.handles, jc)
-        for child in node.named_children:
-            state = self._walk_flat_stmt(child, state, jc)
+        # children in source order on an explicit stack so a deep expression
+        # chain (e.g. a 1,000-term `||`, issue #3819) does not overflow Python's
+        # recursion limit.
+        stack: list[Node] = [node]
+        while stack:
+            cur = stack.pop()
+            node_type = cur.type
+            if node_type in jc.descriptor.nested_scope_types:
+                # Definition-time header expressions (TS parameter decorators) run in
+                # THIS scope; walk them, then leave the body to its own caller pass.
+                for header in lean_definition_header_nodes(cur, jc.descriptor):
+                    state = self._walk_flat_stmt(header, state, jc)
+                if is_inline_callback(cur, jc.descriptor, self._has_own_pass):
+                    self._walk_inline_callback(cur, state, jc, self._walk_flat_stmt)
+                continue
+            if node_type == cs.TS_BREAK_STATEMENT:
+                self._record_break_exit(state)
+                continue
+            if node_type in _FLAT_IF_TYPES:
+                state = self._walk_flat_if(cur, state, jc)
+                continue
+            if node_type in _FLAT_LOOP_TYPES:
+                state = self._walk_flat_loop(cur, state, jc)
+                continue
+            if node_type in _FLAT_MANDATORY_LOOP_TYPES:
+                state = self._walk_flat_mandatory_loop(cur, state, jc)
+                continue
+            if node_type in _FLAT_TRY_TYPES:
+                state = self._walk_flat_try(cur, state, jc)
+                continue
+            if node_type in _FLAT_SWITCH_TYPES:
+                state = self._walk_switch(cur, state, jc, self._walk_flat_stmt)
+                continue
+            if node_type == cs.TS_RS_MATCH_EXPRESSION:
+                state = self._walk_flat_match(cur, state, jc)
+                continue
+            self._apply_js_leaf(cur, state.taint, state.handles, jc)
+            stack.extend(reversed(cur.named_children))
         return state
 
     def _walk_flat_loop(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
@@ -1937,6 +1947,18 @@ class FlowProcessor:
             self._restore_shadows(pre_shadows, jc)
         return self._merge_lean(arm_exits) if arm_exits else state
 
+    @staticmethod
+    def _unwrap_flat_else_if(alt: Node) -> Node | None:
+        if alt.type in _FLAT_IF_TYPES:
+            return alt
+        if (
+            alt.type == cs.TS_JS_ELSE_CLAUSE
+            and len(alt.named_children) == 1
+            and alt.named_children[0].type in _FLAT_IF_TYPES
+        ):
+            return alt.named_children[0]
+        return None
+
     def _walk_flat_if(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # The header (any initializer + condition) runs on all paths; each of the
         # then / else(-if) / implicit skip paths is walked against a copy and
@@ -1945,33 +1967,52 @@ class FlowProcessor:
         # branches), and a Go `if` initializer (`if x := f(); cond {}`) is scoped
         # to the whole if statement (restored on exit), so neither shadows a
         # source/sink past its scope.
+        # Unwrap `else if` chains iteratively (issue #3819): a generated chain
+        # of 1,000+ branches would otherwise overflow Python's recursion limit.
         pre_if_shadows = set(jc.local_names)
-        consequence = node.child_by_field_name(jc.descriptor.if_consequence_field)
-        # Most grammars carry a single `alternative` (else block or nested else-if);
-        # PHP emits the whole chain as several sibling `alternative` children
-        # (`else_if_clause`* then an optional `else_clause`), so gather them all
-        # (issue #1174). For Go/Java/C++/Rust this list is 0 or 1 element -> unchanged.
-        alternatives = node.children_by_field_name(cs.FIELD_ALTERNATIVE)
-        skip = {n.id for n in (consequence, *alternatives) if n is not None}
-        for child in node.named_children:
-            if child.id not in skip:
-                state = self._walk_flat_stmt(child, state, jc)
-        pre_shadows = set(jc.local_names)
         branch_exits: list[_LeanState] = []
-        if consequence is not None:
-            branch_exits.append(self._walk_flat_stmt(consequence, state.copy(), jc))
-            self._restore_shadows(pre_shadows, jc)
-        for alternative in alternatives:
-            # A block/nested-if (Go/Java/…) or a PHP else-if/else clause; the
-            # recursion walks each in its own branch copy and merges (a MAY
-            # over-approximation for the mutually-exclusive elseif arms).
-            branch_exits.append(self._walk_flat_stmt(alternative, state.copy(), jc))
-            self._restore_shadows(pre_shadows, jc)
-        # An implicit skip path (condition false, nothing runs) survives unless the
-        # chain ends in a TERMINAL else: one plain alternative (else block / nested
-        # if) is terminal; a PHP chain ending in `else_if_clause` is not.
-        if not alternatives or alternatives[-1].type == cs.TS_PHP_ELSE_IF_CLAUSE:
-            branch_exits.append(state.copy())
+        cur: Node | None = node
+        cur_state = state
+        while cur is not None:
+            consequence = cur.child_by_field_name(jc.descriptor.if_consequence_field)
+            # Most grammars carry a single `alternative` (else block or nested
+            # else-if); PHP emits the whole chain as several sibling
+            # `alternative` children (`else_if_clause`* then an optional
+            # `else_clause`), so gather them all (issue #1174). For
+            # Go/Java/C++/Rust this list is 0 or 1 element -> unchanged.
+            alternatives = cur.children_by_field_name(cs.FIELD_ALTERNATIVE)
+            skip = {n.id for n in (consequence, *alternatives) if n is not None}
+            for child in cur.named_children:
+                if child.id not in skip:
+                    cur_state = self._walk_flat_stmt(child, cur_state, jc)
+            pre_shadows = set(jc.local_names)
+            if consequence is not None:
+                branch_exits.append(
+                    self._walk_flat_stmt(consequence, cur_state.copy(), jc)
+                )
+                self._restore_shadows(pre_shadows, jc)
+            if (
+                len(alternatives) == 1
+                and (next_if := self._unwrap_flat_else_if(alternatives[0])) is not None
+            ):
+                cur = next_if
+                cur_state = cur_state.copy()
+                continue
+            for alternative in alternatives:
+                # A block/nested-if (Go/Java/…) or a PHP else-if/else clause;
+                # walk each in its own branch copy and merge (a MAY
+                # over-approximation for the mutually-exclusive elseif arms).
+                branch_exits.append(
+                    self._walk_flat_stmt(alternative, cur_state.copy(), jc)
+                )
+                self._restore_shadows(pre_shadows, jc)
+            # An implicit skip path (condition false, nothing runs) survives
+            # unless the chain ends in a TERMINAL else: one plain alternative
+            # (else block / nested if) is terminal; a PHP chain ending in
+            # `else_if_clause` is not.
+            if not alternatives or alternatives[-1].type == cs.TS_PHP_ELSE_IF_CLAUSE:
+                branch_exits.append(cur_state.copy())
+            cur = None
         self._restore_shadows(pre_if_shadows, jc)
         return self._merge_lean(branch_exits)
 
