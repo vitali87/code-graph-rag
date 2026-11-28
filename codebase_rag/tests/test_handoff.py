@@ -170,6 +170,28 @@ _IMPORTED_FROM_A_BAD_NAME: dict[str, tuple[dict[str, str], dict[str, str]]] = {
         },
     ),
 }
+# A README and other Markdown beside a Python and a Go file, and a shell
+# script, which the ast-grep tier takes where its extra is installed. Neither
+# of those two tiers registers a module or a definition in the project index,
+# though the graph holds their Module nodes and the script's Function
+# (issue #3790).
+DOCUMENTS_FIXTURE = {
+    "README.md": "# Demo\n\nSee [the guide](docs/guide.md).\n",
+    "CHANGELOG.md": "# Changes\n",
+    "docs/guide.md": "# Guide\n\n## Usage\n\nRun it.\n",
+    "app.py": (
+        "class Base:\n    pass\n\n\n"
+        "class App(Base):\n    def run(self):\n        return 1\n"
+    ),
+    "go.mod": "module example.com/demo\n\ngo 1.22\n",
+    "main.go": "package main\n\nfunc main() {\n\tgreet()\n}\n\nfunc greet() {}\n",
+    "tool.sh": "greet() {\n  echo hi\n}\n",
+}
+_DOCUMENTS_EDITED = {
+    "app.py": DOCUMENTS_FIXTURE["app.py"] + "\n\ndef helper():\n    return 2\n",
+    "main.go": DOCUMENTS_FIXTURE["main.go"] + "\nfunc wave() {}\n",
+    "docs/guide.md": DOCUMENTS_FIXTURE["docs/guide.md"] + "\n## More\n",
+}
 # Names and paths outside ASCII, which the files keep as UTF-8.
 UNICODE_FIXTURE = {
     "grüße.py": "def grüße():\n    return 'é'\n\n\ndef call():\n    return grüße()\n",
@@ -529,6 +551,37 @@ class TestTheProjectIndex:
             'simple_name\tmain\t["demo.main.main"]',
             'simple_name\tzeta\t["demo.zeta.zeta"]',
         ]
+
+    @pytest.mark.parametrize("reused", [False, True], ids=["new", "reused"])
+    @pytest.mark.parametrize("edited", sorted(_DOCUMENTS_EDITED))
+    def test_an_incremental_run_holds_what_a_fresh_index_holds(
+        self, tmp_path: Path, edited: str, reused: bool
+    ) -> None:
+        # Issue #3790: the module map was seeded from every Module the graph
+        # holds, and the registry from every definition, so a sync listed the
+        # Markdown files and the script the run did not re-parse, which a
+        # fresh index of the tree never registers. A sync starts a new
+        # updater, as `cgr` does, or reuses one, as the watcher does.
+        repo = _write(tmp_path / "repo", DOCUMENTS_FIXTURE)
+        synced = tmp_path / "synced"
+        with _embedded_graph(tmp_path / "graph.sqlite") as ingestor:
+            # The checkout's own state directory, which the stamp reads.
+            updater = _updater(repo, ingestor, state_dir=None, handoff_dir=synced)
+            updater.run()
+            (repo / edited).write_text(_DOCUMENTS_EDITED[edited], encoding="utf-8")
+            _stamp_after_cache(repo, edited)
+            if not reused:
+                updater = _updater(repo, ingestor, state_dir=None, handoff_dir=synced)
+            updater.run()
+        fresh = tmp_path / "fresh"
+        with _embedded_graph(tmp_path / "fresh.sqlite") as ingestor:
+            _updater(
+                repo, ingestor, state_dir=tmp_path / "fresh-state", handoff_dir=fresh
+            ).run(force=True)
+
+        # The sync was incremental: a full build names no file it re-parses.
+        assert f'reparse\t{edited}\t{{"reason":"changed"}}' in _lines(synced / _FILES)
+        assert _lines(synced / _INDEX) == _lines(fresh / _INDEX)
 
 
 class TestTheFormat:

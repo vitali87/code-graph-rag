@@ -1,0 +1,43 @@
+> tools/call get_function_source {"node_id": "<node_id:afero.match.Glob>"}
+isError: false
+--- text
+Source code for node ID <node_id>:
+
+```
+func Glob(fs Fs, pattern string) (matches []string, err error) {
+	if !hasMeta(pattern) {
+		// Lstat not supported by a ll filesystems.
+		if _, err = lstatIfPossible(fs, pattern); err != nil {
+			return nil, nil
+		}
+		return []string{pattern}, nil
+	}
+
+	dir, file := filepath.Split(pattern)
+	switch dir {
+	case "":
+		dir = "."
+	case string(filepath.Separator):
+	// nothing
+	default:
+		dir = dir[0 : len(dir)-1] // chop off trailing separator
+	}
+
+	if !hasMeta(dir) {
+		return glob(fs, dir, file, nil)
+	}
+
+	var m []string
+	m, err = Glob(fs, dir)
+	if err != nil {
+		return
+	}
+	for _, d := range m {
+		matches, err = glob(fs, d, file, matches)
+		if err != nil {
+			return
+		}
+	}
+	return
+}
+```

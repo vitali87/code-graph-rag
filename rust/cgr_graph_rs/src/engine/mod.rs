@@ -21,8 +21,13 @@
 //! the files' summaries into the project's index in walk order, and so
 //! plans which file claims each module's name. `lstat` reads an entry's own
 //! type as Python reads it, which is what each of them calls a link.
+//!
+//! `go` is phase 3's Go engine (docs/reports/PHASE3_GO.md), built in steps
+//! that nothing a user runs reaches until Go joins the Rust engine's
+//! languages.
 
 pub mod discover;
+pub mod go;
 pub mod ignore;
 mod lstat;
 pub mod merge;
@@ -107,6 +112,26 @@ impl Engine {
             return items.iter().map(work).collect();
         }
         self.pool.install(|| items.par_iter().map(work).collect())
+    }
+
+    /// `map_ordered` with a state each worker makes with `init` and lends to
+    /// every item it takes, such as a parser: rayon's `map_init`, which may
+    /// make more than one per worker but never lends one to two items at
+    /// once. The results keep the items' order, and a batch too small to
+    /// share runs on the calling thread with one state.
+    pub fn map_init_ordered<T, S, R, I, F>(&self, items: &[T], init: I, work: F) -> Vec<R>
+    where
+        T: Sync,
+        R: Send,
+        I: Fn() -> S + Sync + Send,
+        F: Fn(&mut S, &T) -> R + Sync + Send,
+    {
+        if items.len() < self.pooled_from {
+            let mut state = init();
+            return items.iter().map(|item| work(&mut state, item)).collect();
+        }
+        self.pool
+            .install(|| items.par_iter().map_init(&init, &work).collect())
     }
 
     /// Whether `test` holds for every item, asked as `map_ordered` asks.

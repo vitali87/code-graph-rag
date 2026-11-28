@@ -1,0 +1,16 @@
+> tools/call structural_search {"language": "go", "pattern": "normalizePath($P)"}
+isError: false
+--- text
+memmap.go:57:8  normalizePath(name)
+memmap.go:136:8  normalizePath(name)
+memmap.go:155:8  normalizePath(name)
+memmap.go:221:8  normalizePath(name)
+memmap.go:233:8  normalizePath(name)
+memmap.go:280:8  normalizePath(name)
+memmap.go:298:8  normalizePath(path)
+memmap.go:319:11  normalizePath(oldname)
+memmap.go:320:11  normalizePath(newname)
+memmap.go:409:8  normalizePath(name)
+memmap.go:426:8  normalizePath(name)
+memmap.go:442:8  normalizePath(name)
+memmap_test.go:32:11  normalizePath(d.input)
