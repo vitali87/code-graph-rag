@@ -5,6 +5,10 @@ recursion, one frame per tree level. A generated `else if` chain of ~1,000
 branches, or one condition of ~1,000 `||` terms, raised RecursionError, and
 the call pass caught it for the WHOLE file: every call in it was dropped,
 neighbours included, while the sync still reported "done".
+
+With the I/O group on, the flow walk ran first and recursed the same way,
+once per `else if` or `||` term, so the deep caller lost every call it made
+(issue #3819).
 """
 
 from __future__ import annotations
@@ -20,11 +24,12 @@ from typer.testing import CliRunner, Result
 
 from codebase_rag import cli
 from codebase_rag import constants as cs
+from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parsers.call_processor import CallProcessor
 from codebase_rag.parsers.type_inference import TypeInferenceEngine
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import _MockIngestor, create_and_run_updater
 from codebase_rag.types_defs import ASTNode, LanguageQueries
 
 # Past Python's default recursion limit of 1,000 frames in all three grammars.
@@ -90,8 +95,8 @@ def _cpp(dispatch_body: str) -> dict[str, str]:
     }
 
 
-def _or_terms(count: int) -> str:
-    return " || ".join(f"x == {i}" for i in range(count))
+def _or_terms(count: int, operator: str = " || ") -> str:
+    return operator.join(f"x == {i}" for i in range(count))
 
 
 _SOURCES: dict[tuple[str, str], Callable[[], dict[str, str]]] = {
@@ -145,20 +150,31 @@ _MODULE = {"rust": "src.lib", "go": "a", "cpp": "a"}
 _FILE = {"rust": "src/lib.rs", "go": "a.go", "cpp": "a.cpp"}
 
 
-def _index(repo: Path, files: dict[str, str], mock: MagicMock) -> GraphUpdater:
+def _index(
+    repo: Path,
+    files: dict[str, str],
+    mock: MagicMock,
+    capture: CaptureSelection | None = None,
+) -> GraphUpdater:
     for rel, text in files.items():
         (repo / rel).parent.mkdir(parents=True, exist_ok=True)
         (repo / rel).write_text(text, encoding="utf-8")
-    return create_and_run_updater(repo, mock)
+    return create_and_run_updater(repo, mock, capture=capture)
 
 
-def _calls(repo: Path, mock: MagicMock) -> set[tuple[str, str]]:
+def _edges(
+    repo: Path, mock: MagicMock, rel: cs.RelationshipType
+) -> set[tuple[str, str]]:
     prefix = f"{repo.name}."
     return {
         (str(c.args[0][2]).removeprefix(prefix), str(c.args[2][2]).removeprefix(prefix))
         for c in mock.ensure_relationship_batch.call_args_list
-        if c.args[1] == cs.RelationshipType.CALLS.value
+        if c.args[1] == rel.value
     }
+
+
+def _calls(repo: Path, mock: MagicMock) -> set[tuple[str, str]]:
+    return _edges(repo, mock, cs.RelationshipType.CALLS)
 
 
 @pytest.mark.parametrize(("lang", "shape"), list(_SOURCES), ids=str)
@@ -277,6 +293,178 @@ def test_a_failed_caller_costs_only_its_own_calls(
     assert f"{temp_repo.name}.a.dispatch (a.go)" in logged[0], logged
     assert updater.call_pass_failures == [temp_repo / "a.go"]
     logged.clear()
+
+
+# --- the I/O group -----------------------------------------------------------
+
+_IO = resolve_capture([cs.CaptureGroup.IO])
+
+
+def _js(dispatch_body: str) -> dict[str, str]:
+    return {
+        "a.js": "function helper() { return 1 }\nfunction other() { return 2 }\n"
+        + "function dispatch(x) {\n"
+        + dispatch_body
+        + "\n}\nfunction simple() { return other() }\n",
+    }
+
+
+def _py(dispatch_body: str) -> dict[str, str]:
+    return {
+        "a.py": "def helper():\n    return 1\n\n\ndef other():\n    return 2\n\n\n"
+        + "def dispatch(x):\n"
+        + dispatch_body
+        + "\n\n\ndef simple():\n    return other()\n",
+    }
+
+
+def _lua(dispatch_body: str) -> dict[str, str]:
+    return {
+        "a.lua": "function helper() return 1 end\nfunction other() return 2 end\n"
+        + "function dispatch(x)\n"
+        + dispatch_body
+        + "\nend\nfunction simple() return other() end\n",
+    }
+
+
+# Each of the I/O group's flow walks: the flat one (Rust, Go, C++ and Lua,
+# whose `else if` nests in an `else` block), the JS/TS one and the Python
+# one, each with a condition or a value that nests one level per term.
+_IO_SOURCES: dict[tuple[str, str], Callable[[], dict[str, str]]] = {
+    **_SOURCES,
+    ("lua", "else-if"): lambda: _lua(
+        "if x == 0 then return 0\n"
+        + "".join(f"else if x == {i} then return {i}\n" for i in range(1, BRANCHES))
+        + "else return helper()\n"
+        + "end\n" * BRANCHES
+    ),
+    ("javascript", "else-if"): lambda: _js(
+        _else_if(
+            "    if (x === {i}) {{",
+            "    }} else if (x === {i}) {{",
+            "return {i}",
+            BRANCHES,
+        )
+        + "\n    } else {\n        return helper()\n    }"
+    ),
+    ("javascript", "or-chain"): lambda: _js(
+        f"    if ({_or_terms(TERMS)}) {{ return helper() }}\n    return 0"
+    ),
+    ("javascript", "or-value"): lambda: _js(
+        f"    const v = {_or_terms(TERMS)}\n    return v ? helper() : 0"
+    ),
+    ("python", "or-chain"): lambda: _py(
+        f"    if {_or_terms(TERMS, ' or ')}:\n        return helper()\n    return 0"
+    ),
+    ("python", "or-value"): lambda: _py(
+        f"    v = {_or_terms(TERMS, ' or ')}\n    return helper() if v else 0"
+    ),
+}
+_IO_MODULE = {**_MODULE, "lua": "a", "javascript": "a", "python": "a"}
+# Lua's `else if` opens a block per link, and the I/O group's access walk
+# (not its flow walk) still takes a frame per nested block, so Lua's chain
+# holds the flow walk alone to the run without the group.
+_IO_CAPTURE = {
+    "lua": resolve_capture([f"{cs.CAPTURE_ADD_PREFIX}{cs.RelationshipType.FLOWS_TO}"])
+}
+
+
+def _index_both(
+    tmp_path: Path, files: dict[str, str], capture: CaptureSelection = _IO
+) -> tuple[tuple[Path, _MockIngestor, GraphUpdater], tuple[Path, _MockIngestor]]:
+    # The same repository, indexed once with the I/O group on and once
+    # without it; the two checkouts share a name, so their qns do too.
+    with_io, without = tmp_path / "io" / "deep", tmp_path / "plain" / "deep"
+    io_mock, plain_mock = _MockIngestor(), _MockIngestor()
+    updater = _index(with_io, files, io_mock, capture=capture)
+    _index(without, files, plain_mock)
+    return (with_io, io_mock, updater), (without, plain_mock)
+
+
+@pytest.mark.parametrize(("lang", "shape"), list(_IO_SOURCES), ids=str)
+def test_a_deep_function_keeps_its_calls_with_the_io_group_on(
+    tmp_path: Path, lang: str, shape: str
+) -> None:
+    (with_io, io_mock, updater), (without, plain_mock) = _index_both(
+        tmp_path, _IO_SOURCES[(lang, shape)](), _IO_CAPTURE.get(lang, _IO)
+    )
+
+    mod = _IO_MODULE[lang]
+    expected = _calls(without, plain_mock)
+    assert (f"{mod}.dispatch", f"{mod}.helper") in expected, expected
+    assert _calls(with_io, io_mock) == expected
+    assert updater.call_pass_failures == []
+
+
+# Go's deep shapes read the environment before the chain and write what they
+# read in the branch at its far end; JS and Python read it in the deepest
+# operand of a value. Each must flow as its shallow version does.
+_GO_IO = (
+    ("package deep\n\n", 'package deep\n\nimport "os"\n\n'),
+    ("    w := Worker{}\n", '    w := Worker{}\n    v := os.Getenv("DEEP")\n'),
+    (
+        "return helper() + w.Run()",
+        'os.WriteFile("out.txt", []byte(v), 0644)\n        return helper() + w.Run()',
+    ),
+)
+
+
+def _go_io(files: dict[str, str]) -> dict[str, str]:
+    text = files["a.go"]
+    for old, new in _GO_IO:
+        assert text.count(old) == 1, old
+        text = text.replace(old, new)
+    return {**files, "a.go": text}
+
+
+def _js_io(terms: int) -> dict[str, str]:
+    rest = "".join(f" || x === {i}" for i in range(1, terms))
+    return {
+        "a.js": 'const fs = require("fs")\n\nfunction dispatch(x) {\n'
+        + f"    const v = process.env.DEEP{rest}\n"
+        + '    fs.writeFileSync("out.txt", v)\n}\n',
+    }
+
+
+def _py_io(terms: int) -> dict[str, str]:
+    rest = "".join(f" or x == {i}" for i in range(1, terms))
+    return {
+        "a.py": "import os\n\n\ndef dispatch(x):\n"
+        + f'    v = os.getenv("DEEP"){rest}\n'
+        + '    with open("out.txt", "w") as out:\n        out.write(v)\n',
+    }
+
+
+_FLOW_SOURCES: dict[tuple[str, str], tuple[Callable[[], dict[str, str]], ...]] = {
+    ("go", "else-if"): (
+        lambda: _go_io(_SOURCES[("go", "else-if")]()),
+        lambda: _go_io(_SHALLOW["go"]()),
+    ),
+    ("go", "or-chain"): (
+        lambda: _go_io(_SOURCES[("go", "or-chain")]()),
+        lambda: _go_io(_SHALLOW["go"]()),
+    ),
+    ("javascript", "or-value"): (lambda: _js_io(TERMS), lambda: _js_io(2)),
+    ("python", "or-value"): (lambda: _py_io(TERMS), lambda: _py_io(2)),
+}
+
+
+@pytest.mark.parametrize(("lang", "shape"), list(_FLOW_SOURCES), ids=str)
+def test_a_deep_function_flows_as_a_shallow_one_does(
+    tmp_path: Path, lang: str, shape: str
+) -> None:
+    deep_source, shallow_source = _FLOW_SOURCES[(lang, shape)]
+    (deep, deep_mock, updater), (without, plain_mock) = _index_both(
+        tmp_path / "deep", deep_source()
+    )
+    shallow, shallow_mock = tmp_path / "shallow" / "deep", _MockIngestor()
+    _index(shallow, shallow_source(), shallow_mock, capture=_IO)
+
+    flows = _edges(shallow, shallow_mock, cs.RelationshipType.FLOWS_TO)
+    assert ("resource::ENV::DEEP", "resource::FILE::out.txt") in flows, flows
+    assert _edges(deep, deep_mock, cs.RelationshipType.FLOWS_TO) == flows
+    assert _calls(deep, deep_mock) == _calls(without, plain_mock)
+    assert updater.call_pass_failures == []
 
 
 # --- the sync summary ---------------------------------------------------------
