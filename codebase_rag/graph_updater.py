@@ -9371,8 +9371,9 @@ class GraphUpdater:
         queue_callers: Callable[[list[str]], list[tuple[Path, str, bytes]]],
         flow_functions: dict[str, FileFlowFunctions | None] | None = None,
     ) -> None:
-        """Bring the callers of the re-parsed callable-flow holders into the
-        re-parse, until no joined file holds one.
+        """Bring the callers of the re-parsed callable-flow functions into the
+        re-parse, until no re-parsed file holds one its callers were not
+        asked for.
 
         `run_callback(fn): return fn()` gets an edge to each callable its
         callers pass in (`run_callback(_on_start)`), derived from bindings
@@ -9400,24 +9401,28 @@ class GraphUpdater:
             if (flow := scanned(path, key, data)) is not None
         }
         flow_names: frozenset[str] = frozenset()
-        holders: set[str] = set()
+        # The names each file's callers were asked for. A file asked once can
+        # gain a forwarder later, when the file it forwards into joins
+        # (`wrap(cb): return bridge.run_b(cb)`, once bridge.py does), and
+        # only the callers of that name bind the edges the re-parse drops, so
+        # they are asked for it then. The names only grow, so the loop ends
+        # (reviews of PR #3812).
+        queried: dict[str, frozenset[str]] = {}
         while True:
             flow_names = settled_flow_names(list(files.values()), flow_names)
-            joined = {
-                key: names
-                for key, flow in sorted(files.items())
-                if key not in holders
-                and (
-                    names := (
-                        flow.forwarders(flow_names)
-                        if key in edited
-                        else flow.names(flow_names)
-                    )
+            joined: dict[str, Collection[str]] = {}
+            for key, flow in sorted(files.items()):
+                names = (
+                    flow.forwarders(flow_names)
+                    if key in edited
+                    else flow.names(flow_names)
                 )
-            }
+                asked = queried.get(key, frozenset())
+                if gained := names - asked:
+                    joined[key] = gained
+                    queried[key] = asked | gained
             if not joined:
                 return
-            holders.update(joined)
             for path, key, data in queue_callers(self._flow_caller_keys(joined)):
                 if (flow := scanned(path, key, data)) is not None:
                     files[key] = flow

@@ -33,6 +33,7 @@ from codebase_rag.tests.test_incremental_interface_skip import (
     _diff,
     _edit_after_cache,
     _materialise,
+    _snapshot,
     _sync,
     _updater,
 )
@@ -159,6 +160,147 @@ def test_a_flow_holder_brings_in_only_the_callers_of_its_invoking_functions(
     assert got == reparsed
     clean = _clean(root)
     assert synced == clean, _diff(synced, clean)
+
+
+_LOG = "def log(msg):\n    print(msg)\n"
+_WIDEN_LOG = {"util.py": _LOG.replace("(msg)", "(msg, level=0)", 1)}
+_ENTRY = (
+    "from registry import wrap\n\n\n"
+    "def on_start():\n"
+    '    return "started"\n\n\n'
+    "def main():\n"
+    "    return wrap(on_start)\n"
+)
+# A file the closure holds can gain a forwarding name in a later round, once
+# the file it forwards into joins. entry.py calls only that name, so asked
+# for no more than the names its file held when it joined, the closure left
+# it unparsed and the flow edges its call binds were lost (reviews of
+# PR #3812).
+#
+# Greptile: registry.py joins with run_a, whose caller bridge.py then makes
+# wrap a forwarder into run_b.
+_LATE_WRAP = {
+    "util.py": _LOG,
+    "registry.py": (
+        "import bridge\nfrom util import log\n\n\n"
+        "def run_a(cb):\n"
+        '    log("running")\n'
+        "    return cb()\n\n\n"
+        "def wrap(cb):\n"
+        "    return bridge.run_b(cb)\n"
+    ),
+    "bridge.py": (
+        "import registry\n\n\ndef run_b(cb):\n    registry.run_a(cb)\n    return cb()\n"
+    ),
+    "entry.py": _ENTRY,
+}
+# CodeRabbit: bridge.forward only forwards, and entry.py calls outer at module
+# level.
+_LATE_OUTER = {
+    "util.py": _LOG,
+    "registry.py": (
+        "import bridge\nfrom util import log\n\n\n"
+        "def invoke(cb):\n"
+        '    log("running")\n'
+        "    cb()\n\n\n"
+        "def outer(cb):\n"
+        "    bridge.forward(cb)\n"
+    ),
+    "bridge.py": "import registry\n\n\ndef forward(cb):\n    registry.invoke(cb)\n",
+    "entry.py": (
+        "import registry\n\n\ndef handler():\n    pass\n\n\nregistry.outer(handler)\n"
+    ),
+}
+# The name settles two rounds after registry.py joins: run_c's file is a
+# caller of bridge.py, itself a caller of registry.py.
+_LATER_WRAP = {
+    "util.py": _LOG,
+    "registry.py": (
+        "import hop\nfrom util import log\n\n\n"
+        "def run_a(cb):\n"
+        '    log("running")\n'
+        "    return cb()\n\n\n"
+        "def wrap(cb):\n"
+        "    return hop.run_c(cb)\n"
+    ),
+    "bridge.py": _LATE_WRAP["bridge.py"],
+    "hop.py": (
+        "import bridge\n\n\ndef run_c(cb):\n    bridge.run_b(cb)\n    return cb()\n"
+    ),
+    "entry.py": _ENTRY,
+}
+# An edited file holds only through what it forwards: registry.py joins with
+# wrap_each, and wrap gains its target once bridge.py, a caller of helper.py,
+# joins. A comment keeps registry.py's interface, so entry.py is no dependent
+# of it.
+_LATE_EDITED_WRAP = {
+    "util.py": _LOG,
+    "helper.py": (
+        'from util import log\n\n\ndef each(cb):\n    log("each")\n    return cb()\n'
+    ),
+    "registry.py": (
+        "import bridge\nimport helper\n\n\n"
+        "def wrap_each(cb):\n"
+        "    return helper.each(cb)\n\n\n"
+        "def wrap(cb):\n"
+        "    return bridge.run_b(cb)\n"
+    ),
+    "bridge.py": (
+        "import helper\n\n\ndef run_b(cb):\n    helper.each(cb)\n    return cb()\n"
+    ),
+    "entry.py": _ENTRY,
+}
+LATE_FLOW_CASES = {
+    "greptile": (_LATE_WRAP, _WIDEN_LOG),
+    "coderabbit": (_LATE_OUTER, _WIDEN_LOG),
+    "two-rounds-later": (_LATER_WRAP, _WIDEN_LOG),
+    "edited-holder": (
+        _LATE_EDITED_WRAP,
+        {**_WIDEN_LOG, "registry.py": _LATE_EDITED_WRAP["registry.py"] + "# edited\n"},
+    ),
+}
+
+
+def _late_flow_sync(root: Path, edits: dict[str, str], mode: str) -> set[str]:
+    """Sync the indexed `root` after `edits` the way `mode` names: a new
+    updater as the CLI does, the indexing one as the watcher keeps it, or a
+    reingest of the edited files; the files it re-parsed."""
+    store = _StatefulIngestor()
+    indexer = _updater(store, root)
+    indexer.run(force=True)
+    _edit_after_cache(root, edits)
+    match mode:
+        case "reingest":
+            report = _updater(store, root).reingest([root / rel for rel in edits])
+            got = {*report.reparsed, *report.affected}
+        case "reused":
+            indexer.run()
+            got = set(indexer._reparsed_file_keys)
+        case _:
+            updater = _updater(store, root)
+            updater.run()
+            got = set(updater._reparsed_file_keys)
+    synced = _snapshot(store)
+    clean = _clean(root)
+    assert synced == clean, _diff(synced, clean)
+    return got
+
+
+@pytest.mark.parametrize("mode", ["new", "reused", "reingest"])
+@pytest.mark.parametrize(
+    ("files", "edits"),
+    LATE_FLOW_CASES.values(),
+    ids=LATE_FLOW_CASES.keys(),
+)
+def test_a_held_file_that_gains_a_flow_name_brings_in_its_callers(
+    temp_repo: Path, files: dict[str, str], edits: dict[str, str], mode: str
+) -> None:
+    root = temp_repo / PROJECT
+    _materialise(root, files)
+
+    got = _late_flow_sync(root, edits, mode)
+
+    assert "entry.py" in got, sorted(got)
 
 
 def test_flow_callers_are_the_callers_of_a_flow_function_or_a_closure() -> None:
