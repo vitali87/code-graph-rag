@@ -378,6 +378,28 @@ def _forget_toolchain_probe_answers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(parser_fingerprint, "_PROBE_ANSWERS", {})
 
 
+def _isolate_setting(
+    patch: pytest.MonkeyPatch,
+    name: str,
+    value: str | Path | bool | None,
+    *,
+    exported: bool = True,
+) -> None:
+    """`value` for setting `name`, in `settings` and in the environment.
+
+    Exported as well: a `cgr`, script or pytest a test starts reads its
+    settings from the environment, not from this process's `settings`, and
+    the environment holds the developer's own, `.env` merged in at import
+    (PR #3809 review). Settings match a name in any case, so every spelling
+    goes; None, or `exported=False`, leaves the name unset, for its default.
+    """
+    patch.setattr(cgr_config.settings, name, value)
+    for spelling in [key for key in os.environ if key.upper() == name]:
+        patch.delenv(spelling)
+    if exported and value is not None:
+        patch.setenv(name, str(value))
+
+
 def _isolate_vector_stores(
     patch: pytest.MonkeyPatch, factory: pytest.TempPathFactory
 ) -> None:
@@ -386,21 +408,23 @@ def _isolate_vector_stores(
     # on its file lock. A developer .env sets QDRANT_URL to the live daemon
     # stack, and URL mode never reads QDRANT_DB_PATH, so the URL must be
     # cleared too or the purge lands on the live server.
-    patch.setattr(cgr_config.settings, "QDRANT_URL", None)
-    patch.setattr(cgr_config.settings, "QDRANT_API_KEY", None)
-    patch.setattr(cgr_config.settings, "QDRANT_ALLOW_INSECURE_API_KEY", False)
-    patch.setattr(
-        cgr_config.settings, "QDRANT_DB_PATH", str(factory.mktemp("qdrant-iso"))
-    )
-    patch.setattr(
-        cgr_config.settings,
+    _isolate_setting(patch, "QDRANT_URL", None)
+    _isolate_setting(patch, "QDRANT_API_KEY", None)
+    _isolate_setting(patch, "QDRANT_ALLOW_INSECURE_API_KEY", False)
+    _isolate_setting(patch, "QDRANT_DB_PATH", str(factory.mktemp("qdrant-iso")))
+    # Unset in the environment, not exported: pymilvus reads MILVUS_URI when
+    # imported and refuses a file path there. A child gets the default, a
+    # file in its own working directory.
+    _isolate_setting(
+        patch,
         "MILVUS_URI",
         str(factory.mktemp("milvus-iso") / "milvus.db"),
+        exported=False,
     )
     # Unset it already lands under the isolated CGR_HOME; a developer .env
     # that sets it would not.
-    patch.setattr(
-        cgr_config.settings,
+    _isolate_setting(
+        patch,
         "SQLITE_VECTOR_PATH",
         factory.mktemp("sqlite-vec-iso") / "vectors.sqlite",
     )
@@ -408,10 +432,7 @@ def _isolate_vector_stores(
 
 def _isolate_home(patch: pytest.MonkeyPatch, factory: pytest.TempPathFactory) -> Path:
     home = factory.mktemp("cgr-home-iso")
-    patch.setattr(cgr_config.settings, "CGR_HOME", home)
-    # Exported as well: a `cgr`, script or pytest a test starts reads its
-    # home from the environment, not from this process's settings.
-    patch.setenv(rag_cs.ENV_CGR_HOME, str(home))
+    _isolate_setting(patch, rag_cs.ENV_CGR_HOME, home)
     # The trust store's home when the working directory's `.env` sets
     # CGR_HOME (`_trust_store`): the user's own, read at import.
     patch.setattr(cgr_config, "_DEFAULT_CGR_HOME", home)
