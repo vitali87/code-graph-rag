@@ -200,6 +200,26 @@ GO_WORK_SEARCH = frozenset({"", "auto"})
 # Go spells its working folder as PWD does when PWD names that folder, and
 # the helper's loads set PWD, so a query run for them sets it too.
 GO_ENV_PWD = "PWD"
+# A -modfile in GOFLAGS has the loads read that module file in place of the
+# module's go.mod (issue #3797). Go takes a flag there only as `-name=value`
+# or `--name=value`, and the last one given wins.
+GO_ENV_GOFLAGS = "GOFLAGS"
+GO_FLAG_MODFILE = frozenset({"-modfile", "--modfile"})
+GO_FLAG_VALUE_SEPARATOR = "="
+# Go's own settings file, where `go env -w` keeps a setting (PR #3804
+# review). GOENV names it, and `off` turns it off; unset or empty, it is
+# `go/env` in the user's config folder: %AppData% on Windows, $HOME/Library/
+# Application Support on macOS and iOS, and elsewhere $XDG_CONFIG_HOME when
+# that is an absolute path, else $HOME/.config.
+GO_ENV_GOENV = "GOENV"
+GO_ENV_FILE_OFF = "off"
+GO_ENV_FILE_PARTS = ("go", "env")
+GO_ENV_WINDOWS_CONFIG = "APPDATA"
+GO_ENV_HOME = "HOME"
+GO_ENV_XDG_CONFIG_HOME = "XDG_CONFIG_HOME"
+GO_ENV_APPLE_PLATFORMS = frozenset({"darwin", "ios"})
+GO_ENV_APPLE_CONFIG_PARTS = ("Library", "Application Support")
+GO_ENV_UNIX_CONFIG = ".config"
 # A `replace` can name any folder, `/` or a home directory included, so the
 # listing of one for the pipes, sockets and devices Go would open there stops
 # after this many entries.
