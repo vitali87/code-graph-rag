@@ -4929,6 +4929,17 @@ class GraphUpdater:
             if row.get(cs.KEY_LABEL) != cs.NodeLabel.METHOD.value:
                 type_inference.method_return_types[qn] = chain
                 continue
+            # An interface's method stores its result as every Go method
+            # does, but parsing records none for it, so a clean index leaves
+            # a chain through it (`i.Common().StaticCallee()`) unresolved;
+            # read back, the chain resolved (issue #3781).
+            if (
+                self.function_registry.get(
+                    _natural_qn(qn).rpartition(cs.SEPARATOR_DOT)[0]
+                )
+                == NodeType.INTERFACE
+            ):
+                continue
             # Parsing keys a method's result by its natural qn, which each
             # build file declaring it again (`Self`, `Self@5`) shares, and
             # writes each over the last in registration order: replayed in
