@@ -37,6 +37,7 @@ from ...utils.path_utils import (
 from ..build_lock import artifact_fresh, build_cached_artifact, newest_source_mtime
 from ..frontend_mode import resolve_frontend_mode
 from ..go.module_paths import discover_go_module_paths
+from .go_env import go_setting
 
 # Call-site join key: (rel_file, name_token_line, name_token_byte_col, simple_name).
 # The NAME token, not the call-expression start: nested calls (`make().Handle(x)`
@@ -870,16 +871,17 @@ def _split_modfile(goflags: str) -> _SplitGoFlags:
     return _SplitGoFlags(modfile, "".join(kept))
 
 
-def _modfile_flag() -> str:
-    """The module file the -modfile in the helper's GOFLAGS names, as Go
-    reads the flag, or empty for the module's go.mod (issue #3797).
+def _modfile_flag(module: str) -> str:
+    """The module file the -modfile in the GOFLAGS of the helper's loads in
+    `module` names, as Go reads the flag, or empty for the module's go.mod
+    (issue #3797).
 
-    GOFLAGS is read from the environment the helper runs in, as GOWORK is,
-    so one kept in Go's own settings file by `go env -w` is not looked for.
+    GOFLAGS is the one Go takes there, from the environment or else from
+    Go's own settings file, where `go env -w` keeps it (PR #3804 review).
     `go env GOMOD` cannot answer in its place: `go env` takes no -modfile,
     and names the go.mod all the same.
     """
-    return _split_modfile(os.environ.get(cs.GO_ENV_GOFLAGS, "")).modfile
+    return _split_modfile(go_setting(cs.GO_ENV_GOFLAGS, module)).modfile
 
 
 def _without_modfile(env: Mapping[str, str]) -> dict[str, str]:
@@ -934,10 +936,10 @@ def _active_workfile(go: str, module: str) -> str | None:
     `go env GOWORK`, run there with the helper's environment, answers as
     the loads choose. It is not run when GOWORK is `off`, nor when GOWORK
     is unset and no folder above holds a go.work, the usual case, where Go
-    finds none either; a GOWORK kept in Go's own settings file by `go env
-    -w` is then not looked for.
+    finds none either. GOWORK is the one Go takes there, from the
+    environment or else from Go's own settings file (PR #3804 review).
     """
-    chosen = os.environ.get(cs.GO_ENV_GOWORK, "")
+    chosen = go_setting(cs.GO_ENV_GOWORK, module)
     if chosen == cs.GO_WORK_OFF:
         return None
     if chosen in cs.GO_WORK_SEARCH and not _workfile_above(module):
@@ -965,20 +967,22 @@ def _loaded_folders(go: str, anchors: list[Path]) -> list[str]:
     loads the workspace's modules too, wherever they are. A go.work can
     sit above the repository or be named by GOWORK, so each anchor's is
     asked for (PR #3777 review); each is read once. Go refuses -modfile in
-    a workspace before it loads a package, so a workspace then sends the
-    loads nowhere (issue #3797).
+    a workspace before it loads a package, so a workspace then sends that
+    anchor's loads nowhere (issue #3797).
     """
-    modules = [os.path.abspath(anchor) for anchor in anchors]
-    active = {module: _active_workfile(go, module) for module in modules}
-    if modfile := _modfile_flag():
-        return [
-            folder
-            for module, workfile in active.items()
-            if workfile is None
-            for folder in _local_replace_targets(go, module, modfile)
-        ]
     folders: list[str] = []
-    for workfile in dict.fromkeys(filter(None, active.values())):
+    modules: list[str] = []
+    workfiles: dict[str, None] = {}
+    for module in [os.path.abspath(anchor) for anchor in anchors]:
+        workfile = _active_workfile(go, module)
+        if modfile := _modfile_flag(module):
+            if workfile is None:
+                folders.extend(_local_replace_targets(go, module, modfile))
+            continue
+        modules.append(module)
+        if workfile is not None:
+            workfiles[workfile] = None
+    for workfile in workfiles:
         used, replaced = _workspace_folders(go, workfile)
         modules.extend(used)
         folders.extend(used + replaced)
@@ -1071,7 +1075,7 @@ def _run_tool_once(
         **_without_modfile(os.environ),
         **_GO_ENV,
         "CGR_IGNORE_DIRS": ",".join(sorted(ignored_dirs)),
-        _MODFILE_ENV: _modfile_flag(),
+        _MODFILE_ENV: _modfile_flag(os.path.abspath(module_root)),
     }
     if overlay is not None:
         env[_OVERLAY_ENV] = str(overlay)
