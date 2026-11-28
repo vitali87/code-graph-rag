@@ -3138,16 +3138,25 @@ class GraphUpdater:
         parses none.
 
         Pass 2 parses a file's imports only where `_route` sends it to
-        tree-sitter, so this asks `_route` too: a file libclang emitted, or
-        one whose language runs on another engine, is not read back.
+        tree-sitter, or to the notebook tier, which parses a notebook's code
+        cells as Python, so this asks `_route` too: a file libclang emitted,
+        or one whose language runs on another engine, is not read back.
         """
         try:
             path.relative_to(self.repo_path)
         except ValueError:
             return None
         route = self._route(path)
-        language = route.language
-        if route.tier is not cs.FileTier.TREE_SITTER or language is None:
+        match route.tier:
+            case cs.FileTier.TREE_SITTER:
+                language = route.language
+            case cs.FileTier.NOTEBOOK:
+                # A notebook in another language has no Module to restore,
+                # and its source reads as no tree (`_load_notebook_ast`).
+                language = cs.SupportedLanguage.PYTHON
+            case _:
+                return None
+        if language is None:
             return None
         language_queries = self.queries.get(language)
         if language_queries is None or not language_queries.get(cs.QUERY_IMPORTS):
@@ -3411,7 +3420,7 @@ class GraphUpdater:
             self._prune_stale_seeded_module_qns()
 
             known_module_paths = self._resolve_deferred_definitions(rehydrate=not force)
-            self._write_project_index()
+            self._write_project_index(known_module_paths)
         finally:
             # After the deferred stages, as `_reingest_resolve` does, so an
             # edge into a re-parsed Go receiver method finds it registered
@@ -9532,7 +9541,7 @@ class GraphUpdater:
                 self.handoff_dir, files, scan.reparse_reasons(), deleted_keys
             )
 
-    def _write_project_index(self) -> None:
+    def _write_project_index(self, known_module_paths: dict[str, str]) -> None:
         """Write hand-off B, the project index, when a hand-off directory is
         set: the registries pass 3 resolves calls against."""
         if self.handoff_dir is None:
@@ -9545,12 +9554,14 @@ class GraphUpdater:
                 modules=dp.module_qn_to_file_path,
                 definitions=self.function_registry.items(),
                 simple_names=self.simple_name_lookup,
-                imports=self._project_index_imports(),
+                imports=self._project_index_imports(known_module_paths),
                 parents=dp.class_inheritance,
             ),
         )
 
-    def _project_index_imports(self) -> Mapping[str, Mapping[str, str]]:
+    def _project_index_imports(
+        self, known_module_paths: dict[str, str]
+    ) -> Mapping[str, Mapping[str, str]]:
         """Every module's import map, as a fresh index of the tree holds it.
 
         A fresh index parses every file's imports. An incremental run parses
@@ -9559,12 +9570,23 @@ class GraphUpdater:
         rest (issue #3796). The hand-off parses those the way the run parses a
         reached one, into a copy of the import state: the run's own, which
         every later pass resolves through, stays as it is without a hand-off,
-        and so does the graph.
+        and so does the graph. `known_module_paths` is what the run finished
+        its maps against.
         """
         import_processor = self.factory.import_processor
         mapping = import_processor.import_mapping
         module_paths = self.factory.definition_processor.module_qn_to_file_path
-        unheld = [qn for qn in module_paths if qn not in mapping]
+        # Each file once, under its own module, as the run's walk restores
+        # it: a bodied inline `mod` read back from the graph carries its
+        # file's path, and the file restored under the `mod`'s qn keyed its
+        # top-level `use`s one scope too deep (#2805 review).
+        unheld = [
+            holder
+            for holder in dict.fromkeys(
+                _file_module_holding(qn, module_paths) for qn in module_paths
+            )
+            if holder is not None and holder not in mapping
+        ]
         if self._is_full_build or not unheld:
             return mapping
         detached = import_processor.detached_copy()
@@ -9585,6 +9607,12 @@ class GraphUpdater:
             detached.point_module_imports_at_own_language_siblings(
                 module_qn, module_paths, siblings
             )
+        # The run's last steps over the maps, taken before these were
+        # restored: a Rust file's inline `mod` maps commit only at the
+        # arbitration, and a Scala import names a package until every module
+        # declaring one is known (#2450).
+        detached.finalise_rust_mod_scope_uses(known_module_paths)
+        detached.resolve_scala_project_imports(known_module_paths)
         return detached.import_mapping
 
     def _log_process_counts(self, scan: _FileScan, changed_count: int) -> None:
