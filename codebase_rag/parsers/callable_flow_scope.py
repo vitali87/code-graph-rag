@@ -15,6 +15,7 @@ from collections.abc import Collection, Iterable, Mapping
 from tree_sitter import Node
 
 from .. import constants as cs
+from ..types_defs import ResultRow
 from .handlers import get_handler
 from .utils import callable_parameter_indices, python_parameter_names, safe_decode_text
 
@@ -74,6 +75,44 @@ def settled_flow_names(
         if grown == flow_names:
             return flow_names
         flow_names = grown
+
+
+def flow_caller_paths(
+    rows: Iterable[ResultRow], holders: Mapping[str, Collection[str]]
+) -> list[str]:
+    """The callers among `rows` that hold an edge into one of the flow
+    functions `holders` names for each holder file (issue #3781).
+
+    Every flow edge out of a holder starts at a function that invokes a
+    parameter, and is written from the bindings of the calls resolved to it,
+    or to a function forwarding into it, which the loop reaches by name in
+    turn. A caller of something else in the file records none. A closure is
+    named by its position (`anonymous_3_4`, `lambda_3_4`), not by a name the
+    holder's scan reads, and an alias call of it (`make()(cb)`) seeds it, so
+    an edge into such a name keeps its caller too.
+    """
+    simple = {
+        path: {_simple_name(name) for name in names} for path, names in holders.items()
+    }
+    return sorted(
+        {
+            caller
+            for row in rows
+            if isinstance(caller := row.get(cs.KEY_CALLER_PATH), str)
+            and caller
+            and isinstance(target_path := row.get(cs.KEY_TARGET_PATH), str)
+            and isinstance(target_name := row.get(cs.KEY_TARGET_NAME), str)
+            and (
+                _simple_name(target_name) in simple.get(target_path, ())
+                or any(character.isdigit() for character in target_name)
+            )
+        }
+    )
+
+
+def _simple_name(name: str) -> str:
+    # A C++ definition can name itself with its scope (`Registry::run`).
+    return name.rpartition(cs.SEPARATOR_DOUBLE_COLON)[2].rpartition(cs.SEPARATOR_DOT)[2]
 
 
 def _python_import_aliases(root: Node) -> dict[str, str]:

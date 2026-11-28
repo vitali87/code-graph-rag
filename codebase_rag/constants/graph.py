@@ -1473,6 +1473,18 @@ CYPHER_FOREIGN_MEMBER_PATHS = (
     "WHERE c.path IS NOT NULL AND NOT c.path IN $paths "
     "RETURN DISTINCT c.path AS path"
 )
+# The other way round: the files whose module subtrees hold nodes declared at
+# $paths, such as the type a Go method in methods.go hangs off in types.go.
+# The re-parse delete of methods.go cannot reach those nodes, so its stale
+# methods and their edges go only with their owner's re-parse (issue #3781).
+CYPHER_MEMBER_OWNER_PATHS = (
+    "MATCH (c) WHERE c.path IN $paths "
+    f"MATCH (m:Module)-[:{MODULE_SUBTREE_REL_PATTERN}*1..]->(c) "
+    "WHERE m.path IS NOT NULL AND NOT m.path IN $paths "
+    "AND (m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix) "
+    "RETURN DISTINCT m.path AS path"
+)
 CYPHER_AFFECTED_CALLER_PATHS = (
     "MATCH (caller)-[:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS]->(target) "
     "WHERE target.path IN $paths AND caller.path IS NOT NULL "
@@ -1480,6 +1492,19 @@ CYPHER_AFFECTED_CALLER_PATHS = (
     "AND caller.qualified_name STARTS WITH $project_prefix "
     "AND target.qualified_name STARTS WITH $project_prefix "
     "RETURN DISTINCT caller.path AS caller_path"
+)
+# The same edges with what each one ends at, for the callable-flow closure
+# (issue #3781): a holder's flow edges are written from the bindings of the
+# calls INTO its flow functions, so only the callers holding an edge into one
+# of those need re-walking, not every caller of anything in the file.
+CYPHER_FLOW_CALLER_TARGETS = (
+    "MATCH (caller)-[:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS]->(target) "
+    "WHERE target.path IN $paths AND caller.path IS NOT NULL "
+    "AND NOT caller.path IN $paths "
+    "AND caller.qualified_name STARTS WITH $project_prefix "
+    "AND target.qualified_name STARTS WITH $project_prefix "
+    "RETURN DISTINCT caller.path AS caller_path, target.path AS target_path, "
+    "target.name AS target_name"
 )
 # Documents whose links point into $paths (issue #2458). A link that names a
 # heading ends at that heading's Section, which a re-parse of the linked
@@ -1851,6 +1876,7 @@ CYPHER_PARAM_QUALIFIED_NAMES = "qualified_names"
 KEY_TARGET_LABEL = "target_label"
 KEY_TARGET_QN = "target_qn"
 KEY_TARGET_PATH = "target_path"
+KEY_TARGET_NAME = "target_name"
 
 # Gloss nodes (issue #1808): the properties an agent-authored note carries and
 # the keys its read tools answer with.

@@ -63,7 +63,11 @@ from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from .parsers import utils as parser_utils
 from .parsers.ast_grep_tier import AstGrepTier
-from .parsers.callable_flow_scope import FileFlowFunctions, settled_flow_names
+from .parsers.callable_flow_scope import (
+    FileFlowFunctions,
+    flow_caller_paths,
+    settled_flow_names,
+)
 from .parsers.constant_nodes import PendingConstantType
 from .parsers.contract_linking import link_contracts
 from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
@@ -1793,7 +1797,8 @@ def _go_package_dirs(keys: Iterable[str]) -> set[str]:
 def _go_package_siblings(
     keys: Iterable[str], eligible_by_key: Mapping[str, Path]
 ) -> list[str]:
-    """The walked Go files beside a Go file the sync re-parses or deletes.
+    """The walked Go files beside a Go file the sync finds changed, added or
+    deleted.
 
     A Go method hangs off its receiver type, which another file of the
     package may declare, so re-parsing the type's file deleted the methods
@@ -1801,7 +1806,10 @@ def _go_package_siblings(
     method's file alone could not find its type and filed the method under
     a second name beside the stale one. Package files re-parse together,
     and the type's methods, a build's declarations of one among them, come
-    back as a clean index has them (issue #2483).
+    back as a clean index has them (issue #2483). A changed file can pair
+    with any file beside it in a way the graph does not hold yet; an
+    unchanged one pairs only as the graph says, so it brings in just those
+    files (`_go_member_owner_keys`, `_queue_foreign_members`, issue #3781).
     """
     keys = set(keys)
     dirs = _go_package_dirs(keys)
@@ -6547,6 +6555,38 @@ class GraphUpdater:
             if len(present) == joined:
                 return reindexed_keys
 
+    def _go_member_owner_keys(self, keys: Collection[str]) -> list[str]:
+        """The files declaring the types the Go files at `keys` attach
+        methods to, read from the graph as `_foreign_member_keys` reads the
+        other direction."""
+        go_keys = sorted(key for key in keys if key.endswith(cs.EXT_GO))
+        if not go_keys or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_MEMBER_OWNER_PATHS,
+                {
+                    cs.CYPHER_PARAM_PATHS: go_keys,
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            # The stale methods would outlive the run under a completed hash
+            # commit, so an incremental run aborts, as the foreign-member
+            # read does.
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="member owners")
+            return []
+        return sorted(
+            {
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_PATH), str) and path
+            }
+        )
+
     def _member_files(
         self, keys: list[str], eligible_by_key: dict[str, Path]
     ) -> dict[str, Path]:
@@ -8394,21 +8434,33 @@ class GraphUpdater:
             scan,
             reindexed_keys,
         )
+        # The whole package of a Go file whose source changed; the files
+        # joined above are unchanged, and bring in only the files their
+        # members hang in, in the closure below (issue #3781).
         reindexed_keys = self._queue_affected_callers(
-            _go_package_siblings({*present, *deleted_before_parse}, eligible_by_key),
+            _go_package_siblings(
+                {
+                    *(key for _p, key, _n, _b in scan.changed_entries[:edited_count]),
+                    *deleted_before_parse,
+                },
+                eligible_by_key,
+            ),
             present,
             eligible_by_key,
             scan,
             reindexed_keys,
         )
-        reindexed_keys = self._queue_callable_flow_closure(
-            edited_count,
-            deleted_before_parse,
-            present,
-            eligible_by_key,
-            scan,
-            reindexed_keys,
-        )
+        # A full build re-parses every walked file already, so the closure
+        # could only queue files it skips; its scan read every file once more.
+        if not is_full_build:
+            reindexed_keys = self._queue_callable_flow_closure(
+                edited_count,
+                deleted_before_parse,
+                present,
+                eligible_by_key,
+                scan,
+                reindexed_keys,
+            )
         # Pass 2 order decides which same-stem file claims the bare module
         # qn; a clean build processes files in walk order, so the re-parse
         # set follows it too instead of the order the dependents were found.
@@ -9226,8 +9278,9 @@ class GraphUpdater:
         scan: _FileScan,
         reindexed_keys: list[str],
     ) -> list[str]:
-        """Queue the callable-flow passers, then the Go package files and the
-        member files of everything re-parsed, until none brings in more.
+        """Queue the callable-flow passers, then the files Go methods of the
+        re-parsed files hang in and the member files of everything re-parsed,
+        until none brings in more.
 
         A file the last two bring in can hold a receiver itself: registry.cpp
         joins for the out-of-line members of registry.h, a dependent, and
@@ -9235,17 +9288,28 @@ class GraphUpdater:
         plugins.cpp, re-parses too. So the callable flow is walked again over
         every file they add.
         """
+        # Each round scans every re-parsed file again; a file's functions are
+        # what its bytes say, so each is read once for the whole closure.
+        flow_functions: dict[str, FileFlowFunctions | None] = {}
         while True:
             reindexed_keys = self._queue_callable_flow_passers(
-                edited_count, present, eligible_by_key, scan, reindexed_keys
-            )
-            flowed = len(present)
-            # A Go caller the callable flow brought in re-parses with its
-            # package too, as every other re-parsed Go file does (issue #2483).
-            reindexed_keys = self._queue_affected_callers(
-                _go_package_siblings(present, eligible_by_key),
+                edited_count,
                 present,
                 eligible_by_key,
+                scan,
+                reindexed_keys,
+                flow_functions,
+            )
+            flowed = len(present)
+            # A Go file re-parsed unchanged brings in the files whose types
+            # its methods hang off, whose re-parse alone deletes those
+            # methods' old nodes; their own other members join below, as
+            # every type's do (issues #2483, #3781).
+            owners = self._go_member_owner_keys(present)
+            reindexed_keys = self._queue_affected_callers(
+                owners,
+                present,
+                self._member_files(owners, eligible_by_key),
                 scan,
                 reindexed_keys,
             )
@@ -9264,6 +9328,7 @@ class GraphUpdater:
         eligible_by_key: dict[str, Path],
         scan: _FileScan,
         reindexed_keys: list[str],
+        flow_functions: dict[str, FileFlowFunctions | None] | None = None,
     ) -> list[str]:
         """Queue the files that pass callables into a re-parsed function."""
         queued = len(scan.changed_entries)
@@ -9282,6 +9347,7 @@ class GraphUpdater:
             [(path, key, data) for path, key, _new, data in scan.changed_entries],
             {key for _path, key, _new, _data in scan.changed_entries[:edited_count]},
             queue_callers,
+            flow_functions,
         )
         if len(scan.changed_entries) == queued:
             return reindexed_keys
@@ -9292,6 +9358,7 @@ class GraphUpdater:
         reparsed: list[tuple[Path, str, bytes]],
         edited: Collection[str],
         queue_callers: Callable[[list[str]], list[tuple[Path, str, bytes]]],
+        flow_functions: dict[str, FileFlowFunctions | None] | None = None,
     ) -> None:
         """Bring the callers of the re-parsed callable-flow holders into the
         re-parse, until no joined file holds one.
@@ -9309,31 +9376,58 @@ class GraphUpdater:
         A file is checked only when it is re-parsed, so a dependent whose
         functions take no part in callable flow widens nothing.
         """
+        known = {} if flow_functions is None else flow_functions
+
+        def scanned(path: Path, key: str, data: bytes) -> FileFlowFunctions | None:
+            if key not in known:
+                known[key] = self._file_flow_functions(path, data)
+            return known[key]
+
         files = {
             key: flow
             for path, key, data in reparsed
-            if (flow := self._file_flow_functions(path, data)) is not None
+            if (flow := scanned(path, key, data)) is not None
         }
         flow_names: frozenset[str] = frozenset()
         holders: set[str] = set()
         while True:
             flow_names = settled_flow_names(list(files.values()), flow_names)
-            joined = sorted(
-                key
-                for key, flow in files.items()
+            joined = {
+                key: names
+                for key, flow in sorted(files.items())
                 if key not in holders
                 and (
-                    flow.forwarders(flow_names)
-                    if key in edited
-                    else flow.names(flow_names)
+                    names := (
+                        flow.forwarders(flow_names)
+                        if key in edited
+                        else flow.names(flow_names)
+                    )
                 )
-            )
+            }
             if not joined:
                 return
             holders.update(joined)
-            for path, key, data in queue_callers(self._affected_caller_keys(joined)):
-                if (flow := self._file_flow_functions(path, data)) is not None:
+            for path, key, data in queue_callers(self._flow_caller_keys(joined)):
+                if (flow := scanned(path, key, data)) is not None:
                     files[key] = flow
+
+    def _flow_caller_keys(self, holders: Mapping[str, Collection[str]]) -> list[str]:
+        """The files calling into the flow functions `holders` names for
+        each holder file, whose walks write its callable-flow edges."""
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_FLOW_CALLER_TARGETS,
+                {
+                    cs.CYPHER_PARAM_PATHS: sorted(holders),
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="callable-flow callers")
+            return []
+        return flow_caller_paths(rows, holders)
 
     def _file_flow_functions(
         self, filepath: Path, file_bytes: bytes
