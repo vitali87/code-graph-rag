@@ -20,8 +20,8 @@ Scoped to: body-parser
 ┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
 ┃ Relationship Type   ┃ Count ┃
 ┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
-│ CALLS               │   696 │
-│ REFERENCES          │   594 │
+│ CALLS               │   672 │
+│ REFERENCES          │   579 │
 │ DEFINES             │   491 │
 │ CONTAINS_SECTION    │   131 │
 │ IMPORTS             │    46 │
@@ -31,7 +31,7 @@ Scoped to: body-parser
 │ LINKS_TO            │     6 │
 │ CONTAINS_FOLDER     │     5 │
 ├─────────────────────┼───────┤
-│ Total Relationships │ 2,027 │
+│ Total Relationships │ 1,988 │
 └─────────────────────┴───────┘
 --- stderr
 Fetching graph statistics...

@@ -63,7 +63,6 @@ E	CALLS	Function	"ky.source.utils.merge.mergeHooks"	Function	"ky.source.utils.me
 E	CALLS	Function	"ky.source.utils.merge.newHookValue"	Function	"ky.source.utils.merge.deepMerge"	{"arg_count":2,"col":4,"end_col":85,"end_line":34,"kwarg_names":[],"line":34,"resolution":"exact"}
 E	CALLS	Function	"ky.source.utils.merge.validateAndMerge"	Function	"ky.source.utils.is.isObject"	{"arg_count":1,"col":8,"end_col":24,"end_line":7,"kwarg_names":[],"line":7,"resolution":"exact"}
 E	CALLS	Function	"ky.source.utils.merge.validateAndMerge"	Function	"ky.source.utils.merge.deepMerge"	{"arg_count":2,"col":8,"end_col":33,"end_line":12,"kwarg_names":[],"line":12,"resolution":"exact","spread_args":true}
-E	CALLS	Function	"ky.source.utils.timeout.timeout"	Function	"ky.source.utils.timeout.timeout"	{"col":5,"end_col":20,"end_line":22,"line":22,"resolution":"heuristic"}
 E	CALLS	Function	"ky.source.utils.timeout.timeout"	Function	"ky.source.utils.timeout.timeout.anonymous_14_20"	{"col":20,"end_col":2,"end_line":31,"line":15,"resolution":"exact"}
 E	CALLS	Function	"ky.source.utils.timeout.timeout"	Function	"ky.source.utils.timeout.timeout.anonymous_15_31"	{"col":31,"end_col":3,"end_line":22,"line":16,"resolution":"exact"}
 E	CALLS	Function	"ky.source.utils.timeout.timeout"	Function	"ky.source.utils.timeout.timeout.anonymous_27_9"	{"col":9,"end_col":4,"end_line":30,"line":28,"resolution":"exact"}
@@ -78,28 +77,12 @@ E	CALLS	Function	"ky.test.helpers.with-page.browserTest"	Function	"ky.test.brows
 E	CALLS	Function	"ky.test.helpers.with-page.browserTest"	Function	"ky.test.browser.anonymous_458_51"	{"col":10,"end_col":22,"end_line":22,"line":22,"resolution":"exact","via_param":"run"}
 E	CALLS	Function	"ky.test.helpers.with-page.browserTest"	Function	"ky.test.helpers.with-page.browserTest.anonymous_17_50"	{"col":50,"end_col":3,"end_line":26,"line":18,"resolution":"exact"}
 E	CALLS	Function	"ky.test.helpers.with-page.defaultBrowsersTest"	Function	"ky.test.helpers.with-page.browserTest"	{"arg_count":3,"col":1,"end_col":42,"end_line":31,"kwarg_names":[],"line":31,"resolution":"exact"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._calculateRetryDelay"	Function	"ky.source.utils.delay.delay"	{"arg_count":1,"col":41,"end_col":64,"end_line":244,"kwarg_names":[],"line":244,"resolution":"heuristic"}
 E	CALLS	Method	"ky.source.core.Ky.Ky._fetch"	Function	"ky.source.utils.options.findUnknownOptions"	{"arg_count":2,"col":28,"end_col":75,"end_line":301,"kwarg_names":[],"line":301,"resolution":"exact"}
 E	CALLS	Method	"ky.source.core.Ky.Ky._fetch"	Function	"ky.source.utils.timeout.timeout"	{"arg_count":4,"col":9,"end_col":103,"end_line":311,"kwarg_names":[],"line":311,"resolution":"exact"}
 E	CALLS	Method	"ky.source.core.Ky.Ky._retry"	Function	"ky.source.core.Ky.Ky.create.function_"	{"col":16,"end_col":27,"end_line":258,"line":258,"resolution":"exact","via_param":"function_"}
 E	CALLS	Method	"ky.source.core.Ky.Ky._retry"	Function	"ky.source.utils.delay.delay"	{"arg_count":2,"col":9,"end_col":50,"end_line":265,"kwarg_names":[],"line":265,"resolution":"exact"}
 E	CALLS	Method	"ky.source.core.Ky.Ky._retry"	Method	"ky.source.core.Ky.Ky._calculateRetryDelay"	{"arg_count":1,"col":28,"end_col":55,"end_line":260,"kwarg_names":[],"line":260,"resolution":"exact"}
 E	CALLS	Method	"ky.source.core.Ky.Ky._retry"	Method	"ky.source.core.Ky.Ky._retry"	{"arg_count":1,"col":15,"end_col":32,"end_line":282,"kwarg_names":[],"line":282,"resolution":"exact"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress"	{"col":4,"end_col":84,"end_line":321,"line":321,"resolution":"overload","via_param":"onDownloadProgress"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress"	{"col":6,"end_col":89,"end_line":340,"line":340,"resolution":"overload","via_param":"onDownloadProgress"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress"	{"col":7,"end_col":73,"end_line":353,"line":353,"resolution":"overload","via_param":"onDownloadProgress"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress@156"	{"col":4,"end_col":84,"end_line":321,"line":321,"resolution":"overload","via_param":"onDownloadProgress"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress@156"	{"col":6,"end_col":89,"end_line":340,"line":340,"resolution":"overload","via_param":"onDownloadProgress"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress@156"	{"col":7,"end_col":73,"end_line":353,"line":353,"resolution":"overload","via_param":"onDownloadProgress"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress@208"	{"col":4,"end_col":84,"end_line":321,"line":321,"resolution":"overload","via_param":"onDownloadProgress"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress@208"	{"col":6,"end_col":89,"end_line":340,"line":340,"resolution":"overload","via_param":"onDownloadProgress"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress@208"	{"col":7,"end_col":73,"end_line":353,"line":353,"resolution":"overload","via_param":"onDownloadProgress"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress@271"	{"col":4,"end_col":84,"end_line":321,"line":321,"resolution":"overload","via_param":"onDownloadProgress"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress@271"	{"col":6,"end_col":89,"end_line":340,"line":340,"resolution":"overload","via_param":"onDownloadProgress"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress@271"	{"col":7,"end_col":73,"end_line":353,"line":353,"resolution":"overload","via_param":"onDownloadProgress"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress@317"	{"col":4,"end_col":84,"end_line":321,"line":321,"resolution":"overload","via_param":"onDownloadProgress"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress@317"	{"col":6,"end_col":89,"end_line":340,"line":340,"resolution":"overload","via_param":"onDownloadProgress"}
-E	CALLS	Method	"ky.source.core.Ky.Ky._stream"	Function	"ky.test.browser.onDownloadProgress@317"	{"col":7,"end_col":73,"end_line":353,"line":353,"resolution":"overload","via_param":"onDownloadProgress"}
 E	CALLS	Method	"ky.source.core.Ky.Ky.constructor"	Function	"ky.source.core.Ky.Ky._decorateResponse.json"	{"col":54,"end_col":72,"end_line":182,"line":182,"resolution":"heuristic"}
 E	CALLS	Method	"ky.source.core.Ky.Ky.constructor"	Function	"ky.source.core.Ky.Ky._decorateResponse.json"	{"col":92,"end_col":110,"end_line":182,"line":182,"resolution":"heuristic"}
 E	CALLS	Method	"ky.source.core.Ky.Ky.constructor"	Function	"ky.source.core.Ky.Ky.constructor.anonymous_169_45"	{"col":45,"end_col":4,"end_line":172,"line":170,"resolution":"exact"}
@@ -107,9 +90,6 @@ E	CALLS	Method	"ky.source.core.Ky.Ky.constructor"	Function	"ky.source.utils.merg
 E	CALLS	Method	"ky.source.core.Ky.Ky.constructor"	Function	"ky.source.utils.merge.mergeHooks"	{"arg_count":2,"col":10,"end_col":4,"end_line":137,"kwarg_names":[],"line":129,"resolution":"exact"}
 E	CALLS	Method	"ky.source.core.Ky.Ky.constructor"	Function	"ky.source.utils.normalize.normalizeRequestMethod"	{"arg_count":1,"col":11,"end_col":84,"end_line":138,"kwarg_names":[],"line":138,"resolution":"exact"}
 E	CALLS	Method	"ky.source.core.Ky.Ky.constructor"	Function	"ky.source.utils.normalize.normalizeRetryOptions"	{"arg_count":1,"col":10,"end_col":46,"end_line":141,"kwarg_names":[],"line":141,"resolution":"exact"}
-E	CALLS	Method	"ky.source.core.Ky.Ky.constructor"	Function	"ky.source.utils.timeout.timeout"	{"col":12,"end_col":27,"end_line":143,"line":143,"resolution":"heuristic"}
-E	CALLS	Method	"ky.source.core.Ky.Ky.constructor"	Function	"ky.test.hooks.fetch"	{"col":10,"end_col":23,"end_line":144,"line":144,"resolution":"heuristic"}
-E	CALLS	Method	"ky.source.core.Ky.Ky.constructor"	Function	"ky.test.hooks.fetch"	{"col":27,"end_col":43,"end_line":144,"line":144,"resolution":"heuristic"}
 E	CALLS	Method	"ky.source.core.Ky.Ky.create"	Function	"ky.source.core.Ky.Ky.create.function_"	{"arg_count":0,"col":61,"end_col":72,"end_line":84,"kwarg_names":[],"line":84,"resolution":"exact"}
 E	CALLS	Method	"ky.source.core.Ky.Ky.create"	Method	"ky.source.core.Ky.Ky._retry"	{"arg_count":1,"col":41,"end_col":58,"end_line":84,"kwarg_names":[],"line":84,"resolution":"exact"}
 E	CALLS	Method	"ky.source.core.Ky.Ky.create"	Method	"ky.source.core.Ky.Ky.constructor"	{"arg_count":2,"col":13,"end_col":35,"end_line":29,"kwarg_names":[],"line":29,"resolution":"exact"}
@@ -205,7 +185,6 @@ E	CALLS	Module	"ky.test.browser"	Function	"ky.test.helpers.with-page.defaultBrow
 E	CALLS	Module	"ky.test.browser"	Function	"ky.test.helpers.with-page.defaultBrowsersTest"	{"arg_count":2,"col":0,"end_col":2,"end_line":353,"kwarg_names":[],"line":323,"resolution":"exact"}
 E	CALLS	Module	"ky.test.browser"	Function	"ky.test.helpers.with-page.defaultBrowsersTest"	{"arg_count":2,"col":0,"end_col":2,"end_line":425,"kwarg_names":[],"line":355,"resolution":"exact"}
 E	CALLS	Module	"ky.test.browser"	Function	"ky.test.helpers.with-page.defaultBrowsersTest"	{"arg_count":2,"col":0,"end_col":2,"end_line":76,"kwarg_names":[],"line":50,"resolution":"exact"}
-E	CALLS	Module	"ky.test.fetch"	Function	"ky.source.core.Ky.Ky._decorateResponse.json"	{"col":13,"end_col":22,"end_line":65,"line":65,"resolution":"heuristic"}
 E	CALLS	Module	"ky.test.fetch"	Function	"ky.test.fetch.anonymous_48_49"	{"col":49,"end_col":1,"end_line":60,"line":49,"resolution":"exact"}
 E	CALLS	Module	"ky.test.fetch"	Function	"ky.test.fetch.anonymous_5_51"	{"col":51,"end_col":1,"end_line":47,"line":6,"resolution":"exact"}
 E	CALLS	Module	"ky.test.fetch"	Function	"ky.test.fetch.anonymous_61_49"	{"col":49,"end_col":1,"end_line":66,"line":62,"resolution":"exact"}
@@ -1533,11 +1512,6 @@ E	LINKS_TO	Section	"ky.readme_md.API.ky_delete(input, options?)"	Section	"ky.rea
 E	LINKS_TO	Section	"ky.readme_md.API.ky_delete(input, options?).options.hooks.hooks_beforeRetry"	Section	"ky.readme_md.API.ky_stop"	{"anchor":"kystop","col":262,"end_col":282,"end_line":308,"line":308,"text":"`ky.stop`"}
 E	LINKS_TO	Section	"ky.readme_md.API.ky_delete(input, options?).options.prefixUrl"	Section	"ky.readme_md.API.ky_extend(defaultOptions)"	{"anchor":"kyextenddefaultoptions","col":22,"end_col":62,"end_line":200,"line":200,"text":"`ky.extend()`"}
 E	LINKS_TO	Section	"ky.readme_md.API.ky_delete(input, options?).options.retry"	Section	"ky.readme_md.API.ky_delete(input, options?).options.timeout"	{"anchor":"timeout","col":38,"end_col":57,"end_line":244,"line":244,"text":"timeout"}
-E	REFERENCES	Function	"ky.source.core.Ky.Ky.create.function_"	Function	"ky.test.browser.onDownloadProgress"	{"col":40,"end_col":70,"end_line":77,"line":77,"resolution":"overload"}
-E	REFERENCES	Function	"ky.source.core.Ky.Ky.create.function_"	Function	"ky.test.browser.onDownloadProgress@156"	{"col":40,"end_col":70,"end_line":77,"line":77,"resolution":"overload"}
-E	REFERENCES	Function	"ky.source.core.Ky.Ky.create.function_"	Function	"ky.test.browser.onDownloadProgress@208"	{"col":40,"end_col":70,"end_line":77,"line":77,"resolution":"overload"}
-E	REFERENCES	Function	"ky.source.core.Ky.Ky.create.function_"	Function	"ky.test.browser.onDownloadProgress@271"	{"col":40,"end_col":70,"end_line":77,"line":77,"resolution":"overload"}
-E	REFERENCES	Function	"ky.source.core.Ky.Ky.create.function_"	Function	"ky.test.browser.onDownloadProgress@317"	{"col":40,"end_col":70,"end_line":77,"line":77,"resolution":"overload"}
 E	REFERENCES	Function	"ky.source.index.createInstance"	Function	"ky.source.index.createInstance.anonymous_15_15"	{"col":15,"end_col":115,"end_line":16,"line":16,"resolution":"exact"}
 E	REFERENCES	Function	"ky.source.index.createInstance"	Function	"ky.source.index.createInstance.create"	{"col":1,"end_col":94,"end_line":19,"line":19,"resolution":"exact"}
 E	REFERENCES	Function	"ky.source.index.createInstance"	Function	"ky.source.index.createInstance.create"	{"col":13,"end_col":94,"end_line":19,"line":19,"resolution":"exact"}
