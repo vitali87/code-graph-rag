@@ -52,10 +52,17 @@ DEDUPED_MARK = " (*)"
 # The licence reproduced for a crate offering a choice, in order of
 # preference: MIT is the shortest of the usual pairs and needs no NOTICE.
 PREFERRED = ("MIT", "Zlib", "Apache-2.0")
+# The windows-rs crates (windows-sys, windows-link) name theirs in lower case.
 LICENSE_FILES = {
-    "MIT": ("LICENSE-MIT", "LICENSE-MIT.md", "LICENSE", "LICENSE.md"),
+    "MIT": ("LICENSE-MIT", "LICENSE-MIT.md", "LICENSE", "LICENSE.md", "license-mit"),
     "Zlib": ("LICENSE-ZLIB", "LICENSE-ZLIB.md", "LICENSE", "LICENSE.md"),
-    "Apache-2.0": ("LICENSE-APACHE", "LICENSE-APACHE.md", "LICENSE", "LICENSE.md"),
+    "Apache-2.0": (
+        "LICENSE-APACHE",
+        "LICENSE-APACHE.md",
+        "LICENSE",
+        "LICENSE.md",
+        "license-apache-2.0",
+    ),
 }
 LICENSE_SPLIT = re.compile(r"\s+OR\s+|/|[()]")
 # `libsqlite3-sys`'s `bundled` feature compiles SQLite's own source in.

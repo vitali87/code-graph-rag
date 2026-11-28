@@ -29,6 +29,7 @@ from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
 from ...utils.path_utils import (
+    is_junction_left_out,
     is_regular_file,
     is_special_file_entry,
     is_symlink_entry,
@@ -636,11 +637,13 @@ def _special_files(repo_path: Path) -> list[str]:
 def _special_entries(root: str, limit: int | None = None) -> tuple[list[str], bool]:
     """The pipes, sockets and devices under `root`, and links to one, each
     spelled from `root`, and whether the listing ended before `limit`
-    entries. Links are never followed, so no listing loops; a folder that
-    cannot be listed is passed over."""
+    entries. Links are never followed, nor a Windows junction the
+    repository walk leaves out, so no listing loops; a folder that cannot
+    be listed is passed over."""
     found: list[str] = []
     seen = 0
     pending = [root]
+    top = Path(root)
     while pending:
         try:
             with os.scandir(pending.pop()) as entries:
@@ -648,13 +651,24 @@ def _special_entries(root: str, limit: int | None = None) -> tuple[list[str], bo
                     seen += 1
                     if limit is not None and seen > limit:
                         return found, False
-                    if entry.is_dir(follow_symlinks=False):
-                        pending.append(entry.path)
-                    elif _is_special(entry):
-                        found.append(entry.path)
+                    _sort_entry(entry, top, pending, found)
         except OSError:
             continue
     return found, True
+
+
+def _sort_entry(
+    entry: os.DirEntry[str], top: Path, pending: list[str], found: list[str]
+) -> None:
+    """Queue a listed folder for listing, or keep a pipe, socket or device.
+    A junction looping onto the way down would be listed again at every
+    level, so one the repository walk leaves out is not queued (issue
+    #3740)."""
+    if entry.is_dir(follow_symlinks=False):
+        if not is_junction_left_out(entry.path, top):
+            pending.append(entry.path)
+    elif _is_special(entry):
+        found.append(entry.path)
 
 
 def _is_special(entry: os.DirEntry[str]) -> bool:

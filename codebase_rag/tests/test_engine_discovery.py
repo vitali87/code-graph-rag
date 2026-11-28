@@ -28,13 +28,20 @@ from codebase_rag import constants as cs
 from codebase_rag import engine_frame
 from codebase_rag.checkout_state import state_file
 from codebase_rag.config import load_ignore_patterns
-from codebase_rag.tests.conftest import _MockIngestor, create_and_run_updater
+from codebase_rag.tests.conftest import (
+    _MockIngestor,
+    create_and_run_updater,
+    get_node_names,
+)
 from codebase_rag.tests.shadows import child_env
 from codebase_rag.tests.test_symlink_policy import (
+    _junction,
     _link,
+    _loops_repo,
     _make_undecodable,
     _write,
     needs_fifo,
+    needs_junctions,
 )
 from codebase_rag.utils.path_utils import readable_name
 
@@ -376,6 +383,90 @@ class TestLinks:
 
         assert _rel_paths(plan) == ["a.py", "pkg/b.py"]
         assert plan.dirs[1].dirpath == f"{root}{os.sep}pkg"
+
+
+def _junctions_repo(tmp_path: Path) -> Path:
+    """A repository holding a junction to a folder inside it, one to a folder
+    outside it, and two whose folders are gone, one inside and one outside.
+    No junction names an ancestor, so each walk ends."""
+    repo = _tree(tmp_path / "repo", ["b.py", "real/a.py"])
+    outside = _tree(tmp_path / "outside", ["secret.py"])
+    gone_inside, gone_outside = repo / "gone", tmp_path / "gone"
+    gone_inside.mkdir()
+    gone_outside.mkdir()
+    _junction(repo / "alias", repo / "real")
+    # Not "out": that name is skipped as build output wherever it is.
+    _junction(repo / "elsewhere", outside)
+    _junction(repo / "vanished", gone_inside)
+    _junction(repo / "dangling", gone_outside)
+    gone_inside.rmdir()
+    gone_outside.rmdir()
+    return repo
+
+
+@needs_junctions
+class TestJunctions:
+    """A junction is no link to `os.path.islink`, so the walk enters one that
+    names a folder inside the repository, and leaves out as a link one that
+    names a folder outside it, judged by where it points (issue #3740)."""
+
+    def test_a_junction_is_entered_only_when_it_names_a_folder_inside(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _junctions_repo(tmp_path)
+
+        plan = _same_plan(repo)
+
+        assert _rel_paths(plan) == ["b.py", "alias/a.py", "real/a.py"]
+        # One whose folder inside is gone is a folder that cannot be listed.
+        assert _keys(plan) == [cs.ROOT_DIR_KEY, "alias", "real"]
+        assert sorted(plan.symlinks) == ["dangling", "elsewhere"]
+
+    def test_a_junction_naming_a_folder_on_its_way_down_is_left_out_as_a_link(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _loops_repo(tmp_path / "repo")
+
+        plan = _same_plan(repo)
+
+        # A/J and B/K are entered once each; under each, the other's
+        # junction names a folder already entered.
+        assert _rel_paths(plan) == [
+            "A/a.py",
+            "A/J/b.py",
+            "B/b.py",
+            "B/K/a.py",
+            "F/x.py",
+        ]
+        assert _keys(plan) == [cs.ROOT_DIR_KEY, "A", "A/J", "B", "B/K", "F"]
+        assert sorted(plan.symlinks) == ["A/J/K", "B/K/J", "F/J1", "F/J2", "top"]
+
+    def test_nothing_outside_is_indexed_and_no_module_is_left_without_a_parent(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _junctions_repo(tmp_path)
+        ingestor = _MockIngestor()
+
+        # The run audits its graph: no node without a relationship.
+        create_and_run_updater(repo, ingestor)
+
+        assert get_node_names(ingestor, cs.NodeLabel.MODULE) == {
+            "repo.b",
+            "repo.alias.a",
+            "repo.real.a",
+        }
+
+    def test_a_directory_symlink_beside_a_junction_is_still_a_link(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _tree(tmp_path / "repo", ["real/a.py"])
+        _junction(repo / "alias", repo / "real")
+        _link(repo / "dir_link", "real", directory=True)
+
+        plan = _same_plan(repo)
+
+        assert _rel_paths(plan) == ["alias/a.py", "real/a.py"]
+        assert plan.symlinks == ("dir_link",)
 
 
 @needs_fifo

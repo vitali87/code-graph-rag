@@ -11,7 +11,11 @@
 //!   comes before `a-b/x.py`.
 //! - **Folders** are pruned by `IgnoreRules::should_keep_dir`; one the rules
 //!   keep is still left out, and reported, when it is a link or its name is
-//!   not UTF-8. Links are never followed; the root is, when it is one.
+//!   not UTF-8. Links are never followed; the root is, when it is one. A
+//!   link is what Python calls one (`lstat`): on Windows a junction is none,
+//!   so the walk enters one naming a folder inside the root, and leaves out
+//!   as a link one naming a folder outside it or one it entered on its way
+//!   down, as `is_junction_left_out` does (`lstat`).
 //! - **Files**: cgr's own state files are dropped at any depth, then
 //!   `should_skip_rel_file` decides; a file it keeps is left out, and
 //!   reported, when it is a link, when its name is not UTF-8, or when it is
@@ -39,11 +43,12 @@
 //! folder's subfolders in the order the system lists them.
 
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, FileType};
+use std::fs;
 use std::mem;
 use std::path::{Path, PathBuf, MAIN_SEPARATOR_STR};
 
 use super::ignore::{string_from_os_str, IgnoreRules, PatternError};
+use super::lstat::{walk_kind, Kind, WalkRoot};
 use super::state::python_mtime;
 use super::Engine;
 
@@ -129,10 +134,12 @@ impl Engine {
 
     /// The plan without its hashes.
     pub fn walk(&self, root: &OsStr, rules: &IgnoreRules) -> Result<FilePlan, PatternError> {
+        let walk_root = WalkRoot::new(Path::new(root));
         let mut nodes = vec![Node::root(root)];
         let mut level = vec![0];
         while !level.is_empty() {
-            let visits: Vec<Visit> = self.map_ordered(&level, |&id| visit(rules, &nodes[id]));
+            let visits: Vec<Visit> =
+                self.map_ordered(&level, |&id| visit(rules, &nodes[id], &walk_root));
             let mut next = Vec::new();
             for (&id, mut visit) in level.iter().zip(visits) {
                 if let Visit::Listed(listed) = &mut visit {
@@ -229,8 +236,9 @@ enum Report {
 /// One entry of a listing.
 pub(super) struct Entry {
     pub(super) name: OsString,
-    /// Its own type, a link not followed; `None` when it cannot be read.
-    kind: Option<FileType>,
+    /// Its own type, a link not followed, as Python reads it; `None` when
+    /// it cannot be read.
+    kind: Option<Kind>,
     /// Whether it is a folder once links are followed: what puts it among
     /// `os.walk`'s `dirnames`.
     pub(super) is_dir: bool,
@@ -239,22 +247,21 @@ pub(super) struct Entry {
 impl Entry {
     /// `is_symlink_entry`.
     pub(super) fn is_link(&self) -> bool {
-        self.kind.is_some_and(|kind| kind.is_symlink())
+        self.kind == Some(Kind::Link)
     }
 
     /// `is_special_file_entry`: no regular file, folder or link. An entry
     /// whose type cannot be read is not special.
-    fn is_special(&self) -> bool {
-        self.kind
-            .is_some_and(|kind| !kind.is_file() && !kind.is_dir() && !kind.is_symlink())
+    pub(super) fn is_special(&self) -> bool {
+        self.kind == Some(Kind::Special)
     }
 }
 
-fn visit(rules: &IgnoreRules, node: &Node) -> Visit {
+fn visit(rules: &IgnoreRules, node: &Node, root: &WalkRoot) -> Visit {
     let mtime = fs::metadata(&node.dirpath)
         .ok()
         .map(|metadata| python_mtime(&metadata));
-    let Some(entries) = list(&node.dirpath) else {
+    let Some(entries) = list(&node.dirpath, root) else {
         return Visit::Unlisted;
     };
     match judge(rules, node, entries) {
@@ -266,20 +273,20 @@ fn visit(rules: &IgnoreRules, node: &Node) -> Visit {
     }
 }
 
-/// The folder's entries in the order the system lists them, or `None` when
-/// it cannot be listed to the end.
-pub(super) fn list(dirpath: &OsStr) -> Option<Vec<Entry>> {
+/// The folder's entries in the order the system lists them, judged as a
+/// walk of the repository at `root` judges them, or `None` when it cannot
+/// be listed to the end.
+pub(super) fn list(dirpath: &OsStr, root: &WalkRoot) -> Option<Vec<Entry>> {
     let mut entries = Vec::new();
     for entry in fs::read_dir(dirpath).ok()? {
         let entry = entry.ok()?;
-        let kind = entry.file_type().ok();
+        let kind = walk_kind(&entry, root);
         // `DirEntry.is_dir()`, which follows a link and is false for any
-        // entry it cannot stat.
+        // entry it cannot stat. Any other entry is a folder by its own
+        // type, so a junction is one even when what it names is gone.
         let is_dir = match kind {
-            Some(kind) if kind.is_symlink() => {
-                fs::metadata(entry.path()).is_ok_and(|metadata| metadata.is_dir())
-            }
-            Some(kind) => kind.is_dir(),
+            Some(Kind::Link) => fs::metadata(entry.path()).is_ok_and(|metadata| metadata.is_dir()),
+            Some(kind) => kind == Kind::Folder,
             None => false,
         };
         entries.push(Entry {

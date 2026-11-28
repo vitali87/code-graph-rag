@@ -29,7 +29,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Callable, Generator
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from subprocess import CompletedProcess
 from typing import NamedTuple
 from unittest.mock import MagicMock, call
@@ -46,12 +46,14 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import has_other_language_sibling
 from codebase_rag.main import detect_excludable_directories
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers import structure_processor
+from codebase_rag.parsers import java_generated, structure_processor
 from codebase_rag.parsers.contracts import discover_contract_operations
 from codebase_rag.parsers.csharp_frontend.frontend import (
     find_csharp_project,
     uncovered_csharp_projects,
 )
+from codebase_rag.parsers.dart.package_paths import discover_dart_packages
+from codebase_rag.parsers.go.module_paths import discover_go_module_paths
 from codebase_rag.parsers.go_frontend import (
     GoCallSite,
     GoSemanticFacts,
@@ -62,6 +64,10 @@ from codebase_rag.parsers.java_lombok import _overlay_from_root, overlay_identit
 from codebase_rag.parsers.js_ts.module_paths import (
     _read_manifest as _read_package_manifest,
 )
+from codebase_rag.parsers.js_ts.module_paths import (
+    discover_js_workspace_packages,
+)
+from codebase_rag.parsers.python_source_roots import discover_python_source_roots
 from codebase_rag.tests.conftest import (
     _MockIngestor,
     create_and_run_updater,
@@ -94,6 +100,41 @@ def _link(link: Path, target: str, *, directory: bool = False) -> None:
         link.symlink_to(Path(target), target_is_directory=directory)
     except OSError:  # Windows without symlink privileges.
         pytest.skip("symlinks need privileges on this host")
+
+
+needs_junctions = pytest.mark.skipif(
+    sys.platform != "win32", reason="directory junctions are Windows'"
+)
+
+
+def _junction(junction: Path, target: Path, *, loop: bool = False) -> None:
+    """A directory junction at `junction` naming the folder `target`, which
+    must exist.
+
+    Windows only, and unlike a symlink it needs no privilege. Python's walk
+    does not count one as a link, so it enters one naming a folder inside
+    the repository (issue #3740). One naming an ancestor is a loop, which
+    the walks leave out; were they to enter it, they would at every level
+    until Windows refuses the path, so a test says when it makes one.
+    """
+    import _winapi
+
+    assert loop or not junction.is_relative_to(target), "a junction that loops"
+    _winapi.CreateJunction(str(target), str(junction))
+
+
+def _loops_repo(repo: Path) -> Path:
+    """A repository at `repo` whose junctions loop: two naming their own
+    folder, one naming the root, and a cycle of two through each other, A/J
+    naming B and B/K naming A. Windows only."""
+    for rel in ("A/a.py", "B/b.py", "F/x.py"):
+        _write(repo / rel, f"# {rel}\n")
+    _junction(repo / "F" / "J1", repo / "F", loop=True)
+    _junction(repo / "F" / "J2", repo / "F", loop=True)
+    _junction(repo / "top", repo, loop=True)
+    _junction(repo / "A" / "J", repo / "B")
+    _junction(repo / "B" / "K", repo / "A")
+    return repo
 
 
 def _write(path: Path, text: str) -> Path:
@@ -190,6 +231,272 @@ class TestWalk:
         _link(entry, "repo", directory=True)
         assert _walked(entry) == _walked(layout)
         assert {"pkg/__init__.py", "pkg/core.py"} <= set(_walked(entry))
+
+
+def _as_junctions(monkeypatch: pytest.MonkeyPatch, targets: dict[Path, Path]) -> None:
+    """Folders stand in for Windows junctions: `os.path.isjunction` and
+    `os.readlink` answer for each as Windows does, `\\\\?\\` and all where a
+    drive is spelled, so the rule is checked on every system."""
+    isjunction, readlink = os.path.isjunction, os.readlink
+    spelled = {os.fspath(junction): target for junction, target in targets.items()}
+
+    def is_junction(path: str | os.PathLike[str]) -> bool:
+        return os.fspath(path) in spelled or isjunction(path)
+
+    def read_link(path: str | os.PathLike[str]) -> str:
+        if (target := spelled.get(os.fspath(path))) is None:
+            return readlink(path)
+        if target.drive:
+            return f"{cs.WINDOWS_VERBATIM_PREFIX}{target}"
+        return os.fspath(target)
+
+    monkeypatch.setattr(os.path, "isjunction", is_junction)
+    monkeypatch.setattr(os, "readlink", read_link)
+
+
+class TestJunctions:
+    """Issue #3740: Python's walk entered a Windows junction wherever it
+    pointed, and the structure pass left out a folder outside the root, so
+    what one named outside became modules with no parent; one naming a
+    folder on its own way down was entered at every level, each doubling
+    the walk with two of them. A junction naming a folder outside the root,
+    or one the walk has already entered to reach it, is now left out as a
+    link, judged by where `os.readlink` says it points; any other is
+    entered."""
+
+    @pytest.mark.parametrize(
+        ("target", "outside"),
+        [
+            pytest.param("repo/real", False, id="inside"),
+            pytest.param("outside", True, id="outside"),
+            pytest.param("repo/gone", False, id="dangling-inside"),
+            pytest.param("gone", True, id="dangling-outside"),
+            pytest.param("repo/real/../../outside", True, id="out-through-dots"),
+        ],
+    )
+    def test_a_junction_is_judged_by_where_it_points(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        target: str,
+        outside: bool,
+    ) -> None:
+        repo = tmp_path / "repo"
+        (repo / "real").mkdir(parents=True)
+        (tmp_path / "outside").mkdir()
+        junction = repo / "junction"
+        junction.mkdir()
+        _as_junctions(monkeypatch, {junction: tmp_path / target})
+
+        assert path_utils.is_junction_left_out(junction, repo) is outside
+
+    def test_one_whose_target_cannot_be_read_is_left_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        junction = tmp_path / "junction"
+        junction.mkdir()
+        monkeypatch.setattr(os.path, "isjunction", lambda _path: True)
+
+        def unreadable(_path: str | os.PathLike[str]) -> str:
+            raise PermissionError(junction)
+
+        monkeypatch.setattr(os, "readlink", unreadable)
+
+        assert path_utils.is_junction_left_out(junction, tmp_path) is True
+
+    def test_a_folder_that_is_no_junction_is_never_left_out(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "plain").mkdir()
+
+        assert path_utils.is_junction_left_out(tmp_path / "plain", tmp_path) is False
+
+    @pytest.mark.parametrize(
+        ("target", "spelled"),
+        [
+            pytest.param("\\\\?\\C:\\repo\\x", "C:\\repo\\x", id="drive"),
+            pytest.param(
+                "\\\\?\\UNC\\host\\share\\x", "\\\\host\\share\\x", id="share"
+            ),
+            pytest.param("\\\\?\\Volume{0}\\x", "\\\\?\\Volume{0}\\x", id="volume"),
+            pytest.param("C:\\repo\\x", "C:\\repo\\x", id="plain"),
+            pytest.param("/repo/x", "/repo/x", id="posix"),
+        ],
+    )
+    def test_a_target_s_verbatim_prefix_goes_where_a_drive_or_share_follows(
+        self, target: str, spelled: str
+    ) -> None:
+        assert path_utils.without_verbatim_prefix(target) == spelled
+
+    @pytest.mark.parametrize(
+        ("target", "root", "left_out"),
+        [
+            pytest.param("C:\\repo\\real", "C:\\repo", False, id="plain"),
+            pytest.param(
+                "\\\\?\\C:\\repo\\real", "C:\\repo", False, id="target-prefixed"
+            ),
+            pytest.param(
+                "C:\\repo\\real", "\\\\?\\C:\\repo", False, id="root-prefixed"
+            ),
+            pytest.param(
+                "\\\\?\\C:\\repo\\real", "\\\\?\\C:\\repo", False, id="both-prefixed"
+            ),
+            pytest.param("c:\\REPO\\Real", "\\\\?\\C:\\repo", False, id="other-case"),
+            pytest.param(
+                "\\\\?\\UNC\\host\\share\\repo\\x",
+                "\\\\host\\share\\repo",
+                False,
+                id="share",
+            ),
+            pytest.param("C:\\outside", "C:\\repo", True, id="outside"),
+            pytest.param(
+                "\\\\?\\C:\\outside", "C:\\repo", True, id="outside-target-prefixed"
+            ),
+            pytest.param(
+                "C:\\outside", "\\\\?\\C:\\repo", True, id="outside-root-prefixed"
+            ),
+            pytest.param("C:\\repository", "C:\\repo", True, id="a-longer-name"),
+        ],
+    )
+    def test_a_target_is_compared_with_the_root_without_prefix_or_case(
+        self, target: str, root: str, left_out: bool
+    ) -> None:
+        windows_root = PureWindowsPath(root)
+
+        assert (
+            path_utils.junction_left_out(
+                PureWindowsPath(target), [windows_root], windows_root
+            )
+            is left_out
+        )
+
+    @pytest.mark.parametrize(
+        ("target", "way", "left_out"),
+        [
+            pytest.param("C:\\repo\\F", ["F"], True, id="its-own-folder"),
+            pytest.param("C:\\repo", ["F", "F\\G"], True, id="the-root"),
+            pytest.param("C:\\repo\\F", ["F", "F\\G"], True, id="an-ancestor"),
+            pytest.param("\\\\?\\c:\\REPO\\f", ["F"], True, id="spelled-otherwise"),
+            # A/J names B, so a junction under it naming A closes the cycle.
+            pytest.param("C:\\repo\\A", ["A", "B"], True, id="a-cycle"),
+            pytest.param("C:\\repo\\F\\H", ["F", "F\\G"], False, id="a-sibling"),
+            pytest.param("C:\\repo\\F\\G\\H", ["F", "F\\G"], False, id="a-child"),
+        ],
+    )
+    def test_a_target_already_on_the_walk_s_way_down_is_a_loop(
+        self, target: str, way: list[str], left_out: bool
+    ) -> None:
+        # `way`: the real path of each folder entered below the root, from
+        # it, the junction's own folder last.
+        root = PureWindowsPath("C:\\repo")
+        chain = [root, *(root / part for part in way)]
+
+        assert (
+            path_utils.junction_left_out(PureWindowsPath(target), chain, root)
+            is left_out
+        )
+
+    def test_the_walk_and_the_structure_pass_leave_out_a_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        _write(repo / "F" / "x.py", "X = 1\n")
+        for name in ("J1", "J2"):
+            (repo / "F" / name).mkdir()
+        (repo / "top").mkdir()
+        _as_junctions(
+            monkeypatch,
+            {
+                repo / "F" / "J1": repo / "F",
+                repo / "F" / "J2": repo / "F",
+                repo / "top": repo,
+            },
+        )
+        reported: list[str] = []
+
+        walked = [
+            rel for _d, _n, rel in walk_eligible_files(repo, on_symlink=reported.append)
+        ]
+        derived = structure_processor.StructureProcessor(
+            ingestor=_MockIngestor(),
+            repo_path=repo,
+            project_name="repo",
+            queries={},
+        )._directories_to_derive(None)
+
+        assert walked == ["F/x.py"]
+        assert sorted(reported) == ["F/J1", "F/J2", "top"]
+        assert derived == {repo, repo / "F"}
+
+    def test_the_walk_and_the_structure_pass_leave_out_one_naming_a_folder_outside(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        _write(repo / "real" / "a.py", "A = 1\n")
+        _write(repo / "alias" / "a.py", "A = 1\n")
+        _write(repo / "elsewhere" / "secret.py", "S = 1\n")
+        _write(tmp_path / "outside" / "secret.py", "S = 1\n")
+        _as_junctions(
+            monkeypatch,
+            {repo / "alias": repo / "real", repo / "elsewhere": tmp_path / "outside"},
+        )
+        reported: list[str] = []
+
+        walked = [
+            rel for _d, _n, rel in walk_eligible_files(repo, on_symlink=reported.append)
+        ]
+        derived = structure_processor.StructureProcessor(
+            ingestor=_MockIngestor(),
+            repo_path=repo,
+            project_name="repo",
+            queries={},
+        )._directories_to_derive(None)
+
+        assert walked == ["alias/a.py", "real/a.py"]
+        assert reported == ["elsewhere"]
+        assert derived == {repo, repo / "alias", repo / "real"}
+
+    def test_a_walk_of_its_own_enters_only_the_junctions_the_walk_enters(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        for rel in ("F/x.py", "F/J1/x.py", "top/t.py", "real/a.py", "alias/a.py"):
+            _write(repo / rel, "X = 1\n")
+        _write(repo / "elsewhere" / "secret.py", "S = 1\n")
+        _write(repo / "pruned" / "p.py", "P = 1\n")
+        (repo / "real" / "folder.py").mkdir()
+        _write(tmp_path / "outside" / "secret.py", "S = 1\n")
+        # Before any is a junction, they agree with `os.walk` and `rglob`.
+        assert [entry[0] for entry in path_utils.walk_tree(repo)] == [
+            entry[0] for entry in os.walk(repo)
+        ]
+        assert sorted(path_utils.rglob_files(repo, "*.py")) == sorted(
+            path for path in repo.rglob("*.py") if not path.is_dir()
+        )
+        _as_junctions(
+            monkeypatch,
+            {
+                repo / "F" / "J1": repo / "F",
+                repo / "top": repo,
+                repo / "alias": repo / "real",
+                repo / "elsewhere": tmp_path / "outside",
+            },
+        )
+
+        walked: list[str] = []
+        for dirpath, dirnames, _filenames in path_utils.walk_tree(repo):
+            # Pruned by its caller as `os.walk`'s folders are.
+            dirnames[:] = [name for name in dirnames if name != "pruned"]
+            walked.append(Path(dirpath).relative_to(repo).as_posix())
+        found = path_utils.rglob_files(repo, "*.py")
+
+        assert sorted(walked) == [".", "F", "alias", "real", "real/folder.py"]
+        assert sorted(path.relative_to(repo).as_posix() for path in found) == [
+            "F/x.py",
+            "alias/a.py",
+            "pruned/p.py",
+            "real/a.py",
+        ]
 
 
 class TestIndex:
@@ -1567,6 +1874,80 @@ class TestOtherWalks:
         _link(repo / "linked", "../shared", directory=True)
         # Negative half: a real directory is still offered.
         assert detect_excludable_directories(repo) == {"node_modules"}
+
+    @pytest.mark.parametrize(
+        ("files", "find"),
+        [
+            pytest.param(
+                {"pkg/__init__.py": ""},
+                discover_python_source_roots,
+                id="python-source-roots",
+            ),
+            pytest.param(
+                {"package.json": '{"name": "looped"}'},
+                discover_js_workspace_packages,
+                id="js-workspace-packages",
+            ),
+            pytest.param(
+                {"go.mod": "module example.com/looped\n"},
+                discover_go_module_paths,
+                id="go-module-paths",
+            ),
+            pytest.param(
+                {"pubspec.yaml": "name: looped\n", "lib/looped.dart": ""},
+                discover_dart_packages,
+                id="dart-packages",
+            ),
+            pytest.param(
+                {"pom.xml": "<project />\n"},
+                java_generated._build_dirs,
+                id="java-build-files",
+            ),
+            pytest.param(
+                {"api.json": json.dumps(_OPENAPI)},
+                discover_contract_operations,
+                id="contracts",
+            ),
+            pytest.param(
+                {"App.csproj": "<Project />\n"}, find_csharp_project, id="csharp"
+            ),
+        ],
+    )
+    def test_none_goes_round_a_junction_looping_onto_its_way_down(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        files: dict[str, str],
+        find: Callable[[Path], object],
+    ) -> None:
+        # Each walk of its own entered every Windows junction, so one naming
+        # its own folder held the run there for good (issue #3740). A folder
+        # stands in for the junction: each finds what it holds until it is
+        # one, which `walk_tree` and `rglob_files` then leave out.
+        repo = tmp_path / "repo"
+        _write(repo / "F" / "x.py", "X = 1\n")
+        loop = repo / "F" / "J1"
+        for rel, text in files.items():
+            _write(loop / rel, text)
+        assert find(repo)
+
+        _as_junctions(monkeypatch, {loop: repo / "F"})
+
+        assert not find(repo)
+
+    @needs_fifo
+    def test_the_go_helper_s_pipe_listing_goes_round_no_junction_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        loop = repo / "F" / "J1"
+        loop.mkdir(parents=True)
+        os.mkfifo(loop / "p.go")
+        assert go_frontend._special_files(repo) == [str(loop / "p.go")]
+
+        _as_junctions(monkeypatch, {loop: repo / "F"})
+
+        assert go_frontend._special_files(repo) == []
 
 
 def _package_repo(root: Path, name: str) -> Path:

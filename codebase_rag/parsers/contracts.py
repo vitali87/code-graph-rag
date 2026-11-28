@@ -14,7 +14,6 @@ and a ``.proto`` yields operations only from inside a ``service`` block.
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 from typing import NamedTuple
@@ -31,6 +30,7 @@ from ..utils.path_utils import (
     is_symlink_entry,
     is_utf8_name,
     should_skip_path,
+    walk_tree,
 )
 
 
@@ -56,7 +56,7 @@ def discover_contract_operations(
     # never read from disk and an un-ignored tree (a checked-in generated
     # `dist/` the user rescued) is not skipped here while being indexed.
     operations: list[ContractOperation] = []
-    for directory, subdirs, filenames in os.walk(repo_path):
+    for directory, subdirs, filenames in walk_tree(repo_path):
         # A name that is not UTF-8 is left out, as by the file walk: no graph
         # key can hold it (#3722).
         subdirs[:] = [

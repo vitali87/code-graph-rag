@@ -52,6 +52,11 @@ from codebase_rag.tests.conftest import (
 )
 from codebase_rag.tests.engine_modes import CHANGE_SHADOW_DIR_ENV
 from codebase_rag.tests.shadows import child_env
+from codebase_rag.tests.test_symlink_policy import (
+    _junction,
+    _loops_repo,
+    needs_junctions,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TESTS = Path(__file__).resolve().parent
@@ -683,6 +688,49 @@ class TestInSync:
         os.utime(repo, ns=(recorded, recorded))
 
         self._case(repo, False)
+
+    @needs_junctions
+    def test_folders_holding_junctions_are_listed_as_python_lists_them(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _repo(tmp_path)
+        outside = tmp_path / "outside"
+        _write(outside, "o.py", "O = 1\n")
+        # One naming a folder inside is walked and listed as a folder, one
+        # naming a folder outside left out as a link (issue #3740).
+        _junction(repo / "alias", repo / "pkg")
+        # Not "out": that name is skipped as build output wherever it is.
+        _junction(repo / "elsewhere", outside)
+        _sync(repo)
+        cached = json.loads(_cache(repo).read_text(encoding=cs.ENCODING_UTF8))
+        assert "alias/b.py" in cached
+        assert not any(key.startswith("elsewhere/") for key in cached)
+        self._case(repo, True)
+        # The root's time moved with nothing indexable changed, so its
+        # listing decides, junctions and all.
+        moved = os.stat(repo).st_mtime_ns + 10**9
+        os.utime(repo, ns=(moved, moved))
+        self._case(repo, True)
+
+        # Seen through the junction too.
+        _write(repo, "pkg/d.py", "D = 4\n")
+
+        self._case(repo, False)
+
+    @needs_junctions
+    def test_junctions_that_loop_are_left_out_of_the_listing_as_of_the_walk(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _loops_repo(tmp_path / "repo")
+        _sync(repo)
+        self._case(repo, True)
+        # Each listing decides now, the loops' folders among them.
+        for rel in (".", "A", "A/J", "B", "B/K", "F"):
+            folder = repo / rel
+            moved = os.stat(folder).st_mtime_ns + 10**9
+            os.utime(folder, ns=(moved, moved))
+
+        self._case(repo, True)
 
     def test_a_cache_mtime_in_the_future_counts_as_zero(self, tmp_path: Path) -> None:
         repo = _repo(tmp_path)

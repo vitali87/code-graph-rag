@@ -52,6 +52,7 @@ use std::path::{Component, Path, PathBuf};
 
 use super::discover::{child_dirpath, list, ROOT_DIR_KEY};
 use super::ignore::{IgnoreRules, PatternError};
+use super::lstat::WalkRoot;
 use super::rows::{
     ContainedRow, NodeId, NodeRow, ABSOLUTE_PATH, CONTAINS_FILE, CONTAINS_FOLDER, CONTAINS_PACKAGE,
     EXTENSION, FILE, FOLDER, NAME, PACKAGE, PATH, PROJECT, QUALIFIED_NAME,
@@ -260,17 +261,16 @@ impl Engine {
     /// The root and every folder the structure pass keeps under it, the
     /// root first, then a level of the tree at a time.
     fn folders(&self, root: &OsStr, rules: &IgnoreRules) -> Result<Vec<Folder>, PatternError> {
-        let resolved_root = resolve(Path::new(root));
+        let walk_root = WalkRoot::new(Path::new(root));
         let mut folders = vec![Folder {
             parts: Vec::new(),
             path: root.to_owned(),
-            resolved: resolved_root.clone(),
+            resolved: walk_root.resolved().to_path_buf(),
         }];
         let mut level = vec![0];
         while !level.is_empty() {
-            let found: Vec<Result<Vec<Folder>, PatternError>> = self.map_ordered(&level, |&id| {
-                subfolders(rules, &folders[id], &resolved_root)
-            });
+            let found: Vec<Result<Vec<Folder>, PatternError>> =
+                self.map_ordered(&level, |&id| subfolders(rules, &folders[id], &walk_root));
             let mut next = Vec::new();
             for kept in found {
                 for folder in kept? {
@@ -289,9 +289,9 @@ impl Engine {
 fn subfolders(
     rules: &IgnoreRules,
     folder: &Folder,
-    resolved_root: &Path,
+    root: &WalkRoot,
 ) -> Result<Vec<Folder>, PatternError> {
-    let Some(entries) = list(&folder.path) else {
+    let Some(entries) = list(&folder.path, root) else {
         return Ok(Vec::new());
     };
     let mut kept = Vec::new();
@@ -306,7 +306,7 @@ fn subfolders(
         let resolved = resolve(Path::new(&path));
         // `should_skip_path`'s first check, ahead of the rules: a folder
         // that resolves outside the root (a Windows junction) is left out.
-        if !resolved.starts_with(resolved_root) {
+        if !resolved.starts_with(root.resolved()) {
             continue;
         }
         let mut parts = folder.parts.clone();

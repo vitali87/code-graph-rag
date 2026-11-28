@@ -19,7 +19,8 @@
 //! the Package and Folder rows, the map of each folder's package, and the
 //! File rows, built as `rows` that Python's ingestor writes. `merge` folds
 //! the files' summaries into the project's index in walk order, and so
-//! plans which file claims each module's name.
+//! plans which file claims each module's name. `lstat` reads an entry's own
+//! type as Python reads it, which is what each of them calls a link.
 //!
 //! `go` is phase 3's Go engine (docs/reports/PHASE3_GO.md), built in steps
 //! that nothing a user runs reaches until Go joins the Rust engine's
@@ -28,6 +29,7 @@
 pub mod discover;
 pub mod go;
 pub mod ignore;
+mod lstat;
 pub mod merge;
 #[cfg(feature = "python")]
 pub mod python;

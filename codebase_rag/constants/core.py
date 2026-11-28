@@ -479,6 +479,12 @@ GRAMMAR_VERSION_FMT = "{name}=={version}"
 RUST_EXTENSION_DIST = "cgr-graph-rs"
 GIT_DIR_NAME = ".git"
 ROOT_DIR_KEY = "."
+# What `os.readlink` puts before a Windows junction's target, and its form
+# for a share: the drive or share path after it names the same folder.
+WINDOWS_VERBATIM_PREFIX = "\\\\?\\"
+WINDOWS_VERBATIM_UNC_PREFIX = "\\\\?\\UNC\\"
+WINDOWS_UNC_PREFIX = "\\\\"
+WINDOWS_DRIVE_SEPARATOR = ":"
 JSON_EMPTY_OBJECT = "{}"
 
 STR_NONE = "None"

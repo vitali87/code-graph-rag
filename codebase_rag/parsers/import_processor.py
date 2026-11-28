@@ -48,6 +48,7 @@ from ..utils.path_utils import (
     is_special_file_entry,
     is_utf8_name,
     module_extension,
+    rglob_files,
     should_skip_rel_file,
     walk_eligible_files,
 )
@@ -8859,7 +8860,7 @@ class ImportProcessor:
         parser = self._julia_tree_sitter_parser()
         if parser is not None:
             try:
-                for path in sorted(self.repo_path.rglob("*" + cs.EXT_JL)):
+                for path in sorted(rglob_files(self.repo_path, "*" + cs.EXT_JL)):
                     if not path.is_file():
                         continue
                     try:
@@ -8895,7 +8896,7 @@ class ImportProcessor:
         parser = self._julia_tree_sitter_parser()
         if parser is not None:
             try:
-                for path in sorted(self.repo_path.rglob("*" + cs.EXT_JL)):
+                for path in sorted(rglob_files(self.repo_path, "*" + cs.EXT_JL)):
                     if not path.is_file():
                         continue
                     rel = path.relative_to(self.repo_path).as_posix()
@@ -9020,7 +9021,7 @@ class ImportProcessor:
     def _julia_candidate_excluded(self, rel_file: str) -> bool:
         # The same exclude/unignore predicate the indexer walks with, so an
         # excluded generated module cannot win import resolution. Its name
-        # rule too: these indexes are filled by `rglob`, and a file or folder
+        # rule too: these indexes are filled by `rglob_files`, and a file or folder
         # whose name is not UTF-8 would carry it into the import map (#3722).
         if not is_utf8_name(rel_file):
             return True
@@ -9066,7 +9067,7 @@ class ImportProcessor:
             return cached
         index: dict[str, set[str]] = {}
         try:
-            for path in self.repo_path.rglob("*" + cs.EXT_JL):
+            for path in rglob_files(self.repo_path, "*" + cs.EXT_JL):
                 if not path.is_file():
                     continue
                 rel = path.relative_to(self.repo_path).as_posix()

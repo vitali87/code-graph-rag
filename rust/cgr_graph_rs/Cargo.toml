@@ -1,6 +1,6 @@
 [package]
 name = "cgr_graph_rs"
-version = "0.1.19"
+version = "0.1.20"
 edition = "2021"
 description = "Native acceleration for code-graph-rag: its embedded graph, and its indexer's tree walks"
 license = "MIT"
@@ -55,6 +55,15 @@ tree-sitter-language = "0.1"
 # through pyo3, so this adds no crate to the wheel.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# The reparse tag of an entry Rust calls a link (src/engine/lstat.rs), which
+# std does not expose: Python counts only a symbolic link's tag as a link, so
+# its walk enters a junction (#3740). Only what that one call needs.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Storage_FileSystem",
+    "Win32_System_SystemServices",
+] }
 
 [dev-dependencies]
 tree-sitter-python = "=0.25.0"

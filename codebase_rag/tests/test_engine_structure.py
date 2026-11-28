@@ -39,7 +39,14 @@ from codebase_rag.parsers.structure_processor import StructureProcessor
 from codebase_rag.tests.conftest import _MockIngestor, create_and_run_updater
 from codebase_rag.tests.engine_modes import STRUCTURE_SHADOW_DIR_ENV
 from codebase_rag.tests.shadows import child_env
-from codebase_rag.tests.test_symlink_policy import _link, _make_undecodable, _write
+from codebase_rag.tests.test_symlink_policy import (
+    _junction,
+    _link,
+    _loops_repo,
+    _make_undecodable,
+    _write,
+    needs_junctions,
+)
 from codebase_rag.utils.path_utils import cached_resolve_posix
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -511,6 +518,47 @@ class TestRules:
         found = _same_structure(pairs, checked, repo)
 
         assert _keys(found) == [".", "real", "real/inner"]
+
+    @needs_junctions
+    def test_a_junction_is_a_folder_only_when_it_names_one_inside_the_root(
+        self, tmp_path: Path, pairs: list[Pair], checked: _Recorded
+    ) -> None:
+        repo = _tree(tmp_path / "repo", ["real/inner/__init__.py"])
+        outside = _tree(tmp_path / "outside", ["pkg/__init__.py"])
+        gone = _tree(tmp_path / "gone", [])
+        # Entered when it names a folder inside the root, and left out as a
+        # link otherwise, judged by where it points (issue #3740).
+        _junction(repo / "alias", repo / "real")
+        # Not "out": that name is skipped as build output wherever it is.
+        _junction(repo / "elsewhere", outside)
+        _junction(repo / "dangling", gone)
+        gone.rmdir()
+
+        found = _same_structure(pairs, checked, repo)
+
+        assert _keys(found) == [".", "alias", "alias/inner", "real", "real/inner"]
+
+    @needs_junctions
+    def test_a_junction_naming_a_folder_on_its_way_down_is_left_out(
+        self, tmp_path: Path, pairs: list[Pair], checked: _Recorded
+    ) -> None:
+        repo = _loops_repo(tmp_path / "repo")
+
+        found = _same_structure(pairs, checked, repo)
+
+        assert _keys(found) == [".", "A", "A/J", "B", "B/K", "F"]
+
+    @needs_junctions
+    def test_a_directory_symlink_beside_a_junction_is_still_left_out(
+        self, tmp_path: Path, pairs: list[Pair], checked: _Recorded
+    ) -> None:
+        repo = _tree(tmp_path / "repo", ["real/inner/__init__.py"])
+        _junction(repo / "alias", repo / "real")
+        _link(repo / "dir_link", "real", directory=True)
+
+        found = _same_structure(pairs, checked, repo)
+
+        assert _keys(found) == [".", "alias", "alias/inner", "real", "real/inner"]
 
     def test_a_folder_whose_name_is_not_utf8_is_left_out(
         self, tmp_path: Path, pairs: list[Pair], checked: _Recorded

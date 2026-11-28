@@ -46,6 +46,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sha2::{Digest, Sha256};
 
 use super::discover::STATE_FILENAMES;
+use super::lstat::{lstat_kind, Kind};
 use json::{Text, Value};
 
 /// The folder under CGR_HOME holding each checkout's state
@@ -421,7 +422,7 @@ pub fn prepare_state_dir(cgr_home: &Path, repo: &Path) -> Option<Prepared> {
 
 /// `_is_regular`: only a regular file under a state file's name is cgr's.
 fn is_regular(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+    lstat_kind(path) == Some(Kind::File)
 }
 
 /// `_adopt`: whether `legacy` became `target`. A target that exists, or
@@ -708,6 +709,8 @@ pub fn publish_hash_cache(path: &Path, hashes: &Entries<String>, stamp: f64) -> 
         file.sync_all()?;
         drop(file);
         let current = fs::symlink_metadata(&temp)?;
+        // Rust's `is_symlink`, not Python's (`lstat`): cgr made this file,
+        // so a junction found in its place is a swap as much as a link is.
         if current.file_type().is_symlink() || !same_file(&created, &current) {
             return Err(io::Error::other(format!(
                 "temporary cache path {} was replaced after creation",
