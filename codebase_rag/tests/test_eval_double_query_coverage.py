@@ -35,6 +35,8 @@ from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.document_tier import _load_parser as _load_markdown
+from codebase_rag.tests.conftest import force_mtime_after_cache
 from evals import cgr_graph
 from evals.cgr_graph import _StatefulIngestor
 
@@ -44,6 +46,7 @@ PY_SRC = {
     "util.py": "def helper():\n    return 1\n",
     "app.py": "class Widget:\n    def draw(self):\n        return 2\n",
 }
+DOCUMENTS = {"README.md": "# Demo\n\nA demo.\n", "docs/guide.md": "# Guide\n"}
 CS_SRC = {"Shapes.cs": "namespace Demo;\npublic class Circle { }\n"}
 GO_SRC = {"pkg/types.go": "package pkg\n\ntype T struct{}\n"}
 
@@ -275,6 +278,38 @@ class TestTheDoubleAnswersWithRealRows:
         names = {row[cs.KEY_QUALIFIED_NAME]: row[cs.KEY_NAME] for row in rows}
         assert names["proj.util.helper"] == "helper"
         assert names["proj.app.Widget.draw"] == "draw"
+
+    def test_an_incremental_run_reads_back_no_markdown_module(
+        self, tmp_path: Path
+    ) -> None:
+        # The read-back of the graph's modules tells a Markdown file's by the
+        # row's path, which the double left out: every row was kept, and the
+        # documents' modules were offered to deferred resolution, as only
+        # the real store had stopped doing (issue #3790).
+        if _load_markdown() is None:
+            pytest.skip("the Markdown grammar is not installed")
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = _indexed(root, PY_SRC | DOCUMENTS)
+        assert "proj.README_md" in {
+            props.get(cs.KEY_QUALIFIED_NAME)
+            for (label, _uid), props in store.nodes.items()
+            if label == cs.NodeLabel.MODULE.value
+        }
+        (root / "app.py").write_text(PY_SRC["app.py"] + "\n# edited\n", "utf-8")
+        force_mtime_after_cache(root, root / "app.py")
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=store,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name="proj",
+        )
+
+        updater.run()
+
+        assert sorted(updater.known_module_paths()) == ["proj.app", "proj.util"]
 
 
 class TestQueriesWhoseCallersSwallowExceptions:

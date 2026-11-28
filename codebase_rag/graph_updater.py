@@ -3245,22 +3245,9 @@ class GraphUpdater:
         )
 
     def _restore_module_imports(self, module_qn: str, path: Path) -> bool:
-        """Parse one unchanged module's imports; False when Pass 2 would not.
-
-        Pass 2 parses a file's imports only where `_route` sends it to
-        tree-sitter, so this asks `_route` too: a file libclang emitted, or
-        one whose language runs on another engine, is not read back here.
-        """
-        try:
-            path.relative_to(self.repo_path)
-        except ValueError:
-            return False
-        route = self._route(path)
-        language = route.language
-        if route.tier is not cs.FileTier.TREE_SITTER or language is None:
-            return False
-        language_queries = self.queries.get(language)
-        if language_queries is None or not language_queries.get(cs.QUERY_IMPORTS):
+        """Parse one unchanged module's imports; False when Pass 2 would not."""
+        language = self._imports_language(path)
+        if language is None:
             return False
         entry = self.ast_cache.load(path)
         if entry is None:
@@ -3280,6 +3267,36 @@ class GraphUpdater:
                 entry[0], module_qn
             )
         return True
+
+    def _imports_language(self, path: Path) -> cs.SupportedLanguage | None:
+        """The language Pass 2 parses the imports of `path` in; None when it
+        parses none.
+
+        Pass 2 parses a file's imports only where `_route` sends it to
+        tree-sitter, or to the notebook tier, which parses a notebook's code
+        cells as Python, so this asks `_route` too: a file libclang emitted,
+        or one whose language runs on another engine, is not read back.
+        """
+        try:
+            path.relative_to(self.repo_path)
+        except ValueError:
+            return None
+        route = self._route(path)
+        match route.tier:
+            case cs.FileTier.TREE_SITTER:
+                language = route.language
+            case cs.FileTier.NOTEBOOK:
+                # A notebook in another language has no Module to restore,
+                # and its source reads as no tree (`_load_notebook_ast`).
+                language = cs.SupportedLanguage.PYTHON
+            case _:
+                return None
+        if language is None:
+            return None
+        language_queries = self.queries.get(language)
+        if language_queries is None or not language_queries.get(cs.QUERY_IMPORTS):
+            return None
+        return language
 
     @property
     def state_dir(self) -> Path:
@@ -3540,7 +3557,7 @@ class GraphUpdater:
             known_module_paths = self._resolve_deferred_definitions(
                 rehydrate=not force, carried=self._pending_inbound_edges
             )
-            self._write_project_index()
+            self._write_project_index(known_module_paths)
         finally:
             # After the deferred stages, as `_reingest_resolve` does, so an
             # edge into a re-parsed Go receiver method finds it registered
@@ -9661,7 +9678,7 @@ class GraphUpdater:
                 self.handoff_dir, files, scan.reparse_reasons(), deleted_keys
             )
 
-    def _write_project_index(self) -> None:
+    def _write_project_index(self, known_module_paths: dict[str, str]) -> None:
         """Write hand-off B, the project index, when a hand-off directory is
         set: the registries pass 3 resolves calls against."""
         if self.handoff_dir is None:
@@ -9674,10 +9691,66 @@ class GraphUpdater:
                 modules=dp.module_qn_to_file_path,
                 definitions=self.function_registry.items(),
                 simple_names=self.simple_name_lookup,
-                imports=self.factory.import_processor.import_mapping,
+                imports=self._project_index_imports(known_module_paths),
                 parents=dp.class_inheritance,
             ),
         )
+
+    def _project_index_imports(
+        self, known_module_paths: dict[str, str]
+    ) -> Mapping[str, Mapping[str, str]]:
+        """Every module's import map, as a fresh index of the tree holds it.
+
+        A fresh index parses every file's imports. An incremental run parses
+        those of the files it re-parses and of the unchanged modules they
+        reach, and opens no other file, so a new updater holds no map for the
+        rest (issue #3796). The hand-off parses those the way the run parses a
+        reached one, into a copy of the import state: the run's own, which
+        every later pass resolves through, stays as it is without a hand-off,
+        and so does the graph. `known_module_paths` is what the run finished
+        its maps against.
+        """
+        import_processor = self.factory.import_processor
+        mapping = import_processor.import_mapping
+        module_paths = self.factory.definition_processor.module_qn_to_file_path
+        # Each file once, under its own module, as the run's walk restores
+        # it: a bodied inline `mod` read back from the graph carries its
+        # file's path, and the file restored under the `mod`'s qn keyed its
+        # top-level `use`s one scope too deep (#2805 review).
+        unheld = [
+            holder
+            for holder in dict.fromkeys(
+                _file_module_holding(qn, module_paths) for qn in module_paths
+            )
+            if holder is not None and holder not in mapping
+        ]
+        if self._is_full_build or not unheld:
+            return mapping
+        detached = import_processor.detached_copy()
+        siblings = detached.stem_sibling_modules(module_paths)
+        for module_qn in unheld:
+            path = module_paths[module_qn]
+            language = self._imports_language(path)
+            if language is None or (entry := self.ast_cache.peek(path)) is None:
+                continue
+            detached.restore_unparsed_imports(
+                entry[0],
+                module_qn,
+                language,
+                self.queries,
+                self.factory.definition_processor.function_locations,
+            )
+            # Re-pointed as the run re-points a restored map (#2586).
+            detached.point_module_imports_at_own_language_siblings(
+                module_qn, module_paths, siblings
+            )
+        # The run's last steps over the maps, taken before these were
+        # restored: a Rust file's inline `mod` maps commit only at the
+        # arbitration, and a Scala import names a package until every module
+        # declaring one is known (#2450).
+        detached.finalise_rust_mod_scope_uses(known_module_paths)
+        detached.resolve_scala_project_imports(known_module_paths)
+        return detached.import_mapping
 
     def _log_process_counts(self, scan: _FileScan, changed_count: int) -> None:
         """Log how many files were skipped, changed and unreadable."""
