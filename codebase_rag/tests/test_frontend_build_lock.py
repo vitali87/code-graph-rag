@@ -284,13 +284,14 @@ def test_a_programming_error_in_the_probe_is_not_swallowed_as_unavailable(
 @dataclass(frozen=True)
 class _Frontend:
     """A frontend that builds its tool under the shared lock: its module, the
-    one file a repository needs for it to go as far as the build, and its
-    entry point."""
+    one file a repository needs for it to go as far as the build, its entry
+    point, and where in its cache the build leaves the tool."""
 
     module: ModuleType
     repo_file: str
     repo_text: str
     entry: str
+    built: str
 
     def repo(self, tmp_path: Path) -> Path:
         repo = tmp_path / "repo"
@@ -303,6 +304,11 @@ class _Frontend:
 
     def lock(self) -> Path:
         return self.cache() / self.module._BUILD_LOCK
+
+    def artifact(self) -> Path:
+        """What a build leaves for the frontend to run: Go's binary, C#'s
+        dll, Java's class folder."""
+        return self.cache() / self.built
 
     def run(self, repo: Path) -> tuple[bool, list[str]]:
         """Whether a run on `repo` found any call site, and what it warned."""
@@ -317,7 +323,13 @@ class _Frontend:
 
 _FRONTENDS = [
     pytest.param(
-        _Frontend(go_fe, "go.mod", "module example.com/demo\n", "run_go_frontend"),
+        _Frontend(
+            go_fe,
+            "go.mod",
+            "module example.com/demo\n",
+            "run_go_frontend",
+            f"out/{go_fe._BINARY_NAME}",
+        ),
         id="go",
     ),
     pytest.param(
@@ -326,11 +338,12 @@ _FRONTENDS = [
             "Demo.csproj",
             '<Project Sdk="Microsoft.NET.Sdk" />\n',
             "run_csharp_frontend",
+            f"out/{csharp_fe._DLL_NAME}",
         ),
         id="csharp",
     ),
     pytest.param(
-        _Frontend(java_fe, "Demo.java", "class Demo {}\n", "run_java_frontend"),
+        _Frontend(java_fe, "Demo.java", "class Demo {}\n", "run_java_frontend", "out"),
         id="java",
     ),
 ]
@@ -338,11 +351,12 @@ _FRONTENDS = [
 
 class _FakeToolchain:
     """Stands in for go, dotnet and javac. Go's version probe gets the
-    helper's own floor; every other command is a build, which fails, or
-    times out."""
+    helper's own floor; every other command is a build, which fails, times
+    out, or exits 0 having written nothing."""
 
     def __init__(self) -> None:
         self.time_out = False
+        self.exit_code = 1
         self.builds: list[list[str]] = []
 
     def __call__(
@@ -354,7 +368,9 @@ class _FakeToolchain:
         self.builds.append(list(cmd))
         if self.time_out:
             raise subprocess.TimeoutExpired(cmd, timeout=1)
-        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="build failed")
+        return subprocess.CompletedProcess(
+            cmd, self.exit_code, stdout="", stderr="build failed"
+        )
 
 
 @pytest.fixture
@@ -517,4 +533,26 @@ def test_a_failed_build_under_the_lock_warns_once(
 
     assert len(toolchain.builds) == 1
     assert len(warnings) == 1
+    assert not found
+
+
+@pytest.mark.parametrize("frontend", _FRONTENDS)
+def test_a_build_that_leaves_no_fresh_tool_warns_once(
+    frontend: _Frontend,
+    tmp_path: Path,
+    cgr_home: Path,
+    toolchain: _FakeToolchain,
+) -> None:
+    # The build exits 0, but the tool it should leave is missing, or older
+    # than its sources when clocks disagree. No build or lock warning fits,
+    # and the fallback to tree-sitter went unexplained (PR #3800 review).
+    repo = frontend.repo(tmp_path)
+    toolchain.exit_code = 0
+
+    found, warnings = frontend.run(repo)
+
+    assert len(toolchain.builds) == 1
+    assert warnings == [
+        ls.FRONTEND_BUILD_ARTIFACT_STALE.format(artifact=frontend.artifact())
+    ]
     assert not found

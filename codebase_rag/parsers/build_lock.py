@@ -207,8 +207,8 @@ def build_cached_artifact(
 
     Shared by every semantic frontend: they differ only in what the artifact
     is (a binary, a dll, a class output dir) and how it compiles. Returns the
-    artifact when it is fresh afterwards, else None so the caller can fall
-    back to tree-sitter.
+    artifact when it is fresh afterwards, else None, after one warning, so
+    the caller can fall back to tree-sitter.
     """
     if artifact_fresh():
         return artifact
@@ -220,7 +220,13 @@ def build_cached_artifact(
             return None
     finally:
         release_build_lock(handle)
-    return artifact if artifact_fresh() else None
+    if artifact_fresh():
+        return artifact
+    # The build reported success, so neither it nor the lock has said why
+    # there is no tool: a build that wrote elsewhere, or clocks that make
+    # what it wrote older than its sources (PR #3800 review).
+    logger.warning(ls.FRONTEND_BUILD_ARTIFACT_STALE.format(artifact=artifact))
+    return None
 
 
 def toolchain_runs(binary: str, timeout: float, probe_arg: str = "-version") -> bool:

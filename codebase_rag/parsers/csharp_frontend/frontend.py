@@ -452,8 +452,9 @@ def run_csharp_frontend(
         return _empty_facts()
     dll = _build_tool(dotnet)
     if dll is None:
-        # The build, or the lock it waits on, has already said why; a second
-        # warning here repeated it, or named a build that never ran (#3794).
+        # The build, the lock it waits on, or the tool it left has already
+        # said why; a second warning here repeated it, or named a build that
+        # never ran (#3794).
         return _empty_facts()
     _restore(dotnet, project)
     uncovered = uncovered_csharp_projects(repo_path, project)

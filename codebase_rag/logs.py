@@ -77,6 +77,10 @@ FRONTEND_BUILD_LOCK_TIMED_OUT = (
     "Frontend tool's build lock {lock} is still held by another process after "
     "{seconds:g}s; using tree-sitter"
 )
+FRONTEND_BUILD_ARTIFACT_STALE = (
+    "Frontend tool's build finished but left {artifact} missing or older than "
+    "its sources; using tree-sitter"
+)
 CSHARP_FRONTEND_RUNNING = "--- C# Roslyn frontend: {path} ---"
 CSHARP_FRONTEND_UNAVAILABLE = (
     "C# Roslyn frontend enabled but dotnet is unavailable; using tree-sitter"
