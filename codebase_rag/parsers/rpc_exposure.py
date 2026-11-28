@@ -212,13 +212,22 @@ class GoRpcExposureProcessor:
     def _walk_bindings(
         self, node: Node, scope_end: int, bindings: list[_Binding]
     ) -> None:
-        for child in node.named_children:
+        # Each node below `node` with the end of the block it is in, off an
+        # explicit stack in source order: a generated `else if` chain or a
+        # long `||` condition nests ~1,000 levels deep (issue #3825).
+        pending = [(child, scope_end) for child in reversed(node.named_children)]
+        while pending:
+            child, child_scope = pending.pop()
             if child.type == cs.TS_GO_SHORT_VAR_DECLARATION:
-                self._collect_value_bindings(child, scope_end, bindings)
+                self._collect_value_bindings(child, child_scope, bindings)
             elif child.type == cs.TS_GO_VAR_DECLARATION:
-                self._collect_var_spec_bindings(child, scope_end, bindings)
-            child_scope = child.end_byte if child.type == cs.TS_GO_BLOCK else scope_end
-            self._walk_bindings(child, child_scope, bindings)
+                self._collect_var_spec_bindings(child, child_scope, bindings)
+            if child.type == cs.TS_GO_BLOCK:
+                child_scope = child.end_byte
+            pending.extend(
+                (grandchild, child_scope)
+                for grandchild in reversed(child.named_children)
+            )
 
     def _collect_value_bindings(
         self, node: Node, scope_end: int, bindings: list[_Binding]

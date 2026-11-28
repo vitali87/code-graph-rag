@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import NamedTuple
 
@@ -206,26 +205,36 @@ class _LeanHandles(NamedTuple):
     rpc_fields: dict[str, str]
 
 
-@contextmanager
-def _child_handle_scope(
+class _Visit(NamedTuple):
+    # Nodes of the lean walk that share the names in scope: `in_scope` for the
+    # nodes themselves, `body_extra` added for a body block among them (a loop
+    # clause's variables). `nodes` is a stack, its last node walked next.
+    nodes: list[Node]
+    in_scope: frozenset[str]
+    body_extra: frozenset[str]
+
+
+class _ScopeEnd(NamedTuple):
+    # Where a child scope's walk ends: the enclosing handle bindings it puts
+    # back. It sits beneath the scope's own nodes on the walk's stack, so it
+    # pops once they are all walked.
+    bindings: dict[str, HandleBinding]
+
+
+def _open_handle_scope(
     lean_handles: _LeanHandles | None, unbound: Iterable[str] = ()
-) -> Generator[None]:
+) -> _ScopeEnd | None:
     # A nested block or an inline callback walked within its caller is a child
     # lexical scope for handles too: what it binds (`const out = {}`) is out of
     # scope afterwards, so it must not leak to, kill or replace the enclosing
     # bindings, and a name it binds anew (a callback parameter `out`) is not the
     # enclosing handle inside it (mirrors the in_scope shadow set, by value).
     if lean_handles is None:
-        yield
-        return
+        return None
     snapshot = dict(lean_handles.bindings)
     for name in unbound:
         lean_handles.bindings.pop(name, None)
-    try:
-        yield
-    finally:
-        lean_handles.bindings.clear()
-        lean_handles.bindings.update(snapshot)
+    return _ScopeEnd(snapshot)
 
 
 # The connect-go constructor: `New<Stem>Client`, qualified by a generated
@@ -551,16 +560,53 @@ class IOAccessProcessor:
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
         lean_handles: _LeanHandles | None,
-        inherited: frozenset[str] = frozenset(),
     ) -> None:
         # Lean non-Python walk (issue #714): find call sinks in the caller body,
         # crediting I/O to the scope that runs it. No handle/stream tracking yet.
         # The walk is lexically scope-aware so a same-named local (`const fs`,
         # `function fetch`, a parameter) shadows the builtin ONLY where it is in
         # scope: block-scoped const/let shadow inside their own block and nested
-        # blocks, never a sibling/outer use. A function/method caller exposes its
-        # statements under the `body` field; the module root (top-level calls) has
-        # no body field, so seed from its own children.
+        # blocks, never a sibling/outer use.
+        pending: list[_Visit | _ScopeEnd] = []
+        pending.extend(
+            reversed(
+                self._callable_visits(
+                    caller_node,
+                    frozenset(),
+                    caller_spec,
+                    import_map,
+                    member_reads,
+                    descriptor,
+                )
+            )
+        )
+        self._walk_stmt_sinks(
+            pending,
+            caller_spec,
+            import_map,
+            sink_by_name,
+            macro_sinks,
+            stream_sinks,
+            member_reads,
+            descriptor,
+            lean_handles,
+        )
+
+    def _callable_visits(
+        self,
+        caller_node: Node,
+        inherited: frozenset[str],
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        member_reads: tuple[tuple[str, ResourceKind], ...],
+        descriptor: LanguageDescriptor,
+    ) -> list[_Visit]:
+        # The statements of a caller, or of an inline callback walked within
+        # it, each with the names in scope for it; their walk starts here, so
+        # the callable's env aliases are set and its parameters' env reads
+        # emitted. A function/method caller exposes its statements under the
+        # `body` field; the module root (top-level calls) has no body field, so
+        # seed from its own children.
         body = caller_node.child_by_field_name(cs.FIELD_BODY) or dart_body_node(
             caller_node
         )
@@ -597,32 +643,17 @@ class IOAccessProcessor:
         self._emit_param_env_reads(
             caller_node, caller_spec, member_reads, descriptor, head_is_live
         )
-        self._walk_scope(
-            statements,
-            frozenset(params),
-            caller_spec,
-            import_map,
-            sink_by_name,
-            macro_sinks,
-            stream_sinks,
-            member_reads,
-            descriptor,
-            lean_handles,
-        )
+        return self._scope_visits(statements, frozenset(params), descriptor)
 
-    def _walk_scope(
+    def _scope_visits(
         self,
         statements: list[Node],
         inherited: frozenset[str],
-        caller_spec: tuple[str, str, str],
-        import_map: dict[str, str],
-        sink_by_name: dict[str, IOSink],
-        macro_sinks: dict[str, IOSink],
-        stream_sinks: dict[str, IOSink],
-        member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
-        lean_handles: _LeanHandles | None,
-    ) -> None:
+    ) -> list[_Visit]:
+        # The statements of one scope in source order, each with the names in
+        # scope for it. Only the syntax decides them, so they are worked out
+        # before any statement is walked.
         # Go wraps a block's statements in a single `statement_list`; unwrap it so the
         # source-order walk iterates the real statements, not one container.
         if descriptor.statement_container_type is not None:
@@ -646,21 +677,7 @@ class IOAccessProcessor:
             # before a const/let is a TDZ error, not the outer name), so every
             # declaration shadows the whole block at once.
             in_scope = inherited | self._block_declarations(statements, descriptor)
-            for stmt in statements:
-                self._walk_stmt_sinks(
-                    stmt,
-                    in_scope,
-                    frozenset(),
-                    caller_spec,
-                    import_map,
-                    sink_by_name,
-                    macro_sinks,
-                    stream_sinks,
-                    member_reads,
-                    descriptor,
-                    lean_handles,
-                )
-            return
+            return [_Visit([stmt], in_scope, frozenset()) for stmt in statements]
         # Declare-at-point languages (Go, Java): a local is in scope only from its
         # own declaration onward, so grow the shadow set in SOURCE ORDER. A call
         # BEFORE a later same-named local is the real global and still emits; the
@@ -673,6 +690,7 @@ class IOAccessProcessor:
         # exception: in scope in the BODY only (not the iterable header, evaluated
         # before the var binds, nor sibling statements), so they are seeded via
         # body_extra and never added to `live` here.
+        visits: list[_Visit] = []
         live = set(inherited)
         for stmt in statements:
             loop_vars = self._loop_declarations(stmt, descriptor)
@@ -683,73 +701,33 @@ class IOAccessProcessor:
             ):
                 # Java multi-declarator: each declarator's initialiser sees only the
                 # declarators up to and including itself, so walk them in source order.
-                self._walk_declaration_ordered(
-                    stmt,
-                    frozenset(live),
-                    caller_spec,
-                    import_map,
-                    sink_by_name,
-                    macro_sinks,
-                    stream_sinks,
-                    member_reads,
-                    descriptor,
-                    lean_handles,
+                visits.extend(
+                    self._declaration_ordered_visits(stmt, frozenset(live), descriptor)
                 )
             else:
                 # decl_in_own_initializer (Java): the name is in scope in its own
                 # initialiser, so seed BEFORE walking; Go (=False): the initialiser
                 # still reads the global, so the name is added only AFTER (below).
                 pre = live | plain if descriptor.decl_in_own_initializer else live
-                self._walk_stmt_sinks(
-                    stmt,
-                    frozenset(pre),
-                    loop_vars,
-                    caller_spec,
-                    import_map,
-                    sink_by_name,
-                    macro_sinks,
-                    stream_sinks,
-                    member_reads,
-                    descriptor,
-                    lean_handles,
-                )
+                visits.append(_Visit([stmt], frozenset(pre), loop_vars))
             live |= plain
+        return visits
 
-    def _walk_declaration_ordered(
-        self,
-        stmt: Node,
-        base_scope: frozenset[str],
-        caller_spec: tuple[str, str, str],
-        import_map: dict[str, str],
-        sink_by_name: dict[str, IOSink],
-        macro_sinks: dict[str, IOSink],
-        stream_sinks: dict[str, IOSink],
-        member_reads: tuple[tuple[str, ResourceKind], ...],
-        descriptor: LanguageDescriptor,
-        lean_handles: _LeanHandles | None,
-    ) -> None:
+    def _declaration_ordered_visits(
+        self, stmt: Node, base_scope: frozenset[str], descriptor: LanguageDescriptor
+    ) -> list[_Visit]:
         # Walk a declaration statement's declarators in SOURCE ORDER (Java
         # `local_variable_declaration`): a declarator's name enters scope for its own
         # initialiser (JLS 6.3) and the following declarators, so an EARLIER
         # initialiser's sink is not shadowed by a LATER declarator's name.
+        visits: list[_Visit] = []
         cur = set(base_scope)
         for child in stmt.named_children:
             if child.type != descriptor.declarator_type:
                 continue
             cur |= self._declarator_names(child, descriptor)
-            self._walk_stmt_sinks(
-                child,
-                frozenset(cur),
-                frozenset(),
-                caller_spec,
-                import_map,
-                sink_by_name,
-                macro_sinks,
-                stream_sinks,
-                member_reads,
-                descriptor,
-                lean_handles,
-            )
+            visits.append(_Visit([child], frozenset(cur), frozenset()))
+        return visits
 
     def _loop_declarations(
         self, stmt: Node, descriptor: LanguageDescriptor
@@ -773,9 +751,7 @@ class IOAccessProcessor:
 
     def _walk_stmt_sinks(
         self,
-        stmt: Node,
-        in_scope: frozenset[str],
-        body_extra: frozenset[str],
+        pending: list[_Visit | _ScopeEnd],
         caller_spec: tuple[str, str, str],
         import_map: dict[str, str],
         sink_by_name: dict[str, IOSink],
@@ -785,98 +761,80 @@ class IOAccessProcessor:
         descriptor: LanguageDescriptor,
         lean_handles: _LeanHandles | None,
     ) -> None:
-        # Emit the direct sinks / member reads within one statement subtree, under
-        # the given in-scope shadow set. A nested { } is a child lexical scope:
-        # recurse via _walk_scope so its declarations shadow only inside it (and,
-        # for declare-at-point langs, in its own source order). body_extra seeds a
-        # loop var into the body scope (the loop's own block) without exposing it to
-        # the header expressions walked here. The LIFO stack pushes children reversed
-        # so siblings pop in SOURCE order: a try-with-resources binds its resource
-        # handles before its body block reads them.
-        stack = [stmt]
-        while stack:
-            node = stack.pop()
-            # Nested function/method: its own caller, walked separately. An
-            # inline callback the call pass never walks alone runs here, as a
-            # Python lambda does, so its I/O lands on this caller (#2772).
-            if node.type in descriptor.nested_scope_types:
-                if is_inline_callback(node, descriptor, self._has_own_pass):
-                    with _child_handle_scope(
+        # Emit the direct sinks / member reads of every pending node, each under
+        # its visit's in-scope shadow set. A nested { } is a child lexical scope:
+        # its statements take their scopes from _scope_visits, so its
+        # declarations shadow only inside it (and, for declare-at-point langs, in
+        # its own source order). body_extra seeds a loop var into the body scope
+        # (the loop's own block) without exposing it to the header expressions.
+        # The LIFO stacks push children reversed so siblings pop in SOURCE order:
+        # a try-with-resources binds its resource handles before its body block
+        # reads them. A child scope goes on `pending`, not a frame of its own:
+        # Lua's `else if` opens a block per link, so a generated chain nests a
+        # block per branch (issue #3825).
+        while pending:
+            visit = pending.pop()
+            if isinstance(visit, _ScopeEnd):
+                # Only pushed with handles to restore (_open_handle_scope).
+                if lean_handles is not None:
+                    lean_handles.bindings.clear()
+                    lean_handles.bindings.update(visit.bindings)
+                continue
+            nodes, in_scope, body_extra = visit
+            while nodes:
+                node = nodes.pop()
+                if node.type in descriptor.nested_scope_types:
+                    # Nested function/method: its own caller, walked separately.
+                    # An inline callback the call pass never walks alone runs
+                    # here, as a Python lambda does, so its I/O lands on this
+                    # caller (#2772).
+                    if not is_inline_callback(node, descriptor, self._has_own_pass):
+                        continue
+                    end = _open_handle_scope(
                         lean_handles, self._param_names(node, descriptor)
-                    ):
-                        self._emit_direct_sinks(
-                            node,
-                            caller_spec,
-                            import_map,
-                            sink_by_name,
-                            macro_sinks,
-                            stream_sinks,
-                            member_reads,
-                            descriptor,
-                            lean_handles,
-                            inherited=in_scope | body_extra,
+                    )
+                    child = self._callable_visits(
+                        node,
+                        in_scope | body_extra,
+                        caller_spec,
+                        import_map,
+                        member_reads,
+                        descriptor,
+                    )
+                elif node.type == descriptor.block_scope_type:
+                    # A nested block is a child lexical scope for handles too: a
+                    # handle declared inside it is out of scope after the block.
+                    end = _open_handle_scope(lean_handles)
+                    child = self._scope_visits(
+                        list(node.named_children), in_scope | body_extra, descriptor
+                    )
+                else:
+                    if lean_handles is not None:
+                        self._maybe_bind_lean_handle(
+                            node, in_scope, import_map, descriptor, lean_handles
                         )
-                continue
-            if node.type == descriptor.block_scope_type:
-                self._walk_nested_block(
-                    node,
-                    in_scope | body_extra,
-                    caller_spec,
-                    import_map,
-                    sink_by_name,
-                    macro_sinks,
-                    stream_sinks,
-                    member_reads,
-                    descriptor,
-                    lean_handles,
-                )
-                continue
-            if lean_handles is not None:
-                self._maybe_bind_lean_handle(
-                    node, in_scope, import_map, descriptor, lean_handles
-                )
-            if self._emit_node_sinks(
-                node,
-                in_scope,
-                caller_spec,
-                import_map,
-                sink_by_name,
-                macro_sinks,
-                stream_sinks,
-                member_reads,
-                descriptor,
-                lean_handles,
-            ):
-                stack.extend(reversed(node.named_children))
-
-    def _walk_nested_block(
-        self,
-        node: Node,
-        in_scope: frozenset[str],
-        caller_spec: tuple[str, str, str],
-        import_map: dict[str, str],
-        sink_by_name: dict[str, IOSink],
-        macro_sinks: dict[str, IOSink],
-        stream_sinks: dict[str, IOSink],
-        member_reads: tuple[tuple[str, ResourceKind], ...],
-        descriptor: LanguageDescriptor,
-        lean_handles: _LeanHandles | None,
-    ) -> None:
-        # A nested block is a child lexical scope for handles too: a handle declared
-        # inside it is out of scope after the block (_child_handle_scope).
-        with _child_handle_scope(lean_handles):
-            self._walk_scope(
-                list(node.named_children),
-                in_scope,
-                caller_spec,
-                import_map,
-                sink_by_name,
-                macro_sinks,
-                stream_sinks,
-                member_reads,
-                descriptor,
-                lean_handles,
-            )
+                    if self._emit_node_sinks(
+                        node,
+                        in_scope,
+                        caller_spec,
+                        import_map,
+                        sink_by_name,
+                        macro_sinks,
+                        stream_sinks,
+                        member_reads,
+                        descriptor,
+                        lean_handles,
+                    ):
+                        nodes.extend(reversed(node.named_children))
+                    continue
+                # The child scope walks next, then its end puts the enclosing
+                # handles back, then the rest of this visit's nodes resume.
+                if nodes:
+                    pending.append(visit)
+                if end is not None:
+                    pending.append(end)
+                pending.extend(reversed(child))
+                break
 
     def _emit_node_sinks(
         self,
@@ -1611,29 +1569,42 @@ class IOAccessProcessor:
         # `options?.client`), or wrappers/alternatives thereof
         # (`(options?.client ?? this.client)`, `client!`). An ancestor
         # mention is not enough: `this.client.cache.get(...)` calls the
-        # cache, not the client.
-        if receiver.type == descriptor.identifier_type:
-            return safe_decode_text(receiver) == _CLIENT_RECEIVER_NAME
-        if receiver.type == descriptor.member_expression_type:
-            prop = receiver.child_by_field_name(descriptor.property_field)
-            return safe_decode_text(prop) == _CLIENT_RECEIVER_NAME
-        if receiver.type == cs.TS_PARENTHESIZED_EXPRESSION and receiver.named_children:
-            return cls._names_client(receiver.named_children[0], descriptor)
-        if receiver.type == cs.TS_BINARY_EXPRESSION:
+        # cache, not the client. The operands are checked off an explicit
+        # stack: a generated `a || b || ...` nests one node per term (issue
+        # #3825).
+        pending = [receiver]
+        while pending:
+            node = pending.pop()
+            if (operands := cls._client_operands(node)) is not None:
+                if not operands:
+                    return False
+                pending.extend(operands)
+            elif not cls._is_client_name(node, descriptor):
+                return False
+        return True
+
+    @staticmethod
+    def _client_operands(node: Node) -> list[Node] | None:
+        # The operands a wrapper or an alternative may yield, every one of
+        # which must name a client; None for any other node.
+        if node.type in (cs.TS_PARENTHESIZED_EXPRESSION, cs.TS_NON_NULL_EXPRESSION):
+            return node.named_children[:1]
+        if node.type == cs.TS_BINARY_EXPRESSION:
             # `a ?? b` / `a || b` yields ONE operand at runtime, so EVERY
             # operand must be client-shaped; a mixed pair may select the
             # non-client.
-            children = receiver.named_children
-            return bool(children) and all(
-                cls._names_client(child, descriptor) for child in children
-            )
-        if receiver.type == cs.TS_JS_TERNARY_EXPRESSION:
-            branches = receiver.named_children[1:]
-            return bool(branches) and all(
-                cls._names_client(child, descriptor) for child in branches
-            )
-        if receiver.type == cs.TS_NON_NULL_EXPRESSION and receiver.named_children:
-            return cls._names_client(receiver.named_children[0], descriptor)
+            return node.named_children
+        if node.type == cs.TS_JS_TERNARY_EXPRESSION:
+            return node.named_children[1:]
+        return None
+
+    @staticmethod
+    def _is_client_name(node: Node, descriptor: LanguageDescriptor) -> bool:
+        if node.type == descriptor.identifier_type:
+            return safe_decode_text(node) == _CLIENT_RECEIVER_NAME
+        if node.type == descriptor.member_expression_type:
+            prop = node.child_by_field_name(descriptor.property_field)
+            return safe_decode_text(prop) == _CLIENT_RECEIVER_NAME
         return False
 
     @staticmethod
