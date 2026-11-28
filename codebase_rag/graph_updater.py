@@ -3032,8 +3032,7 @@ class GraphUpdater:
         return restored
 
     def _graph_importers(self, module_qns: list[str]) -> set[str]:
-        """The project's modules whose IMPORTS edges end in `module_qns`;
-        none when the graph cannot be read, as before #3802."""
+        """The project's modules whose IMPORTS edges end in `module_qns`."""
         if not isinstance(self.ingestor, QueryProtocol):
             return set()
         try:
@@ -3045,6 +3044,13 @@ class GraphUpdater:
                 },
             )
         except Exception:
+            # A full build parsed every file and holds every include, so it
+            # goes on. An incremental run that read the outage as "none" lost
+            # the calls an includer's statics bind and still committed its
+            # hashes, so a retry found nothing to sync; it aborts, as the
+            # inbound capture does.
+            if not self._is_full_build:
+                raise
             logger.warning(ls.C_INCLUDERS_UNREAD)
             return set()
         return {

@@ -11,11 +11,13 @@ issue #3154).
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
+from codebase_rag import logs as ls
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import (
@@ -23,6 +25,7 @@ from codebase_rag.tests.conftest import (
     force_mtime_after_cache,
     get_relationships,
 )
+from codebase_rag.types_defs import PropertyDict, ResultRow
 from evals.cgr_graph import _StatefulIngestor
 
 _CSTATIC = {
@@ -558,6 +561,67 @@ def test_a_sync_of_a_header_reads_the_units_that_compile_it_and_no_other(
     synced, _ = _sync_util_h(tmp_path / "repo", files, "new")
     held = {_short(qn) for qn in synced.factory.import_processor.import_mapping}
     assert held == read, held
+
+
+class _ImporterOutage(_StatefulIngestor):
+    """Fails the importer query once `down` is set, answers the rest."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.down = False
+
+    def fetch_all(
+        self, query: str, params: PropertyDict | None = None
+    ) -> list[ResultRow]:
+        if self.down and query == cq.CYPHER_GRAPH_IMPORTERS_OF:
+            raise RuntimeError("importer query outage")
+        return super().fetch_all(query, params)
+
+
+@pytest.mark.parametrize("updater", ["new", "reingest"])
+def test_a_sync_that_cannot_read_a_headers_includers_aborts(
+    tmp_path: Path, updater: str
+) -> None:
+    # The captured edges restore top.h, but only the importer query finds
+    # main.c above it. Read as "no importers", the sync dropped
+    # util.wrap -> main.helper and committed its hashes, so the next sync saw
+    # the repository in sync and never put the edge back. It fails instead,
+    # as a failed inbound capture does: it commits nothing and reports the
+    # graph partial, so the caller keeps its unfinished-run marker.
+    if "c" not in load_parsers()[0]:
+        pytest.skip("c parser not available")
+    root = tmp_path / "repo"
+    _write(root, _THREE_UP)
+    store = _ImporterOutage()
+    _updater(root, store).run(force=True)
+    _write(root, {"util.h": _THREE_UP["util.h"] + _ADDED})
+    force_mtime_after_cache(root, root / "util.h")
+    synced = _updater(root, store)
+    cache = synced.state_dir / cs.HASH_CACHE_FILENAME
+    hashes = cache.read_bytes()
+    store.down = True
+    with pytest.raises(RuntimeError, match="importer query outage"):
+        if updater == "new":
+            synced.run()
+        else:
+            synced.reingest([root / "util.h"])
+    assert cache.read_bytes() == hashes
+    assert not synced.committed
+    assert synced.reingest_mutated is (updater == "reingest")
+
+
+def test_a_full_build_reads_an_unreadable_importer_query_as_none(
+    tmp_path: Path,
+) -> None:
+    # A full build parses every file, so it holds every include already and
+    # goes on, saying what it could not read.
+    store = _ImporterOutage()
+    store.down = True
+    updater = GraphUpdater(ingestor=store, repo_path=tmp_path, parsers={}, queries={})
+    updater._is_full_build = True
+    with patch("codebase_rag.graph_updater.logger") as log:
+        assert updater._graph_importers(["proj.util"]) == set()
+    log.warning.assert_called_once_with(ls.C_INCLUDERS_UNREAD)
 
 
 # a.cpp declares module `foo`, which binds the name `foo` to foo.cpp's module
