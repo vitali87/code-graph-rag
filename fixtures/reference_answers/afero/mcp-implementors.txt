@@ -1,0 +1,89 @@
+> tools/call implementors {"qualified_name": "afero.afero.Fs"}
+isError: false
+--- text
+[
+  {
+    "label": "Class",
+    "qualified_name": "afero.basepath.BasePathFs",
+    "path": "basepath.go",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "afero.cacheOnReadFs.CacheOnReadFs",
+    "path": "cacheOnReadFs.go",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "afero.copyOnWriteFs.CopyOnWriteFs",
+    "path": "copyOnWriteFs.go",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "afero.gcsfs.fs.Fs",
+    "path": "gcsfs/fs.go",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "afero.gcsfs.gcs.GcsFs",
+    "path": "gcsfs/gcs.go",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "afero.httpFs.HttpFs",
+    "path": "httpFs.go",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "afero.iofs.FromIOFS",
+    "path": "iofs.go",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "afero.memmap.MemMapFs",
+    "path": "memmap.go",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "afero.os.OsFs",
+    "path": "os.go",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "afero.readonlyfs.ReadOnlyFs",
+    "path": "readonlyfs.go",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "afero.regexpfs.RegexpFs",
+    "path": "regexpfs.go",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "afero.sftpfs.sftp.Fs",
+    "path": "sftpfs/sftp.go",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "afero.tarfs.fs.Fs",
+    "path": "tarfs/fs.go",
+    "relationship": "IMPLEMENTS"
+  },
+  {
+    "label": "Class",
+    "qualified_name": "afero.zipfs.fs.Fs",
+    "path": "zipfs/fs.go",
+    "relationship": "IMPLEMENTS"
+  }
+]

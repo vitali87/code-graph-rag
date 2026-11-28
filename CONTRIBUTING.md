@@ -329,6 +329,7 @@ drives and checks:
 | `sqlite_graph` | the bulk writer, the variable-length walk and `Graph::load`, against a model of the graph |
 | `xml_elements` | the XML project-file reader (`formats::xml`) on any bytes |
 | `ignore_patterns` | the walk's ignore rules (`engine::ignore`) on any patterns and paths |
+| `go_build_constraint` | the Go build-constraint reader, `decide` and the package clause (`engine::go`) on any file name and head |
 
 To run one locally, with a nightly toolchain and `cargo install cargo-fuzz`:
 

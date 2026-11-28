@@ -292,6 +292,13 @@ type DirMtimesCache = dict[str, float]
 
 _CPP_SPAN_FILE_EXTENSIONS = frozenset(cs.CPP_EXTENSIONS) | frozenset(cs.C_EXTENSIONS)
 
+# The tiers whose files the project index never holds: the ast-grep tier keeps
+# its modules in a map of its own and its definitions out of the registry, and
+# the document tier registers neither. The graph holds their Module nodes and
+# the ast-grep tier's definitions all the same, so an incremental run reads
+# them back only from files of the other tiers (issue #3790).
+_TIERS_OUTSIDE_THE_INDEX = frozenset({cs.FileTier.AST_GREP, cs.FileTier.DOCUMENT})
+
 
 _PATH_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
 # Windows reports a reparse-point loop as ERROR_CANT_RESOLVE_FILENAME, which
@@ -4501,6 +4508,28 @@ class GraphUpdater:
             cs.KEY_QUALIFIED_NAME,
         )
 
+    def _parsing_registers(self, path: str) -> bool:
+        """Whether parsing the file at `path` registers its module and its
+        definitions, as every tier but the ast-grep and the document tier
+        does: a fresh run's tables hold only those (issue #3790)."""
+        return self._route(self.repo_path / path).tier not in _TIERS_OUTSIDE_THE_INDEX
+
+    def _registered_rows(self, rows: list[ResultRow]) -> list[ResultRow]:
+        """`rows` less those whose `path` names a file parsing registers
+        nothing of. A row with no path is kept, as before."""
+        verdicts: dict[str, bool] = {}
+        kept: list[ResultRow] = []
+        for row in rows:
+            path = row.get(cs.KEY_PATH)
+            if isinstance(path, str) and path:
+                # Once per file: the definition rows come many to a file.
+                if path not in verdicts:
+                    verdicts[path] = self._parsing_registers(path)
+                if not verdicts[path]:
+                    continue
+            kept.append(row)
+        return kept
+
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
         # files. Read every definition's qualified name back from the graph and
@@ -4516,9 +4545,17 @@ class GraphUpdater:
         self._module_qns_by_path = None
         project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
         try:
-            rows = self._owned_rows(
-                self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params),
-                cs.KEY_QUALIFIED_NAME,
+            # Not an ast-grep script's definitions, which parsing never
+            # registers: read back, as a full build does too once part of the
+            # graph is written, they bound cJSON's Python `self.report` to a
+            # Ruby `report` (issue #3790).
+            rows = self._registered_rows(
+                self._owned_rows(
+                    self.ingestor.fetch_all(
+                        cs.CYPHER_ALL_DEFINITION_QNS, project_params
+                    ),
+                    cs.KEY_QUALIFIED_NAME,
+                )
             )
             self._read_resolved_type_targets(project_params)
         except Exception:
@@ -4546,9 +4583,13 @@ class GraphUpdater:
         # C++20 module-impl resolution must count them as real targets, or
         # an incremental run would drop edges a clean index emits.
         try:
-            module_rows = self._owned_rows(
-                self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_QNS, project_params),
-                cs.KEY_QUALIFIED_NAME,
+            # Nor a Markdown file's or a script's module, which a fresh run
+            # never offers deferred resolution (issue #3790).
+            module_rows = self._registered_rows(
+                self._owned_rows(
+                    self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_QNS, project_params),
+                    cs.KEY_QUALIFIED_NAME,
+                )
             )
         except Exception:
             if not self._is_full_build:
@@ -5223,6 +5264,12 @@ class GraphUpdater:
             # eligible_paths, so a same-basename ADD (delete shapes.rs + add
             # shapes.cpp) takes the bare qn a clean index would give it.
             if path not in eligible_paths:
+                continue
+            # Only a module parsing would put here: a Markdown file's or an
+            # ast-grep script's never enters this map, and seeded it reached
+            # the project index of every sync (issue #3790). Before the flux
+            # stems, so no claim of one is recorded for a restore either.
+            if not self._parsing_registers(path):
                 continue
             # A survivor of a stem in flux re-parses unseeded (issue #1569),
             # on the same terms `_forget_flux_stem_qns` applies to an

@@ -23,7 +23,7 @@ Scoped to: uuid
 ┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
 ┃ Relationship Type   ┃ Count ┃
 ┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
-│ CALLS               │   286 │
+│ CALLS               │   281 │
 │ DEFINES             │   119 │
 │ IMPORTS             │    52 │
 │ DEFINES_METHOD      │    31 │
@@ -35,7 +35,7 @@ Scoped to: uuid
 │ ACCEPTS             │    10 │
 │ CONTAINS_FOLDER     │     2 │
 ├─────────────────────┼───────┤
-│ Total Relationships │   619 │
+│ Total Relationships │   614 │
 └─────────────────────┴───────┘
 --- stderr
 Fetching graph statistics...

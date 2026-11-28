@@ -28,7 +28,7 @@ Scoped to: cjson
 │ DEFINES             │   582 │
 │ CONTAINS_SECTION    │   399 │
 │ IMPORTS             │   221 │
-│ REFERENCES          │   166 │
+│ REFERENCES          │   164 │
 │ CONTAINS_FILE       │   161 │
 │ CONTAINS_MODULE     │    83 │
 │ RETURNS             │    60 │
@@ -38,7 +38,7 @@ Scoped to: cjson
 │ CONTAINS_PACKAGE    │     3 │
 │ INSTANTIATES        │     2 │
 ├─────────────────────┼───────┤
-│ Total Relationships │ 3,272 │
+│ Total Relationships │ 3,270 │
 └─────────────────────┴───────┘
 --- stderr
 Fetching graph statistics...

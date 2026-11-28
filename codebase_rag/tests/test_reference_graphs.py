@@ -196,6 +196,27 @@ def test_every_language_has_a_reference_repository() -> None:
     assert required <= covered, sorted(required - covered)
 
 
+def test_the_pinned_go_graphs_link_interfaces_implementations_and_embeds() -> None:
+    # Phase 3 of the rewrite moves Go's interface link to Rust and holds it
+    # to these graphs (docs/reports/PHASE3_GO.md, section 6). uuid declares
+    # no interface, so without afero nothing pinned would check a method set
+    # matched, an interface method overridden or an interface embedded.
+    edges = {
+        line.split(_SEP)[1]
+        for repo in load_manifest()
+        if repo["language"] == cs.SupportedLanguage.GO
+        for line in read_graph(graph_path(repo))
+        if line.startswith(f"{cs.REFERENCE_EDGE_TAG}{_SEP}")
+    }
+    linked = {
+        cs.RelationshipType.IMPLEMENTS,
+        cs.RelationshipType.OVERRIDES,
+        cs.RelationshipType.INHERITS,
+    }
+
+    assert linked <= edges, sorted(linked - edges)
+
+
 def test_a_record_holding_a_unicode_line_separator_reads_back_whole(
     tmp_path: Path,
 ) -> None:

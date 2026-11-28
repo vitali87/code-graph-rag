@@ -1,0 +1,76 @@
+$ cgr -q graph importers io/fs --project afero
+status: 0
+--- stdout
+[
+  {
+    "alias": "iofs",
+    "col": 1,
+    "end_col": 13,
+    "end_line": 21,
+    "imported_name": null,
+    "line": 21,
+    "module": "afero.afero_test",
+    "path": "afero_test.go"
+  },
+  {
+    "alias": "fs",
+    "col": 1,
+    "end_col": 8,
+    "end_line": 4,
+    "imported_name": null,
+    "line": 4,
+    "module": "afero.basepath",
+    "path": "basepath.go"
+  },
+  {
+    "alias": "fs",
+    "col": 7,
+    "end_col": 14,
+    "end_line": 16,
+    "imported_name": null,
+    "line": 16,
+    "module": "afero.internal.common.adapters",
+    "path": "internal/common/adapters.go"
+  },
+  {
+    "alias": "fs",
+    "col": 1,
+    "end_col": 8,
+    "end_line": 8,
+    "imported_name": null,
+    "line": 8,
+    "module": "afero.iofs",
+    "path": "iofs.go"
+  },
+  {
+    "alias": "fs",
+    "col": 1,
+    "end_col": 8,
+    "end_line": 11,
+    "imported_name": null,
+    "line": 11,
+    "module": "afero.iofs_test",
+    "path": "iofs_test.go"
+  },
+  {
+    "alias": "fs",
+    "col": 1,
+    "end_col": 8,
+    "end_line": 21,
+    "imported_name": null,
+    "line": 21,
+    "module": "afero.mem.file",
+    "path": "mem/file.go"
+  },
+  {
+    "alias": "fs",
+    "col": 1,
+    "end_col": 8,
+    "end_line": 6,
+    "imported_name": null,
+    "line": 6,
+    "module": "afero.memmap_test",
+    "path": "memmap_test.go"
+  }
+]
+--- stderr

@@ -3,6 +3,7 @@
   {"name": "body-parser", "language": "javascript", "repository": "expressjs/body-parser", "commit": "0aa4e1128ef88c7f68a851a44c6adbbed35dbfd4"},
   {"name": "ky", "language": "typescript", "repository": "sindresorhus/ky", "commit": "4a427011ad7b4ab98bb5f02ecaa5375fba5addca"},
   {"name": "uuid", "language": "go", "repository": "google/uuid", "commit": "0f11ee6918f41a04c201eceeadf612a377bc7fbc"},
+  {"name": "afero", "language": "go", "repository": "spf13/afero", "commit": "399bb34ad9fd8a252ad1d8bfaef96279b66dc774"},
   {"name": "javapoet", "language": "java", "repository": "square/javapoet", "commit": "714e05ca60179285746604452324262b126dcb2d"},
   {"name": "anyhow", "language": "rust", "repository": "dtolnay/anyhow", "commit": "48be1caa24fa65467aaa8071eb698542e4fa1d43"},
   {"name": "cjson", "language": "c", "repository": "DaveGamble/cJSON", "commit": "acc76239bee01d8e9c858ae2cab296704e52d916"},

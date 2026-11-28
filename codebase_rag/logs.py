@@ -135,6 +135,9 @@ GO_FRONTEND_PARSE_FAILED = (
     "stdout: {stdout}\nstderr: {stderr}"
 )
 GO_FRONTEND_RUN_FAILED = "Go frontend tool did not finish ({error}); using tree-sitter"
+GO_FRONTEND_RUN_NOT_UTF8 = (
+    "Go frontend tool printed output that is not UTF-8; using tree-sitter"
+)
 GO_FRONTEND_ANCHOR_DEGRADED = (
     "Go frontend tool failed for module anchor {anchor}; that module falls back "
     "to tree-sitter while the others keep their compiler facts. Recorded in "
@@ -143,6 +146,15 @@ GO_FRONTEND_ANCHOR_DEGRADED = (
 GO_FRONTEND_NO_FACTS = (
     "Go frontend produced no facts; every join falls back to tree-sitter. "
     "Tool diagnostics:\n{stderr}"
+)
+GO_FRONTEND_QUERY_FAILED = (
+    "Go frontend: `{command}` failed ({error}); pipes in the folders it would "
+    "name are not kept out of the type checker's loads"
+)
+GO_FRONTEND_REPLACE_LISTING_CUT = (
+    "Go frontend stopped listing the replace target {target} after {limit} "
+    "entries; a named pipe past them can still hold the type checker up until "
+    "its timeout"
 )
 # A run rooted at a path that is neither a file nor a directory used to walk
 # nothing and report success (issue #1651): a deleted or mistyped target was

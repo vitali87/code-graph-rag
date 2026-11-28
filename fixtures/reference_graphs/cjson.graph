@@ -3203,8 +3203,6 @@ E	REFERENCES	Function	"cjson.tests.print_value.main"	Function	"cjson.tests.print
 E	REFERENCES	Function	"cjson.tests.readme_examples.main"	Function	"cjson.tests.readme_examples.create_monitor_should_create_a_monitor"	{"col":13,"end_col":51,"end_line":253,"line":253,"resolution":"exact"}
 E	REFERENCES	Function	"cjson.tests.readme_examples.main"	Function	"cjson.tests.readme_examples.create_monitor_with_helpers_should_create_a_monitor"	{"col":13,"end_col":64,"end_line":254,"line":254,"resolution":"exact"}
 E	REFERENCES	Function	"cjson.tests.readme_examples.main"	Function	"cjson.tests.readme_examples.supports_full_hd_should_check_for_full_hd_support"	{"col":13,"end_col":62,"end_line":255,"line":255,"resolution":"exact"}
-E	REFERENCES	Method	"cjson.tests.unity.auto.unity_test_summary.UnityTestSummary.run"	Function	"cjson.tests.unity.auto.colour_reporter_rb.report"	{"col":15,"end_col":26,"end_line":66,"line":66,"resolution":"heuristic"}
-E	REFERENCES	Method	"cjson.tests.unity.auto.unity_to_junit.UnityTestSummary.run"	Function	"cjson.tests.unity.auto.colour_reporter_rb.report"	{"col":15,"end_col":26,"end_line":102,"line":102,"resolution":"heuristic"}
 E	REFERENCES	Module	"cjson.cJSON"	Function	"cjson.cJSON.internal_free"	{"col":56,"end_col":69,"end_line":186,"line":186,"resolution":"exact"}
 E	REFERENCES	Module	"cjson.cJSON"	Function	"cjson.cJSON.internal_malloc"	{"col":39,"end_col":54,"end_line":186,"line":186,"resolution":"exact"}
 E	REFERENCES	Module	"cjson.cJSON"	Function	"cjson.cJSON.internal_realloc"	{"col":71,"end_col":87,"end_line":186,"line":186,"resolution":"exact"}

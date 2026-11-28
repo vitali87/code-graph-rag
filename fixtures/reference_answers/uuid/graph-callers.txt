@@ -3,51 +3,6 @@ status: 0
 --- stdout
 [
   {
-    "arg_count": 1,
-    "callee_path": "time.go",
-    "col": 6,
-    "depth": 1,
-    "end_col": 16,
-    "end_line": 117,
-    "kwarg_names": [],
-    "label": "Method",
-    "line": 117,
-    "path": "time.go",
-    "qualified_name": "uuid.uuid.UUID.Time",
-    "resolution": "exact",
-    "through": "uuid.uuid.UUID.Time"
-  },
-  {
-    "arg_count": 1,
-    "callee_path": "time.go",
-    "col": 6,
-    "depth": 1,
-    "end_col": 41,
-    "end_line": 120,
-    "kwarg_names": [],
-    "label": "Method",
-    "line": 120,
-    "path": "time.go",
-    "qualified_name": "uuid.uuid.UUID.Time",
-    "resolution": "exact",
-    "through": "uuid.uuid.UUID.Time"
-  },
-  {
-    "arg_count": 1,
-    "callee_path": "time.go",
-    "col": 6,
-    "depth": 1,
-    "end_col": 16,
-    "end_line": 125,
-    "kwarg_names": [],
-    "label": "Method",
-    "line": 125,
-    "path": "time.go",
-    "qualified_name": "uuid.uuid.UUID.Time",
-    "resolution": "exact",
-    "through": "uuid.uuid.UUID.Time"
-  },
-  {
     "arg_count": 0,
     "callee_path": "time.go",
     "col": 12,
