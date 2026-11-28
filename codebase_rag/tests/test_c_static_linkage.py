@@ -10,6 +10,7 @@ issue #3154).
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -600,11 +601,11 @@ def test_a_sync_that_cannot_read_a_headers_includers_aborts(
     cache = synced.state_dir / cs.HASH_CACHE_FILENAME
     hashes = cache.read_bytes()
     store.down = True
+    sync = (
+        synced.run if updater == "new" else partial(synced.reingest, [root / "util.h"])
+    )
     with pytest.raises(RuntimeError, match="importer query outage"):
-        if updater == "new":
-            synced.run()
-        else:
-            synced.reingest([root / "util.h"])
+        sync()
     assert cache.read_bytes() == hashes
     assert not synced.committed
     assert synced.reingest_mutated is (updater == "reingest")
