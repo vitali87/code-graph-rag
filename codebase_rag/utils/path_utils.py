@@ -103,7 +103,22 @@ def unwritable_output_reason(path: Path) -> str | None:
     Run before the graph is read or indexed, so a mistyped `-o` fails at once
     instead of after the work it was meant to save (issue #2410). Missing
     parent directories are fine: the writer creates them.
+
+    The probes are stat calls, and `Path` answers "no" only for a missing
+    entry: a component over the file name limit or a parent that cannot be
+    searched raises instead, and the callers only handle a returned reason, so
+    the check meant to replace a traceback produced one (issue #3688). Such an
+    error is itself the reason nothing can be written there.
     """
+    try:
+        return _unwritable_output_reason(path)
+    except OSError as error:
+        return cs.CLI_ERR_OUTPUT_UNUSABLE.format(
+            reason=error.strerror or str(error), path=path
+        )
+
+
+def _unwritable_output_reason(path: Path) -> str | None:
     if path.is_dir():
         return cs.CLI_ERR_OUTPUT_IS_DIR.format(path=path)
     if path.exists():

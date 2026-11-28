@@ -88,6 +88,9 @@ CLI_ERR_OUTPUT_PARENT_NOT_DIR = (
     "Error: --output cannot be created, this is not a directory: {parent}"
 )
 CLI_ERR_OUTPUT_NOT_WRITABLE = "Error: --output cannot be written here: {target}"
+# The probe itself failed (a component over the file name limit, a parent
+# that cannot be searched); `reason` is the OS's own wording (issue #3688).
+CLI_ERR_OUTPUT_UNUSABLE = "Error: --output cannot be used, {reason}: {path}"
 # `cgr export` scope and retired options (issue #2410).
 CLI_EXPORT_SCOPE = "Scoped to: {projects}"
 CLI_ERR_EXPORT_EMPTY_SCOPE = (
