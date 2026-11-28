@@ -1588,14 +1588,6 @@ status: 0
   },
   {
     "label": "Method",
-    "name": "Close",
-    "qualified_name": "afero.unionFile.UnionFile.Close",
-    "path": "unionFile.go",
-    "start_line": 31,
-    "end_line": 42
-  },
-  {
-    "label": "Method",
     "name": "Read",
     "qualified_name": "afero.unionFile.UnionFile.Read",
     "path": "unionFile.go",
@@ -1681,30 +1673,6 @@ status: 0
     "path": "unionFile.go",
     "start_line": 257,
     "end_line": 269
-  },
-  {
-    "label": "Function",
-    "name": "copyFile",
-    "qualified_name": "afero.unionFile.copyFile",
-    "path": "unionFile.go",
-    "start_line": 271,
-    "end_line": 311
-  },
-  {
-    "label": "Function",
-    "name": "copyFileToLayer",
-    "qualified_name": "afero.unionFile.copyFileToLayer",
-    "path": "unionFile.go",
-    "start_line": 323,
-    "end_line": 331
-  },
-  {
-    "label": "Function",
-    "name": "copyToLayer",
-    "qualified_name": "afero.unionFile.copyToLayer",
-    "path": "unionFile.go",
-    "start_line": 313,
-    "end_line": 321
   },
   {
     "label": "Function",

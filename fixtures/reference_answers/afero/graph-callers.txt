@@ -20,6 +20,21 @@ status: 0
   {
     "arg_count": 2,
     "callee_path": "match.go",
+    "col": 15,
+    "depth": 1,
+    "end_col": 37,
+    "end_line": 64,
+    "kwarg_names": [],
+    "label": "Method",
+    "line": 64,
+    "path": "iofs.go",
+    "qualified_name": "afero.iofs.IOFS.Glob",
+    "resolution": "exact",
+    "through": "afero.match.Glob"
+  },
+  {
+    "arg_count": 2,
+    "callee_path": "match.go",
     "col": 10,
     "depth": 1,
     "end_col": 23,
