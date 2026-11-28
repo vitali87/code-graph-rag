@@ -7,14 +7,15 @@ the call pass caught it for the WHOLE file: every call in it was dropped,
 neighbours included, while the sync still reported "done".
 
 With the I/O group on, the flow walk ran first and recursed the same way,
-once per `else if` or `||` term, so the deep caller lost every call it made
-(issue #3819).
+once per `else if` or `||` term and once per `if` nested in another's block,
+so the deep caller lost every call it made (issue #3819).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import NamedTuple
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -298,6 +299,8 @@ def test_a_failed_caller_costs_only_its_own_calls(
 # --- the I/O group -----------------------------------------------------------
 
 _IO = resolve_capture([cs.CaptureGroup.IO])
+# The group's flow walk alone: FLOWS_TO without READS_FROM/WRITES_TO.
+_FLOW = resolve_capture([f"{cs.CAPTURE_ADD_PREFIX}{cs.RelationshipType.FLOWS_TO}"])
 
 
 def _js(dispatch_body: str) -> dict[str, str]:
@@ -364,9 +367,7 @@ _IO_MODULE = {**_MODULE, "lua": "a", "javascript": "a", "python": "a"}
 # Lua's `else if` opens a block per link, and the I/O group's access walk
 # (not its flow walk) still takes a frame per nested block, so Lua's chain
 # holds the flow walk alone to the run without the group.
-_IO_CAPTURE = {
-    "lua": resolve_capture([f"{cs.CAPTURE_ADD_PREFIX}{cs.RelationshipType.FLOWS_TO}"])
-}
+_IO_CAPTURE = {"lua": _FLOW}
 
 
 def _index_both(
@@ -465,6 +466,190 @@ def test_a_deep_function_flows_as_a_shallow_one_does(
     assert _edges(deep, deep_mock, cs.RelationshipType.FLOWS_TO) == flows
     assert _calls(deep, deep_mock) == _calls(without, plain_mock)
     assert updater.call_pass_failures == []
+
+
+# --- nested ifs ---------------------------------------------------------------
+
+# Each `if` in the block of another took three or four frames of the flow walk,
+# so this many levels passed Python's default limit of 1,000 frames.
+DEPTH = 400
+
+
+class _Nested(NamedTuple):
+    # A repository whose `dispatch(x)` has `body` for its body, beside
+    # `helper`, `other` and `simple`; one level of nesting, opened and closed;
+    # and what the innermost level runs: an environment read written to
+    # stdout, then the call every run must keep.
+    files: Callable[[str], dict[str, str]]
+    opens: str
+    closes: str
+    inner: str
+
+    def source(self, depth: int) -> dict[str, str]:
+        return self.files(
+            "".join(self.opens.format(i=i) + "\n" for i in range(depth))
+            + f"{self.inner}\n"
+            + f"{self.closes}\n" * depth
+        )
+
+
+def _c_family(
+    path: str, header: str, fn: str, dispatch: str, io: str, footer: str = ""
+) -> _Nested:
+    # `fn` is a no-argument signature for {name}, `dispatch` the deep one's.
+    def files(body: str) -> dict[str, str]:
+        return {
+            path: header
+            + f"{fn.format(name='helper')} {{ return 1; }}\n"
+            + f"{fn.format(name='other')} {{ return 2; }}\n"
+            + f"{dispatch} {{\n{body}\n    return 0;\n}}\n"
+            + f"{fn.format(name='simple')} {{ return other(); }}\n"
+            + footer
+        }
+
+    x = "$x" if path.endswith(".php") else "x"
+    return _Nested(files, f"if ({x} == {{i}}) {{{{", "}", f"{io}\nreturn helper();")
+
+
+_NESTED_LANGS: dict[str, _Nested] = {
+    "go": _Nested(
+        lambda body: {
+            "go.mod": _GO_MANIFEST,
+            "a.go": 'package deep\n\nimport (\n\t"fmt"\n\t"os"\n)\n\n'
+            + "func helper() int { return 1 }\nfunc other() int { return 2 }\n\n"
+            + f"func dispatch(x int) int {{\n{body}\n\treturn 0\n}}\n\n"
+            + "func simple() int { return other() }\n",
+        },
+        "if x == {i} {{",
+        "}",
+        'fmt.Println(os.Getenv("DEEP"))\nreturn helper()',
+    ),
+    "rust": _Nested(
+        lambda body: {
+            "Cargo.toml": _RS_MANIFEST,
+            "src/lib.rs": "pub fn helper() -> u32 { 1 }\npub fn other() -> u32 { 2 }\n"
+            + f"pub fn dispatch(x: u32) -> u32 {{\n{body}\n    0\n}}\n"
+            + "pub fn simple() -> u32 { other() }\n",
+        },
+        "if x == {i} {{",
+        "}",
+        'println!("{:?}", std::env::var("DEEP"));\nreturn helper();',
+    ),
+    "cpp": _c_family(
+        "a.cpp",
+        "#include <cstdio>\n#include <cstdlib>\n",
+        "int {name}()",
+        "int dispatch(int x)",
+        'printf("%s", std::getenv("DEEP"));',
+    ),
+    "c": _c_family(
+        "a.c",
+        "#include <stdio.h>\n#include <stdlib.h>\n",
+        "int {name}(void)",
+        "int dispatch(int x)",
+        'printf("%s", getenv("DEEP"));',
+    ),
+    "java": _c_family(
+        "A.java",
+        "class A {\n",
+        "static int {name}()",
+        "static int dispatch(int x)",
+        'System.out.println(System.getenv("DEEP"));',
+        "}\n",
+    ),
+    "c_sharp": _c_family(
+        "A.cs",
+        "using System;\nclass A {\n",
+        "static int {name}()",
+        "static int dispatch(int x)",
+        'Console.WriteLine(Environment.GetEnvironmentVariable("DEEP"));',
+        "}\n",
+    ),
+    "javascript": _c_family(
+        "a.js",
+        "",
+        "function {name}()",
+        "function dispatch(x)",
+        "console.log(process.env.DEEP);",
+    ),
+    "typescript": _c_family(
+        "a.ts",
+        "",
+        "export function {name}(): number",
+        "export function dispatch(x: number): number",
+        "console.log(process.env.DEEP);",
+    ),
+    "php": _c_family(
+        "a.php",
+        "<?php\n",
+        "function {name}()",
+        "function dispatch($x)",
+        "echo getenv('DEEP');",
+    ),
+    "scala": _Nested(
+        lambda body: {
+            "A.scala": "object A {\n  def helper(): Int = 1\n  def other(): Int = 2\n"
+            + f"  def dispatch(x: Int): Int = {{\n{body}\n    0\n  }}\n"
+            + "  def simple(): Int = other()\n}\n",
+        },
+        "if (x == {i}) {{",
+        "}",
+        'println(System.getenv("DEEP"))\nreturn helper()',
+    ),
+    "dart": _c_family(
+        "a.dart",
+        "import 'dart:io';\n",
+        "int {name}()",
+        "int dispatch(int x)",
+        "print(Platform.environment['DEEP']);",
+    ),
+    "lua": _Nested(
+        lambda body: _lua(f"{body}\nreturn 0"),
+        "if x == {i} then",
+        "end",
+        'print(os.getenv("DEEP"))\nreturn helper()',
+    ),
+}
+
+
+def _py_nested(depth: int) -> dict[str, str]:
+    # Python nests by indentation: one more column per level.
+    ifs = "".join(" " * (4 + i) + f"if x == {i}:\n" for i in range(depth))
+    inner = " " * (4 + depth)
+    body = f'{ifs}{inner}print(os.getenv("DEEP"))\n{inner}return helper()\n    return 0'
+    return {"a.py": "import os\n\n\n" + _py(body)["a.py"]}
+
+
+_NESTED: dict[str, Callable[[int], dict[str, str]]] = {
+    **{name: lang.source for name, lang in _NESTED_LANGS.items()},
+    "python": _py_nested,
+}
+
+
+@pytest.mark.parametrize("lang", list(_NESTED))
+def test_deeply_nested_ifs_keep_their_calls_and_flow_as_one_if_does(
+    tmp_path: Path, lang: str
+) -> None:
+    # The group's access walk takes a frame per nested block too (issue
+    # #3825), so these runs hold its flow walk alone.
+    (deep, deep_mock, updater), (without, plain_mock) = _index_both(
+        tmp_path / "deep", _NESTED[lang](DEPTH), _FLOW
+    )
+    shallow, shallow_mock = tmp_path / "shallow" / "deep", _MockIngestor()
+    _index(shallow, _NESTED[lang](1), shallow_mock, capture=_FLOW)
+
+    expected = _calls(without, plain_mock)
+    assert any(
+        "dispatch" in frm.lower() and "helper" in to.lower() for frm, to in expected
+    ), expected
+    assert _calls(deep, deep_mock) == expected
+    assert updater.call_pass_failures == []
+    flows = _edges(shallow, shallow_mock, cs.RelationshipType.FLOWS_TO)
+    assert any(
+        src.startswith("resource::ENV::") and dst.startswith("resource::STDOUT::")
+        for src, dst in flows
+    ), flows
+    assert _edges(deep, deep_mock, cs.RelationshipType.FLOWS_TO) == flows
 
 
 # --- the sync summary ---------------------------------------------------------
