@@ -43,6 +43,14 @@ empty), `rust` runs exactly what `python` runs and `both` indexes nothing
 twice: an updater with no language on Rust is skipped before its repository
 is read.
 
+The `--engine-preview` option (docs/reports/PHASE3_GO.md, section 10) names
+languages whose port is under way, such as `go`: for the session it sets
+`index_engine.PREVIEW`, so `rust` and `both` put them on Rust too, and `both`
+compares every repository holding one. A module flag of this process: a
+`cgr` a test starts runs without it. While the engine holds none of a
+previewed language's analysis, its Rust side is Python's passes again, so
+the preview compares Python with itself.
+
 `@pytest.mark.index_engine("go=python")` sets one test's selection over the
 mode's, for an internals test that must stay on Python until it is
 rewritten. The test still runs in every mode.
@@ -87,6 +95,15 @@ ENGINE_MODE_HELP = (
     "repository the two index differently (both)."
 )
 ENGINE_MODE_HEADER = "engine mode: {mode}"
+ENGINE_PREVIEW_OPTION = "--engine-preview"
+ENGINE_PREVIEW_HELP = (
+    "Run these languages on the Rust engine wherever a selection asks for it, "
+    "before the build lists them: a port under way (comma-separated, whole "
+    "families)."
+)
+ENGINE_PREVIEW_HEADER = "engine preview: {languages}"
+ENGINE_PREVIEW_PLUGIN = "cgr-engine-preview"
+PREVIEW_ATTRIBUTE = "PREVIEW"
 INDEX_ENGINE_MARKER = "index_engine"
 INDEX_ENGINE_ENV = "CGR_INDEX_ENGINE"
 INDEX_ENGINE_SETTING = "INDEX_ENGINE"
@@ -673,6 +690,28 @@ class FramePlanCheck:
         )
 
 
+class EnginePreview:
+    """`--engine-preview`, for the whole session: the languages it names are
+    `index_engine.PREVIEW` from when the session is configured, so the runs
+    of shared fixtures see them too, until it ends."""
+
+    def __init__(self, spec: str) -> None:
+        from codebase_rag import index_engine
+
+        try:
+            languages = index_engine.parse_preview(spec)
+        except ValueError as error:
+            raise pytest.UsageError(
+                f"{ENGINE_PREVIEW_OPTION} {spec}: {error}"
+            ) from error
+        self.languages = languages
+        self._patch = pytest.MonkeyPatch()
+        self._patch.setattr(index_engine, PREVIEW_ATTRIBUTE, languages)
+
+    def pytest_unconfigure(self, config: pytest.Config) -> None:
+        self._patch.undo()
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         ENGINE_MODE_OPTION,
@@ -680,16 +719,26 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=EngineMode.PYTHON.value,
         help=ENGINE_MODE_HELP,
     )
+    parser.addoption(
+        ENGINE_PREVIEW_OPTION, default="", metavar="LANGUAGES", help=ENGINE_PREVIEW_HELP
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    if preview := config.getoption(ENGINE_PREVIEW_OPTION):
+        config.pluginmanager.register(EnginePreview(preview), ENGINE_PREVIEW_PLUGIN)
     mode = EngineMode(config.getoption(ENGINE_MODE_OPTION))
     if mode is not EngineMode.PYTHON:
         config.pluginmanager.register(EngineSession(mode), ENGINE_SESSION_PLUGIN)
 
 
-def pytest_report_header(config: pytest.Config) -> str:
-    return ENGINE_MODE_HEADER.format(mode=config.getoption(ENGINE_MODE_OPTION))
+def pytest_report_header(config: pytest.Config) -> list[str]:
+    header = [ENGINE_MODE_HEADER.format(mode=config.getoption(ENGINE_MODE_OPTION))]
+    preview = config.pluginmanager.get_plugin(ENGINE_PREVIEW_PLUGIN)
+    if isinstance(preview, EnginePreview):
+        languages = LANGUAGE_SEPARATOR.join(sorted(preview.languages))
+        header.append(ENGINE_PREVIEW_HEADER.format(languages=languages))
+    return header
 
 
 def _marked_selection(node: pytest.Item) -> str | None:

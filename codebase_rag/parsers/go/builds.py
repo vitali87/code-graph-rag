@@ -140,6 +140,16 @@ UNKNOWN = Expr("unknown")
 # what the decision's walk and Python's own hashing recurse through.
 _MAX_EXPR_SIZE = 4096
 _MAX_EXPR_DEPTH = 200
+# A constraint's canonical text, as the project index hand-off writes it
+# (docs/reports/PHASE3_GO.md, section 6): the `//go:build` grammar, and for
+# the three constraints it has no words for, a word no tag can be.
+_TEXT_AND = " && "
+_TEXT_OR = " || "
+_TEXT_NOT = "!"
+_TEXT_GROUP = "({text})"
+_TEXT_ALWAYS = "<always>"
+_TEXT_NEVER = "<never>"
+_TEXT_UNKNOWN = "<unknown>"
 
 
 def _tag(name: str) -> Expr:
@@ -229,6 +239,40 @@ def negate(part: Expr) -> Expr:
 _all = all_of
 _any = any_of
 _not = negate
+
+
+def canonical_text(expr: Expr) -> str:
+    """`expr` written out, the same for the same constraint: its operands in
+    the order it holds them, each compound one of a compound in parentheses.
+    The three constraints the `//go:build` grammar cannot spell get words of
+    their own.
+
+    Read back as a `//go:build` line, the text is `expr` again only while it
+    stays within what the reader reads, `_MAX_TOKENS` tokens nested at most
+    `_MAX_DEPTH` deep: the parentheses add tokens, so a constraint read from
+    a line near the limit, or built past it through a chain of embeds, can
+    write a text that reads back as UNKNOWN."""
+    if expr == ALWAYS:
+        return _TEXT_ALWAYS
+    if expr == NEVER:
+        return _TEXT_NEVER
+    match expr.op:
+        case "unknown":
+            return _TEXT_UNKNOWN
+        case "tag":
+            return expr.name
+        case "not":
+            return f"{_TEXT_NOT}{_operand_text(expr.parts[0])}"
+        case "and":
+            return _TEXT_AND.join(_operand_text(part) for part in expr.parts)
+        case _:
+            return _TEXT_OR.join(_operand_text(part) for part in expr.parts)
+
+
+def _operand_text(part: Expr) -> str:
+    text = canonical_text(part)
+    grouped = part.op in ("and", "or") and part not in (ALWAYS, NEVER)
+    return _TEXT_GROUP.format(text=text) if grouped else text
 
 
 def name_constraint(rel_path: str) -> Expr:

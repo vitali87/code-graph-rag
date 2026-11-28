@@ -25,9 +25,28 @@ plan against the `module` lines of `index.txt`, and its reading of the
 ignore files against `load_ignore_patterns`. Any difference, written to
 `frame.txt` beside the hand-offs, fails the check.
 
+`compare --engines A,B` (docs/reports/PHASE3_GO.md, section 6) indexes each
+pinned repository whose language the two `CGR_INDEX_ENGINE` selections put
+on different engines (as they ask, `auto` read as this release's default)
+once under each, with the Go type checker on, and compares the two runs'
+file plans in order and their project indexes and graphs as multisets, as
+the `both` cells do; it fails on any difference. A selection of several
+tokens separates them with `;`. The type checker's answers change with the
+Go release, so nothing of that path is recorded: both sides run live. A Go
+repository is compared only with `go` on PATH, and only when the type checker
+analysed every one of its modules in both runs: a Go below the floor, a
+helper that fails to build or a run that crashes falls back to tree-sitter
+on both sides alike, which would compare without it, so the comparison fails
+instead, naming the modules and the runs' warnings.
+
+`--preview LANGUAGES` runs those languages on the Rust engine wherever the
+selection asks for it, before the build lists them (`index_engine.PREVIEW`),
+in every run's process.
+
     uv run python -m scripts.handoff check --runs 2      # exit 1 on a difference
     uv run python -m scripts.handoff check uuid --index-engine go=rust
     uv run python -m scripts.handoff record --out DIR    # under DIR/<repository>
+    uv run python -m scripts.handoff compare --engines python,go=rust
 
 The files are not checked in: both engines exist side by side, so they are
 compared live. `record` writes the first run's, once every run agreed, for
@@ -37,17 +56,25 @@ reading, or for comparing two engine selections with `diff -r`.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 from codebase_rag import constants as cs
-from codebase_rag.canonical_graph import difference_in_order, read_handoff
+from codebase_rag.canonical_graph import (
+    difference,
+    difference_in_order,
+    handoff_difference,
+    read_graph,
+    read_handoff,
+)
 from codebase_rag.types_defs import ReferenceRepo
 from scripts.reference_graphs import (
     DEFAULT_CACHE,
@@ -62,12 +89,16 @@ from scripts.reference_graphs import (
 
 if TYPE_CHECKING:
     from codebase_rag.config import CgrignorePatterns
+    from codebase_rag.services.graph_service import MemgraphIngestor
 
 # The module each run starts, and the command it runs there.
 MODULE = "scripts.handoff"
 INDEX_COMMAND = "index"
 RECORD_COMMAND = "record"
 CHECK_COMMAND = "check"
+COMPARE_COMMAND = "compare"
+PREVIEW_FLAG = "--preview"
+GRAPH_FLAG = "--graph"
 DEFAULT_RUNS = 2
 SCRATCH_PREFIX = "cgr-handoff-"
 SCRATCH_GRAPH = "graph.sqlite"
@@ -85,13 +116,73 @@ FRAME_EXCLUDE = "exclude"
 FRAME_UNIGNORE = "unignore"
 FRAME_NOT_COMPARED = "! the frame was not compared: the extension lacks it"
 FILE_LINE = f"{cs.HandoffKind.FILE}{cs.REFERENCE_FIELD_SEPARATOR}"
+# The graph a run exports with `--graph`, as the reference graphs write
+# theirs: what `compare` holds the two sides to after their hand-offs.
+GRAPH_FILE = "graph.txt"
+# `compare`'s two selections, and the Go program the type checker needs.
+ENGINES_SEPARATOR = ","
+ENGINES_COUNT = 2
+GO_PROGRAM = "go"
+COMPARE_HEADING = "{repo} ({language}): {first} against {second}"
+COMPARE_SAME = "  {file}: same"
+COMPARE_DIFFERS = (
+    "  {file}: {first} lines only under {first_name}, {second} only under {second_name}"
+)
+COMPARE_FIRST = "  <- first difference"
+ENGINES_USAGE = (
+    "give two CGR_INDEX_ENGINE values, comma-separated, such as python,go=rust; "
+    "a value of several tokens separates them with ';'"
+)
+NOTHING_TO_COMPARE = (
+    "no repository chosen holds a language that {first} and {second} put on "
+    "different engines"
+)
+NO_GO = (
+    "{repo}: comparing a Go repository runs the Go type checker, and there is "
+    "no `go` on PATH"
+)
+# What a run with the Go type checker on writes of it beside its hand-offs:
+# the modules it should analyse and those it did, and what the run warned.
+GO_TYPES_FILE = "gotypes.json"
+GO_TYPES_ROOT = "."
+GO_TYPES_UNWRITTEN = "{repo}: the run under {engine} wrote no {file}"
+GO_TYPES_NO_MODULE = (
+    "{repo}: no go.mod for the Go type checker to analyse in the run under "
+    "{engine}, so the comparison would run without it"
+)
+GO_TYPES_NOT_RUN = (
+    "{repo}: the Go type checker did not analyse {modules} in the run under "
+    "{engine}, which fell back to tree-sitter; the run warned:"
+)
+GO_TYPES_WARNING = "    {warning}"
 
 # One run's hand-off files, by name, as the lines `read_handoff` reads.
 type Handoffs = dict[cs.HandoffFile, list[str]]
 
 
+class GoTypesRun(TypedDict):
+    """`GO_TYPES_FILE`: each Go module root the type checker should analyse
+    and those it did, `.` for the repository's own, and the run's warnings."""
+
+    modules: list[str]
+    analysed: list[str]
+    warnings: list[str]
+
+
+class IndexOptions(NamedTuple):
+    """How a run indexes: on which `CGR_INDEX_ENGINE` selection (None for
+    none), with which languages previewed on Rust, with the Go type checker
+    or the reference graphs' tree-sitter alone, and whether it exports its
+    graph beside its hand-offs."""
+
+    index_engine: str | None = None
+    preview: str | None = None
+    go_types: bool = False
+    graph: bool = False
+
+
 def _child_env(
-    home: Path, seed: int | None, index_engine: str | None
+    home: Path, seed: int | None, index_engine: str | None, go_types: bool = False
 ) -> dict[str, str]:
     """The reference graphs' index environment, with this checkout first on
     the import path: the run starts `scripts.handoff` from a scratch
@@ -101,6 +192,8 @@ def _child_env(
         # The interpreter's own seed, not one left in the shell: that could
         # be a later run's, and the two runs would hash alike.
         env.pop(cs.REFERENCE_SEED_ENV, None)
+    if go_types:
+        env[cs.SETTING_GO_FRONTEND] = cs.GoFrontend.GOTYPES
     paths = [str(PROJECT_ROOT), *filter(None, [env.get(PYTHONPATH_ENV)])]
     env[PYTHONPATH_ENV] = os.pathsep.join(paths)
     return env
@@ -111,7 +204,7 @@ def index_run(
     source: Path,
     seed: int | None,
     out: Path,
-    index_engine: str | None,
+    options: IndexOptions,
 ) -> None:
     """Index `source` afresh in a Python process of its own, under `seed`,
     writing its hand-off files to `out`."""
@@ -130,11 +223,15 @@ def index_run(
             "--project-name",
             repo["name"],
         ]
+        if options.preview is not None:
+            command.extend((PREVIEW_FLAG, options.preview))
+        if options.graph:
+            command.append(GRAPH_FLAG)
         result = subprocess.run(
             command,
             check=False,
             cwd=work,
-            env=_child_env(home, seed, index_engine),
+            env=_child_env(home, seed, options.index_engine, options.go_types),
             capture_output=True,
             text=True,
             encoding=cs.ENCODING_UTF8,
@@ -148,16 +245,23 @@ def index_run(
         )
 
 
-def index_in_process(repo_path: Path, out: Path, project_name: str) -> None:
+def index_in_process(
+    repo_path: Path,
+    out: Path,
+    project_name: str,
+    preview: str | None = None,
+    graph: bool = False,
+) -> None:
     """One run, in this process: `repo_path` indexed afresh as `cgr start`
     indexes it (its ignore files, the capture the settings give), into a
-    scratch embedded graph, writing the hand-off files to `out`."""
+    scratch embedded graph, writing the hand-off files to `out`, with the
+    languages `preview` names on Rust, and with `graph` its export too."""
     # Imported here, not when `record` or `check` load this module: the
     # settings merge the working directory's `.env` when they load.
     from loguru import logger
 
-    from codebase_rag import engine_frame
-    from codebase_rag.config import load_ignore_patterns
+    from codebase_rag import engine_frame, index_engine
+    from codebase_rag.config import load_ignore_patterns, settings
     from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
@@ -167,6 +271,12 @@ def index_in_process(repo_path: Path, out: Path, project_name: str) -> None:
     # says reaches the caller only when it fails.
     logger.remove()
     logger.add(sys.stderr, level=RUN_LOG_LEVEL, backtrace=False)
+    warnings: list[str] = []
+    logger.add(
+        lambda message: warnings.append(message.record["message"]), level=RUN_LOG_LEVEL
+    )
+    if preview is not None:
+        index_engine.PREVIEW = index_engine.parse_preview(preview)
     ignore = load_ignore_patterns(repo_path)
     frame = _FrameCheck()
     engine_frame.CHECK = frame
@@ -181,7 +291,7 @@ def index_in_process(repo_path: Path, out: Path, project_name: str) -> None:
         ) as ingestor,
     ):
         ingestor.ensure_constraints()
-        GraphUpdater(
+        updater = GraphUpdater(
             ingestor=ingestor,
             repo_path=repo_path,
             parsers=parsers,
@@ -193,12 +303,73 @@ def index_in_process(repo_path: Path, out: Path, project_name: str) -> None:
             skip_embeddings=True,
             state_dir=Path(tmp) / SCRATCH_STATE,
             handoff_dir=out,
-        ).run(force=True)
+        )
+        updater.run(force=True)
+        if graph:
+            _write_export(ingestor, repo_path, out / GRAPH_FILE)
+    if settings.GO_FRONTEND == cs.GoFrontend.GOTYPES:
+        analysed = updater.factory.definition_processor.go_analysed_roots
+        _write_go_types(updater.repo_path, analysed, warnings, out / GO_TYPES_FILE)
     engine_frame.CHECK = None
     lines = [*frame.lines, *_reading_difference(repo_path, ignore)]
     if not frame.compared:
         lines.append(FRAME_NOT_COMPARED)
     (out / FRAME_FILE).write_bytes(cs.LINE_FEED.join(lines).encode(cs.ENCODING_UTF8))
+
+
+def _write_go_types(
+    repo_path: Path, analysed: Iterable[str], warnings: list[str], path: Path
+) -> None:
+    """What the type checker did in this run: its modules are the module
+    roots it runs once each, named as it names those it analysed."""
+    from codebase_rag.parsers.go import discover_go_module_paths
+
+    modules = {
+        GO_TYPES_ROOT
+        if anchor == repo_path
+        else anchor.relative_to(repo_path).as_posix()
+        for _, _, anchor in discover_go_module_paths(repo_path)
+    }
+    record = GoTypesRun(
+        modules=sorted(modules), analysed=sorted(analysed), warnings=warnings
+    )
+    path.write_text(json.dumps(record, ensure_ascii=False), encoding=cs.ENCODING_UTF8)
+
+
+def _type_checked(repo: ReferenceRepo, engine: str, out: Path) -> None:
+    """Fail unless the run under `engine` had the type checker analyse every
+    module of `repo`."""
+    path = out / GO_TYPES_FILE
+    if not path.is_file():
+        raise SystemExit(
+            GO_TYPES_UNWRITTEN.format(
+                repo=repo["name"], engine=engine, file=GO_TYPES_FILE
+            )
+        )
+    record: GoTypesRun = json.loads(path.read_text(encoding=cs.ENCODING_UTF8))
+    if not record["modules"]:
+        raise SystemExit(GO_TYPES_NO_MODULE.format(repo=repo["name"], engine=engine))
+    if missing := [
+        name for name in record["modules"] if name not in record["analysed"]
+    ]:
+        heading = GO_TYPES_NOT_RUN.format(
+            repo=repo["name"], engine=engine, modules=", ".join(missing)
+        )
+        warned = [
+            GO_TYPES_WARNING.format(warning=line)
+            for warning in record["warnings"]
+            for line in warning.splitlines()
+        ]
+        raise SystemExit(cs.LINE_FEED.join([heading, *warned]))
+
+
+def _write_export(ingestor: MemgraphIngestor, repo_path: Path, path: Path) -> None:
+    """The run's graph, exported as `cgr start -o` writes it, as the
+    reference graphs' sorted lines."""
+    from codebase_rag.canonical_graph import canonical, write_graph
+
+    export = json.loads(json.dumps(ingestor.export_graph_to_dict(), ensure_ascii=False))
+    write_graph(path, canonical(export, repo_path))
 
 
 class _FrameCheck:
@@ -298,7 +469,7 @@ def check_repo(
     repo: ReferenceRepo,
     cache: Path,
     runs: int,
-    index_engine: str | None,
+    options: IndexOptions,
     work: Path,
 ) -> tuple[int, list[str], Handoffs]:
     """Whether every run of `repo` wrote the first run's files, the lines
@@ -308,7 +479,7 @@ def check_repo(
     frame: list[tuple[int | None, list[str]]] = []
     for number, (seed, source) in enumerate(checkouts(repo, checkout, runs)):
         out = work / repo["name"] / RUN_DIR.format(number=number)
-        index_run(repo, source, seed, out, index_engine)
+        index_run(repo, source, seed, out, options)
         outcomes.append((seed, _read(repo, out)))
         frame.append((seed, _frame_difference(repo, out)))
     (_, first), *later = outcomes
@@ -346,16 +517,18 @@ def run(
     *,
     out: Path | None = None,
     index_engine: str | None = None,
+    preview: str | None = None,
 ) -> int:
     """Check every run of each of `repos` against its first, and with `out`,
     record the first runs' files there."""
+    options = IndexOptions(index_engine=index_engine, preview=preview)
     status = 0
     # A recording writes nothing until every repository has indexed and
     # every run agreed, as the reference graphs' does.
     staged: list[tuple[ReferenceRepo, Handoffs]] = []
     with tempfile.TemporaryDirectory(prefix=SCRATCH_PREFIX) as tmp:
         for repo in repos:
-            found, lines, first = check_repo(repo, cache, runs, index_engine, Path(tmp))
+            found, lines, first = check_repo(repo, cache, runs, options, Path(tmp))
             for line in lines:
                 say(line)
             status = status or found
@@ -375,12 +548,163 @@ def run(
     return status
 
 
+def parted_languages(first: str, second: str) -> frozenset[cs.SupportedLanguage]:
+    """The languages two `CGR_INDEX_ENGINE` selections put on different
+    engines, as they ask: whether this build can run either there decides
+    what a run does, not what the comparison is for."""
+    from codebase_rag.index_engine import asked_index_engines, parse_index_engine
+
+    one = asked_index_engines(parse_index_engine(first))
+    other = asked_index_engines(parse_index_engine(second))
+    return frozenset(
+        language for language, engine in one.items() if other[language] != engine
+    )
+
+
+def compared_repos(
+    repos: Sequence[ReferenceRepo], first: str, second: str
+) -> list[ReferenceRepo]:
+    """Those of `repos` whose language the two selections part on."""
+    parted = parted_languages(first, second)
+    return [repo for repo in repos if repo["language"] in parted]
+
+
+class Side(NamedTuple):
+    """One side of a comparison: the hand-offs its run wrote and its graph."""
+
+    handoffs: Handoffs
+    graph: list[str]
+
+
+def _side(repo: ReferenceRepo, out: Path) -> Side:
+    if not (out / GRAPH_FILE).is_file():
+        raise SystemExit(f"{repo['name']}: a run wrote no {GRAPH_FILE}")
+    return Side(_read(repo, out), read_graph(out / GRAPH_FILE))
+
+
+def _differences(first: Side, second: Side) -> list[tuple[str, list[str]]]:
+    """Each file's difference, in the order of the pipeline: the file plan in
+    order, the project index and the graph as multisets, as `both` compares
+    them, so the first that differs names the stage at which the two part."""
+    handoffs = [
+        (
+            str(file),
+            handoff_difference(file, first.handoffs[file], second.handoffs[file]),
+        )
+        for file in cs.HandoffFile
+    ]
+    return [*handoffs, (GRAPH_FILE, difference(first.graph, second.graph))]
+
+
+def compare_repo(
+    repo: ReferenceRepo,
+    cache: Path,
+    engines: tuple[str, str],
+    preview: str | None,
+    work: Path,
+) -> tuple[int, list[str]]:
+    """Whether `repo` indexed under each of `engines`, both from its
+    checkout and with the type checker on, gives the same file plan, project
+    index and graph, and the lines saying where not, the first difference
+    marked."""
+    if repo["language"] == cs.SupportedLanguage.GO and shutil.which(GO_PROGRAM) is None:
+        raise SystemExit(NO_GO.format(repo=repo["name"]))
+    checkout = fetch(repo, cache)
+    sides: list[Side] = []
+    for number, engine in enumerate(engines):
+        out = work / repo["name"] / RUN_DIR.format(number=number)
+        options = IndexOptions(engine, preview, go_types=True, graph=True)
+        index_run(repo, checkout, None, out, options)
+        if repo["language"] == cs.SupportedLanguage.GO:
+            _type_checked(repo, engine, out)
+        sides.append(_side(repo, out))
+    first_name, second_name = engines
+    lines = [
+        COMPARE_HEADING.format(
+            repo=repo["name"],
+            language=repo["language"],
+            first=first_name,
+            second=second_name,
+        )
+    ]
+    found = False
+    for file, diff in _differences(*sides):
+        if not diff:
+            lines.append(COMPARE_SAME.format(file=file))
+            continue
+        only_first = sum(1 for line in diff if line.startswith("-"))
+        heading = COMPARE_DIFFERS.format(
+            file=file,
+            first=only_first,
+            first_name=first_name,
+            second=len(diff) - only_first,
+            second_name=second_name,
+        )
+        lines.append(heading if found else f"{heading}{COMPARE_FIRST}")
+        found = True
+        lines.extend(f"    {line}" for line in diff[: cs.REFERENCE_DIFF_LINES])
+        if len(diff) > cs.REFERENCE_DIFF_LINES:
+            lines.append(f"    ... and {len(diff) - cs.REFERENCE_DIFF_LINES} more")
+    return (cs.REFERENCE_EXIT_DIFFERENT if found else 0), lines
+
+
+def compare(
+    repos: Sequence[ReferenceRepo],
+    cache: Path,
+    engines: tuple[str, str],
+    preview: str | None = None,
+) -> int:
+    """Compare each of `repos` under the two selections, exit 1 when any
+    differs."""
+    status = 0
+    with tempfile.TemporaryDirectory(prefix=SCRATCH_PREFIX) as tmp:
+        for repo in repos:
+            found, lines = compare_repo(repo, cache, engines, preview, Path(tmp))
+            for line in lines:
+                say(line)
+            status = status or found
+    return status
+
+
+def engines_option(text: str) -> tuple[str, str]:
+    """`--engines`: two selections, each refused the way cgr refuses the
+    setting at start-up."""
+    from codebase_rag.index_engine import index_engine_error
+
+    engines = text.split(ENGINES_SEPARATOR)
+    if len(engines) != ENGINES_COUNT or not all(engines):
+        raise argparse.ArgumentTypeError(ENGINES_USAGE)
+    for engine in engines:
+        if (error := index_engine_error(engine)) is not None:
+            raise argparse.ArgumentTypeError(error)
+    first, second = engines
+    return first, second
+
+
+def preview_option(text: str) -> str:
+    """`--preview`, refused as `parse_preview` refuses it, before any
+    repository is fetched."""
+    from codebase_rag.index_engine import preview_error
+
+    if (error := preview_error(text)) is not None:
+        raise argparse.ArgumentTypeError(error)
+    return text
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    shared = argparse.ArgumentParser(add_help=False)
-    shared.add_argument("names", nargs="*", help="only these repositories")
-    shared.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
+    repos_args = argparse.ArgumentParser(add_help=False)
+    repos_args.add_argument("names", nargs="*", help="only these repositories")
+    repos_args.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
+    repos_args.add_argument(
+        PREVIEW_FLAG,
+        type=preview_option,
+        metavar="LANGUAGES",
+        help="run these languages on Rust wherever the selection asks, before "
+        "the build lists them",
+    )
+    shared = argparse.ArgumentParser(add_help=False, parents=[repos_args])
     shared.add_argument("--runs", type=int, default=DEFAULT_RUNS)
     shared.add_argument(
         "--index-engine",
@@ -393,15 +717,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     record.add_argument(
         "--out", type=Path, required=True, help="write DIR/<repository>/*.txt"
     )
+    comparison = commands.add_parser(
+        COMPARE_COMMAND,
+        parents=[repos_args],
+        help="index each repository under two selections and compare",
+    )
+    comparison.add_argument(
+        "--engines", type=engines_option, required=True, metavar="A,B"
+    )
     one = commands.add_parser(
         INDEX_COMMAND, help="one run, in this process: what record and check start"
     )
     one.add_argument("repo_path", type=Path)
     one.add_argument("out", type=Path)
     one.add_argument("--project-name", required=True)
+    one.add_argument(PREVIEW_FLAG, type=preview_option, metavar="LANGUAGES")
+    one.add_argument(GRAPH_FLAG, action="store_true", help="export the graph too")
     args = parser.parse_args(argv)
     if args.command == INDEX_COMMAND:
-        index_in_process(args.repo_path, args.out, args.project_name)
+        index_in_process(
+            args.repo_path, args.out, args.project_name, args.preview, args.graph
+        )
         return 0
     if args.command == CHECK_COMMAND and args.runs < 2:
         parser.error("a check compares runs: give --runs 2 or more")
@@ -410,12 +746,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if unknown:
         parser.error(f"unknown repositories: {', '.join(sorted(unknown))}")
     chosen = [repo for repo in repos if not args.names or repo["name"] in args.names]
+    if args.command == COMPARE_COMMAND:
+        first, second = args.engines
+        if not (compared := compared_repos(chosen, first, second)):
+            parser.error(NOTHING_TO_COMPARE.format(first=first, second=second))
+        return compare(compared, args.cache, args.engines, args.preview)
     return run(
         chosen,
         args.cache,
         max(args.runs, 1),
         out=args.out if args.command == RECORD_COMMAND else None,
         index_engine=args.index_engine,
+        preview=args.preview,
     )
 
 

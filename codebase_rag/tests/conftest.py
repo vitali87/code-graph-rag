@@ -498,6 +498,16 @@ _GRAMMAR_VERSIONS: list[list[str]] = []
 
 
 @pytest.fixture
+def no_engine_preview(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No language previewed on Rust (`index_engine.PREVIEW` empty), for a
+    test of what this build runs without one: a session run with the plugin's
+    `--engine-preview` sets one before any test. Its own comes back after."""
+    from codebase_rag import index_engine
+
+    monkeypatch.setattr(index_engine, "PREVIEW", frozenset())
+
+
+@pytest.fixture
 def fingerprint_inputs_once_per_session(monkeypatch: pytest.MonkeyPatch) -> None:
     """What the parser fingerprint reads from the environment, read once per
     test session (per xdist worker) for the tests that use this, which index

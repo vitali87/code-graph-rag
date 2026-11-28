@@ -20,18 +20,29 @@ files claims a module's bare name (#1569), and a class's parents.
 An empty set, map or list states no fact (Python's registries create some on
 a mere lookup), so a simple name with no definitions, a module with no
 imports and a class with no parents get no line.
+
+From format version 2 the project index also holds Go's own tables
+(docs/reports/PHASE3_GO.md, section 6), the facts Go's analysis keeps beside
+the shared registries: each module's package clause, each method's
+signature, each interface's embeds as written, each implementation pair with
+who paired it and the builds it holds in, each free function's first result,
+and each file's build constraint, written in the canonical text
+`parsers/go/builds.py` gives it. A file that every build compiles states no
+constraint and gets no line. The Rust engine writes the same from its index,
+so a difference names the stage at which the two part.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Set
 from pathlib import Path
 
 from . import constants as cs
 from .canonical_graph import canonical_json
 from .language_spec import get_language_for_extension
+from .parsers.go.builds import ALWAYS, canonical_text
 from .parsers.notebook import is_notebook_path
-from .types_defs import JsonValue, PlannedFile, ProjectIndex
+from .types_defs import GoProjectIndex, JsonValue, PlannedFile, ProjectIndex
 from .utils.path_utils import cached_relative_path
 
 
@@ -40,7 +51,9 @@ def _line(kind: cs.HandoffKind, key: str, value: JsonValue) -> str:
 
 
 def _write(directory: Path, file: cs.HandoffFile, lines: Iterable[str]) -> None:
-    header = cs.HANDOFF_HEADER.format(file=file, version=cs.HANDOFF_FORMAT_VERSION)
+    header = cs.HANDOFF_HEADER.format(
+        file=file, version=cs.HANDOFF_FORMAT_VERSIONS[file]
+    )
     text = "".join(f"{line}{cs.LINE_FEED}" for line in (header, *lines))
     directory.mkdir(parents=True, exist_ok=True)
     # Bytes, not text: text mode would end each line with `\r\n` on Windows.
@@ -109,9 +122,100 @@ def module_line(module_qn: str, path: str, language: str | None) -> str:
     )
 
 
+def _go_lines(
+    repo_path: Path,
+    modules: Mapping[str, Path],
+    definitions: Set[str],
+    go: GoProjectIndex,
+) -> list[str]:
+    """The lines of Go's own tables, one per entry, each pair once for each
+    side that paired it, and a build constraint for each Go file that has
+    one.
+
+    Of the modules and definitions the index holds only. Python's tables
+    keep what a deleted file declared on a reused updater (the watcher's, the
+    MCP server's): its clause, its methods and interfaces, under the qns the
+    file gave them, though those left the index with the file. A fresh index
+    holds none of it, and the Rust engine re-reads every Go file each run.
+    """
+    lines = [
+        _line(cs.HandoffKind.GO_PACKAGE, module_qn, {cs.HANDOFF_KEY_CLAUSE: clause})
+        for module_qn, clause in go.packages.items()
+        if module_qn in modules
+    ]
+    lines.extend(
+        _line(
+            cs.HandoffKind.GO_METHOD,
+            method_qn,
+            {
+                cs.HANDOFF_KEY_FILE: spec.file,
+                cs.HANDOFF_KEY_PACKAGE: spec.package,
+                cs.HANDOFF_KEY_PARAMS: [*spec.signature.params],
+                cs.HANDOFF_KEY_RESULTS: None
+                if spec.signature.results is None
+                else [*spec.signature.results],
+            },
+        )
+        for method_qn, spec in go.methods.items()
+        if method_qn in definitions
+    )
+    lines.extend(
+        _line(
+            cs.HandoffKind.GO_INTERFACE,
+            interface_qn,
+            {
+                cs.HANDOFF_KEY_EMBEDS: [*decl.embeds],
+                cs.HANDOFF_KEY_FILE: decl.file,
+                cs.HANDOFF_KEY_PACKAGE: decl.package,
+            },
+        )
+        for interface_qn, decl in go.interfaces.items()
+        if interface_qn in definitions
+    )
+    sources = (
+        (cs.GoPairSource.PROVEN, go.proven),
+        (cs.GoPairSource.GUESSED, go.guessed),
+    )
+    lines.extend(
+        _line(
+            cs.HandoffKind.GO_IMPLEMENTS,
+            implementer,
+            {
+                cs.HANDOFF_KEY_BUILDS: canonical_text(
+                    go.pair_builds.get((interface_qn, implementer), ALWAYS)
+                ),
+                cs.HANDOFF_KEY_INTERFACE: interface_qn,
+                cs.HANDOFF_KEY_SOURCE: source,
+            },
+        )
+        for source, pairs in sources
+        for interface_qn, implementer in pairs
+    )
+    lines.extend(
+        _line(cs.HandoffKind.GO_RETURN_TYPE, qn, {cs.HANDOFF_KEY_TYPE: return_type})
+        for qn, return_type in go.return_types.items()
+        if qn in definitions
+    )
+    go_files = {
+        cached_relative_path(path, repo_path).as_posix()
+        for path in modules.values()
+        if module_language(path) == cs.SupportedLanguage.GO
+    }
+    for rel_path in go_files:
+        if (constraint := go.builds.constraint(rel_path)) != ALWAYS:
+            lines.append(
+                _line(
+                    cs.HandoffKind.GO_BUILD,
+                    rel_path,
+                    {cs.HANDOFF_KEY_CONSTRAINT: canonical_text(constraint)},
+                )
+            )
+    return lines
+
+
 def write_project_index(directory: Path, repo_path: Path, index: ProjectIndex) -> None:
     """Write `index.txt`: the modules, definitions, simple names, imports and
-    parents the run registered, every line sorted."""
+    parents the run registered, and Go's own tables, every line sorted."""
     lines = [
         module_line(
             module_qn,
@@ -120,9 +224,10 @@ def write_project_index(directory: Path, repo_path: Path, index: ProjectIndex) -
         )
         for module_qn, path in index.modules.items()
     ]
+    definitions = dict(index.definitions)
     lines.extend(
         _line(cs.HandoffKind.DEFINITION, qn, {cs.HANDOFF_KEY_LABEL: label})
-        for qn, label in index.definitions
+        for qn, label in definitions.items()
     )
     for name, qns in index.simple_names.items():
         if found := sorted(qns):
@@ -133,4 +238,5 @@ def write_project_index(directory: Path, repo_path: Path, index: ProjectIndex) -
     for class_qn, parents in index.parents.items():
         if parents:
             lines.append(_line(cs.HandoffKind.INHERITS, class_qn, [*parents]))
+    lines.extend(_go_lines(repo_path, index.modules, definitions.keys(), index.go))
     _write(directory, cs.HandoffFile.INDEX, sorted(lines))

@@ -105,9 +105,9 @@ def _drop_helper_on_later_runs(monkeypatch: pytest.MonkeyPatch) -> None:
         source: Path,
         seed: int | None,
         out: Path,
-        index_engine: str | None,
+        options: handoff.IndexOptions,
     ) -> None:
-        original(repo, source, seed, out, index_engine)
+        original(repo, source, seed, out, options)
         if seed is not None:
             index = out / cs.HandoffFile.INDEX
             lines = index.read_bytes().split(b"\n")
@@ -185,9 +185,9 @@ def _frame_files(monkeypatch: pytest.MonkeyPatch, plant: bytes = b"") -> list[by
         source: Path,
         seed: int | None,
         out: Path,
-        index_engine: str | None,
+        options: handoff.IndexOptions,
     ) -> None:
-        original(repo, source, seed, out, index_engine)
+        original(repo, source, seed, out, options)
         written.append((out / handoff.FRAME_FILE).read_bytes())
         if seed is not None and plant:
             (out / handoff.FRAME_FILE).write_bytes(plant)
@@ -285,7 +285,7 @@ def test_a_recording_writes_the_first_runs_files_once_every_run_agrees(
     written = sorted(p.relative_to(out).as_posix() for p in out.rglob("*.txt"))
     assert written == ["demo/files.txt", "demo/index.txt"]
     index = (out / "demo" / cs.HandoffFile.INDEX).read_bytes()
-    assert index.startswith(b"# cgr handoff index.txt 1\n")
+    assert index.startswith(b"# cgr handoff index.txt 2\n")
     assert f"\n{HELPER}\n".encode() in index
 
     _drop_helper_on_later_runs(monkeypatch)
@@ -324,7 +324,7 @@ def test_the_selection_reaches_the_index_environment_and_no_other(
 def test_main_hands_its_options_to_the_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    calls: list[tuple[list[str], int, Path | None, str | None]] = []
+    calls: list[tuple[list[str], int, Path | None, str | None, str | None]] = []
 
     def recorded(
         repos: list[ReferenceRepo],
@@ -333,8 +333,10 @@ def test_main_hands_its_options_to_the_run(
         *,
         out: Path | None,
         index_engine: str | None,
+        preview: str | None,
     ) -> int:
-        calls.append(([repo["name"] for repo in repos], runs, out, index_engine))
+        names = [repo["name"] for repo in repos]
+        calls.append((names, runs, out, index_engine, preview))
         return 0
 
     monkeypatch.setattr(handoff, "run", recorded)
@@ -342,10 +344,12 @@ def test_main_hands_its_options_to_the_run(
     assert handoff.main(["check", "uuid", "--index-engine", "go=rust"]) == 0
     assert handoff.main(["check", "--runs", "3"]) == 0
     assert handoff.main(["record", "uuid", "--out", str(tmp_path)]) == 0
+    assert handoff.main(["check", "uuid", "--preview", "go"]) == 0
     assert calls == [
-        (["uuid"], 2, None, "go=rust"),
-        ([repo["name"] for repo in load_manifest()], 3, None, None),
-        (["uuid"], 2, tmp_path, None),
+        (["uuid"], 2, None, "go=rust", None),
+        ([repo["name"] for repo in load_manifest()], 3, None, None, None),
+        (["uuid"], 2, tmp_path, None, None),
+        (["uuid"], 2, None, None, "go"),
     ]
 
 
@@ -359,6 +363,7 @@ def test_main_hands_its_options_to_the_run(
         (["check", "no-such-repo"], "unknown repositories: no-such-repo"),
         (["check", "--runs", "1"], "--runs 2"),
         (["record", "uuid"], "--out"),
+        (["check", "--preview", "c"], "this preview names only c."),
     ],
 )
 def test_main_refuses_what_it_cannot_run(
@@ -378,12 +383,22 @@ def test_main_refuses_what_it_cannot_run(
 
 def test_the_reference_graphs_job_checks_the_hand_offs_with_its_install() -> None:
     # With every tier's extra, as the graphs are checked, and after a
-    # difference in them too, so one push shows every check's.
+    # difference in them too, so one push shows every check's. The engine
+    # comparison runs the Go type checker, so Go is installed before it.
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding=cs.ENCODING_UTF8))
     steps = workflow["jobs"]["reference-graphs"]["steps"]
     checks = [step for step in steps if "scripts.handoff" in step.get("run", "")]
 
     assert [step["run"] for step in checks] == [
-        "uv run --no-sync python -m scripts.handoff check --runs 2"
+        "uv run --no-sync python -m scripts.handoff check --runs 2",
+        "uv run --no-sync python -m scripts.handoff compare --engines python,go=rust",
     ]
-    assert checks[0]["if"] == "${{ !cancelled() }}"
+    assert [step["if"] for step in checks] == ["${{ !cancelled() }}"] * 2
+    go = [
+        number
+        for number, step in enumerate(steps)
+        if step.get("uses", "").startswith("actions/setup-go@")
+    ]
+    assert len(go) == 1
+    assert go[0] < steps.index(checks[1])
+    assert steps[go[0]]["with"]["go-version"] == ">=1.27.2"

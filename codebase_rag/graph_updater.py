@@ -160,6 +160,7 @@ from .types_defs import (
     FunctionLocation,
     FunctionLocations,
     FunctionSpanKey,
+    GoProjectIndex,
     IndexEngineSelection,
     JsonValue,
     LanguageQueries,
@@ -9539,6 +9540,16 @@ class GraphUpdater:
                 simple_names=self.simple_name_lookup,
                 imports=self.factory.import_processor.import_mapping,
                 parents=dp.class_inheritance,
+                go=GoProjectIndex(
+                    packages=dp.go_package_names,
+                    methods=dp.go_methods,
+                    interfaces=dp.go_interfaces,
+                    proven=dp.go_proven_pairs,
+                    guessed=dp.go_guessed_pairs,
+                    pair_builds=dp.go_pair_builds,
+                    return_types=dp.go_function_return_types,
+                    builds=dp.go_builds,
+                ),
             ),
         )
 

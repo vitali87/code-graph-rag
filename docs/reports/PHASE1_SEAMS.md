@@ -386,6 +386,9 @@ value is JSON written the reference graphs' way: sorted keys, no ASCII
 escaping, no spaces. UTF-8, `\n` line ends. The first line is
 `# cgr handoff <file> 1`, the format version. Each engine writes the
 version it implements; a comparison of two versions fails and names both.
+Phase 3 moved `index.txt` to version 2, which adds Go's own sections
+([PHASE3_GO.md](PHASE3_GO.md), section 6) and keeps every section below
+byte for byte.
 
 `files.txt`:
 
