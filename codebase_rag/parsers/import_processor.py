@@ -2251,7 +2251,7 @@ class ImportProcessor:
         "_julia_file_stems",
         "_julia_declared",
         "_julia_scope_declared",
-        "_julia_scope_map_keys",
+        "_julia_scope_bindings",
         "_deferred_import_edges",
         "unresolved_specifiers",
         "unresolved_references",
@@ -2394,11 +2394,13 @@ class ImportProcessor:
         # include so non-C++ projects never pay for it.
         self._cpp_module_qn_map: dict[str, str] | None = None
         self._cpp_qn_to_rel: dict[str, str] = {}
-        # File module -> its nested-scope map keys; read unguarded on the
-        # re-ingest path, which never runs the per-run cache resets. A parse
-        # record, not a layout cache: the per-run resets keep it, so a file
-        # deleted in a later run still names the keys it wrote (#3787).
-        self._julia_scope_map_keys: dict[str, set[str]] = {}
+        # File module -> each nested-scope map key it wrote -> the bindings
+        # it wrote there; read unguarded on the re-ingest path, which never
+        # runs the per-run cache resets. A parse record, not a layout cache:
+        # the per-run resets keep it, so a file deleted in a later run still
+        # names what it wrote (#3787). The bindings, not just the keys: two
+        # files can write under one key, and each takes back only its own.
+        self._julia_scope_bindings: dict[str, dict[str, dict[str, str]]] = {}
         # IMPORTS edges held back until every file is parsed, so internal
         # targets verify against the full module registry (issue #652).
         self._deferred_import_edges: list[DeferredImportEdge] = []
@@ -2899,15 +2901,7 @@ class ImportProcessor:
         self.csharp_static_imports.pop(module_qn, None)
         self.csharp_global_static_imports.pop(module_qn, None)
         self.java_static_imports.pop(module_qn, None)
-        # A nested `module` keys its bindings under its own qn, which the parse
-        # recorded here; they go with the record, or a re-parse that drops the
-        # nested module, or the file's deletion, left its map behind. Exactly
-        # the recorded keys, never a prefix sweep, and not one that is a file
-        # module's own qn (`a/A.jl` beside `a.jl`'s `module A`): that map is
-        # the other file's parse output.
-        for key in self._julia_scope_map_keys.pop(module_qn, ()):
-            if key not in self.module_qn_to_file_path:
-                self.import_mapping.pop(key, None)
+        self._drop_julia_scope_bindings(module_qn)
         # Cleared with the mapping it shadows: these entries ADD edges, so a
         # stale one would resurrect an include the edited file has removed
         # (issue #1758).
@@ -2956,6 +2950,31 @@ class ImportProcessor:
         }
         self.dart_exposed_libraries.pop(module_qn, None)
         self._retract_import_sites(module_qn)
+
+    def _drop_julia_scope_bindings(self, module_qn: str) -> None:
+        """Take back what this module's nested Julia `module`s bound.
+
+        A nested `module` keys its bindings under its own qn, which the parse
+        recorded; they go with the record, or a re-parse that drops the nested
+        module, or the file's deletion, left its map behind. Exactly the
+        recorded keys, never a prefix sweep, and not one that is a file
+        module's own qn (`a/A.jl` beside `a.jl`'s `module A`): that map is
+        the other file's parse output. A key two files' nested modules share
+        (`module B; module C` in `a.jl`, `module C` in `a/B.jl`) is rebuilt
+        from the bindings the other files recorded, which no re-parse of
+        theirs writes again (#3787 review).
+        """
+        for key in self._julia_scope_bindings.pop(module_qn, {}):
+            if key in self.module_qn_to_file_path:
+                continue
+            if kept := {
+                local_name: target
+                for scopes in self._julia_scope_bindings.values()
+                for local_name, target in scopes.get(key, {}).items()
+            }:
+                self.import_mapping[key] = kept
+            else:
+                self.import_mapping.pop(key, None)
 
     def _clear_module_side_tables(self, module_qn: str) -> None:
         """Drop the rest of what a previous parse of this module recorded.
@@ -3041,7 +3060,7 @@ class ImportProcessor:
         # but the IMPORTS edge stays on the file module (#652). The explicit
         # registry keeps a sibling FILE module whose qn is a prefix
         # (`proj.a.b` beside `proj.a`) from leaking in.
-        map_keys = {module_qn, *self._julia_scope_map_keys.get(module_qn, ())}
+        map_keys = {module_qn, *self._julia_scope_bindings.get(module_qn, ())}
         for map_key in map_keys:
             bindings = self.import_mapping.get(map_key)
             if not bindings:
@@ -8727,13 +8746,15 @@ class ImportProcessor:
         for stmt_node in captures.get(cs.CAPTURE_IMPORT, []):
             scope = self._julia_import_scope_name(stmt_node)
             map_qn = f"{module_qn}{cs.SEPARATOR_DOT}{scope}" if scope else module_qn
-            if scope:
-                self._julia_scope_map_keys.setdefault(module_qn, set()).add(map_qn)
             for local_name, dotted, depth in self._julia_import_pairs(stmt_node):
                 target = self._julia_resolve_module_path(
                     dotted, depth, module_qn, scope
                 )
                 self.import_mapping.setdefault(map_qn, {})[local_name] = target
+                if scope:
+                    self._julia_scope_bindings.setdefault(module_qn, {}).setdefault(
+                        map_qn, {}
+                    )[local_name] = target
                 self._record_import_site(module_qn, local_name, stmt_node, dotted)
 
     def _julia_import_pairs(self, stmt_node: Node):

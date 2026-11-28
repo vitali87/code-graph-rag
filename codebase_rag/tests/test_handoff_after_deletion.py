@@ -86,6 +86,13 @@ JULIA_NESTED_FIXTURE = {
         "run() = Util.helper(2)\nend\n"
     ),
 }
+# `src/a.jl`'s `module B; module C` and `src/a/B.jl`'s `module C` key their
+# bindings under one qn, `demo.src.a.B.C`, which is neither file's module.
+JULIA_SHARED_SCOPE_FIXTURE = {
+    "src/Util.jl": "module Util\nexport helper\nhelper(x) = x + 1\nend\n",
+    "src/a.jl": "module B\nmodule C\nusing Util: helper\nend\nend\n",
+    "src/a/B.jl": "module C\nusing Util\nend\n",
+}
 # Added between the run that parsed a file and the one that deletes it, so
 # that run's per-run resets come between, the Julia path caches' among them.
 LATER_ADDITIONS = {
@@ -247,6 +254,51 @@ def test_its_tables_name_the_file_as_a_fresh_index_s_do(
 
     assert _naming(indexed.reused, indexed.module_qns, indexed.path) == _naming(
         indexed.fresh, indexed.module_qns, indexed.path
+    )
+
+
+def test_a_deletion_keeps_what_another_file_binds_in_a_shared_scope(
+    tmp_path: Path,
+) -> None:
+    # `src/a.jl` takes back its own bindings under the shared scope, and
+    # leaves `src/a/B.jl`'s `using Util` there: that unchanged file is never
+    # parsed again to write it back (#3787 review). Its tables are not
+    # compared: the surviving `demo.src.a.B` is named inside the deleted
+    # `demo.src.a`, yet is live.
+    _index(JULIA_SHARED_SCOPE_FIXTURE, "src/a.jl", tmp_path)
+
+    assert _lines(tmp_path / "reused" / "handoffs" / _INDEX) == _lines(
+        tmp_path / "fresh" / "handoffs" / _INDEX
+    )
+
+
+def test_an_edit_keeps_what_another_file_binds_in_a_shared_scope(
+    tmp_path: Path,
+) -> None:
+    # Re-parsing `src/a.jl` drops the bindings its last parse wrote under the
+    # shared scope, and only those (#3787 review).
+    edited = {"src/a.jl": "module B\nmodule C\nusing Util: helper as h\nend\nend\n"}
+    repo = _write(tmp_path / "repo", JULIA_SHARED_SCOPE_FIXTURE)
+    with _embedded_graph(tmp_path / "reused.sqlite") as ingestor:
+        reused = _updater(
+            repo,
+            ingestor,
+            state_dir=tmp_path / "reused" / "state",
+            handoff_dir=tmp_path / "reused" / "handoffs",
+        )
+        reused.run()
+        _write(repo, edited)
+        reused.run()
+    with _embedded_graph(tmp_path / "fresh.sqlite") as ingestor:
+        _updater(
+            repo,
+            ingestor,
+            state_dir=tmp_path / "fresh" / "state",
+            handoff_dir=tmp_path / "fresh" / "handoffs",
+        ).run()
+
+    assert _lines(tmp_path / "reused" / "handoffs" / _INDEX) == _lines(
+        tmp_path / "fresh" / "handoffs" / _INDEX
     )
 
 
