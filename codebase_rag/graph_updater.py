@@ -7017,21 +7017,39 @@ class GraphUpdater:
         self._prune_class_keyed_maps(module_qn_prefixes, file_path)
 
         self._drop_module_records(file_path, qns_to_remove)
+        self._drop_module_parse_records(file_path, module_qn_prefixes, qns_to_remove)
+
+    def _drop_module_parse_records(
+        self, file_path: Path, module_qn_prefixes: set[str], qns_to_remove: set[str]
+    ) -> None:
+        """Drop what the definition pass keyed on the removed file's modules
+        and on the definitions the sweep removed."""
+        # Last: the ownership read above takes this file's span records as
+        # the definitions it owns. A re-parse drops the records it writes
+        # again (issue #1019); a deleted module is never parsed again, so its
+        # spans, its folded overloads, its Go package clause, its Rust and C#
+        # method records and its cached captures stayed on a reused updater,
+        # which a fresh index of the same tree never holds (issue #3787). On
+        # the prefixes the sweep used, so a span read back from the graph by
+        # a fresh updater, keyed by the path-derived qn, goes too.
+        dp = self.factory.definition_processor
+        for qn in module_qn_prefixes:
+            dp.function_locations.drop_module(qn)
+            dp.folded_overloads.pop(qn, None)
+            dp.go_package_names.pop(qn, None)
+        for qn in qns_to_remove:
+            dp.rust_function_modules.pop(qn, None)
+        dp.csharp_methods.difference_update(qns_to_remove)
+        self._forget_evicted_captures(file_path)
 
     def _drop_module_import_state(
         self, file_path: Path, recorded_qns: set[str], module_qn_prefixes: set[str]
     ) -> None:
         """Drop the import-side state a removed file's module qns recorded."""
+        imports = self.factory.import_processor
         for prefix in module_qn_prefixes:
-            self.factory.import_processor.commonjs_direct_exports.pop(prefix, None)
-            self.factory.import_processor.esm_default_exports.pop(prefix, None)
-        if file_path.suffix in (*cs.C_EXTENSIONS, *cs.CPP_EXTENSIONS):
-            for qn in recorded_qns:
-                self.factory.import_processor.drop_cpp_module_import_state(qn)
-        self._drop_rust_csharp_import_state(file_path)
-
-    def _drop_rust_csharp_import_state(self, file_path: Path) -> None:
-        """Drop the Rust and C# import state keyed on the recorded qns."""
+            imports.commonjs_direct_exports.pop(prefix, None)
+            imports.esm_default_exports.pop(prefix, None)
         # A deleted file is no writer: its mod-scope registry entries must
         # not weigh in the next arbitration (a modified file re-drops this
         # in its own re-parse, harmlessly twice). The drop keys on the qn
@@ -7043,20 +7061,22 @@ class GraphUpdater:
         # the bare qn's real owner, which this event does not re-parse, while
         # the deleted file's own writers kept voting forever. A Rust file
         # with no recorded qn was never parsed and owns no import state.
+        # Before the drop below: retracting the file's shadows writes back
+        # into the import maps of the modules it shadowed.
         if file_path.suffix == cs.EXT_RS:
-            qn_to_path = self.factory.definition_processor.module_qn_to_file_path
-            for qn, path in qn_to_path.items():
-                if path == file_path:
-                    self.factory.import_processor.drop_rust_module_import_state(qn)
-
-        # Same discipline for C#: a deleted file's namespaces, identifier
-        # evidence, and using entries must not survive into the next flush
-        # (issue #1347).
-        if file_path.suffix == cs.EXT_CS:
-            qn_to_path = self.factory.definition_processor.module_qn_to_file_path
-            for qn, path in qn_to_path.items():
-                if path == file_path:
-                    self.factory.import_processor.drop_csharp_module_import_state(qn)
+            for qn in recorded_qns:
+                imports.drop_rust_module_import_state(qn)
+        # Every language's import map and the tables beside it go, or a reused
+        # updater's project index keeps a deleted module's `imports` line that
+        # a fresh index of the same tree does not have (issue #3787). On the
+        # qns the parse recorded: the path-derived fallback can name another
+        # file's inline module, whose imports this event does not re-parse.
+        is_c_family = file_path.suffix in (*cs.C_EXTENSIONS, *cs.CPP_EXTENSIONS)
+        for qn in recorded_qns:
+            if is_c_family:
+                imports.drop_cpp_module_import_state(qn)
+            else:
+                imports.drop_module_import_state(qn)
 
     def _span_ownership(
         self,
