@@ -18,12 +18,22 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+from loguru import logger
 
 import codebase_rag.parsers.go_frontend.frontend as fe
+from codebase_rag import logs as ls
 from codebase_rag.parsers.go_frontend import run_go_frontend
+
+# Kept before a test replaces `subprocess.run`, so a fake helper can still
+# start a real process and have `subprocess` decode its output exactly as the
+# frontend asks it to, on every platform.
+_REAL_RUN = subprocess.run
+# Deeper than the limit any interpreter puts on decoding nested JSON.
+_DEPTH = 100_000
 
 _PAYLOAD = json.dumps(
     {
@@ -42,6 +52,23 @@ _PAYLOAD = json.dumps(
         "implements": [],
     }
 )
+
+
+def _call_payload(line: str) -> str:
+    """A one-call payload whose call is on `line`, spelled as JSON text."""
+    return (
+        '{"calls": [{"file": "s.go", "line": ' + line + ', "col": 1, '
+        '"name": "Helper", "tfile": "s.go", "tline": 9, "tcol": 5}]}'
+    )
+
+
+def _printing(stdout: bytes, stderr: bytes) -> list[str]:
+    """A command that prints these bytes as they are."""
+    script = (
+        "import sys; "
+        f"sys.stdout.buffer.write({stdout!r}); sys.stderr.buffer.write({stderr!r})"
+    )
+    return [sys.executable, "-c", script]
 
 
 def _two_module_repo(tmp_path: Path) -> Path:
@@ -163,6 +190,21 @@ def test_a_crashed_tool_is_recorded_as_degraded(
         ("not json at all", "unparseable JSON"),
         ("[1, 2, 3]", "well-formed JSON of the wrong shape"),
         ('{"calls": [{"file": "s.go"}]}', "a malformed fact entry"),
+        # Each of the next three is JSON `json.loads` reads or refuses with
+        # an error other than JSONDecodeError, which ended the index (#3792).
+        pytest.param(
+            _call_payload("Infinity"), "a position of Infinity", id="infinity"
+        ),
+        pytest.param(
+            _call_payload("9" * (sys.get_int_max_str_digits() + 1)),
+            "an integer past the int-string limit",
+            id="huge-integer",
+        ),
+        pytest.param(
+            '{"calls": ' + "[" * _DEPTH + "]" * _DEPTH + "}",
+            "nesting past the recursion limit",
+            id="deep-nesting",
+        ),
     ],
 )
 def test_every_parse_failure_is_recorded_as_degraded(
@@ -188,3 +230,49 @@ def test_every_parse_failure_is_recorded_as_degraded(
     facts = run_go_frontend(repo)
 
     assert facts.degraded_modules, f"{why} left no record"
+
+
+@pytest.mark.parametrize(
+    ("stdout", "stderr"),
+    [
+        pytest.param(_call_payload("3").encode() + b"\n", b"caf\xe9\n", id="stderr"),
+        pytest.param(
+            _call_payload("3").replace("s.go", "caf\xe9.go").encode("latin-1"),
+            b"",
+            id="stdout",
+        ),
+    ],
+)
+def test_output_that_is_not_utf8_is_a_failed_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stdout: bytes, stderr: bytes
+) -> None:
+    """A helper whose output is not UTF-8 failed, like one that crashed.
+
+    The strict decode raised out of `subprocess.run` and ended the index
+    (#3792). Read leniently instead, the byte in a payload's file name would
+    have read as U+FFFD and joined nothing, so the module's facts must go,
+    with one warning, and the other module's stay.
+    """
+    repo = _two_module_repo(tmp_path)
+    _patch_toolchain(monkeypatch)
+
+    def _run(cmd, **kwargs):
+        if Path(cmd[1]) == repo:
+            return _REAL_RUN(_printing(stdout, stderr), **kwargs)
+        return subprocess.CompletedProcess(cmd, 0, stdout=_PAYLOAD, stderr="")
+
+    monkeypatch.setattr(fe.subprocess, "run", _run)
+    warnings: list[str] = []
+    sink = logger.add(warnings.append, level="WARNING", format="{message}")
+    try:
+        facts = run_go_frontend(repo)
+    finally:
+        logger.remove(sink)
+
+    assert facts.degraded_modules == (".",)
+    assert facts.analysed_modules == ("sub",)
+    assert set(facts.call_sites) == {("sub/s.go", 3, 1, "Helper")}
+    assert [w.rstrip("\n") for w in warnings] == [
+        ls.GO_FRONTEND_RUN_NOT_UTF8,
+        ls.GO_FRONTEND_ANCHOR_DEGRADED.format(anchor=repo),
+    ]

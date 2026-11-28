@@ -1,0 +1,47 @@
+$ cgr -q stats --project afero
+status: 0
+--- stdout
+Scoped to: afero
+    Node Statistics    
+┏━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Node Type   ┃ Count ┃
+┡━━━━━━━━━━━━━╇━━━━━━━┩
+│ Method      │   560 │
+│ Function    │   243 │
+│ File        │    81 │
+│ Class       │    71 │
+│ Module      │    61 │
+│ Section     │    36 │
+│ Interface   │    17 │
+│ Folder      │    13 │
+│ Type        │     7 │
+│ Project     │     1 │
+├─────────────┼───────┤
+│ Total Nodes │ 1,090 │
+└─────────────┴───────┘
+
+    Relationship Statistics    
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Relationship Type   ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ CALLS               │ 5,813 │
+│ DEFINES_METHOD      │   560 │
+│ DEFINES             │   338 │
+│ IMPORTS             │   295 │
+│ INSTANTIATES        │   202 │
+│ OVERRIDES           │   200 │
+│ RETURNS             │    91 │
+│ CONTAINS_FILE       │    81 │
+│ CONTAINS_MODULE     │    61 │
+│ DEPENDS_ON_EXTERNAL │    48 │
+│ CONTAINS_SECTION    │    36 │
+│ IMPLEMENTS          │    32 │
+│ ACCEPTS             │    26 │
+│ CONTAINS_FOLDER     │    13 │
+│ REFERENCES          │    12 │
+│ INHERITS            │     3 │
+├─────────────────────┼───────┤
+│ Total Relationships │ 7,811 │
+└─────────────────────┴───────┘
+--- stderr
+Fetching graph statistics...

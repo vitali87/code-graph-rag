@@ -1,0 +1,89 @@
+> tools/call importers {"module_qualified_name": "io/fs"}
+isError: false
+--- text
+[
+  {
+    "module": "afero.afero_test",
+    "path": "afero_test.go",
+    "line": 21,
+    "col": 1,
+    "col_char": 1,
+    "end_line": 21,
+    "end_col": 13,
+    "end_col_char": 13,
+    "alias": "iofs",
+    "imported_name": null
+  },
+  {
+    "module": "afero.basepath",
+    "path": "basepath.go",
+    "line": 4,
+    "col": 1,
+    "col_char": 1,
+    "end_line": 4,
+    "end_col": 8,
+    "end_col_char": 8,
+    "alias": "fs",
+    "imported_name": null
+  },
+  {
+    "module": "afero.internal.common.adapters",
+    "path": "internal/common/adapters.go",
+    "line": 16,
+    "col": 7,
+    "col_char": 7,
+    "end_line": 16,
+    "end_col": 14,
+    "end_col_char": 14,
+    "alias": "fs",
+    "imported_name": null
+  },
+  {
+    "module": "afero.iofs",
+    "path": "iofs.go",
+    "line": 8,
+    "col": 1,
+    "col_char": 1,
+    "end_line": 8,
+    "end_col": 8,
+    "end_col_char": 8,
+    "alias": "fs",
+    "imported_name": null
+  },
+  {
+    "module": "afero.iofs_test",
+    "path": "iofs_test.go",
+    "line": 11,
+    "col": 1,
+    "col_char": 1,
+    "end_line": 11,
+    "end_col": 8,
+    "end_col_char": 8,
+    "alias": "fs",
+    "imported_name": null
+  },
+  {
+    "module": "afero.mem.file",
+    "path": "mem/file.go",
+    "line": 21,
+    "col": 1,
+    "col_char": 1,
+    "end_line": 21,
+    "end_col": 8,
+    "end_col_char": 8,
+    "alias": "fs",
+    "imported_name": null
+  },
+  {
+    "module": "afero.memmap_test",
+    "path": "memmap_test.go",
+    "line": 6,
+    "col": 1,
+    "col_char": 1,
+    "end_line": 6,
+    "end_col": 8,
+    "end_col_char": 8,
+    "alias": "fs",
+    "imported_name": null
+  }
+]

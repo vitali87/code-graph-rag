@@ -1,0 +1,48 @@
+$ cgr -q graph tests-reaching afero.match.Glob --project afero
+status: 0
+--- stdout
+[
+  {
+    "depth": 1,
+    "label": "Function",
+    "path": "gcsfs/gcs_test.go",
+    "qualified_name": "afero.gcsfs.gcs_test.TestGcsGlob",
+    "through": "afero.match.Glob"
+  },
+  {
+    "depth": 1,
+    "label": "Function",
+    "path": "match_test.go",
+    "qualified_name": "afero.match_test.TestGlob",
+    "through": "afero.match.Glob"
+  },
+  {
+    "depth": 1,
+    "label": "Function",
+    "path": "match_test.go",
+    "qualified_name": "afero.match_test.TestGlobError",
+    "through": "afero.match.Glob"
+  },
+  {
+    "depth": 1,
+    "label": "Function",
+    "path": "match_test.go",
+    "qualified_name": "afero.match_test.TestGlobSymlink",
+    "through": "afero.match.Glob"
+  },
+  {
+    "depth": 1,
+    "label": "Function",
+    "path": "tarfs/tarfs_test.go",
+    "qualified_name": "afero.tarfs.tarfs_test.TestGlob",
+    "through": "afero.match.Glob"
+  },
+  {
+    "depth": 1,
+    "label": "Function",
+    "path": "zipfs/zipfs_test.go",
+    "qualified_name": "afero.zipfs.zipfs_test.TestZipFS",
+    "through": "afero.match.Glob"
+  }
+]
+--- stderr
