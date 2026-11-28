@@ -8,7 +8,12 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
-from ..utils.path_utils import is_enterable_dir, is_regular_file, is_utf8_name
+from ..utils.path_utils import (
+    is_enterable_dir,
+    is_regular_file,
+    is_utf8_name,
+    walk_tree,
+)
 
 
 def _dotted(rel_dir: Path) -> str:
@@ -184,7 +189,7 @@ def discover_python_source_roots(repo_path: Path) -> dict[str, list[tuple[str, s
     # root are mapped. Three signals contribute, each in its own helper above.
     roots: dict[str, list[tuple[str, str]]] = {}
     repo_path = repo_path.resolve()
-    for dirpath, dirnames, filenames in os.walk(repo_path):
+    for dirpath, dirnames, filenames in walk_tree(repo_path):
         dirnames[:] = _walkable(dirnames)
         current = Path(dirpath)
         rel = current.relative_to(repo_path)

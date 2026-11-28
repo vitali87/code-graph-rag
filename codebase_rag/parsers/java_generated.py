@@ -14,7 +14,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from ..utils.path_utils import is_enterable_dir, is_utf8_name, should_keep_dir
+from ..utils.path_utils import (
+    is_enterable_dir,
+    is_utf8_name,
+    should_keep_dir,
+    walk_tree,
+)
 
 _BUILD_FILES = ("pom.xml", "build.gradle", "build.gradle.kts")
 _MAVEN_GENERATED = ("target", "generated-sources")
@@ -30,7 +35,7 @@ def _build_dirs(repo_path: Path) -> list[Path]:
     out: list[Path] = []
     repo_str = str(repo_path)
     prefix_len = len(repo_str) + 1
-    for dirpath, dirnames, filenames in os.walk(repo_str):
+    for dirpath, dirnames, filenames in walk_tree(repo_str):
         rel_dir = (
             dirpath[prefix_len:].replace(os.sep, "/")
             if len(dirpath) >= prefix_len

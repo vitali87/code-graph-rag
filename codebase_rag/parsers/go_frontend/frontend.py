@@ -27,7 +27,11 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
-from ...utils.path_utils import is_special_file_entry, is_symlink_entry
+from ...utils.path_utils import (
+    is_junction_left_out,
+    is_special_file_entry,
+    is_symlink_entry,
+)
 from ..build_lock import artifact_fresh, build_cached_artifact, newest_source_mtime
 from ..frontend_mode import resolve_frontend_mode
 from ..go.module_paths import discover_go_module_paths
@@ -598,13 +602,17 @@ def _special_files(repo_path: Path) -> list[str]:
     overlay's relative ones from the folder each load runs in.
     """
     found: list[str] = []
-    pending = [os.path.abspath(repo_path)]
+    root = os.path.abspath(repo_path)
+    pending = [root]
     while pending:
         try:
             with os.scandir(pending.pop()) as entries:
                 for entry in entries:
                     if entry.is_dir(follow_symlinks=False):
-                        pending.append(entry.path)
+                        # A junction looping onto the way down would be
+                        # listed again at every level (issue #3740).
+                        if not is_junction_left_out(entry.path, Path(root)):
+                            pending.append(entry.path)
                     elif not entry.is_file(follow_symlinks=False) and (
                         is_special_file_entry(entry.path)
                         or (

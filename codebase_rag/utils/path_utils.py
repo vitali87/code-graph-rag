@@ -502,6 +502,42 @@ def without_verbatim_prefix(path: str) -> str:
     return path
 
 
+def walk_tree(
+    top: str | os.PathLike[str],
+) -> Iterator[tuple[str, list[str], list[str]]]:
+    """`os.walk(top)`, top-down, entering no Windows junction the repository
+    walk leaves out (`is_junction_left_out`, judged against `top`).
+
+    `os.walk` and `rglob` enter every junction, as one is no link to
+    `os.path.islink`, so each walk of the repository besides the indexer's
+    (the import maps', the build files', the contracts') went on down one
+    naming a folder on its own way down until the path grew too long, two
+    of them doubling the walk at every level: the run never ended (issue
+    #3740). The caller prunes the folders it is given as it would
+    `os.walk`'s. Off Windows it is `os.walk`.
+    """
+    root = Path(top)
+    for dirpath, dirnames, filenames in os.walk(top):
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if not is_junction_left_out(os.path.join(dirpath, name), root)
+        ]
+        yield dirpath, dirnames, filenames
+
+
+def rglob_files(top: Path, pattern: str) -> Iterator[Path]:
+    """What `top.rglob(pattern)` finds that is no folder, walked by
+    `walk_tree`, as `rglob` enters every junction too.
+
+    A folder whose name matches is left out: each caller keeps only the
+    regular files it finds.
+    """
+    for dirpath, _dirnames, filenames in walk_tree(top):
+        for name in fnmatch.filter(filenames, pattern):
+            yield Path(dirpath, name)
+
+
 def is_special_file_entry(path: str | os.PathLike[str]) -> bool:
     """Whether a repository walk leaves this entry out as a pipe, socket or device.
 

@@ -44,12 +44,14 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import has_other_language_sibling
 from codebase_rag.main import detect_excludable_directories
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers import structure_processor
+from codebase_rag.parsers import java_generated, structure_processor
 from codebase_rag.parsers.contracts import discover_contract_operations
 from codebase_rag.parsers.csharp_frontend.frontend import (
     find_csharp_project,
     uncovered_csharp_projects,
 )
+from codebase_rag.parsers.dart.package_paths import discover_dart_packages
+from codebase_rag.parsers.go.module_paths import discover_go_module_paths
 from codebase_rag.parsers.go_frontend import (
     GoCallSite,
     GoSemanticFacts,
@@ -60,6 +62,10 @@ from codebase_rag.parsers.java_lombok import _overlay_from_root, overlay_identit
 from codebase_rag.parsers.js_ts.module_paths import (
     _read_manifest as _read_package_manifest,
 )
+from codebase_rag.parsers.js_ts.module_paths import (
+    discover_js_workspace_packages,
+)
+from codebase_rag.parsers.python_source_roots import discover_python_source_roots
 from codebase_rag.tests.conftest import (
     _MockIngestor,
     create_and_run_updater,
@@ -447,6 +453,48 @@ class TestJunctions:
         assert walked == ["alias/a.py", "real/a.py"]
         assert reported == ["elsewhere"]
         assert derived == {repo, repo / "alias", repo / "real"}
+
+    def test_a_walk_of_its_own_enters_only_the_junctions_the_walk_enters(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        for rel in ("F/x.py", "F/J1/x.py", "top/t.py", "real/a.py", "alias/a.py"):
+            _write(repo / rel, "X = 1\n")
+        _write(repo / "elsewhere" / "secret.py", "S = 1\n")
+        _write(repo / "pruned" / "p.py", "P = 1\n")
+        (repo / "real" / "folder.py").mkdir()
+        _write(tmp_path / "outside" / "secret.py", "S = 1\n")
+        # Before any is a junction, they agree with `os.walk` and `rglob`.
+        assert [entry[0] for entry in path_utils.walk_tree(repo)] == [
+            entry[0] for entry in os.walk(repo)
+        ]
+        assert sorted(path_utils.rglob_files(repo, "*.py")) == sorted(
+            path for path in repo.rglob("*.py") if not path.is_dir()
+        )
+        _as_junctions(
+            monkeypatch,
+            {
+                repo / "F" / "J1": repo / "F",
+                repo / "top": repo,
+                repo / "alias": repo / "real",
+                repo / "elsewhere": tmp_path / "outside",
+            },
+        )
+
+        walked: list[str] = []
+        for dirpath, dirnames, _filenames in path_utils.walk_tree(repo):
+            # Pruned by its caller as `os.walk`'s folders are.
+            dirnames[:] = [name for name in dirnames if name != "pruned"]
+            walked.append(Path(dirpath).relative_to(repo).as_posix())
+        found = path_utils.rglob_files(repo, "*.py")
+
+        assert sorted(walked) == [".", "F", "alias", "real", "real/folder.py"]
+        assert sorted(path.relative_to(repo).as_posix() for path in found) == [
+            "F/x.py",
+            "alias/a.py",
+            "pruned/p.py",
+            "real/a.py",
+        ]
 
 
 class TestIndex:
@@ -1576,6 +1624,80 @@ class TestOtherWalks:
         _link(repo / "linked", "../shared", directory=True)
         # Negative half: a real directory is still offered.
         assert detect_excludable_directories(repo) == {"node_modules"}
+
+    @pytest.mark.parametrize(
+        ("files", "find"),
+        [
+            pytest.param(
+                {"pkg/__init__.py": ""},
+                discover_python_source_roots,
+                id="python-source-roots",
+            ),
+            pytest.param(
+                {"package.json": '{"name": "looped"}'},
+                discover_js_workspace_packages,
+                id="js-workspace-packages",
+            ),
+            pytest.param(
+                {"go.mod": "module example.com/looped\n"},
+                discover_go_module_paths,
+                id="go-module-paths",
+            ),
+            pytest.param(
+                {"pubspec.yaml": "name: looped\n", "lib/looped.dart": ""},
+                discover_dart_packages,
+                id="dart-packages",
+            ),
+            pytest.param(
+                {"pom.xml": "<project />\n"},
+                java_generated._build_dirs,
+                id="java-build-files",
+            ),
+            pytest.param(
+                {"api.json": json.dumps(_OPENAPI)},
+                discover_contract_operations,
+                id="contracts",
+            ),
+            pytest.param(
+                {"App.csproj": "<Project />\n"}, find_csharp_project, id="csharp"
+            ),
+        ],
+    )
+    def test_none_goes_round_a_junction_looping_onto_its_way_down(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        files: dict[str, str],
+        find: Callable[[Path], object],
+    ) -> None:
+        # Each walk of its own entered every Windows junction, so one naming
+        # its own folder held the run there for good (issue #3740). A folder
+        # stands in for the junction: each finds what it holds until it is
+        # one, which `walk_tree` and `rglob_files` then leave out.
+        repo = tmp_path / "repo"
+        _write(repo / "F" / "x.py", "X = 1\n")
+        loop = repo / "F" / "J1"
+        for rel, text in files.items():
+            _write(loop / rel, text)
+        assert find(repo)
+
+        _as_junctions(monkeypatch, {loop: repo / "F"})
+
+        assert not find(repo)
+
+    @needs_fifo
+    def test_the_go_helper_s_pipe_listing_goes_round_no_junction_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        loop = repo / "F" / "J1"
+        loop.mkdir(parents=True)
+        os.mkfifo(loop / "p.go")
+        assert go_frontend._special_files(repo) == [str(loop / "p.go")]
+
+        _as_junctions(monkeypatch, {loop: repo / "F"})
+
+        assert go_frontend._special_files(repo) == []
 
 
 def _package_repo(root: Path, name: str) -> Path:

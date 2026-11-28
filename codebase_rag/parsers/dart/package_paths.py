@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 
@@ -8,7 +7,12 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
-from ...utils.path_utils import is_regular_file, is_utf8_name, should_keep_dir
+from ...utils.path_utils import (
+    is_regular_file,
+    is_utf8_name,
+    should_keep_dir,
+    walk_tree,
+)
 
 _PUBSPEC_NAME = re.compile(cs.DART_PUBSPEC_NAME_PATTERN, re.MULTILINE)
 
@@ -24,7 +28,7 @@ def discover_dart_packages(
     # #3278). Map every first-party pubspec name to the dotted, repo-relative
     # `lib/` directory it stands for. A monorepo of packages maps each one.
     found: list[tuple[int, str, str]] = []
-    for directory, subdirs, filenames in os.walk(repo_path):
+    for directory, subdirs, filenames in walk_tree(repo_path):
         package_dir = Path(directory)
         here = package_dir.relative_to(repo_path).parts
         dir_prefix = f"{cs.SEPARATOR_SLASH.join(here)}/" if here else ""
