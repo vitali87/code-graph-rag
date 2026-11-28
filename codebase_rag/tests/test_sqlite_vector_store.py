@@ -721,10 +721,13 @@ class TestTheDefaultStore:
     def notes(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> Iterator[list[str]]:
+        # A fresh install's: the suite exports its own SQLITE_VECTOR_PATH for
+        # the children tests start, as a developer's shell may.
         for name in (
             "CGR_VECTOR_STORE_BACKEND",
             cs.SETTING_VECTOR_STORE_BACKEND,
             *cs.QDRANT_CONNECTION_SETTINGS,
+            "SQLITE_VECTOR_PATH",
         ):
             monkeypatch.delenv(name, raising=False)
         # AppConfig reads `.env` from the working directory.

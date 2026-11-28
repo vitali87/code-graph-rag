@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, call
 import pytest
 from loguru import logger
 
+from codebase_rag import config as cgr_config
 from codebase_rag import constants as rag_cs
 from codebase_rag import engine_frame, graph_audit
 from codebase_rag.capture import CaptureSelection
@@ -377,35 +378,90 @@ def _forget_toolchain_probe_answers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(parser_fingerprint, "_PROBE_ANSWERS", {})
 
 
-@pytest.fixture(autouse=True)
-def _isolate_vector_store(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+def _isolate_setting(
+    patch: pytest.MonkeyPatch,
+    name: str,
+    value: str | Path | bool | None,
+    *,
+    exported: bool = True,
+) -> None:
+    """`value` for setting `name`, in `settings` and in the environment.
+
+    Exported as well: a `cgr`, script or pytest a test starts reads its
+    settings from the environment, not from this process's `settings`, and
+    the environment holds the developer's own, `.env` merged in at import
+    (PR #3809 review). Settings match a name in any case, so every spelling
+    goes; None, or `exported=False`, leaves the name unset, for its default.
+    """
+    patch.setattr(cgr_config.settings, name, value)
+    for spelling in [key for key in os.environ if key.upper() == name]:
+        patch.delenv(spelling)
+    if exported and value is not None:
+        patch.setenv(name, str(value))
+
+
+def _isolate_vector_stores(
+    patch: pytest.MonkeyPatch, factory: pytest.TempPathFactory
 ) -> None:
     # Tests must never touch the developer's real vector store: a clean-path
     # test would purge it for real, and parallel xdist workers would collide
     # on its file lock. A developer .env sets QDRANT_URL to the live daemon
     # stack, and URL mode never reads QDRANT_DB_PATH, so the URL must be
     # cleared too or the purge lands on the live server.
-    from codebase_rag.config import settings
-
-    monkeypatch.setattr(settings, "QDRANT_URL", None)
-    monkeypatch.setattr(settings, "QDRANT_API_KEY", None)
-    monkeypatch.setattr(settings, "QDRANT_ALLOW_INSECURE_API_KEY", False)
-    monkeypatch.setattr(
-        settings, "QDRANT_DB_PATH", str(tmp_path_factory.mktemp("qdrant-iso"))
-    )
-    monkeypatch.setattr(
-        settings,
+    _isolate_setting(patch, "QDRANT_URL", None)
+    _isolate_setting(patch, "QDRANT_API_KEY", None)
+    _isolate_setting(patch, "QDRANT_ALLOW_INSECURE_API_KEY", False)
+    _isolate_setting(patch, "QDRANT_DB_PATH", str(factory.mktemp("qdrant-iso")))
+    # Unset in the environment, not exported: pymilvus reads MILVUS_URI when
+    # imported and refuses a file path there. A child gets the default, a
+    # file in its own working directory.
+    _isolate_setting(
+        patch,
         "MILVUS_URI",
-        str(tmp_path_factory.mktemp("milvus-iso") / "milvus.db"),
+        str(factory.mktemp("milvus-iso") / "milvus.db"),
+        exported=False,
     )
     # Unset it already lands under the isolated CGR_HOME; a developer .env
     # that sets it would not.
-    monkeypatch.setattr(
-        settings,
+    _isolate_setting(
+        patch,
         "SQLITE_VECTOR_PATH",
-        tmp_path_factory.mktemp("sqlite-vec-iso") / "vectors.sqlite",
+        factory.mktemp("sqlite-vec-iso") / "vectors.sqlite",
     )
+
+
+def _isolate_home(patch: pytest.MonkeyPatch, factory: pytest.TempPathFactory) -> Path:
+    home = factory.mktemp("cgr-home-iso")
+    _isolate_setting(patch, rag_cs.ENV_CGR_HOME, home)
+    # The trust store's home when the working directory's `.env` sets
+    # CGR_HOME (`_trust_store`): the user's own, read at import.
+    patch.setattr(cgr_config, "_DEFAULT_CGR_HOME", home)
+    return home
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_configure(config: pytest.Config) -> None:
+    """CGR_HOME and the vector stores isolated for the whole session (#3808).
+
+    The fixtures below give each test its own, but they are function-scoped,
+    so collection and every module- and session-scoped fixture ran on the
+    real ones: an index made there left its checkout state in the user's
+    `~/.cgr/state`. Set here, the session's are in place before collection,
+    in every process of the run, xdist workers included. Last, so pytest's
+    temporary root, which they are made under, is configured.
+    """
+    patch = pytest.MonkeyPatch()
+    config.add_cleanup(patch.undo)
+    factory: pytest.TempPathFactory = config._tmp_path_factory
+    _isolate_vector_stores(patch, factory)
+    _isolate_home(patch, factory)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_vector_store(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_vector_stores(monkeypatch, tmp_path_factory)
 
 
 @pytest.fixture(autouse=True)
@@ -434,11 +490,7 @@ def _pin_vector_backend(monkeypatch: pytest.MonkeyPatch) -> None:
 def _isolate_cgr_home(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
-    from codebase_rag.config import settings
-
-    home = tmp_path_factory.mktemp("cgr-home-iso")
-    monkeypatch.setattr(settings, "CGR_HOME", home)
-    return home
+    return _isolate_home(monkeypatch, tmp_path_factory)
 
 
 @pytest.fixture
