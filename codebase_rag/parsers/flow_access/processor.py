@@ -1199,7 +1199,11 @@ class FlowProcessor:
         # uses the SAME (suffix-aware) qn the definition pass assigned, matching the
         # qn its own walk is keyed under; without it a duplicate-named nested def
         # would record under a reconstructed unsuffixed qn that never composes.
-        self._function_locations = function_locations or {}
+        # Held as given: an empty map is still filled after this processor is
+        # built (issue #3818).
+        self._function_locations = (
+            function_locations if function_locations is not None else {}
+        )
         self._enabled = selection.rel_enabled(cs.RelationshipType.FLOWS_TO)
         # Per-function return-taint SUMMARY collected during the walk: caller QN
         # -> the Taint it returns (resolved origins + pending callee QNs whose
