@@ -15,6 +15,8 @@ TS_LUA_METHOD_INDEX_EXPRESSION = "method_index_expression"
 TS_LUA_IDENTIFIER = "identifier"
 TS_LUA_STRING_CONTENT = "string_content"
 TS_LUA_BLOCK = "block"
+# The `else` arm of an `if_statement`, holding its block.
+TS_LUA_ELSE_STATEMENT = "else_statement"
 # `dot_index_expression` / `bracket_index_expression` field names: the accessed
 # table is `table`, the member/key is `field`.
 TS_LUA_FIELD_TABLE = "table"

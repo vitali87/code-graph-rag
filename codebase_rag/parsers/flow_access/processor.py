@@ -387,6 +387,13 @@ def _py_pattern_names(target: Node) -> list[str]:
 type _HandleMap = dict[str, frozenset[HandleBinding]]
 # (function, parameter) -> every (callee, via) the parameter is handed to.
 type _HandoffIndex = dict[tuple[str, str], list[tuple[str, str]]]
+# An `if` walked a step at a time: each yield asks for one sub-walk (a node and
+# the state it starts from) and is sent the state that walk ends in; it returns
+# the state after the whole `if`.
+type _IfSteps[S] = Generator[tuple[Node, S], S, S]
+# The walks an `if` paused, innermost last: what each still had to walk, and
+# the `if` that paused it.
+type _PausedWalks[S] = list[tuple[list[Node], _IfSteps[S]]]
 
 
 class _UndecidedCall(NamedTuple):
@@ -879,6 +886,11 @@ _HOISTED_DECL_LANGS = frozenset(
 # names, and the sets are unions across Go/Java/Rust/C++ (a type absent from
 # one grammar simply never appears in its trees).
 _FLAT_IF_TYPES = frozenset({cs.TS_JS_IF_STATEMENT, cs.TS_RS_IF_EXPRESSION})
+# What an `else if` sits in with nothing beside it; each walks as a plain
+# node, with no leaf effect of its own.
+_ELSE_WRAPPERS = frozenset(
+    {cs.TS_JS_ELSE_CLAUSE, cs.TS_LUA_ELSE_STATEMENT, cs.TS_LUA_BLOCK}
+)
 _FLAT_LOOP_TYPES = frozenset(
     {
         cs.TS_JS_FOR_STATEMENT,
@@ -1062,6 +1074,31 @@ def _is_short_circuit(node: Node) -> bool:
         and operator.text is not None
         and operator.text.decode(cs.ENCODING_UTF8) in cs.JS_SHORT_CIRCUIT_OPERATORS
     )
+
+
+def _else_if(alternative: Node) -> Node | None:
+    # The `if` an else branch is and nothing more (`else if`): the
+    # alternative itself (Go, Java, C#, Scala), the one statement of its
+    # `else` clause (C, C++, Rust, JS, TS, PHP), or of the block of Lua's
+    # `else`. None for any other else.
+    node = alternative
+    while node.type in _ELSE_WRAPPERS and node.named_child_count == 1:
+        node = node.named_children[0]
+    return node if node.type in _FLAT_IF_TYPES else None
+
+
+def _resume_if[S](paused: _PausedWalks[S], sent: S | None) -> tuple[list[Node], S]:
+    # Run the innermost paused `if` on, sent the state its last sub-walk ended
+    # in (None to start it). Returns what the walk takes off its stack next:
+    # the `if`'s next sub-walk, or once it is done the rest of the walk it
+    # paused, with the state each starts from.
+    pending, steps = paused[-1]
+    try:
+        node, state = next(steps) if sent is None else steps.send(sent)
+    except StopIteration as done:
+        paused.pop()
+        return pending, done.value
+    return [node], state
 
 
 def _switch_arm_is_default(arm: Node) -> bool:
@@ -1641,7 +1678,36 @@ class FlowProcessor:
         # C++): if/loop/try/match nodes branch-and-merge (issue #714 follow-up);
         # every other node applies its leaf effect and threads state through its
         # children in source order (so a nested call in an argument is seen).
-        node_type = node.type
+        # Those children go on an explicit stack, not one frame each: a
+        # generated `||` condition nests one node per term (issue #3819). An
+        # `if` pauses the walk there too, and its branches are walked on the
+        # same stack, so ifs nested in ifs take no frame each either.
+        pending = [node]
+        paused: _PausedWalks[_LeanState] = []
+        while True:
+            while pending:
+                current = pending.pop()
+                node_type = current.type
+                if node_type in _FLAT_IF_TYPES:
+                    paused.append((pending, self._flat_if_steps(current, state, jc)))
+                    pending, state = _resume_if(paused, None)
+                elif (
+                    walked := self._walk_flat_construct(current, node_type, state, jc)
+                ) is not None:
+                    state = walked
+                else:
+                    self._apply_js_leaf(current, state.taint, state.handles, jc)
+                    pending.extend(reversed(current.named_children))
+            if not paused:
+                return state
+            pending, state = _resume_if(paused, state)
+
+    def _walk_flat_construct(
+        self, node: Node, node_type: str, state: _LeanState, jc: _JsCtx
+    ) -> _LeanState | None:
+        # The state after a node other than an `if` the flat walk scopes,
+        # breaks or branches on; None for any other node, which the caller
+        # walks as a plain one.
         if node_type in jc.descriptor.nested_scope_types:
             # Definition-time header expressions (TS parameter decorators) run in
             # THIS scope; walk them, then leave the body to its own caller pass.
@@ -1653,8 +1719,6 @@ class FlowProcessor:
         if node_type == cs.TS_BREAK_STATEMENT:
             self._record_break_exit(state)
             return state
-        if node_type in _FLAT_IF_TYPES:
-            return self._walk_flat_if(node, state, jc)
         if node_type in _FLAT_LOOP_TYPES:
             return self._walk_flat_loop(node, state, jc)
         if node_type in _FLAT_MANDATORY_LOOP_TYPES:
@@ -1665,10 +1729,7 @@ class FlowProcessor:
             return self._walk_switch(node, state, jc, self._walk_flat_stmt)
         if node_type == cs.TS_RS_MATCH_EXPRESSION:
             return self._walk_flat_match(node, state, jc)
-        self._apply_js_leaf(node, state.taint, state.handles, jc)
-        for child in node.named_children:
-            state = self._walk_flat_stmt(child, state, jc)
-        return state
+        return None
 
     def _walk_flat_loop(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Loop shield: a break inside the body targets THIS loop, never an
@@ -1937,15 +1998,41 @@ class FlowProcessor:
             self._restore_shadows(pre_shadows, jc)
         return self._merge_lean(arm_exits) if arm_exits else state
 
-    def _walk_flat_if(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
+    def _flat_if_steps(
+        self, node: Node, state: _LeanState, jc: _JsCtx
+    ) -> _IfSteps[_LeanState]:
         # The header (any initializer + condition) runs on all paths; each of the
         # then / else(-if) / implicit skip paths is walked against a copy and
         # unioned (MAY join). Two shadow scopes are restored: a branch grows the
         # live shadow set with its own block-scoped declarations (restored between
         # branches), and a Go `if` initializer (`if x := f(); cond {}`) is scoped
         # to the whole if statement (restored on exit), so neither shadows a
-        # source/sink past its scope.
+        # source/sink past its scope. An `else if` is the next link of the same
+        # chain, walked in this frame, not a nested one: its header runs on the
+        # paths that reach it and its branches join this if's, as a nested
+        # walk's merge gave, and a generated chain is as deep as it is long
+        # (issue #3819). Each walk of a header part or branch is a step
+        # _walk_flat_stmt takes on its own stack.
         pre_if_shadows = set(jc.local_names)
+        branch_exits: list[_LeanState] = []
+        link: Node | None = node
+        while link is not None:
+            state, link = yield from self._flat_if_link_steps(
+                link, state, jc, branch_exits
+            )
+        self._restore_shadows(pre_if_shadows, jc)
+        return self._merge_lean(branch_exits)
+
+    def _flat_if_link_steps(
+        self,
+        node: Node,
+        state: _LeanState,
+        jc: _JsCtx,
+        branch_exits: list[_LeanState],
+    ) -> Generator[tuple[Node, _LeanState], _LeanState, tuple[_LeanState, Node | None]]:
+        # One `if` of a chain: its header advances the state, its branches add
+        # their exits. Returns the state and the `else if` to walk next, or
+        # None once the chain ends.
         consequence = node.child_by_field_name(jc.descriptor.if_consequence_field)
         # Most grammars carry a single `alternative` (else block or nested else-if);
         # PHP emits the whole chain as several sibling `alternative` children
@@ -1955,25 +2042,26 @@ class FlowProcessor:
         skip = {n.id for n in (consequence, *alternatives) if n is not None}
         for child in node.named_children:
             if child.id not in skip:
-                state = self._walk_flat_stmt(child, state, jc)
+                state = yield child, state
         pre_shadows = set(jc.local_names)
-        branch_exits: list[_LeanState] = []
         if consequence is not None:
-            branch_exits.append(self._walk_flat_stmt(consequence, state.copy(), jc))
+            branch_exits.append((yield consequence, state.copy()))
             self._restore_shadows(pre_shadows, jc)
-        for alternative in alternatives:
-            # A block/nested-if (Go/Java/…) or a PHP else-if/else clause; the
-            # recursion walks each in its own branch copy and merges (a MAY
-            # over-approximation for the mutually-exclusive elseif arms).
-            branch_exits.append(self._walk_flat_stmt(alternative, state.copy(), jc))
+        following = _else_if(alternatives[-1]) if alternatives else None
+        for alternative in alternatives if following is None else alternatives[:-1]:
+            # Any other else (Go/Java/…) or a PHP else-if/else clause; each is walked
+            # in its own branch copy and merged (a MAY over-approximation for
+            # the mutually-exclusive elseif arms).
+            branch_exits.append((yield alternative, state.copy()))
             self._restore_shadows(pre_shadows, jc)
+        if following is not None:
+            return state.copy(), following
         # An implicit skip path (condition false, nothing runs) survives unless the
         # chain ends in a TERMINAL else: one plain alternative (else block / nested
         # if) is terminal; a PHP chain ending in `else_if_clause` is not.
         if not alternatives or alternatives[-1].type == cs.TS_PHP_ELSE_IF_CLAUSE:
             branch_exits.append(state.copy())
-        self._restore_shadows(pre_if_shadows, jc)
-        return self._merge_lean(branch_exits)
+        return state, None
 
     def _record_break_exit(self, state: _LeanState) -> None:
         # Snapshot the live state at a `break` for the enclosing switch
@@ -2000,8 +2088,32 @@ class FlowProcessor:
     def _walk_js_stmt(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Path-sensitive walk for JS/TS: control-flow nodes branch-and-merge, every
         # other node applies its leaf effect and threads state through its children
-        # in source order (so a nested call in an argument is still seen).
-        node_type = node.type
+        # in source order (so a nested call in an argument is still seen), off an
+        # explicit stack that an `if` pauses, as the flat walk's (issue #3819).
+        pending = [node]
+        paused: _PausedWalks[_LeanState] = []
+        while True:
+            while pending:
+                current = pending.pop()
+                node_type = current.type
+                if node_type == cs.TS_JS_IF_STATEMENT:
+                    paused.append((pending, self._js_if_steps(current, state, jc)))
+                    pending, state = _resume_if(paused, None)
+                elif (
+                    walked := self._walk_js_construct(current, node_type, state, jc)
+                ) is not None:
+                    state = walked
+                else:
+                    self._apply_js_leaf(current, state.taint, state.handles, jc)
+                    pending.extend(reversed(current.named_children))
+            if not paused:
+                return state
+            pending, state = _resume_if(paused, state)
+
+    def _walk_js_construct(
+        self, node: Node, node_type: str, state: _LeanState, jc: _JsCtx
+    ) -> _LeanState | None:
+        # As _walk_flat_construct, for the JS/TS walk's own constructs.
         if node_type in jc.descriptor.nested_scope_types:
             # Definition-time header expressions (TS parameter decorators) run in
             # THIS scope; walk them, then leave the body to its own caller pass.
@@ -2013,8 +2125,6 @@ class FlowProcessor:
         if node_type == cs.TS_BREAK_STATEMENT:
             self._record_break_exit(state)
             return state
-        if node_type == cs.TS_JS_IF_STATEMENT:
-            return self._walk_js_if(node, state, jc)
         if node_type in (
             cs.TS_JS_WHILE_STATEMENT,
             cs.TS_JS_FOR_STATEMENT,
@@ -2030,29 +2140,34 @@ class FlowProcessor:
             # AFTER it, so this is the mandatory-loop shape, not the
             # zero-or-more loop walk.
             return self._walk_mandatory_loop(node, state, jc, self._walk_js_stmt)
-        self._apply_js_leaf(node, state.taint, state.handles, jc)
-        for child in node.named_children:
-            state = self._walk_js_stmt(child, state, jc)
-        return state
+        return None
 
-    def _walk_js_if(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
+    def _js_if_steps(
+        self, node: Node, state: _LeanState, jc: _JsCtx
+    ) -> _IfSteps[_LeanState]:
         # The condition runs on all paths; each of the then / else(-if) / implicit
-        # skip paths is walked against a copy and unioned (MAY join).
-        cond = node.child_by_field_name(cs.TS_FIELD_CONDITION)
-        if cond is not None:
-            state = self._walk_js_stmt(cond, state, jc)
+        # skip paths is walked against a copy and unioned (MAY join). An `else
+        # if` continues the chain, as in _flat_if_steps (#3819), and each walk
+        # is a step _walk_js_stmt takes on its own stack.
         branch_exits: list[_LeanState] = []
-        consequence = node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
-        if consequence is not None:
-            branch_exits.append(self._walk_js_stmt(consequence, state.copy(), jc))
-        alternative = node.child_by_field_name(cs.FIELD_ALTERNATIVE)
-        if alternative is not None:
-            # else_clause holds either a block or a nested if (else-if chain); the
-            # recursion handles both and merges within.
-            branch_exits.append(self._walk_js_stmt(alternative, state.copy(), jc))
-        else:
-            # No else: the skip path preserves the incoming state.
-            branch_exits.append(state.copy())
+        link: Node | None = node
+        while link is not None:
+            cond = link.child_by_field_name(cs.TS_FIELD_CONDITION)
+            if cond is not None:
+                state = yield cond, state
+            consequence = link.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
+            if consequence is not None:
+                branch_exits.append((yield consequence, state.copy()))
+            alternative = link.child_by_field_name(cs.FIELD_ALTERNATIVE)
+            link = _else_if(alternative) if alternative is not None else None
+            if link is not None:
+                state = state.copy()
+            elif alternative is not None:
+                # Any other else is one more branch.
+                branch_exits.append((yield alternative, state.copy()))
+            else:
+                # No else: the skip path preserves the incoming state.
+                branch_exits.append(state.copy())
         return self._merge_lean(branch_exits)
 
     def _walk_js_loop(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
@@ -2331,36 +2446,44 @@ class FlowProcessor:
     ) -> Taint | None:
         # The Taint an expression carries: an identifier propagates the map; a
         # member/subscript may be an env source; a call may be a read source or a
-        # function whose return is deferred (pending) to the fixpoint.
-        if node is None:
-            return None
-        d = jc.descriptor
+        # function whose return is deferred (pending) to the fixpoint. A wrapper
+        # carries its operand's taint and a value-selection form the union of
+        # its operands', expanded on an explicit stack: a generated `a || b ||
+        # ...` nests one node per term (issue #3819).
+        result: Taint | None = None
+        pending = [node]
+        while pending:
+            current = pending.pop()
+            if current is None:
+                continue
+            if (operands := self._js_value_operands(current, jc)) is not None:
+                pending.extend(reversed(operands))
+                continue
+            result = _merge_optional_taints(
+                result, self._js_leaf_taint(current, tainted, jc)
+            )
+        return result
+
+    def _js_value_operands(self, node: Node, jc: _JsCtx) -> list[Node | None] | None:
+        # The operands whose taint `node` carries, or None for a leaf.
         node_type = node.type
         if node_type in (cs.TS_AWAIT_EXPRESSION, cs.TS_PARENTHESIZED_EXPRESSION):
             # Unwrap `await expr` and `(expr)` to the inner source expression.
-            return self._js_expr_taint(self._js_first_expr(node), tainted, jc)
+            return [self._js_first_expr(node)]
         if node_type == cs.TS_GO_TYPE_CONVERSION_EXPRESSION:
             # Go `[]byte(s)` / `string(b)`: value-preserving, taint carries.
-            return self._js_expr_taint(
-                node.child_by_field_name(cs.TS_GO_FIELD_OPERAND), tainted, jc
-            )
+            return [node.child_by_field_name(cs.TS_GO_FIELD_OPERAND)]
         if node_type == cs.TS_RS_REFERENCE_EXPRESSION:
             # Rust `&s` / `&mut s`: a borrow of a tainted value is tainted.
-            return self._js_expr_taint(
-                node.child_by_field_name(cs.FIELD_VALUE), tainted, jc
-            )
+            return [node.child_by_field_name(cs.FIELD_VALUE)]
         if node_type in (cs.TS_JS_TERNARY_EXPRESSION, cs.TS_PY_CONDITIONAL_EXPRESSION):
             # `c ? a : b` (Java shares ternary_expression, C++ spells it
             # conditional_expression): the value MAY be either branch, so
             # their taints union; the condition never becomes the value.
-            return _merge_optional_taints(
-                self._js_expr_taint(
-                    node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE), tainted, jc
-                ),
-                self._js_expr_taint(
-                    node.child_by_field_name(cs.FIELD_ALTERNATIVE), tainted, jc
-                ),
-            )
+            return [
+                node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE),
+                node.child_by_field_name(cs.FIELD_ALTERNATIVE),
+            ]
         if (
             node_type == cs.TS_BINARY_EXPRESSION
             and jc.flow.language in _HOISTED_DECL_LANGS
@@ -2370,14 +2493,18 @@ class FlowProcessor:
             # as the result, so the taints of both union (MAY). In
             # Go/Java/C++/Rust these operators produce a boolean, never an
             # operand, so the value stays clean there.
-            return _merge_optional_taints(
-                self._js_expr_taint(
-                    node.child_by_field_name(cs.TS_FIELD_LEFT), tainted, jc
-                ),
-                self._js_expr_taint(
-                    node.child_by_field_name(cs.TS_FIELD_RIGHT), tainted, jc
-                ),
-            )
+            return [
+                node.child_by_field_name(cs.TS_FIELD_LEFT),
+                node.child_by_field_name(cs.TS_FIELD_RIGHT),
+            ]
+        return None
+
+    def _js_leaf_taint(
+        self, node: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        # The taint one node of _js_expr_taint's walk carries itself.
+        d = jc.descriptor
+        node_type = node.type
         if node_type == d.identifier_type:
             return (
                 tainted.get(node.text.decode(cs.ENCODING_UTF8)) if node.text else None
@@ -3979,11 +4106,37 @@ class FlowProcessor:
         return _LeanState(FlowProcessor._merge([s.taint for s in states]), handles)
 
     def _walk_stmt(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
-        node_type = node.type
+        # Any node but the constructs _walk_py_construct takes descends into
+        # its children in source order, off an explicit stack: a generated
+        # `a or b or ...` nests one node per term (issue #3819). An `if`
+        # pauses the walk there, as in _walk_flat_stmt, so nested ifs take no
+        # frame each either.
+        pending = [node]
+        paused: _PausedWalks[_TaintMap] = []
+        while True:
+            while pending:
+                current = pending.pop()
+                node_type = current.type
+                if node_type == cs.TS_PY_IF_STATEMENT:
+                    paused.append((pending, self._py_if_steps(current, state)))
+                    pending, state = _resume_if(paused, None)
+                elif (
+                    walked := self._walk_py_construct(current, node_type, state, ctx)
+                ) is not None:
+                    state = walked
+                else:
+                    pending.extend(reversed(current.children))
+            if not paused:
+                return state
+            pending, state = _resume_if(paused, state)
+
+    def _walk_py_construct(
+        self, node: Node, node_type: str, state: _TaintMap, ctx: _FlowCtx
+    ) -> _TaintMap | None:
+        # The state after a node other than an `if` the Python walk handles
+        # itself; None for any other node, whose children the caller walks.
         if node_type in PY_SCOPE_BOUNDARIES:
             return self._walk_py_definition_header(node, state, ctx)
-        if node_type == cs.TS_PY_IF_STATEMENT:
-            return self._walk_if(node, state, ctx)
         if node_type in (cs.TS_PY_FOR_STATEMENT, cs.TS_PY_WHILE_STATEMENT):
             return self._walk_loop(node, state, ctx)
         if node_type == cs.TS_PY_TRY_STATEMENT:
@@ -4006,11 +4159,7 @@ class FlowProcessor:
             return self._walk_py_annotation(node, state, ctx)
         if node_type in _PY_USES_AFTER_OPERANDS:
             return self._walk_py_use(node, state, ctx)
-        # Descend into children in source order, in this frame: a generated
-        # `a + b + ...` is as deep as it is long.
-        for child in node.children:
-            state = self._walk_stmt(child, state, ctx)
-        return state
+        return None
 
     def _walk_py_as_pattern(
         self, node: Node, state: _TaintMap, ctx: _FlowCtx
@@ -4180,48 +4329,37 @@ class FlowProcessor:
             arm_exits.append(dict(state))
         return self._merge(arm_exits)
 
-    def _walk_if(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
+    def _py_if_steps(self, node: Node, state: _TaintMap) -> _IfSteps[_TaintMap]:
         # The if-condition runs on all paths; process it in the incoming state.
+        # Each walk is a step _walk_stmt takes on its own stack.
         cond = node.child_by_field_name(cs.TS_FIELD_CONDITION)
         if cond is not None:
-            state = self._walk_stmt(cond, state, ctx)
+            state = yield cond, state
         branch_exits: list[_TaintMap] = []
         consequence = node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
         if consequence is not None:
-            branch_exits.append(self._walk_stmt(consequence, dict(state), ctx))
+            branch_exits.append((yield consequence, dict(state)))
         has_else = False
         for clause in node.children:
             if clause.type == cs.TS_PY_ELIF_CLAUSE:
-                state = self._walk_elif(clause, state, ctx, branch_exits)
+                # An elif condition runs on every path that reaches it, so it
+                # advances the shared state; its body is one more exclusive
+                # branch.
+                elif_cond = clause.child_by_field_name(cs.TS_FIELD_CONDITION)
+                if elif_cond is not None:
+                    state = yield elif_cond, state
+                body = clause.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
             elif clause.type == cs.TS_PY_ELSE_CLAUSE:
                 has_else = True
-                self._walk_branch(
-                    clause.child_by_field_name(cs.FIELD_BODY), state, ctx, branch_exits
-                )
+                body = clause.child_by_field_name(cs.FIELD_BODY)
+            else:
+                continue
+            if body is not None:
+                branch_exits.append((yield body, dict(state)))
         # No else means the skip path preserves the incoming state.
         if not has_else:
             branch_exits.append(dict(state))
         return self._merge(branch_exits) if branch_exits else state
-
-    def _walk_elif(
-        self,
-        clause: Node,
-        state: _TaintMap,
-        ctx: _FlowCtx,
-        branch_exits: list[_TaintMap],
-    ) -> _TaintMap:
-        # An elif condition runs on every path that reaches it, so it
-        # advances the shared state; its body is one more exclusive branch.
-        elif_cond = clause.child_by_field_name(cs.TS_FIELD_CONDITION)
-        if elif_cond is not None:
-            state = self._walk_stmt(elif_cond, state, ctx)
-        self._walk_branch(
-            clause.child_by_field_name(cs.TS_FIELD_CONSEQUENCE),
-            state,
-            ctx,
-            branch_exits,
-        )
-        return state
 
     def _walk_branch(
         self,
@@ -5696,26 +5834,25 @@ class FlowProcessor:
         # closure: wrappers, conditionals, containers, and call ARGUMENTS all
         # hand the function object onward. The one exception is a call's
         # callee position -- `send()` is the direct invocation the
-        # call-relative path handles -- so calls recurse into arguments only.
+        # call-relative path handles -- so calls expand into arguments only.
         # Over-marking is conservative-safe (escape means the def-site MAY
-        # snapshot), never a lost flow.
-        if expr is None:
-            return
-        if expr.type == cs.TS_PY_CALL:
-            self._note_capture_escapes_in(
-                expr.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-            )
-            return
-        if expr.type == cs.TS_PY_IDENTIFIER and expr.text is not None:
-            self._note_capture_escape(expr.text.decode(cs.ENCODING_UTF8))
-            return
-        if expr.type == cs.TS_PY_KEYWORD_ARGUMENT:
-            # `other(send=None)`: the label names a PARAMETER, not the
-            # closure; only the value can carry it onward.
-            self._note_capture_escapes_in(expr.child_by_field_name(cs.FIELD_VALUE))
-            return
-        for child in expr.named_children:
-            self._note_capture_escapes_in(child)
+        # snapshot), never a lost flow. Expanded on an explicit stack: a
+        # generated `a or b or ...` nests one node per term (issue #3819).
+        pending = [expr]
+        while pending:
+            current = pending.pop()
+            if current is None:
+                continue
+            if current.type == cs.TS_PY_CALL:
+                pending.append(current.child_by_field_name(cs.TS_FIELD_ARGUMENTS))
+            elif current.type == cs.TS_PY_IDENTIFIER and current.text is not None:
+                self._note_capture_escape(current.text.decode(cs.ENCODING_UTF8))
+            elif current.type == cs.TS_PY_KEYWORD_ARGUMENT:
+                # `other(send=None)`: the label names a PARAMETER, not the
+                # closure; only the value can carry it onward.
+                pending.append(current.child_by_field_name(cs.FIELD_VALUE))
+            else:
+                pending.extend(current.named_children)
 
     def _flush_pending_captures(self) -> None:
         # Scope end: an escaped closure may run at ANY time with any cell
