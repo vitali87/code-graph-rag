@@ -2,9 +2,19 @@ from __future__ import annotations
 
 import atexit
 import json
+import os
 import time
 import uuid
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    Callable,
+    Collection,
+    Generator,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
+from contextlib import contextmanager
 from functools import cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -147,8 +157,38 @@ else:
     PointStruct = cast(Any, None)
     VectorParams = cast(Any, None)
 
+
+@contextmanager
+def _milvus_uri_shown_to_pymilvus_only_if_a_server() -> Generator[None]:
+    """Let importing pymilvus see MILVUS_URI only when it names a server.
+
+    The import builds pymilvus's default connection from MILVUS_URI and
+    raises on anything but a server address, though MilvusClient takes a
+    Milvus Lite file there: cgr's default, and what `.env.example` shows
+    (#3813). cgr passes the setting to MilvusClient itself and never uses
+    that connection, so for the import alone the variable is empty, which
+    pymilvus reads as unset. Empty rather than removed, and when it is not
+    set too: the import also loads a `.env` of its own, the working
+    directory's or one in a folder above pymilvus's install, which would
+    set it again.
+    """
+    uri = os.environ.get(cs.ENV_MILVUS_URI)
+    if uri is not None and urlsplit(uri).scheme in cs.MILVUS_SERVER_URI_SCHEMES:
+        yield
+        return
+    os.environ[cs.ENV_MILVUS_URI] = ""
+    try:
+        yield
+    finally:
+        if uri is None:
+            os.environ.pop(cs.ENV_MILVUS_URI, None)
+        else:
+            os.environ[cs.ENV_MILVUS_URI] = uri
+
+
 if has_pymilvus():
-    from pymilvus import DataType, MilvusClient
+    with _milvus_uri_shown_to_pymilvus_only_if_a_server():
+        from pymilvus import DataType, MilvusClient
 else:
     DataType = cast(Any, None)
     MilvusClient = cast(Any, None)
@@ -1069,8 +1109,7 @@ def _normalize_milvus_score(raw_score: float) -> float:
 
 
 def _uses_milvus_lite_30_cosine_distance() -> bool:
-    uri = settings.MILVUS_URI
-    if urlsplit(uri).scheme in ("http", "https", "tcp"):
+    if urlsplit(settings.MILVUS_URI).scheme in cs.MILVUS_SERVER_URI_SCHEMES:
         return False
     try:
         lite_version = version("milvus-lite")

@@ -191,6 +191,12 @@ MODULE_QDRANT_CLIENT = "qdrant_client"
 MODULE_PYMILVUS = "pymilvus"
 MODULE_SQLITE_VEC = "sqlite_vec"
 
+# Read by cgr's setting of that name and by pymilvus when it is imported. Any
+# other scheme is a Milvus Lite file or a unix socket: MilvusClient takes
+# those, but pymilvus's import refuses them (#3813).
+ENV_MILVUS_URI = "MILVUS_URI"
+MILVUS_SERVER_URI_SCHEMES = frozenset({"http", "https", "tcp"})
+
 # qdrant-client sends the `api-key` header in the clear only when the URL
 # names this scheme; a URL without a scheme switches to https once a key is set.
 QDRANT_INSECURE_URL_SCHEME = "http"
