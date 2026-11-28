@@ -23,6 +23,7 @@
 # | a call site gaining, changing or losing a callback, directly, through a forwarder or a factory, or by its file's deletion | the edge starts at the receiver | the receivers a new or deleted file, or an edited one whose interface fingerprint moved, hands a function to now (found by name, by the slot it is handed at) or did (by its old edges); an edited file in a language with no fingerprint (Go, C++) has no rule, as nothing says its calls moved (`test_a_go_call_site_edit_keeps_its_receivers_edges`) |
 # | a local handed on (`b = h; run(b)`) bound anew | the same | the receivers an edited file hands a local it assigns, even when its fingerprint held: the fingerprint keeps the argument's text only |
 # | decorator, `functools.partial`, higher-order builtin | none: the edge starts at the call site, from its own walk | dependents |
+# | attribute store (`Spec(handler=h)`, then `spec.handler()`) | the construction sites' bindings | the bindings are kept per site, so a re-walked or deleted site binds what it binds now; a field call re-parsed without its sites, and a site binding anew without the field call, have no rule (`test_a_field_call_and_its_sites_resync_apart`) |
 from __future__ import annotations
 
 import os
@@ -564,6 +565,70 @@ def test_a_call_site_brings_in_the_receiver_its_flow_edge_starts_in(
     mode: str,
 ) -> None:
     _resync(temp_repo, before, after, mode)
+
+
+# An attribute store: `Spec(handler=h1)` binds Spec's callable field, and
+# `spec.handler()` in another file calls what any construction site bound.
+# The bindings are the construction sites' own, so a site re-walked or
+# deleted binds only what it binds now; a watcher's updater kept every one
+# it ever saw. fire.py is edited alongside, so it re-parses in every mode.
+_SPEC = (
+    "class Spec:\n    def __init__(self, handler):\n        self.handler = handler\n"
+)
+_SITE = (
+    "from cbs import h1\nfrom spec import Spec\n\n\n"
+    "def build():\n    return Spec(handler=h1)\n"
+)
+_FIRE = "from spec import Spec\n\n\ndef fire(spec: Spec):\n    return spec.handler()\n"
+_FIELD = {"spec.py": _SPEC, "cbs.py": _CALLBACKS, "site.py": _SITE, "fire.py": _FIRE}
+FIELD_SITE_EDITS: dict[str, dict[str, str | None]] = {
+    "site-is-deleted": {"site.py": None, "fire.py": _FIRE + "# edited\n"},
+    "site-binds-another-function": {
+        "site.py": _SITE.replace("h1", "h2"),
+        "fire.py": _FIRE + "# edited\n",
+    },
+}
+
+
+@pytest.mark.parametrize("mode", ["new", "reused", "reingest"])
+@pytest.mark.parametrize(
+    "after", FIELD_SITE_EDITS.values(), ids=FIELD_SITE_EDITS.keys()
+)
+def test_a_field_call_reaches_what_its_construction_sites_bind_now(
+    temp_repo: Path, after: dict[str, str | None], mode: str
+) -> None:
+    _resync(temp_repo, _FIELD, after, mode)
+
+
+# What no rule covers yet: the graph does not say which calls went through a
+# callable field, so a field call re-parsed without the construction sites
+# loses what they bound, and a site that binds anew does not bring the field
+# call in. Both predate the narrowed closure; pinned here until the binding
+# is kept somewhere a sync can read (follow-up to issue #3781).
+_UNCOVERED_FIELD_EDITS = [
+    pytest.param(
+        {"fire.py": _FIRE + "# edited\n"},
+        mode,
+        id=f"field-call-alone-{mode}",
+        marks=pytest.mark.xfail(strict=True, reason="no field-site rule"),
+    )
+    for mode in ("new", "reingest")
+] + [
+    pytest.param(
+        {"site.py": _SITE.replace("h1", "h2")},
+        mode,
+        id=f"site-alone-{mode}",
+        marks=pytest.mark.xfail(strict=True, reason="no field-call rule"),
+    )
+    for mode in ("new", "reused", "reingest")
+]
+
+
+@pytest.mark.parametrize(("after", "mode"), _UNCOVERED_FIELD_EDITS)
+def test_a_field_call_and_its_sites_resync_apart(
+    temp_repo: Path, after: dict[str, str | None], mode: str
+) -> None:
+    _resync(temp_repo, _FIELD, after, mode)
 
 
 # Go forwards a func value as Python does: wrap.Wrap hands its parameter to
