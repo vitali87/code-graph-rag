@@ -652,6 +652,29 @@ def _go_list_helper(folder: Path) -> Path:
     return helper
 
 
+def _go_settings_file(root: Path, monkeypatch: pytest.MonkeyPatch, line: str) -> None:
+    """Go's settings file, named by GOENV, holding `line`, as `go env -w`
+    writes one. `go env -w` refuses GOWORK, but Go reads it there too."""
+    monkeypatch.setenv("GOENV", str(_write(root / "go-settings" / "env", f"{line}\n")))
+
+
+def _kept_by_go_env(
+    root: Path, monkeypatch: pytest.MonkeyPatch, setting: str
+) -> tuple[Path, Path]:
+    """The repository and the pipe Go reaches through `setting`, GOFLAGS
+    naming a module file or GOWORK a go.work no folder above the module
+    holds, kept in Go's settings file and not in the environment."""
+    monkeypatch.delenv("GOFLAGS", raising=False)
+    monkeypatch.delenv("GOWORK", raising=False)
+    if setting == "GOFLAGS":
+        _go_settings_file(root, monkeypatch, "GOFLAGS=-modfile=alt.mod")
+        return _modfile_layout(root)
+    repo, pipe = _workspace_layout(root, "replace")
+    workfile = (root / "go.work").rename(root / "kept.work")
+    _go_settings_file(root, monkeypatch, f"GOWORK={workfile}")
+    return repo, pipe
+
+
 def _graph_lines(store: _StatefulIngestor) -> list[str]:
     """Each node and edge `store` holds with its properties, one JSON line
     apiece, leaving out only when the sync ended."""
@@ -1157,6 +1180,53 @@ class TestSpecialFiles:
 
         assert facts.degraded_modules == (".",)
         assert _overlays_handed(repo, monkeypatch).overlays == [{}]
+
+    @pytest.mark.parametrize("setting", ["GOFLAGS", "GOWORK"])
+    def test_a_go_load_never_opens_a_pipe_a_kept_go_setting_reaches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setting: str
+    ) -> None:
+        # A `go` command takes a setting its environment leaves unset from
+        # Go's settings file, where `go env -w` keeps it (PR #3804 review).
+        _needs_go()
+        helper = _go_list_helper(tmp_path / "helper")
+        monkeypatch.setattr(go_frontend, "_build_tool", lambda _go: helper)
+        repo, pipe = _kept_by_go_env(tmp_path, monkeypatch, setting)
+
+        facts = _go_facts_within_deadline(repo, pipe)
+
+        assert (facts.degraded_modules, facts.analysed_modules) == ((), (".",))
+
+    @pytest.mark.parametrize("environment", [None, ""])
+    @pytest.mark.parametrize("setting", ["GOFLAGS", "GOWORK"])
+    def test_the_go_type_checker_is_told_to_leave_out_a_pipe_a_kept_setting_reaches(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        setting: str,
+        environment: str | None,
+    ) -> None:
+        # Unset or empty in the environment alike, Go reads the file.
+        _needs_go()
+        repo, pipe = _kept_by_go_env(tmp_path, monkeypatch, setting)
+        if environment is not None:
+            monkeypatch.setenv(setting, environment)
+
+        run = _overlays_handed(repo, monkeypatch)
+
+        assert run.overlays == [{str(pipe): ""}]
+
+    @pytest.mark.parametrize("setting", ["GOFLAGS", "GOWORK"])
+    def test_a_go_setting_the_environment_gives_wins_over_the_kept_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setting: str
+    ) -> None:
+        # Negative: set in the environment, the file is not read for it.
+        _needs_go()
+        repo, _pipe = _kept_by_go_env(tmp_path, monkeypatch, setting)
+        monkeypatch.setenv(setting, "-mod=mod" if setting == "GOFLAGS" else "off")
+
+        run = _overlays_handed(repo, monkeypatch)
+
+        assert run.overlays == [{}]
 
     def test_a_pipe_among_the_rust_sources_is_never_read(
         self, tmp_path: Path, mock_ingestor: MagicMock
