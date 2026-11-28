@@ -1243,10 +1243,11 @@ def _module_holding(name: str, module_paths: Mapping[str, Path]) -> str | None:
 def _file_module_holding(name: str, module_paths: Mapping[str, Path]) -> str | None:
     """`_module_holding`, widened from an inline `mod` to its file's module.
 
-    An incremental run seeds an inline `mod`'s node, which carries its file's
-    path, as a module of its own. Its imports are its file's to restore, and
-    restored under the `mod`'s qn they keyed one scope too deep (#2805
-    review). The file's module is the shortest dotted prefix on that path.
+    The graph writes a bodied inline `mod`'s node with its file's path, so
+    the Module rows read back from it hold the `mod` beside its file's
+    module, under a qn nested in the file's. The file's module is the
+    shortest dotted prefix on that path, and the only one the module seed
+    registers, as a fresh run does (issue #3810).
     """
     holder = _module_holding(name, module_paths)
     if holder is None:
@@ -2066,6 +2067,11 @@ class GraphUpdater:
         # Module qns read back from the graph on incremental runs; deferred
         # import verification counts them as real internal targets.
         self._rehydrated_module_qns: set[str] = set()
+        # The bodied inline `mod`s the graph records in each file the module
+        # seed read, which it leaves out of the module map (issue #3810): the
+        # rehydrated set above names them, and a file's state drop must take
+        # them out of it as it takes the file's own qn.
+        self._graph_inline_mods: dict[Path, set[str]] = {}
         # Go files whose `package` clause a rehydration already read back.
         self._go_clauses_read: set[str] = set()
         # Registered project names, read once per run (issue #1970).
@@ -2979,7 +2985,7 @@ class GraphUpdater:
             ]
             targets += _js_entry_modules(targets, module_paths)
             for target in targets:
-                holder = _file_module_holding(target, module_paths)
+                holder = _module_holding(target, module_paths)
                 if holder is None or holder in walked:
                     continue
                 walked.add(holder)
@@ -3050,7 +3056,7 @@ class GraphUpdater:
         target = self._rust_written_path_qn(path, module_qn, module_paths)
         if target is None:
             return
-        holder = _file_module_holding(target, module_paths)
+        holder = _module_holding(target, module_paths)
         if holder is not None:
             self._restore_unheld_imports(holder)
 
@@ -5261,6 +5267,7 @@ class GraphUpdater:
         # Only incremental runs seed (full builds process every file), so a
         # failed read here always aborts: a missing seed can silently let an
         # added file overwrite a sibling module's qn.
+        seedable: dict[str, str] = {}
         for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL):
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             path = row.get(cs.KEY_PATH)
@@ -5287,6 +5294,18 @@ class GraphUpdater:
             # stems, so no claim of one is recorded for a restore either.
             if not self._parsing_registers(path):
                 continue
+            seedable[qn] = path
+        on_disk = {qn: self.repo_path / path for qn, path in seedable.items()}
+        for qn, path in seedable.items():
+            # A bodied inline `mod` is written with its file's path, under a
+            # qn nested in the file's own (`lib.inner`, `lib.inner.deeper`).
+            # A fresh run knows it only as a scope declared in that module;
+            # seeded, it was a module of its own, which the project index
+            # listed (issue #3810). Kept under its file, whose state drop
+            # forgets it with the file's own qn.
+            if _file_module_holding(qn, on_disk) != qn:
+                self._graph_inline_mods.setdefault(on_disk[qn], set()).add(qn)
+                continue
             # A survivor of a stem in flux re-parses unseeded (issue #1569),
             # on the same terms `_forget_flux_stem_qns` applies to an
             # in-memory claim: one that cannot be opened is not re-parsed and
@@ -5298,7 +5317,7 @@ class GraphUpdater:
             if _stem_key(path) in flux_stems:
                 self._seed_flux_survivor(qn, path)
                 continue
-            module_map.setdefault(qn, self.repo_path / path)
+            module_map.setdefault(qn, on_disk[qn])
 
     def _seed_flux_survivor(self, qn: str, path: str) -> None:
         # An unopenable survivor is not re-parsed and keeps its graph claim;
@@ -7406,6 +7425,11 @@ class GraphUpdater:
         for qn in [qn for qn, path in qn_to_path.items() if path == file_path]:
             del qn_to_path[qn]
             self._rehydrated_module_qns.discard(qn)
+        # Its inline `mod`s too, which the seed kept out of the map: a re-parse
+        # declares again those it still holds.
+        self._rehydrated_module_qns.difference_update(
+            self._graph_inline_mods.pop(file_path, ())
+        )
         # The ast-grep tier's modules go too: the findings pass reads its map
         # as well, so a file excluded on a reused updater would keep writing
         # findings for the Module the delete just removed (issue #2781).
@@ -9576,17 +9600,7 @@ class GraphUpdater:
         import_processor = self.factory.import_processor
         mapping = import_processor.import_mapping
         module_paths = self.factory.definition_processor.module_qn_to_file_path
-        # Each file once, under its own module, as the run's walk restores
-        # it: a bodied inline `mod` read back from the graph carries its
-        # file's path, and the file restored under the `mod`'s qn keyed its
-        # top-level `use`s one scope too deep (#2805 review).
-        unheld = [
-            holder
-            for holder in dict.fromkeys(
-                _file_module_holding(qn, module_paths) for qn in module_paths
-            )
-            if holder is not None and holder not in mapping
-        ]
+        unheld = [qn for qn in module_paths if qn not in mapping]
         if self._is_full_build or not unheld:
             return mapping
         detached = import_processor.detached_copy()

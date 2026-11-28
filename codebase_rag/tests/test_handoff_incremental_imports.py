@@ -218,10 +218,7 @@ def test_its_imports_equal_a_fresh_index_s_where_the_run_finishes_them(
     edited, _text = FINISHED_EDIT
     assert f'reparse\t{edited}\t{{"reason":"changed"}}' in _lines(synced / _FILES)
     assert _imports_keys(fresh) == FINISHED_IMPORTERS
-    # The imports alone: a bodied inline `mod` is read back from the graph as
-    # a module with its file's path, which a fresh index only declares, so an
-    # incremental index has a `module` line for it that a fresh one lacks.
-    assert _imports(_lines(synced / _INDEX)) == _imports(fresh)
+    assert _lines(synced / _INDEX) == fresh
 
 
 @pytest.mark.parametrize("edited", sorted(EDITS))
