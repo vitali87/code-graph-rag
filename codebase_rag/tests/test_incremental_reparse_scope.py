@@ -303,6 +303,50 @@ def test_a_held_file_that_gains_a_flow_name_brings_in_its_callers(
     assert "entry.py" in got, sorted(got)
 
 
+# CodeRabbit on PR #3812: make returns a closure that invokes its parameter,
+# factory returns make's result, and entry.py hands the closure its callback
+# through factory. `invoke -> handler` comes from entry.py's call and
+# facade.py's `return make()` together, so the edit that re-parses
+# registry.py must bring in both; reader.py calls only describe.
+_FACTORY_RETURN = {
+    "util.py": _LOG,
+    "registry.py": (
+        "from util import log\n\n\n"
+        "def make():\n"
+        '    log("making")\n\n'
+        "    def invoke(cb):\n"
+        "        return cb()\n\n"
+        "    return invoke\n\n\n"
+        "def describe():\n"
+        '    return "registry"\n'
+    ),
+    "facade.py": "from registry import make\n\n\ndef factory():\n    return make()\n",
+    "entry.py": (
+        "from facade import factory\n\n\n"
+        "def handler():\n"
+        '    return "handled"\n\n\n'
+        "def main():\n"
+        "    return factory()(handler)\n"
+    ),
+    "reader.py": (
+        "from registry import describe\n\n\ndef show():\n    return describe()\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("mode", ["new", "reused", "reingest"])
+def test_a_factory_returning_an_invoker_brings_in_its_callers(
+    temp_repo: Path, mode: str
+) -> None:
+    root = temp_repo / PROJECT
+    _materialise(root, _FACTORY_RETURN)
+
+    got = _late_flow_sync(root, _WIDEN_LOG, mode)
+
+    assert {"facade.py", "entry.py"} <= got, sorted(got)
+    assert "reader.py" not in got, sorted(got)
+
+
 def test_flow_callers_are_the_callers_of_a_flow_function_or_a_closure() -> None:
     rows: list[ResultRow] = [
         {
@@ -538,6 +582,17 @@ def _embedded_index(root: Path, graph: Path, force: bool) -> set[str]:
         return set(updater._reparsed_file_keys)
 
 
+_RECEIVER = "def run_callback(fn):\n    return fn()\n"
+_PASSING = (
+    "import cbs\nfrom registry import run_callback\n\n\ndef main():\n    return {}\n"
+)
+_RECEIVER_FILES = {
+    "registry.py": _RECEIVER,
+    "cbs.py": "def h1():\n    return 1\n",
+    "entry.py": _PASSING.format("None"),
+}
+
+
 @pytest.mark.usefixtures("treesitter_go")
 @pytest.mark.parametrize(
     ("files", "edits", "reparsed"),
@@ -548,8 +603,20 @@ def _embedded_index(root: Path, graph: Path, force: bool) -> set[str]:
             {"util/util.go", "box/box.go", "box/box_extra.go"},
         ),
         (_GO_FLOW, FLOW_CASES[2][2], FLOW_CASES[2][3]),
+        # A call gaining a callback finds its receiver by name, one losing it
+        # by the edges it held (issue #3781).
+        (
+            _RECEIVER_FILES,
+            {"entry.py": _PASSING.format("run_callback(cbs.h1)")},
+            {"entry.py", "registry.py"},
+        ),
+        (
+            {**_RECEIVER_FILES, "entry.py": _PASSING.format("run_callback(cbs.h1)")},
+            {"entry.py": _PASSING.format("None")},
+            {"entry.py", "registry.py"},
+        ),
     ],
-    ids=["member-owners", "flow-callers"],
+    ids=["member-owners", "flow-callers", "flow-receiver-gained", "flow-receiver-lost"],
 )
 def test_the_embedded_graph_answers_both_lookups_as_the_double_does(
     temp_repo: Path,

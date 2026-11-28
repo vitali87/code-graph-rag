@@ -1506,6 +1506,27 @@ CYPHER_FLOW_CALLER_TARGETS = (
     "RETURN DISTINCT caller.path AS caller_path, target.path AS target_path, "
     "target.name AS target_name"
 )
+# The closure's other direction (issue #3781): what the files at $paths
+# reach, by the name and path of each node their edges end at. A file whose
+# calls changed, or that is deleted, may have handed one of those a callback
+# whose flow edge starts there.
+CYPHER_FLOW_CALLEE_TARGETS = (
+    "MATCH (caller)-[:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS]->(target) "
+    "WHERE caller.path IN $paths AND target.path IS NOT NULL "
+    "AND NOT target.path IN $paths "
+    "AND caller.qualified_name STARTS WITH $project_prefix "
+    "AND target.qualified_name STARTS WITH $project_prefix "
+    "RETURN DISTINCT target.path AS target_path, target.name AS target_name"
+)
+# The files defining a function or method by one of $names: a call names its
+# receiver or factory by text, which the closure reads before any file is
+# parsed, so the file is found by the name (issue #3781).
+CYPHER_FLOW_DEFINITION_PATHS = (
+    "MATCH (d) WHERE (d:Function OR d:Method) AND d.name IN $names "
+    "AND d.path IS NOT NULL "
+    "AND d.qualified_name STARTS WITH $project_prefix "
+    "RETURN DISTINCT d.path AS path, d.name AS name"
+)
 # Documents whose links point into $paths (issue #2458). A link that names a
 # heading ends at that heading's Section, which a re-parse of the linked
 # document deletes and recreates, taking the edge with it; a link whose file

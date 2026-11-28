@@ -237,6 +237,10 @@ _AFFECTED_CALLER_RELS = frozenset(
         cs.RelationshipType.IMPLEMENTS.value,
     }
 )
+# Labels CYPHER_FLOW_DEFINITION_PATHS selects on.
+_FLOW_DEFINITION_LABELS = frozenset(
+    {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value}
+)
 # Labels CYPHER_PROJECT_ROUTE_HANDLERS selects on.
 _ROUTE_HANDLER_LABELS = frozenset(
     {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value}
@@ -1709,6 +1713,18 @@ class _StatefulIngestor:
                     set(raw_paths) if isinstance(raw_paths, list) else set(),
                     _str((params or {}).get(cs.KEY_PROJECT_PREFIX)),
                 )
+            case cs.CYPHER_FLOW_CALLEE_TARGETS:
+                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
+                return self._flow_callee_target_rows(
+                    set(raw_paths) if isinstance(raw_paths, list) else set(),
+                    _str((params or {}).get(cs.KEY_PROJECT_PREFIX)),
+                )
+            case cs.CYPHER_FLOW_DEFINITION_PATHS:
+                raw_names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
+                return self._flow_definition_rows(
+                    set(raw_names) if isinstance(raw_names, list) else set(),
+                    _str((params or {}).get(cs.KEY_PROJECT_PREFIX)),
+                )
             case cs.CYPHER_MEMBER_OWNER_PATHS:
                 raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
                 return self._member_owner_rows(
@@ -3045,6 +3061,53 @@ class _StatefulIngestor:
                 rows, key=lambda row: (row[0], row[1], row[2] or "")
             )
         ]
+
+    def _flow_callee_target_rows(self, paths: set[str], prefix: str) -> list[ResultRow]:
+        """CYPHER_FLOW_CALLEE_TARGETS: the path and name of each node the
+        nodes at `paths` hold an edge into, elsewhere."""
+        rows: set[tuple[str, str | None]] = set()
+        for node_id, props in self.nodes.items():
+            if props.get(cs.KEY_PATH) not in paths or not str(
+                _text(node_id[1])
+            ).startswith(prefix):
+                continue
+            for _fl, _fv, rel_type, to_label, to_val, _site in self._out.get(
+                node_id, ()
+            ):
+                target = self.nodes.get((to_label, to_val))
+                if (
+                    rel_type not in _AFFECTED_CALLER_RELS
+                    or target is None
+                    or not str(_text(to_val)).startswith(prefix)
+                ):
+                    continue
+                target_path = target.get(cs.KEY_PATH)
+                name = target.get(cs.KEY_NAME)
+                if isinstance(target_path, str) and target_path not in paths:
+                    rows.add((target_path, name if isinstance(name, str) else None))
+        return [
+            {cs.KEY_TARGET_PATH: target_path, cs.KEY_TARGET_NAME: name}
+            for target_path, name in sorted(
+                rows, key=lambda row: (row[0], row[1] or "")
+            )
+        ]
+
+    def _flow_definition_rows(self, names: set[str], prefix: str) -> list[ResultRow]:
+        """CYPHER_FLOW_DEFINITION_PATHS: the path of each function or method
+        named one of `names`, with the name."""
+        rows: set[tuple[str, str]] = set()
+        for (label, uid), props in self.nodes.items():
+            path = props.get(cs.KEY_PATH)
+            name = props.get(cs.KEY_NAME)
+            if (
+                label in _FLOW_DEFINITION_LABELS
+                and isinstance(path, str)
+                and isinstance(name, str)
+                and name in names
+                and str(_text(uid)).startswith(prefix)
+            ):
+                rows.add((path, name))
+        return [{cs.KEY_PATH: path, cs.KEY_NAME: name} for path, name in sorted(rows)]
 
     def _edges_into(self, paths: set[str]) -> list[_EdgeKey]:
         # Every edge whose TARGET node lives at one of `paths`, through the
