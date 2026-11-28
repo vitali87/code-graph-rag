@@ -247,6 +247,8 @@ def _compile_tool(dotnet: str, src: Path, out: Path) -> bool:
         # toolchain into a failed index.
         logger.warning(ls.CSHARP_FRONTEND_BUILD_FAILED)
         return False
+    if proc.returncode != 0:
+        logger.warning(ls.CSHARP_FRONTEND_BUILD_FAILED)
     return proc.returncode == 0
 
 
@@ -450,7 +452,9 @@ def run_csharp_frontend(
         return _empty_facts()
     dll = _build_tool(dotnet)
     if dll is None:
-        logger.warning(ls.CSHARP_FRONTEND_BUILD_FAILED)
+        # The build, the lock it waits on, or the tool it left has already
+        # said why; a second warning here repeated it, or named a build that
+        # never ran (#3794).
         return _empty_facts()
     _restore(dotnet, project)
     uncovered = uncovered_csharp_projects(repo_path, project)
